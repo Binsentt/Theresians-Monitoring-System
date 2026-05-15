@@ -21,6 +21,9 @@
     "serve": "^14.2.6",
     "url": "^0.11.4"
   },
+  "devDependencies": {
+    "typescript": "4.9.5"
+  },
   "browserslist": {
     "production": [
       ">0.2%",
