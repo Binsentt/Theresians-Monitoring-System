@@ -1,0 +1,130 @@
+* {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Helvetica Neue', sans-serif;
+}
+
+.home-container {
+  height: 100vh;
+  width: 100%;
+  background: linear-gradient(rgba(11, 36, 71, 0.85), rgba(11, 36, 71, 0.85)), 
+              url('../assets/images/BG.jpg') no-repeat center center/cover;
+  font-family: 'Courier New', Courier, monospace; 
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.home-overlay {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+
+.home-card-sts {
+  background: white;
+  padding: 48px; 
+  border-radius: 12px;
+  text-align: center;
+  max-width: 448px; 
+  width: 100%;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); 
+}
+
+/* Updated Logo Styles */
+.logo-wrapper {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 24px; /* dating inline margin-bottom: 20px */
+}
+
+.school-logo-plain {
+  width: 100px; /* dating inline width: 100px */
+  height: auto;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1)); /* Inayos ang anino para mas visible sa puti */
+}
+
+.school-name-title {
+  color: #0b2447;
+  font-size: 24px; 
+  font-weight: 700;
+  margin-bottom: 12px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+[data-theme='dark'] .school-name-title {
+  color: #000000 !important;
+}
+
+.welcome-subtext {
+  color: #2563eb;
+  font-size: 14px;
+  margin-bottom: 32px; 
+  font-weight: 600;
+}
+
+[data-theme='dark'] .welcome-subtext {
+  color: #60a5fa !important;
+}
+
+.instruction-text {
+  color: #6b7280;
+  font-size: 14px;
+  margin-bottom: 32px;
+}
+
+[data-theme='dark'] .instruction-text {
+  color: #000000 !important;
+}
+
+.home-buttons-group {
+  width: 100%;
+}
+
+.sts-main-btn {
+  width: 100%;
+  background-color: #505050; 
+  color: white;
+  padding: 18px; 
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-family: inherit;
+  font-size: 16px;
+  letter-spacing: 2px;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.sts-main-btn:hover {
+  background-color: #0b2447;
+  transform: translateY(-2px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+}
+
+.sts-main-btn:active {
+  transform: translateY(0);
+}
+
+.logo-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+
+.sts-logo-img {
+  width: 100px;         
+  height: 100px;         
+  object-fit: contain;   
+  background-color: #fff; 
+  border-radius: 50%;     
+  padding: 5px;          
+  border: 2px solid #0b2447; 
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1); 
+}

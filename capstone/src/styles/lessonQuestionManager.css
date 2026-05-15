@@ -1,0 +1,134 @@
+.manager-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.manager-notification {
+  padding: 16px 20px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  font-weight: 600;
+}
+
+.notification-success {
+  background: rgba(34, 197, 94, 0.12);
+  color: #166534;
+  border: 1px solid #a7f3d0;
+}
+
+.notification-error {
+  background: rgba(220, 38, 38, 0.12);
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.manager-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 24px;
+}
+
+.upload-panel,
+.folder-panel,
+.edit-panel {
+  padding: 24px;
+}
+
+.upload-panel h2,
+.folder-panel h2 {
+  margin-bottom: 18px;
+}
+
+.upload-form,
+.folder-form {
+  display: grid;
+  gap: 16px;
+}
+
+.upload-actions,
+.edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.folder-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--panel-bg, #fff);
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 12px;
+}
+
+.folder-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.empty-text {
+  color: var(--text-muted, #64748b);
+  font-size: 0.95rem;
+}
+
+.manager-filters {
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.filter-group {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 1.8fr 1fr 1fr 1fr;
+  gap: 16px;
+}
+
+.file-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.file-name-title {
+  font-weight: 600;
+}
+
+.file-meta {
+  font-size: 0.88rem;
+  color: var(--text-muted, #64748b);
+}
+
+.table-actions-cell {
+  display: flex;
+  gap: 6px;
+}
+
+.action-buttons-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 980px) {
+  .manager-grid {
+    grid-template-columns: 1fr;
+  }
+  .filter-group {
+    grid-template-columns: 1fr;
+  }
+}

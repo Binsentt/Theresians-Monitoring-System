@@ -1,0 +1,214 @@
+/* Global overrides: font, palette, drag prevention, scrolling behavior */
+:root{
+  /* Navy palette */
+  --navy-900: #001f3f;
+  --navy-800: #0b2447;
+  --navy-700: #1a4d8f;
+  --navy-600: #2563eb;
+  --accent: var(--navy-600);
+
+  /* Layout spacing system */
+  --spacing-xs: 8px;
+  --spacing-sm: 12px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-2xl: 48px;
+
+  /* Border radius system */
+  --border-radius-sm: 6px;
+  --border-radius-md: 8px;
+  --border-radius-lg: 12px;
+  --border-radius-xl: 16px;
+
+  /* App surface variables (light defaults) */
+  --bg-primary: #f5f7fb;
+  --bg-secondary: #f8fafc;
+  --bg-hover: rgba(37, 99, 235, 0.02);
+  --panel-bg: #ffffff;
+  --header-bg: #ffffff;
+  --text-primary: #0b2447;
+  --text-muted: #64748b;
+  --border-color: #e5e7eb;
+  --card-shadow: rgba(0,0,0,0.05);
+
+  /* Status colors */
+  --success-color: #16a34a;
+  --warning-color: #d97706;
+  --error-color: #dc2626;
+  --info-color: #2563eb;
+  --accent-color: #2563eb;
+  --accent-bg: rgba(37, 99, 235, 0.1);
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg-primary, #f5f7fb);
+  color: var(--text-primary, #0b2447);
+  font-family: Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-size: 1rem;
+  font-variant-ligatures: common-ligatures;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  margin: 0;
+  font-weight: 700;
+  color: var(--text-primary, #0b2447);
+}
+
+h1 { font-size: 2.25rem; line-height: 1.1; }
+h2 { font-size: 1.75rem; line-height: 1.2; }
+h3 { font-size: 1.25rem; line-height: 1.25; }
+p, label, span, li, button, input, select, textarea {
+  color: var(--text-primary, #0b2447);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Prevent elements from being dragged accidentally */
+* {
+  -webkit-user-drag: none;
+  user-drag: none;
+  -webkit-touch-callout: none;
+}
+img, svg {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
+/* Main containers should not be draggable; allow scrolling inside main panels */
+.dashboard-sts-container,
+.settings-container,
+.dashboard-padding-content,
+.sts-main-panel,
+.settings-main{
+  overflow: hidden;
+}
+
+/* Enable vertical scrolling for main content areas when content overflows */
+.dashboard-padding-content,
+.sts-main-panel,
+.settings-main{
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Use navy palette for common elements (light adjustments only) */
+.sts-sidebar{ background-color: var(--navy-800) !important; }
+.header-info h1, .section-title, .metric-value{ color: var(--text-primary) !important; }
+.sts-header-bar{ background: var(--header-bg) !important; }
+.logout-btn, .btn-primary{ background: var(--navy-800) !important; border-color: transparent !important; }
+
+/* Generic panel and card mapping so components can switch based on variables */
+.sts-metric-card,
+.table-container,
+.modal-content,
+.profile-view,
+.form-container-card {
+  background: var(--panel-bg);
+  box-shadow: 0 4px 6px var(--card-shadow);
+}
+
+.metric-value { color: var(--text-primary) !important; }
+.section-title { color: var(--text-primary) !important; }
+.sts-data-table thead { background: rgba(0,0,0,0.03); }
+
+/* Dark theme overrides when data-theme=\"dark\" is applied on <html> */
+[data-theme='dark'] {
+  --bg-primary: #0b1220;
+  --bg-secondary: #0f1720;
+  --bg-hover: rgba(37, 99, 235, 0.05);
+  --panel-bg: #1e293b;
+  --header-bg: #0f1720;
+  --text-primary: #f1f5f9;
+  --text-muted: #94a3b8;
+  --border-color: #374151;
+  --card-shadow: rgba(0,0,0,0.6);
+  --accent-bg: rgba(37, 99, 235, 0.2);
+}
+
+[data-theme='dark'] .dashboard-sts-container { background-color: var(--bg-primary); }
+[data-theme='dark'] .sts-header-bar { background: var(--header-bg); color: var(--text-primary); }
+[data-theme='dark'] .sts-metric-card { background: var(--panel-bg); }
+[data-theme='dark'] .table-container { background: var(--panel-bg); }
+[data-theme='dark'] .sts-data-table thead { background: rgba(255,255,255,0.02); }
+[data-theme='dark'] .empty-table-msg { color: var(--text-muted); }
+[data-theme='dark'] .metric-label { color: var(--text-muted); }
+[data-theme='dark'] .metric-value { color: var(--status-color) !important; }
+
+/* Ensure main content text in dashboards and settings follows theme (but keep sidebar intact) */
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel *,
+[data-theme='dark'] .settings-container .settings-main,
+[data-theme='dark'] .settings-container .settings-main * {
+  color: var(--text-primary) !important;
+}
+
+[data-theme='dark'] .dashboard-sts-container .sts-sidebar,
+[data-theme='dark'] .dashboard-sts-container .sts-sidebar * {
+  /* keep sidebar colors as-is (mostly dark background with white text) */
+}
+
+/* Improve scroll appearance */
+.sts-main-panel::-webkit-scrollbar, .dashboard-padding-content::-webkit-scrollbar, .settings-main::-webkit-scrollbar{ width:10px; }
+.sts-main-panel::-webkit-scrollbar-thumb, .dashboard-padding-content::-webkit-scrollbar-thumb, .settings-main::-webkit-scrollbar-thumb{ background: rgba(0,0,0,0.15); border-radius:8px; }
+
+/* Buttons should use the app font, not serif overrides */
+.btn,
+button {
+  font-family: Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
+}
+
+/* Password field wrapper and visibility toggle */
+.password-field-wrapper {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.password-field-wrapper input {
+  width: 100%;
+  padding-right: 44px;
+}
+
+.password-toggle-button {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.password-toggle-button:hover,
+.password-toggle-button:focus {
+  color: var(--text-primary);
+  outline: 2px solid rgba(11, 36, 71, 0.25);
+  outline-offset: 2px;
+}
+
+.password-toggle-button svg,
+.password-toggle-button .eye-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

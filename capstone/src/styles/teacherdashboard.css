@@ -1,0 +1,133 @@
+﻿/* =========================================
+   TEACHER DASHBOARD STYLES
+   ========================================= */
+
+/* Remove conflicting layout system - use unified layout.css instead */
+.dashboard-sts-container,
+.sts-sidebar,
+.sts-main-panel,
+.sts-header-bar {
+  display: none !important;
+}
+
+/* Subject cards - responsive grid */
+.subjects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--spacing-lg, 24px);
+  margin-top: var(--spacing-lg, 24px);
+}
+
+.subject-card {
+  background: var(--panel-bg, #ffffff);
+  padding: var(--spacing-lg, 24px);
+  border-radius: var(--border-radius-lg, 12px);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--border-color, #e5e7eb);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.subject-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  border-color: var(--accent-color, #2563eb);
+}
+
+.subject-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--spacing-md, 16px);
+}
+
+.subject-card-header h3 {
+  margin: 0;
+  font-size: 1.125rem;
+  color: var(--text-primary, #0b2447);
+  font-weight: 600;
+}
+
+.status-tag {
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--success-color, #16a34a);
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.subject-time {
+  color: var(--success-color, #16a34a);
+  font-weight: 600;
+  margin: var(--spacing-xs, 8px) 0;
+  font-size: 0.95rem;
+}
+
+.subject-prof {
+  color: var(--text-muted, #64748b);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+/* Enhanced metric cards */
+.sts-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--spacing-lg, 24px);
+  margin-bottom: var(--spacing-xl, 32px);
+}
+
+.sts-metric-card {
+  background: var(--panel-bg, #ffffff);
+  padding: var(--spacing-lg, 24px);
+  border-radius: var(--border-radius-lg, 12px);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--border-color, #e5e7eb);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.sts-metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  border-color: var(--accent-color, #2563eb);
+}
+
+.sts-metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: linear-gradient(90deg, var(--accent-color, #2563eb), var(--accent-bg, rgba(37, 99, 235, 0.6)));
+}
+
+.metric-label {
+  font-size: 0.8rem;
+  color: var(--text-muted, #64748b);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.metric-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--text-primary, #0b2447);
+  margin: var(--spacing-sm, 12px) 0;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm, 12px);
+}
+
+.metric-footer {
+  font-size: 0.8rem;
+  color: var(--success-color, #16a34a);
+  font-weight: 500;
+}

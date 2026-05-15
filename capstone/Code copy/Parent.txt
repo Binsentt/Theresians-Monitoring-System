@@ -1,0 +1,3516 @@
+// ================================================================================
+// FILE: C:\Users\vince\Downloads\Theresian's Quest- Web\capstone\src\components\AdminDashboard.js
+// ================================================================================
+
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import logoImage from '../assets/images/STS_Logo.png';
+import '../styles/admindashboard.css';
+
+export default function AdminDashboard() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeNav, setActiveNav] = useState('dashboard');
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        // Load and apply theme
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+
+        const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+        if (!loggedInUser || loggedInUser.role !== 'admin') {
+          navigate('/login');
+          return;
+        }
+
+        setUser(loggedInUser);
+
+        const response = await fetch('http://localhost:5000/api/accounts');
+        if (response.ok) {
+          const allAccounts = await response.json();
+
+          // Filter to show only non-admin users (parents and teachers)
+          const filteredUsers = allAccounts.filter(acc =>
+            acc.role?.toLowerCase() !== 'admin'
+          );
+          setUsers(filteredUsers);
+        }
+      } catch (error) {
+        console.error('Error fetching data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadData();
+  }, [navigate]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem('loggedInUser');
+    localStorage.removeItem('token');
+    navigate('/');
+  };
+
+  if (loading) {
+    return (
+      <div className="sts-loader-container">
+        <div className="sts-spinner"></div>
+        <p>Loading Admin Portal...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="dashboard-sts-container">
+      <aside className="sts-sidebar">
+        <div className="sidebar-brand">
+          <div className="sts-logo-circle-sidebar">
+            <img
+              src={logoImage}
+              alt="STS Logo"
+              style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '50%' }}
+            />
+          </div>
+          <div className="brand-text">
+            <div className="school-name">ST. THERESE</div>
+            <div className="portal-label">Admin Portal</div>
+          </div>
+        </div>
+
+        <nav className="sidebar-nav">
+          <div
+            className={`nav-item ${activeNav === 'dashboard' ? 'active' : ''}`}
+            onClick={() => setActiveNav('dashboard')}
+          >
+            📊 Dashboard
+          </div>
+
+          <div
+            className={`nav-item ${activeNav === 'users' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveNav('users');
+              navigate('/manage-users');
+            }}
+          >
+            👥 Manage Users
+          </div>
+          <div className="nav-item">🏆 Top Achievers</div>
+          <div className="nav-item">📈 Recent Activity Log</div>
+          <div
+            className={`nav-item ${activeNav === 'settings' ? 'active' : ''}`}
+            onClick={() => navigate('/settings')}
+          >
+            ⚙️ Settings
+          </div>
+        </nav>
+      </aside>
+
+      <main className="sts-main-panel">
+        <header className="sts-header-bar">
+          <div className="header-info">
+            <h1>Admin Dashboard</h1>
+            <p>Welcome, {user?.full_name || 'Administrator'}</p>
+          </div>
+          {/* Logout moved to Settings screen */}
+        </header>
+
+        <div className="dashboard-padding-content">
+
+          <section className="sts-metrics-grid">
+            <div className="sts-metric-card">
+              <div className="metric-label">Total Users</div>
+              <div className="metric-value">{users.length}</div>
+              <div className="metric-footer">Parents & Teachers</div>
+            </div>
+            <div className="sts-metric-card">
+              <div className="metric-label">Parents</div>
+              <div className="metric-value">{users.filter(u => u.role?.toLowerCase() === 'parent').length}</div>
+              <div className="metric-footer">Active accounts</div>
+            </div>
+            <div className="sts-metric-card">
+              <div className="metric-label">Teachers</div>
+              <div className="metric-value">{users.filter(u => u.role?.toLowerCase() === 'teacher').length}</div>
+              <div className="metric-footer">Active accounts</div>
+            </div>
+          </section>
+
+          <div className="sts-reminder-dash">
+            <div className="reminder-text">
+              <div className="reminder-title">System Reminder</div>
+              <p>Manage parent and teacher accounts from the Users section. Monitor system activity and user access logs regularly.</p>
+            </div>
+          </div>
+
+          <section className="table-section">
+            <div className="section-header">
+              <h2 className="section-title">Recent Users</h2>
+              <button className="view-all-btn" onClick={() => navigate('/manage-users')}>
+                View All Users
+              </button>
+            </div>
+
+            <div className="table-container">
+              <table className="sts-data-table">
+                <thead>
+                  <tr>
+                    <th>USER NAME</th>
+                    <th>EMAIL</th>
+                    <th>ROLE</th>
+                    <th>STATUS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.length > 0 ? (
+                    users.slice(-5).reverse().map((u) => (
+                      <tr key={u.id}>
+                        <td>
+                          <div className="student-cell">
+                            <div className="avatar-small">
+                              {u.name?.charAt(0) || u.email.charAt(0).toUpperCase()}
+                            </div>
+                            <span className="name-text">
+                              {u.name || 'No name set'}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="email-cell">{u.email}</td>
+                        <td>
+                          <span className={`role-badge role-${u.role?.toLowerCase()}`}>
+                            {u.role || 'Parent'}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`status-tag ${u.status?.toLowerCase() === 'active' ? 'active' : 'offline'}`}>
+                            {u.status || 'Offline'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="4" className="empty-table-msg">
+                        No users found. Add your first user!
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </main>
+
+      {/* Mobile Bottom Navigation */}
+      {isMobile && (
+        <nav className="mobile-bottom-nav">
+          <div className={`mobile-nav-item ${activeNav === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveNav('dashboard')}>
+            <div className="mobile-nav-icon">📊</div>
+            <div className="mobile-nav-label">Dashboard</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'users' ? 'active' : ''}`} onClick={() => { setActiveNav('users'); navigate('/manage-users'); }}>
+            <div className="mobile-nav-icon">👥</div>
+            <div className="mobile-nav-label">Manage Users</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'achievers' ? 'active' : ''}`}>
+            <div className="mobile-nav-icon">🏆</div>
+            <div className="mobile-nav-label">Top Achievers</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'activity' ? 'active' : ''}`}>
+            <div className="mobile-nav-icon">📈</div>
+            <div className="mobile-nav-label">Recent Activity Log</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'settings' ? 'active' : ''}`} onClick={() => { setActiveNav('settings'); navigate('/settings'); }}>
+            <div className="mobile-nav-icon">⚙️</div>
+            <div className="mobile-nav-label">Settings</div>
+          </div>
+        </nav>
+      )}
+    </div>
+  );
+}
+
+
+
+// --------------------------------------------------------------------------------
+
+// ================================================================================
+// FILE: C:\Users\vince\Downloads\Theresian's Quest- Web\capstone\src\components\HomePageScreen.js
+// ================================================================================
+
+import React, { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import '../styles/homePageStyles.css'; 
+
+export default function HomePageScreen() {
+  const navigate = useNavigate();
+
+  // Load saved theme on mount
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  }, []);
+
+  
+  const handleLoginClick = () => {
+    navigate('/login');
+  };
+
+  return (
+    <div className="home-container">
+      <div className="home-overlay">
+        <div className="home-card-sts">
+
+<div className="logo-wrapper">
+          <img 
+            src={require('../assets/images/STS_Logo.png')} 
+            alt="STS Logo" 
+            className="sts-logo-img" 
+          />
+        </div>
+
+          <h1 className="school-name-title">SAINT THERESE SCHOOL</h1>
+          <p className="welcome-subtext">Welcome to the Gamified Portal</p>
+          <p className="instruction-text">Please Login to continue</p>
+          
+
+          <div className="home-buttons-group">
+            <button className="sts-main-btn" onClick={handleLoginClick}>
+              LOGIN
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// --------------------------------------------------------------------------------
+
+// ================================================================================
+// FILE: C:\Users\vince\Downloads\Theresian's Quest- Web\capstone\src\components\LoginScreen.js
+// ================================================================================
+
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import logoImage from '../assets/images/STS_Logo.png';
+
+export default function LoginScreen() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState(1);
+  const [otp, setOtp] = useState('');
+  const [pendingUserId, setPendingUserId] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const navigate = useNavigate();
+
+  // Load saved theme on mount
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  }, []);
+
+  const handleLogin = async () => {
+  
+    if (!email && !password) {
+      setErrorMessage('Email and password fields are empty.');
+      return;
+    }
+    if (!email) {
+      setErrorMessage('Please enter your email address.');
+      return;
+    }
+    if (!password) {
+      setErrorMessage('Password field is empty.');
+      return;
+    }
+    setErrorMessage('');
+
+    setLoading(true);
+    try {
+      const response = await fetch('http://localhost:5000/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: email.trim().toLowerCase(),
+          password: password
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setErrorMessage(data.error || 'Invalid email or password.');
+        return;
+      }
+
+      if (data.step === 2) {
+        setPendingUserId(data.userId);
+        setStep(2);
+        alert('Verification code sent to your email.');
+      } 
+    } catch (error) {
+      setErrorMessage('Network error. Please check if server is running.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!otp) {
+      setErrorMessage('Please enter the verification code.');
+      return;
+    }
+    setErrorMessage('');
+    setLoading(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/login/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: pendingUserId, otp }),
+      });
+      const result = await res.json();
+      if (!res.ok) {
+        setErrorMessage(result.error || 'Invalid OTP.');
+        return;
+      }
+      if (result.success && result.user) {
+        localStorage.setItem('loggedInUser', JSON.stringify(result.user));
+        const role = result.user.role.toLowerCase();
+        alert(`Welcome back, ${result.user.name}!`);
+        
+        if (role === 'admin') {
+          navigate('/admin-dashboard');
+        } else if (role === 'teacher') {
+          navigate('/teacher-dashboard');
+        } else if (role === 'parent') {
+          navigate('/parent-dashboard');
+        } else {
+          navigate('/');
+        }
+      }
+    } catch (err) {
+      setErrorMessage('Network error while verifying OTP.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="login-page-wrapper">
+      <div className="sts-header-bar">
+        <img src={logoImage} alt="STS Logo" className="sts-logo-circle" />
+        <h2 className="sts-header-text">Login</h2>
+      </div>
+
+      <div className="login-flex-container">
+        <div className="login-card-main">
+          <button className="back-home-link" onClick={() => navigate('/')}>← Back to Home</button>
+          
+          <h3 className="login-title-sts">
+            {step === 1 ? 'Enter your Credentials' : 'Security Verification'}
+          </h3>
+
+          {step === 1 ? (
+            <>
+
+              <div className="sts-input-group">
+                <label className="sts-label">Email Address</label>
+                <input
+                  type="email"
+                  className="sts-input-field"
+                  placeholder="email@example.com"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  disabled={loading}
+                />
+              </div>
+
+              <div className="sts-input-group">
+                <label className="sts-label">Password</label>
+                
+                <div className="password-input-relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    className="sts-input-field"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    disabled={loading}
+                    style={{ paddingRight: '45px' }}
+                  />
+
+                  <div 
+                    className="eye-icon-inside" 
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                    )}
+                  </div>
+                </div>
+
+                <div className="pw-footer-row">
+                  <span className="forgot-pass-link-bottom" onClick={() => navigate('/reset-password')}>
+                    Forgot Password?
+                  </span>
+                </div>
+              </div>
+
+              <button className="sts-login-button" onClick={handleLogin} disabled={loading}>
+                {loading ? 'LOGGING IN...' : 'LOGIN'}
+              </button>
+            </>
+          ) : (
+            <div style={{ marginTop: 16 }}>
+              <p className="verification-instruction" style={{ textAlign: 'center', fontSize: '14px', marginBottom: '15px' }}>
+                Enter the 6-digit code sent to <b>{email}</b>
+              </p>
+              <div className="sts-input-group">
+                <input
+                  className="sts-input-field otp-input"
+                  type="text"
+                  placeholder="000000"
+                  value={otp}
+                  onChange={e => setOtp(e.target.value)}
+                  maxLength={6}
+                />
+              </div>
+              <button className="sts-login-button" onClick={handleVerifyOtp} disabled={loading}>
+                {loading ? 'VERIFYING...' : 'VERIFY CODE'}
+              </button>
+              <button onClick={() => setStep(1)} className="back-login-btn">Back to Login</button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {errorMessage && (
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          backgroundColor: document.documentElement.getAttribute('data-theme') === 'dark' ? '#5a2a2a' : '#f8d7da',
+          color: document.documentElement.getAttribute('data-theme') === 'dark' ? '#ffb3b3' : '#721c24',
+          padding: '12px 20px',
+          borderRadius: '4px',
+          border: document.documentElement.getAttribute('data-theme') === 'dark' ? '1px solid #8b3d3d' : '1px solid #f5c6cb',
+          zIndex: 1000,
+          maxWidth: '400px'
+        }}>
+          {errorMessage}
+          <button 
+            onClick={() => setErrorMessage('')}
+            style={{
+              marginLeft: '10px',
+              background: 'none',
+              border: 'none',
+              color: document.documentElement.getAttribute('data-theme') === 'dark' ? '#ffb3b3' : '#721c24',
+              cursor: 'pointer',
+              fontSize: '18px'
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// --------------------------------------------------------------------------------
+
+// ================================================================================
+// FILE: C:\Users\vince\Downloads\Theresian's Quest- Web\capstone\src\components\ManageUsers.js
+// ================================================================================
+
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import logoImage from '../assets/images/STS_Logo.png';
+import Modal from './Modal';
+import '../styles/manageusers.css';
+
+export default function ManageUsers() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeNav, setActiveNav] = useState('users');
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [selectedRole, setSelectedRole] = useState('Parent');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+  const [newUser, setNewUser] = useState({
+    firstName: '',
+    middleName: '',
+    lastName: '',
+    email: '',
+    password: '',
+    mobile_number: '',
+    address: '',
+    birthday: '',
+    gender: ''
+  });
+  const [adding, setAdding] = useState(false);
+  const [addErrors, setAddErrors] = useState({});
+  const [validationModal, setValidationModal] = useState(null);
+  const [editingUser, setEditingUser] = useState(null);
+  const [editForm, setEditForm] = useState({
+    firstName: '',
+    middleName: '',
+    lastName: '',
+    email: '',
+    mobile_number: '',
+    address: '',
+    birthday: '',
+    gender: ''
+  });
+  const [updating, setUpdating] = useState(false);
+  const [editErrors, setEditErrors] = useState({});
+  const [deletingUser, setDeletingUser] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const filteredUsers = users.filter((u) => {
+    const term = searchTerm.toLowerCase();
+    return (
+      u.name?.toLowerCase().includes(term) ||
+      u.email?.toLowerCase().includes(term)
+    );
+  });
+  const validateBirthday = (date) => {
+    if (!date) return 'Birthday is required';
+    const birthDate = new Date(date);
+    const today = new Date();
+    if (birthDate > today) {
+      return 'Birthday cannot be in the future';
+    }
+    return '';
+  };
+
+  const validateNameField = (name) => {
+    if (!name) return 'This field is required';
+    if (/[0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(name)) return 'No numbers or symbols allowed';
+    return '';
+  };
+
+  const validateEmail = (email) => {
+    if (!email) return 'Email is required';
+    if (!email.endsWith('@gmail.com')) return 'Email must be a Gmail address (@gmail.com)';
+    return '';
+  };
+
+  const validatePhone = (phone) => {
+    if (!phone) return 'Mobile number is required';
+    if (!phone.startsWith('09')) return 'Mobile number must start with 09';
+    if (phone.length !== 11) return 'Mobile number must be exactly 11 digits';
+    return '';
+  };
+
+  const validatePassword = (password) => {
+    if (!password) return 'Password is required';
+    if (password.length < 12) return 'Password must be at least 12 characters long';
+    if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter';
+    if (!/[a-z]/.test(password)) return 'Password must contain at least one lowercase letter';
+    if (!/\d/.test(password)) return 'Password must contain at least one number';
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) return 'Password must contain at least one symbol';
+    return '';
+  };
+  const restrictInput = (field, value) => {
+    let cleanedValue = value;
+    if (field === 'firstName' || field === 'middleName' || field === 'lastName') {
+      cleanedValue = value.replace(/[0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/g, '');
+    }
+    if (field === 'mobile_number') {
+      cleanedValue = value.replace(/[^0-9]/g, '').slice(0, 11);
+    }
+    return cleanedValue;
+  };
+
+  const handleAddFormChange = (field, value) => {
+    const finalValue = restrictInput(field, value);
+    setNewUser({ ...newUser, [field]: finalValue });
+    
+    let error = '';
+    if (field === 'firstName' || field === 'middleName' || field === 'lastName') error = validateNameField(finalValue);
+    else if (field === 'email') error = validateEmail(finalValue);
+    else if (field === 'mobile_number') error = validatePhone(finalValue);
+    else if (field === 'password') error = validatePassword(finalValue);
+    else if (field === 'birthday') error = validateBirthday(finalValue);
+    else if (field === 'gender') {
+      if ((selectedRole || '').toLowerCase() !== 'admin' && finalValue === '') error = 'Gender is required';
+    }
+
+    setAddErrors({ ...addErrors, [field]: error });
+  };
+
+  const handleEditFormChange = (field, value) => {
+    const finalValue = restrictInput(field, value);
+    setEditForm({ ...editForm, [field]: finalValue });
+
+    let error = '';
+    if (field === 'firstName' || field === 'middleName' || field === 'lastName') error = validateNameField(finalValue);
+    else if (field === 'email') error = validateEmail(finalValue);
+    else if (field === 'mobile_number') error = validatePhone(finalValue);
+    else if (field === 'birthday') error = validateBirthday(finalValue);
+    else if (field === 'gender') {
+      const roleToCheck = (editingUser?.role || editForm.role || '').toLowerCase();
+      if (roleToCheck !== 'admin' && finalValue === '') error = 'Gender is required';
+    }
+
+    setEditErrors({ ...editErrors, [field]: error });
+  };
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        // Load and apply theme
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+
+        const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+        if (!loggedInUser || loggedInUser.role !== 'admin') {
+          navigate('/login');
+          return;
+        }
+        setUser(loggedInUser);
+        loadUsers();
+      } catch (error) {
+        console.error('Error loading data:', error);
+        navigate('/login');
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadData();
+  }, [navigate]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const loadUsers = async () => {
+    try {
+      const response = await fetch('http://localhost:5000/api/accounts');
+      const data = await response.json();
+      const usersList = data.filter(acc => acc.role?.toLowerCase() !== 'admin');
+      setUsers(usersList);
+    } catch (error) {
+      console.error('Error loading users:', error);
+    }
+  };
+
+  const handleAddUser = async (e) => {
+    e.preventDefault();
+    const roleIsAdmin = (selectedRole || '').toLowerCase() === 'admin';
+    if (!newUser.firstName || !newUser.lastName || !newUser.email || !newUser.password || !newUser.birthday || (!roleIsAdmin && !newUser.gender)) {
+      setValidationModal({
+        title: 'Missing Required Fields',
+        message: 'Please fill in all required fields (First Name, Last Name, Email, Password, Birthday' + (roleIsAdmin ? ')' : ', Gender)')
+      });
+      return;
+    }
+    if (Object.values(addErrors).some(err => err !== '')) {
+      setValidationModal({
+        title: 'Form Errors',
+        message: 'Please fix the errors in the form before submitting'
+      });
+      return;
+    }
+
+    setAdding(true);
+    try {
+      const fullName = `${newUser.firstName}${newUser.middleName ? ' ' + newUser.middleName : ''} ${newUser.lastName}`;
+      const payload = {
+        name: fullName,
+        email: newUser.email,
+        password: newUser.password,
+        mobile_number: newUser.mobile_number,
+        address: newUser.address,
+        birthday: newUser.birthday,
+        role: selectedRole.toLowerCase() // Convert to lowercase
+      };
+
+      // Add gender for non-admin users
+      const roleIsAdmin = (selectedRole || '').toLowerCase() === 'admin';
+      if (!roleIsAdmin) {
+        payload.gender = newUser.gender || '';
+      }
+
+      const response = await fetch('http://localhost:5000/api/accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setValidationModal({
+          title: 'Success',
+          message: `${selectedRole} added successfully!`
+        });
+        setNewUser({ firstName: '', middleName: '', lastName: '', email: '', password: '', mobile_number: '', address: '', birthday: '', gender: '' });
+        setShowAddForm(false);
+        setSelectedRole('Parent');
+        loadUsers();
+      } else {
+        setValidationModal({
+          title: 'Error',
+          message: data.error || `Failed to add ${selectedRole.toLowerCase()}`
+        });
+      }
+    } catch (error) {
+      setValidationModal({
+        title: 'Connection Error',
+        message: 'Connection error. Please check if the server is running.'
+      });
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleEditClick = (u) => {
+    setEditingUser(u);
+    setEditErrors({});
+    const nameParts = u.name.split(' ');
+    setEditForm({
+      firstName: nameParts[0] || '',
+      middleName: nameParts.length > 2 ? nameParts.slice(1, -1).join(' ') : '',
+      lastName: nameParts[nameParts.length - 1] || '',
+      email: u.email,
+      mobile_number: u.mobile_number || '',
+      address: u.address || '',
+      birthday: u.birthday ? new Date(u.birthday).toISOString().split('T')[0] : '',
+      gender: u.gender || '',
+      role: u.role || ''
+    });
+  };
+
+  const handleUpdateUser = async (e) => {
+    e.preventDefault();
+    if (!editForm.firstName || !editForm.lastName || !editForm.email || !editForm.birthday) {
+      setValidationModal({
+        title: 'Missing Required Fields',
+        message: 'Please fill in all required fields (First Name, Last Name, Email, Birthday)'
+      });
+      return;
+    }
+    if (Object.values(editErrors).some(err => err !== '')) {
+      setValidationModal({
+        title: 'Form Errors',
+        message: 'Please fix the errors before updating'
+      });
+      return;
+    }
+
+    setUpdating(true);
+    try {
+      const fullName = `${editForm.firstName}${editForm.middleName ? ' ' + editForm.middleName : ''} ${editForm.lastName}`;
+      const payload = {
+        name: fullName,
+        email: editForm.email,
+        role: editingUser.role,
+        mobile_number: editForm.mobile_number,
+        address: editForm.address,
+        birthday: editForm.birthday,
+        gender: editForm.gender || ''
+      };
+
+      const response = await fetch(`http://localhost:5000/api/accounts/${editingUser.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        setValidationModal({
+          title: 'Success',
+          message: 'User updated successfully!'
+        });
+        setEditingUser(null);
+        loadUsers();
+      } else {
+        setValidationModal({
+          title: 'Error',
+          message: 'Failed to update user'
+        });
+      }
+    } catch (error) {
+      setValidationModal({
+        title: 'Connection Error',
+        message: 'Connection error'
+      });
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    setDeleting(true);
+    try {
+      const response = await fetch(`http://localhost:5000/api/accounts/${deletingUser.id}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        setValidationModal({
+          title: 'Success',
+          message: 'User deleted successfully!'
+        });
+        setDeletingUser(null);
+        loadUsers();
+      } else {
+        setValidationModal({
+          title: 'Error',
+          message: 'Failed to delete user'
+        });
+      }
+    } catch (error) {
+      setValidationModal({
+        title: 'Connection Error',
+        message: 'Connection error'
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('loggedInUser');
+    localStorage.removeItem('token');
+    navigate('/');
+  };
+
+  if (loading) {
+    return (
+      <div className="sts-loader-container">
+        <div className="sts-spinner"></div>
+        <p>Loading...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="dashboard-sts-container">
+      <aside className="sts-sidebar">
+        <div className="sidebar-brand">
+          <div className="sts-logo-circle-sidebar">
+            <img src={logoImage} alt="STS Logo" className="sidebar-logo-img" />
+          </div>
+          <div className="brand-text">
+            <div className="school-name">ST. THERESE</div>
+            <div className="portal-label">Admin Portal</div>
+          </div>
+        </div>
+
+        <nav className="sidebar-nav">
+          <div
+            className={`nav-item ${activeNav === 'dashboard' ? 'active' : ''}`}
+            onClick={() => navigate('/admin-dashboard')}
+          >
+            📊 Dashboard
+          </div>
+          <div className={`nav-item ${activeNav === 'users' ? 'active' : ''}`}>
+            👥 Manage Users
+          </div>
+          <div className="nav-item">🏆 Top Achievers</div>
+          <div className="nav-item">📈 Recent Activity Log</div>
+          <div
+            className={`nav-item ${activeNav === 'settings' ? 'active' : ''}`}
+            onClick={() => { setActiveNav('settings'); navigate('/settings'); }}
+          >
+            ⚙️ Settings
+          </div>
+        </nav>
+      </aside>
+
+      <main className="sts-main-panel">
+        <header className="sts-header-bar">
+          <div className="header-info">
+            <h1>Manage Users</h1>
+            <p>Welcome, {user?.name || 'Administrator'}</p>
+          </div>
+        </header>
+
+        <div className="dashboard-padding-content">
+          <section className="table-section">
+            <div className="section-header">
+              <h2 className="section-title">Users List ({filteredUsers.length})</h2>
+
+              <div className="controls-wrapper">
+                <input
+                  type="text"
+                  placeholder="Search users..."
+                  className="sts-search-input"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                <button
+                  className="sts-add-btn"
+                  onClick={() => setShowAddForm(!showAddForm)}
+                >
+                  {showAddForm ? 'Cancel' : 'Add'}
+                </button>
+              </div>
+            </div>
+
+            {showAddForm && (
+              <div className="form-container-card">
+                <h3>Add New User</h3>
+                <div className="role-selector">
+                  <label>Select Role:</label>
+                  <select value={selectedRole} onChange={(e) => setSelectedRole(e.target.value)} className="sts-input">
+                    <option value="Parent">Parent</option>
+                    <option value="Teacher">Teacher</option>
+                  </select>
+                </div>
+                <form onSubmit={handleAddUser} className="sts-form">
+                  <div className="form-group">
+                    <label>First Name: *</label>
+                    <input
+                      type="text"
+                      placeholder="John"
+                      value={newUser.firstName}
+                      onChange={(e) => handleAddFormChange('firstName', e.target.value)}
+                      className="sts-input"
+                    />
+                    {addErrors.firstName && <p className="error-text">{addErrors.firstName}</p>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Middle Name/Initial:</label>
+                    <input
+                      type="text"
+                      placeholder="M. or Michael"
+                      value={newUser.middleName}
+                      onChange={(e) => handleAddFormChange('middleName', e.target.value)}
+                      className="sts-input"
+                    />
+                    {addErrors.middleName && <p className="error-text">{addErrors.middleName}</p>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Last Name: *</label>
+                    <input
+                      type="text"
+                      placeholder="Doe"
+                      value={newUser.lastName}
+                      onChange={(e) => handleAddFormChange('lastName', e.target.value)}
+                      className="sts-input"
+                    />
+                    {addErrors.lastName && <p className="error-text">{addErrors.lastName}</p>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Email: *</label>
+                    <input
+                      type="email"
+                      placeholder="user@gmail.com"
+                      value={newUser.email}
+                      onChange={(e) => handleAddFormChange('email', e.target.value)}
+                      className="sts-input"
+                    />
+                    {addErrors.email && <p className="error-text">{addErrors.email}</p>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Password: *</label>
+                    <input
+                      type="password"
+                      placeholder="Enter password"
+                      value={newUser.password}
+                      onChange={(e) => handleAddFormChange('password', e.target.value)}
+                      className="sts-input"
+                    />
+                    {addErrors.password && <p className="error-text">{addErrors.password}</p>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Mobile Number:</label>
+                    <input
+                      type="text"
+                      placeholder="09123456789"
+                      value={newUser.mobile_number}
+                      onChange={(e) => handleAddFormChange('mobile_number', e.target.value)}
+                      className="sts-input"
+                    />
+                    {addErrors.mobile_number && <p className="error-text">{addErrors.mobile_number}</p>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Address:</label>
+                    <input
+                      type="text"
+                      placeholder="Enter address"
+                      value={newUser.address}
+                      onChange={(e) => setNewUser({ ...newUser, address: e.target.value })}
+                      className="sts-input"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Birthday: *</label>
+                    <input
+                      type="date"
+                      max={new Date().toISOString().split("T")[0]}
+                      value={newUser.birthday}
+                      onChange={(e) => {
+                        const selectedDate = new Date(e.target.value);
+                        const todayDate = new Date();
+                        if (selectedDate <= todayDate) {
+                          handleAddFormChange('birthday', e.target.value);
+                        } else {
+                          handleAddFormChange('birthday', '');
+                        }
+                      }}
+                      className="sts-input"
+                    />
+                    {addErrors.birthday && <p className="error-text">{addErrors.birthday}</p>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Gender: *</label>
+                    <select
+                      value={newUser.gender}
+                      onChange={(e) => handleAddFormChange('gender', e.target.value)}
+                      className="sts-input"
+                    >
+                      <option value="">Select Gender</option>
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                    </select>
+                    {addErrors.gender && <p className="error-text">{addErrors.gender}</p>}
+                  </div>
+
+                  <button type="submit" disabled={adding} className="sts-submit-btn">
+                    {adding ? `Adding ${selectedRole}...` : `Add ${selectedRole}`}
+                  </button>
+                </form>
+              </div>
+            )}
+
+            <div className="table-container">
+              <table className="sts-data-table">
+                <thead>
+                  <tr>
+                    <th>USER NAME</th>
+                    <th>EMAIL</th>
+                    <th>ROLE</th>
+                    <th>MOBILE NUMBER</th>
+                    <th>STATUS</th>
+                    <th>ACTIONS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" className="empty-table-msg">
+                        {searchTerm ? `No results found for "${searchTerm}"` : "No users found."}
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredUsers.map((u) => (
+                      <tr key={u.id}>
+                        <td>{u.name || 'No name set'}</td>
+                        <td className="email-cell">{u.email}</td>
+                        <td>
+                          <span className={`role-badge role-${u.role?.toLowerCase()}`}>
+                            {u.role || 'Parent'}
+                          </span>
+                        </td>
+                        <td>{u.mobile_number || '-'}</td>
+                        <td>{u.birthday ? new Date(u.birthday).toLocaleDateString() : 'Not set'}</td>
+                        <td>
+                          <span className={`status-tag ${u.status?.toLowerCase() === 'active' ? 'active' : 'offline'}`}>
+                            {u.status || 'Offline'}
+                          </span>
+                        </td>
+                        <td className="actions-cell">
+                          <button className="edit-action-btn" onClick={() => handleEditClick(u)}>Edit</button>
+                          <button className="delete-action-btn" onClick={() => setDeletingUser(u)}>Delete</button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </main>
+
+      {/* Mobile Bottom Navigation */}
+      {isMobile && (
+        <nav className="mobile-bottom-nav">
+          <div className={`mobile-nav-item ${activeNav === 'dashboard' ? 'active' : ''}`} onClick={() => navigate('/admin-dashboard')}>
+            <div className="mobile-nav-icon">📊</div>
+            <div className="mobile-nav-label">Dashboard</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'users' ? 'active' : ''}`}>
+            <div className="mobile-nav-icon">👥</div>
+            <div className="mobile-nav-label">Users</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'achievers' ? 'active' : ''}`}>
+            <div className="mobile-nav-icon">🏆</div>
+            <div className="mobile-nav-label">Achievers</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'activity' ? 'active' : ''}`}>
+            <div className="mobile-nav-icon">📈</div>
+            <div className="mobile-nav-label">Activity</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'settings' ? 'active' : ''}`} onClick={() => { setActiveNav('settings'); navigate('/settings'); }}>
+            <div className="mobile-nav-icon">⚙️</div>
+            <div className="mobile-nav-label">Settings</div>
+          </div>
+        </nav>
+      )}
+
+      {/* Edit Modal */}
+      {editingUser && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h2>Edit User</h2>
+            <form onSubmit={handleUpdateUser} className="sts-form">
+              <div className="form-group">
+                <label>First Name:</label>
+                <input
+                  type="text"
+                  value={editForm.firstName}
+                  onChange={(e) => handleEditFormChange('firstName', e.target.value)}
+                  className="sts-input"
+                />
+                {editErrors.firstName && <p className="error-text">{editErrors.firstName}</p>}
+              </div>
+
+              <div className="form-group">
+                <label>Middle Name/Initial:</label>
+                <input
+                  type="text"
+                  value={editForm.middleName}
+                  onChange={(e) => handleEditFormChange('middleName', e.target.value)}
+                  className="sts-input"
+                />
+                {editErrors.middleName && <p className="error-text">{editErrors.middleName}</p>}
+              </div>
+
+              <div className="form-group">
+                <label>Last Name:</label>
+                <input
+                  type="text"
+                  value={editForm.lastName}
+                  onChange={(e) => handleEditFormChange('lastName', e.target.value)}
+                  className="sts-input"
+                />
+                {editErrors.lastName && <p className="error-text">{editErrors.lastName}</p>}
+              </div>
+
+              <div className="form-group">
+                <label>Email:</label>
+                <input
+                  type="email"
+                  value={editForm.email}
+                  onChange={(e) => handleEditFormChange('email', e.target.value)}
+                  className="sts-input"
+                />
+                {editErrors.email && <p className="error-text">{editErrors.email}</p>}
+              </div>
+
+              <div className="form-group">
+                <label>Mobile Number:</label>
+                <input
+                  type="text"
+                  value={editForm.mobile_number}
+                  onChange={(e) => handleEditFormChange('mobile_number', e.target.value)}
+                  className="sts-input"
+                />
+                {editErrors.mobile_number && <p className="error-text">{editErrors.mobile_number}</p>}
+              </div>
+
+              <div className="form-group">
+                <label>Address:</label>
+                <input
+                  type="text"
+                  value={editForm.address}
+                  onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                  className="sts-input"
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Birthday: *</label>
+                <input
+                  type="date"
+                  max={new Date().toISOString().split("T")[0]}
+                  value={editForm.birthday}
+                  onChange={(e) => {
+                    const selectedDate = new Date(e.target.value);
+                    const todayDate = new Date();
+                    if (selectedDate <= todayDate) {
+                      handleEditFormChange('birthday', e.target.value);
+                    } else {
+                      handleEditFormChange('birthday', '');
+                    }
+                  }}
+                  className="sts-input"
+                />
+                {editErrors.birthday && <p className="error-text">{editErrors.birthday}</p>}
+              </div>
+
+              <div className="form-group">
+                <label>Gender: *</label>
+                <select
+                  value={editForm.gender}
+                  onChange={(e) => handleEditFormChange('gender', e.target.value)}
+                  className="sts-input"
+                >
+                  <option value="">Select Gender</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                </select>
+                {editErrors.gender && <p className="error-text">{editErrors.gender}</p>}
+              </div>
+
+              <div className="modal-actions">
+                <button type="button" className="cancel-btn" onClick={() => setEditingUser(null)}>Cancel</button>
+                <button type="submit" disabled={updating} className="update-btn">
+                  {updating ? 'Updating...' : 'Update User'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {deletingUser && (
+        <div className="modal-overlay">
+          <div className="modal-content delete-modal">
+            <h2>Delete User?</h2>
+            <p>Are you sure you want to delete <strong>{deletingUser.name}</strong>?</p>
+            <div className="modal-actions">
+              <button className="cancel-btn" onClick={() => setDeletingUser(null)}>Cancel</button>
+              <button className="confirm-delete-btn" onClick={handleDeleteUser} disabled={deleting}>
+                {deleting ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}  
+      {validationModal && (
+        <div className="modal-overlay">
+          <div className="modal-content validation-modal">
+            <h2>{validationModal.title}</h2>
+            <p>{validationModal.message}</p>
+            <div className="modal-actions">
+              <button 
+                className="confirm-btn" 
+                onClick={() => setValidationModal(null)}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
+// --------------------------------------------------------------------------------
+
+// ================================================================================
+// FILE: C:\Users\vince\Downloads\Theresian's Quest- Web\capstone\src\components\ParentDashboard.js
+// ================================================================================
+
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import logoImage from '../assets/images/STS_Logo.png';
+import '../styles/parentdashboard.css';
+
+export default function ParentDashboard() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [activeNav, setActiveNav] = useState('announcements');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: '', email: '', password: '', mobile_number: '', address: '', birthday: ''
+  });
+  const [showPassword, setShowPassword] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [updating, setUpdating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  const today = new Date().toISOString().split("T")[0];
+
+  // --- Icons ---
+  const EyeIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+
+  const EyeOffIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+
+  // --- Validations ---
+  const validateName = (name) => !name ? 'Full name is required' : (/\d/.test(name) ? 'No numbers allowed' : '');
+  const validateEmail = (email) => !email ? 'Email is required' : (!email.endsWith('@gmail.com') ? 'Use @gmail.com' : '');
+  const validatePhone = (phone) => !phone ? 'Required' : (!phone.startsWith('09') || phone.length !== 11 ? 'Must be 11 digits (09...)' : '');
+  const validatePassword = (pw) => (pw && pw.length < 12) ? 'At least 12 characters' : '';
+
+  const handleEditFormChange = (field, value) => {
+    let finalValue = value;
+    if (field === 'name') finalValue = value.replace(/[0-9]/g, '');
+    if (field === 'mobile_number') finalValue = value.replace(/[^0-9]/g, '').slice(0, 11);
+
+    setEditForm({ ...editForm, [field]: finalValue });
+
+    let error = '';
+  if (field === 'name') error = validateName(finalValue);
+  else if (field === 'email') error = validateEmail(finalValue);
+  else if (field === 'mobile_number') error = validatePhone(finalValue);
+  else if (field === 'password') {
+    error = (finalValue === '') ? '' : validatePassword(finalValue);
+  }
+  else if (field === 'birthday') error = validateBirthday(finalValue);
+    setErrors({ ...errors, [field]: error });
+  };
+
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        // Load and apply theme
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+
+        const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+        if (!loggedInUser || loggedInUser.role?.toLowerCase() !== 'parent') {
+          navigate('/login');
+          return;
+        }
+        setUser(loggedInUser);
+      } catch (e) { navigate('/login'); } finally { setLoading(false); }
+    };
+    loadUser();
+  }, [navigate]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth <= 768;
+      setIsMobile(mobile);
+      setSidebarVisible(!mobile);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  const handleLogout = async () => {
+    try {
+      if (user?.id) {
+        await fetch('http://localhost:5000/api/logout-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.id }),
+        });
+      }
+    } catch (err) {
+      console.error("Logout status sync failed", err);
+    }
+    localStorage.clear();
+    navigate('/');
+  };
+
+  const handleEditProfileClick = () => {
+    setEditForm({
+      name: user.name,
+      email: user.email,
+      password: '',
+      mobile_number: user.mobile_number || '',
+      address: user.address || '',
+      birthday: user.birthday || ''
+    });
+    setErrors({});
+    setShowEditProfile(true);
+  };
+
+  const handleUpdateProfile = async (e) => {
+  e.preventDefault();
+  
+  if (Object.values(errors).some(err => err !== '')) {
+    setErrorMessage('Please fix errors before saving.');
+    return;
+  }
+
+  setUpdating(true);
+  try {
+    const finalPassword = editForm.password.trim() !== '' ? editForm.password : user.password;
+
+    const payload = {
+      name: editForm.name,
+      email: editForm.email,
+      role: user.role || 'Parent',
+      password: finalPassword, 
+      mobile_number: editForm.mobile_number,
+      address: editForm.address,
+      birthday: editForm.birthday,
+      status: 'Active' 
+    };
+
+    const response = await fetch(`http://localhost:5000/api/accounts/${user.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.ok) {
+      const updatedUserData = { ...user, ...payload };
+      delete updatedUserData.password;
+      localStorage.setItem('loggedInUser', JSON.stringify(updatedUserData));
+      setUser(updatedUserData);
+      setShowEditProfile(false);
+      setErrorMessage('Profile updated successfully!');
+    } else {
+      const errorData = await response.json();
+      setErrorMessage(errorData.error || 'Failed to update profile.');
+    }
+  } catch (err) {
+    setModal({ title: 'Connection Error', message: 'Cannot connect to server.', type: 'error' });
+  } finally {
+    setUpdating(false);
+  }
+};
+
+  const handleDeleteAccount = async () => {
+    if (!window.confirm('Delete account? This is permanent.')) return;
+    setDeleting(true);
+    try {
+      const resp = await fetch(`http://localhost:5000/api/accounts/${user.id}`, { method: 'DELETE' });
+      if (resp.ok) {
+        localStorage.clear();
+        navigate('/');
+      } else {
+        setErrorMessage('Failed to delete account.');
+      }
+    } catch (err) { 
+      setErrorMessage('Failed to delete account.');
+    } finally { 
+      setDeleting(false); 
+    }
+  };
+
+  if (loading) return <div className="loading-container"><div className="spinner"></div><p>Loading STS Portal...</p></div>;
+
+  return (
+    <div className="dashboard-sts-container">
+      <aside className={`sts-sidebar ${sidebarOpen ? 'open' : ''} ${!sidebarVisible ? 'desktop-hidden mobile-hidden' : ''}`}>
+        <div className="sidebar-brand">
+          <div className="sts-logo-circle-sidebar">
+            <img src={logoImage} alt="Logo" style={{ width: '100%', borderRadius: '50%' }} />
+          </div>
+          <div className="brand-text">
+            <div className="school-name">ST. THERESE</div>
+            <div className="portal-label">Parent Portal</div>
+          </div>
+        </div>
+        <nav className="sidebar-nav">
+          <div className={`nav-item ${activeNav === 'announcements' ? 'active' : ''}`} onClick={() => { setActiveNav('announcements'); setSidebarOpen(false); }}>📢 Announcements</div>
+          <div className={`nav-item ${activeNav === 'attendance' ? 'active' : ''}`} onClick={() => { setActiveNav('attendance'); setSidebarOpen(false); }}>📊 Attendance</div>
+          <div className={`nav-item ${activeNav === 'progress' ? 'active' : ''}`} onClick={() => { setActiveNav('progress'); setSidebarOpen(false); }}>📈 Progress</div>
+          <div className={`nav-item ${activeNav === 'activitylog' ? 'active' : ''}`} onClick={() => { setActiveNav('activitylog'); setSidebarOpen(false); }}>📝 Activity Log</div>
+          <div className={`nav-item ${activeNav === 'settings' ? 'active' : ''}`} onClick={() => { navigate('/settings'); setSidebarOpen(false); }}>⚙️ Settings</div>
+        </nav>
+      </aside>
+
+      <main className={`sts-main-panel ${!sidebarVisible ? 'full-width' : ''}`}>
+        <header className="sts-header-bar">
+          <div className="header-left">
+            {!sidebarVisible && (
+              <button
+                className="hamburger-btn"
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                aria-label="Toggle sidebar"
+              >
+                <span></span>
+                <span></span>
+                <span></span>
+              </button>
+            )}
+            {sidebarVisible && (
+              <button
+                className="sidebar-toggle-btn"
+                onClick={() => setSidebarVisible(!sidebarVisible)}
+                aria-label={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
+              >
+                {sidebarVisible ? '◁' : '▷'}
+              </button>
+            )}
+          </div>
+          <div className="welcome-section">
+            <h1>Parent Dashboard</h1>
+            <p>Welcome, {user?.name}</p>
+          </div>
+          {/* Logout moved to Settings screen */}
+        </header>
+
+        <div className="dashboard-padding-content">
+          {activeNav === 'activitylog' && (
+            <div className="activity-log-wrapper">
+              <h2 className="section-title">📝 Activity Log</h2>
+              <div className="activity-list">
+                <ActivityLogCard
+                  childName="Juan Dela Cruz"
+                  activity="Completed Basic Addition Quest"
+                  time="2 hours ago"
+                  grade="Grade 1"
+                  status="completed"
+                />
+                <ActivityLogCard
+                  childName="Maria Santos"
+                  activity="Started Number Patterns Lesson"
+                  time="4 hours ago"
+                  grade="Grade 2"
+                  status="in-progress"
+                />
+                <ActivityLogCard
+                  childName="Juan Dela Cruz"
+                  activity="Earned Achievement: Math Master"
+                  time="1 day ago"
+                  grade="Grade 1"
+                  status="achievement"
+                />
+                <ActivityLogCard
+                  childName="Maria Santos"
+                  activity="Completed Simple Fractions Quiz"
+                  time="2 days ago"
+                  grade="Grade 2"
+                  status="completed"
+                />
+              </div>
+            </div>
+          )}
+
+          {activeNav === 'attendance' && (
+            <div className="attendance-wrapper">
+              <h2 className="section-title">📊 Attendance Monitoring</h2>
+              <div className="attendance-grid">
+                <AttendanceCard
+                  childName="Juan Dela Cruz"
+                  grade="Grade 1"
+                  totalSessions={25}
+                  attendedSessions={23}
+                  lastLogin="Today, 2:30 PM"
+                  status="active"
+                />
+                <AttendanceCard
+                  childName="Maria Santos"
+                  grade="Grade 2"
+                  totalSessions={28}
+                  attendedSessions={26}
+                  lastLogin="Yesterday, 4:15 PM"
+                  status="active"
+                />
+              </div>
+            </div>
+          )}
+
+          {activeNav === 'announcements' && (
+            <div className="announcements-wrapper">
+              <h2 className="section-title">📢 Announcements</h2>
+              <div className="announcements-list">
+                <AnnouncementCard
+                  title="New Mathematics Lesson Available"
+                  content="Grade 1 students can now access the 'Basic Addition' interactive lesson with fun animations and practice exercises."
+                  date="Today"
+                  type="lesson"
+                />
+                <AnnouncementCard
+                  title="Weekly Challenge: Number Patterns"
+                  content="Complete the number patterns challenge this week to earn bonus points and unlock special achievements!"
+                  date="2 days ago"
+                  type="challenge"
+                />
+                <AnnouncementCard
+                  title="Parent-Teacher Conference Reminder"
+                  content="Don't forget our upcoming parent-teacher conference next Friday at 2:00 PM. We'll discuss your child's progress."
+                  date="3 days ago"
+                  type="meeting"
+                />
+              </div>
+            </div>
+          )}
+
+          {activeNav === 'progress' && (
+            <div className="progress-wrapper">
+              <h2 className="section-title">📈 Child Progress</h2>
+              <div className="progress-grid">
+                <ChildProgressCard
+                  childName="Juan Dela Cruz"
+                  grade="Grade 1"
+                  subject="Mathematics"
+                  progress={85}
+                  completedQuests={12}
+                  totalQuests={15}
+                  achievements={8}
+                />
+                <ChildProgressCard
+                  childName="Maria Santos"
+                  grade="Grade 2"
+                  subject="Mathematics"
+                  progress={92}
+                  completedQuests={18}
+                  totalQuests={20}
+                  achievements={12}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* Mobile Bottom Navigation */}
+      {isMobile && (
+        <nav className="mobile-bottom-nav">
+          <div className={`mobile-nav-item ${activeNav === 'announcements' ? 'active' : ''}`} onClick={() => { setActiveNav('announcements'); setSidebarOpen(false); }}>
+            <div className="mobile-nav-icon">📢</div>
+            <div className="mobile-nav-label">Announcements</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'attendance' ? 'active' : ''}`} onClick={() => { setActiveNav('attendance'); setSidebarOpen(false); }}>
+            <div className="mobile-nav-icon">📊</div>
+            <div className="mobile-nav-label">Attendance</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'progress' ? 'active' : ''}`} onClick={() => { setActiveNav('progress'); setSidebarOpen(false); }}>
+            <div className="mobile-nav-icon">📈</div>
+            <div className="mobile-nav-label">Progress</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'activitylog' ? 'active' : ''}`} onClick={() => { setActiveNav('activitylog'); setSidebarOpen(false); }}>
+            <div className="mobile-nav-icon">📝</div>
+            <div className="mobile-nav-label">Activity Log</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'settings' ? 'active' : ''}`} onClick={() => { navigate('/settings'); setSidebarOpen(false); }}>
+            <div className="mobile-nav-icon">⚙️</div>
+            <div className="mobile-nav-label">Settings</div>
+          </div>
+        </nav>
+      )}
+
+      {showEditProfile && (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <h2>Update Profile</h2>
+            <form onSubmit={handleUpdateProfile}>
+              <div className="form-field name-group">
+                <label>First Name:</label>
+                <input type="text" value={(editForm.name||'').split(' ')[0]||''} onChange={(e) => {
+                  const parts = (editForm.name||'').split(' ').filter(Boolean);
+                  parts[0] = e.target.value;
+                  const newName = parts.join(' ').trim();
+                  handleEditFormChange('name', newName);
+                }} required />
+                {errors.name && <p className="error-msg">{errors.name}</p>}
+              </div>
+
+              <div className="form-field name-group">
+                <label>Middle Name:</label>
+                <input type="text" value={(() => { const p=(editForm.name||'').split(' ').filter(Boolean); return p.length>2 ? p.slice(1,-1).join(' ') : ''; })()} onChange={(e) => {
+                  const p=(editForm.name||'').split(' ').filter(Boolean);
+                  const first = p[0] || '';
+                  const last = p.length ? p[p.length-1] : '';
+                  const middle = e.target.value;
+                  const newName = `${first}${middle ? ' '+middle : ''}${last ? ' '+last : ''}`.trim();
+                  handleEditFormChange('name', newName);
+                }} />
+              </div>
+
+              <div className="form-field name-group">
+                <label>Last Name:</label>
+                <input type="text" value={(() => { const p=(editForm.name||'').split(' ').filter(Boolean); return p.length ? p[p.length-1] : ''; })()} onChange={(e) => {
+                  const p=(editForm.name||'').split(' ').filter(Boolean);
+                  p[p.length-1] = e.target.value;
+                  const newName = p.join(' ').trim();
+                  handleEditFormChange('name', newName);
+                }} required />
+              </div>
+
+              <div className="form-field">
+                <label>Email:</label>
+                <input type="email" value={editForm.email} onChange={(e) => handleEditFormChange('email', e.target.value)} required />
+                {errors.email && <p className="error-msg">{errors.email}</p>}
+              </div>
+
+              <div className="form-field">
+                <label>New Password (Optional):</label>
+                <div className="pass-wrapper">
+                  <input type={showPassword ? 'text' : 'password'} value={editForm.password} onChange={(e) => handleEditFormChange('password', e.target.value)} placeholder="Leave blank to keep current" />
+                  <button type="button" className="btn-eye-toggle" onClick={() => setShowPassword(!showPassword)}>
+                    {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+                  </button>
+                </div>
+                {errors.password && <p className="error-msg">{errors.password}</p>}
+              </div>
+
+              <div className="form-field">
+                <label>Mobile Number:</label>
+                <input type="text" value={editForm.mobile_number} onChange={(e) => handleEditFormChange('mobile_number', e.target.value)} required />
+                {errors.mobile_number && <p className="error-msg">{errors.mobile_number}</p>}
+              </div>
+
+              <div className="form-field">
+                <label>Address:</label>
+                <input type="text" value={editForm.address} onChange={(e) => handleEditFormChange('address', e.target.value)} />
+              </div>
+
+              <div className="form-field">
+                <label>Birthday:</label>
+                <input type="date" value={editForm.birthday} max={today} onChange={(e) => {
+                  const selectedDate = new Date(e.target.value);
+                  const todayDate = new Date();
+                  if (selectedDate <= todayDate) {
+                    handleEditFormChange('birthday', e.target.value);
+                  } else {
+                    handleEditFormChange('birthday', '');
+                  }
+                }} required />
+              </div>
+
+              <div className="modal-btns">
+                <button type="button" className="btn-cancel" onClick={() => setShowEditProfile(false)}>Cancel</button>
+                <button type="submit" className="btn-save" disabled={updating}>{updating ? 'Saving...' : 'Save Changes'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Inline error message */}
+      {errorMessage && (
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          backgroundColor: document.documentElement.getAttribute('data-theme') === 'dark' ? '#5a2a2a' : '#f8d7da',
+          color: document.documentElement.getAttribute('data-theme') === 'dark' ? '#ffb3b3' : '#721c24',
+          padding: '12px 20px',
+          borderRadius: '4px',
+          border: document.documentElement.getAttribute('data-theme') === 'dark' ? '1px solid #8b3d3d' : '1px solid #f5c6cb',
+          zIndex: 1000,
+          maxWidth: '400px'
+        }}>
+          {errorMessage}
+          <button 
+            onClick={() => setErrorMessage('')}
+            style={{
+              marginLeft: '10px',
+              background: 'none',
+              border: 'none',
+              color: document.documentElement.getAttribute('data-theme') === 'dark' ? '#ffb3b3' : '#721c24',
+              cursor: 'pointer',
+              fontSize: '18px'
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* Mobile Bottom Navigation */}
+      {isMobile && (
+        <nav className="mobile-bottom-nav">
+          <div className={`mobile-nav-item ${activeNav === 'announcements' ? 'active' : ''}`} onClick={() => { setActiveNav('announcements'); setSidebarOpen(false); }}>
+            <div className="mobile-nav-icon">📢</div>
+            <div className="mobile-nav-label">Announcements</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'progress' ? 'active' : ''}`} onClick={() => { setActiveNav('progress'); setSidebarOpen(false); }}>
+            <div className="mobile-nav-icon">📈</div>
+            <div className="mobile-nav-label">Progress</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'achievements' ? 'active' : ''}`} onClick={() => { setActiveNav('achievements'); setSidebarOpen(false); }}>
+            <div className="mobile-nav-icon">🏆</div>
+            <div className="mobile-nav-label">Achievements</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'settings' ? 'active' : ''}`} onClick={() => { navigate('/settings'); setSidebarOpen(false); }}>
+            <div className="mobile-nav-icon">⚙️</div>
+            <div className="mobile-nav-label">Settings</div>
+          </div>
+        </nav>
+      )}
+    </div>
+  );
+}
+
+function ActivityLogCard({ childName, activity, time, grade, status }) {
+  const getActivityIcon = (status) => {
+    switch (status) {
+      case 'completed': return '✅';
+      case 'in-progress': return '⏳';
+      case 'achievement': return '🏆';
+      default: return '📝';
+    }
+  };
+
+  return (
+    <div className="activity-card">
+      <span className="activity-icon">{getActivityIcon(status)}</span>
+      <div className="activity-details">
+        <h4>{activity}</h4>
+        <p>{childName}</p>
+      </div>
+      <div className="activity-meta">
+        <div className="activity-time">{time}</div>
+        <div className="activity-grade">{grade}</div>
+      </div>
+    </div>
+  );
+}
+
+function AttendanceCard({ childName, grade, totalSessions, attendedSessions, lastLogin, status }) {
+  const attendanceRate = Math.round((attendedSessions / totalSessions) * 100);
+
+  return (
+    <div className="attendance-card">
+      <div className="attendance-header">
+        <h4>{childName}</h4>
+        <span className="attendance-grade">{grade}</span>
+      </div>
+      <div className="attendance-stats">
+        <div className="stat-item">
+          <span className="stat-label">Total Sessions</span>
+          <span className="stat-value">{totalSessions}</span>
+        </div>
+        <div className="stat-item">
+          <span className="stat-label">Attended</span>
+          <span className="stat-value">{attendedSessions}</span>
+        </div>
+      </div>
+      <div className="attendance-info">
+        <div>Last Login: {lastLogin}</div>
+        <div className="attendance-status" style={{ backgroundColor: status === 'active' ? '#28a745' : '#ffc107' }}>
+          {status === 'active' ? 'Active' : 'Inactive'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnnouncementCard({ title, content, date, type }) {
+  return (
+    <div className="announcement-card">
+      <div className="announcement-header">
+        <h4>{title}</h4>
+        <span className="announcement-type">{type}</span>
+      </div>
+      <div className="announcement-content">{content}</div>
+      <div className="announcement-date">{date}</div>
+    </div>
+  );
+}
+
+function ChildProgressCard({ childName, grade, subject, progress, completedQuests, totalQuests, achievements }) {
+  return (
+    <div className="child-progress-card">
+      <div className="progress-header">
+        <h4>{childName}</h4>
+        <span className="progress-grade">{grade}</span>
+      </div>
+      <p className="quest-name">{subject} Progress</p>
+      <div className="progress-bar-container">
+        <div className="progress-bar" style={{ width: `${progress}%` }}></div>
+        <span className="progress-text">{progress}%</span>
+      </div>
+      <div className="progress-stats">
+        <div className="progress-stat-item">
+          <span className="progress-stat-label">Quests</span>
+          <span className="progress-stat-value">{completedQuests}/{totalQuests}</span>
+        </div>
+        <div className="progress-stat-item">
+          <span className="progress-stat-label">Achievements</span>
+          <span className="progress-stat-value">{achievements}</span>
+        </div>
+        <div className="progress-stat-item">
+          <span className="progress-stat-label">Status</span>
+          <span className="progress-stat-value">{progress >= 80 ? 'Excellent' : progress >= 60 ? 'Good' : 'Needs Help'}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SubjectCard({ title, schedule, prof }) {
+  return (
+    <div className="subject-card">
+      <div className="subject-card-header">
+        <h3>{title}</h3>
+        <span className="status-tag">Completed</span>
+      </div>
+      <p className="subject-time">{schedule}</p>
+      <p className="subject-prof">{prof}</p>
+    </div>
+  );
+}
+
+
+
+// --------------------------------------------------------------------------------
+
+// ================================================================================
+// FILE: C:\Users\vince\Downloads\Theresian's Quest- Web\capstone\src\components\ResetPassword.js
+// ================================================================================
+
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import logoImage from '../assets/images/STS_Logo.png';
+import '../styles/resetpassword.css';
+
+export default function ResetPassword() {
+  const [step, setStep] = useState(1); 
+  const [email, setEmail] = useState('');
+  const [otp, setOtp] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  
+  const navigate = useNavigate();
+
+  const handleSendCode = async () => {
+    if (!email) {
+      alert('Please enter your email address');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch('http://localhost:5000/api/reset-password/send-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        alert('Verification code sent! Please check your email inbox or spam.');
+        setStep(2);
+      } else {
+        alert(data.error || 'Failed to send code. Make sure the email is registered.');
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      alert('Connection error. Please check if your backend is running.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdatePassword = async () => {
+    if (!otp || !newPassword || !confirmPassword) {
+      alert('Please fill in all fields');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      alert('Passwords do not match');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch('http://localhost:5000/api/reset-password/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          email: email,
+          otp: otp,
+          newPassword: newPassword 
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        alert('Password updated successfully! You can now login with your new password.');
+        navigate('/login');
+      } else {
+        alert(data.error || 'Invalid or expired verification code.');
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      alert('Connection error. Failed to update password.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="reset-page-wrapper">
+      <div className="sts-header-bar">
+        <img
+          src={logoImage}
+          alt="STS Logo"
+          className="sts-logo-circle"
+        />
+        <h2 className="sts-header-text">Account Recovery</h2>
+      </div>
+
+      <div className="reset-flex-container">
+        <div className="reset-card-main">
+          <button className="back-link-sts" onClick={() => navigate('/login')}>← Back to Login</button>
+          
+          <h1 className="reset-title-sts">RESET PASSWORD</h1>
+
+          {step === 1 ? (
+            <div className="reset-step-content">
+              <p className="reset-instruction">Enter your registered email to receive a verification code.</p>
+              
+              <div className="sts-input-group">
+                <label className="sts-label">Email Address:*</label>
+                <input 
+                  className="sts-input-field"
+                  type="email" 
+                  placeholder="johndoe@email.com"
+                  value={email} 
+                  onChange={e => setEmail(e.target.value)} 
+                />
+              </div>
+
+              <button 
+                className="sts-action-button" 
+                onClick={handleSendCode}
+                disabled={loading}
+              >
+                {loading ? 'SENDING...' : 'SEND VERIFICATION CODE'}
+              </button>
+            </div>
+          ) : (
+            <div className="reset-step-content">
+              <p className="reset-instruction-sent">Code sent to: <strong>{email}</strong></p>
+              
+              <div className="sts-input-group">
+                <input 
+                  className="sts-input-field" 
+                  type="text" 
+                  placeholder="6-Digit Verification Code" 
+                  value={otp}
+                  onChange={e => setOtp(e.target.value)}
+                />
+              </div>
+              
+              <div className="sts-input-group">
+                <input 
+                  className="sts-input-field" 
+                  type="password" 
+                  placeholder="New Password" 
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                />
+              </div>
+
+              <div className="sts-input-group">
+                <input 
+                  className="sts-input-field" 
+                  type="password" 
+                  placeholder="Re-enter New Password" 
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                />
+              </div>
+
+              <button 
+                className="sts-action-button" 
+                onClick={handleUpdatePassword}
+                disabled={loading}
+              >
+                {loading ? 'UPDATING...' : 'UPDATE PASSWORD'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// --------------------------------------------------------------------------------
+
+// ================================================================================
+// FILE: C:\Users\vince\Downloads\Theresian's Quest- Web\capstone\src\components\SettingsScreen.js
+// ================================================================================
+
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import logoImage from '../assets/images/STS_Logo.png';
+import '../styles/settings.css';
+
+export default function SettingsScreen() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('profile');
+  const [theme, setTheme] = useState('light');
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [showMenu, setShowMenu] = useState(true);
+  
+  const [errorMessage, setErrorMessage] = useState('');
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  const [editForm, setEditForm] = useState({
+    firstName: '',
+    middleName: '',
+    lastName: '',
+    email: '',
+    mobile_number: '',
+    address: '',
+    birthday: '',
+    gender: ''
+  });
+  const [profileErrors, setProfileErrors] = useState({});
+  const [profileUpdating, setProfileUpdating] = useState(false);
+
+  // Change Password States
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  const [passwordErrors, setPasswordErrors] = useState({});
+  const [passwordStep, setPasswordStep] = useState(1); // 1: form, 2: otp
+  const [otpCode, setOtpCode] = useState('');
+  const [pendingUserId, setPendingUserId] = useState(null);
+  const [showPasswords, setShowPasswords] = useState({
+    current: false,
+    new: false,
+    confirm: false
+  });
+  const [passwordUpdating, setPasswordUpdating] = useState(false);
+
+  const today = new Date().toISOString().split("T")[0];
+
+  // --- Icons ---
+  const EyeIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+
+  const EyeOffIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+
+  const GearIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" /><path d="M12 1v6m0 6v6M4.22 4.22l4.24 4.24m3.08 3.08l4.24 4.24M1 12h6m6 0h6M4.22 19.78l4.24-4.24m3.08-3.08l4.24-4.24M19.78 19.78l-4.24-4.24m-3.08-3.08l-4.24-4.24" />
+    </svg>
+  );
+
+  // Load user and theme
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+        if (!loggedInUser) {
+          navigate('/login');
+          return;
+        }
+        setUser(loggedInUser);
+
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        setTheme(savedTheme);
+        document.documentElement.setAttribute('data-theme', savedTheme);
+      } catch (e) {
+        navigate('/login');
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadUser();
+  }, [navigate]);
+
+  // Handle window resize for mobile detection
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem('loggedInUser');
+    localStorage.removeItem('token');
+    navigate('/');
+  };
+
+  // Validation Functions
+  const validateName = (name) => !name ? 'Full name is required' : (/\d/.test(name) ? 'No numbers allowed' : '');
+  const validateNamePart = (part, required = true) => {
+    if (required && !part) return 'This field is required';
+    if (/\d/.test(part)) return 'No numbers allowed';
+    return '';
+  };
+  const validateEmail = (email) => !email ? 'Email is required' : (!email.endsWith('@gmail.com') ? 'Use @gmail.com' : '');
+  const validatePhone = (phone) => !phone ? 'Phone is required' : (!phone.startsWith('09') || phone.length !== 11 ? 'Must be 11 digits (09...)' : '');
+  const validatePassword = (pw) => (pw && pw.length < 12) ? 'At least 12 characters' : '';
+  const validateBirthday = (date) => {
+    if (!date) return 'Birthday is required';
+    const birthDate = new Date(date);
+    const today = new Date();
+    if (birthDate > today) {
+      return 'Birthday cannot be in the future';
+    }
+    return '';
+  };
+
+  // Profile handlers
+  const handleEditProfileClick = () => {
+    const nameParts = (user?.name || '').split(' ').filter(Boolean);
+    setEditForm({
+      firstName: nameParts[0] || '',
+      middleName: nameParts.length > 2 ? nameParts.slice(1, -1).join(' ') : '',
+      lastName: nameParts.length ? nameParts[nameParts.length - 1] : '',
+      email: user.email,
+      mobile_number: user.mobile_number || '',
+      address: user.address || '',
+      birthday: user.birthday || '',
+      gender: user.gender || ''
+    });
+    setProfileErrors({});
+    setShowEditProfile(true);
+  };
+
+  const handleProfileFormChange = (field, value) => {
+    let finalValue = value;
+    if (field === 'firstName' || field === 'middleName' || field === 'lastName') finalValue = value.replace(/[0-9]/g, '');
+    if (field === 'mobile_number') finalValue = value.replace(/[^0-9]/g, '').slice(0, 11);
+
+    setEditForm({ ...editForm, [field]: finalValue });
+
+    let error = '';
+    if (field === 'firstName') error = validateNamePart(finalValue, true);
+    else if (field === 'middleName') error = validateNamePart(finalValue, false);
+    else if (field === 'lastName') error = validateNamePart(finalValue, true);
+    else if (field === 'email') error = validateEmail(finalValue);
+    else if (field === 'mobile_number') error = validatePhone(finalValue);
+    else if (field === 'birthday') error = validateBirthday(finalValue);
+
+    setProfileErrors({ ...profileErrors, [field]: error });
+  };
+
+  const handleUpdateProfile = async (e) => {
+    e.preventDefault();
+
+    if (Object.values(profileErrors).some(err => err !== '')) {
+      setErrorMessage('Please fix errors before saving.');
+      return;
+    }
+    setErrorMessage('');
+
+    setProfileUpdating(true);
+    try {
+      const fullName = `${editForm.firstName}${editForm.middleName ? ' ' + editForm.middleName : ''} ${editForm.lastName}`;
+      const payload = {
+        name: fullName,
+        email: editForm.email,
+        role: user.role || 'User',
+        password: user.password,
+        mobile_number: editForm.mobile_number,
+        address: editForm.address,
+        birthday: editForm.birthday,
+        gender: editForm.gender || '',
+        status: 'Active'
+      };
+
+      const response = await fetch(`http://localhost:5000/api/accounts/${user.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        const updatedUserData = { ...user, ...payload };
+        delete updatedUserData.password;
+        localStorage.setItem('loggedInUser', JSON.stringify(updatedUserData));
+        setUser(updatedUserData);
+        setShowEditProfile(false);
+        setErrorMessage('Profile updated successfully!');
+      } else {
+        const errorData = await response.json();
+        setErrorMessage(errorData.error || 'Failed to update profile.');
+      }
+    } catch (err) {
+      setModal({ title: 'Connection Error', message: 'Cannot connect to server.', type: 'error' });
+    } finally {
+      setProfileUpdating(false);
+    }
+  };
+
+  // Change Password handlers
+  const handleChangePasswordClick = () => {
+    setPasswordForm({
+      currentPassword: '',
+      newPassword: '',
+      confirmPassword: ''
+    });
+    setPasswordErrors({});
+    setPasswordStep(1);
+    setOtpCode('');
+    setShowChangePassword(true);
+  };
+
+  const handlePasswordFormChange = (field, value) => {
+    setPasswordForm({ ...passwordForm, [field]: value });
+
+    let error = '';
+    if (field === 'currentPassword') {
+      error = !value ? 'Current password is required' : '';
+    } else if (field === 'newPassword') {
+      error = !value ? 'New password is required' : validatePassword(value);
+    } else if (field === 'confirmPassword') {
+      error = value !== passwordForm.newPassword ? 'Passwords do not match' : '';
+    }
+    
+    setPasswordErrors({ ...passwordErrors, [field]: error });
+  };
+
+  const handleRequestChangePassword = async (e) => {
+    e.preventDefault();
+
+    // Validate all fields
+    const errors = {};
+    if (!passwordForm.currentPassword) errors.currentPassword = 'Current password is required';
+    if (!passwordForm.newPassword) errors.newPassword = 'New password is required';
+    const pwError = validatePassword(passwordForm.newPassword);
+    if (pwError) errors.newPassword = pwError;
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) errors.confirmPassword = 'Passwords do not match';
+
+    if (Object.keys(errors).length > 0) {
+      setPasswordErrors(errors);
+      return;
+    }
+
+    // Verify current password
+    if (passwordForm.currentPassword !== user.password) {
+      setErrorMessage('Current password is incorrect.');
+      return;
+    }
+    setErrorMessage('');
+
+    setPasswordUpdating(true);
+    try {
+      // Request OTP for password change
+      const response = await fetch('http://localhost:5000/api/request-password-change-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, email: user.email }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setErrorMessage(data.error || 'Failed to send OTP.');
+        return;
+      }
+
+      setPendingUserId(user.id);
+      setPasswordStep(2);
+      alert('OTP sent to your email. Please check your inbox.');
+    } catch (err) {
+      setErrorMessage('Cannot connect to server.');
+    } finally {
+      setPasswordUpdating(false);
+    }
+  };
+
+  const handleVerifyAndChangePassword = async (e) => {
+    e.preventDefault();
+
+    if (!otpCode) {
+      setErrorMessage('Please enter the OTP code.');
+      return;
+    }
+    setErrorMessage('');
+
+    setPasswordUpdating(true);
+    try {
+      // Verify OTP and update password
+      const response = await fetch('http://localhost:5000/api/verify-password-change-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: pendingUserId,
+          otp: otpCode,
+          newPassword: passwordForm.newPassword
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setErrorMessage(data.error || 'OTP verification failed.');
+        return;
+      }
+
+      setErrorMessage('Password changed successfully!');
+      setShowChangePassword(false);
+      
+      // Update local user with new password
+      const updatedUser = { ...user, password: passwordForm.newPassword };
+      localStorage.setItem('loggedInUser', JSON.stringify(updatedUser));
+      setUser(updatedUser);
+    } catch (err) {
+      setErrorMessage('Cannot connect to server.');
+    } finally {
+      setPasswordUpdating(false);
+    }
+  };
+
+  // Theme handlers
+  const handleThemeChange = (newTheme) => {
+    setTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+    document.documentElement.setAttribute('data-theme', newTheme);
+  };
+
+  if (loading) return <div className="loading">Loading...</div>;
+
+  return (
+    <div className="settings-container" data-theme={theme}>
+      {/* Header */}
+      <div className="settings-header">
+        <button
+          className="back-btn"
+          onClick={() => {
+            if (user?.role === 'admin') navigate('/admin-dashboard');
+            else if (user?.role === 'teacher') navigate('/teacher-dashboard');
+            else navigate('/parent-dashboard');
+          }}
+        >
+          ← Back
+        </button>
+        <img src={logoImage} alt="Logo" className="settings-logo" />
+        <h1>Settings</h1>
+      </div>
+
+      {/* Main Content */}
+      <div className="settings-content">
+        {/* Sidebar */}
+        <aside className="settings-sidebar">
+          <button
+            className={`sidebar-btn ${activeTab === 'profile' ? 'active' : ''}`}
+            onClick={() => setActiveTab('profile')}
+          >
+            👤 My Profile
+          </button>
+          <button
+            className={`sidebar-btn ${activeTab === 'password' ? 'active' : ''}`}
+            onClick={() => setActiveTab('password')}
+          >
+            🔒 Change Password
+          </button>
+          <button
+            className={`sidebar-btn ${activeTab === 'appearance' ? 'active' : ''}`}
+            onClick={() => setActiveTab('appearance')}
+          >
+            <GearIcon /> Appearance
+          </button>
+          <button
+            className={`sidebar-btn ${activeTab === 'logout' ? 'active' : ''}`}
+            onClick={handleLogout}
+            style={{ marginTop: '5px' }}
+          >
+            Logout
+          </button>
+        </aside>
+        <main className="settings-main">
+          {activeTab === 'profile' && (
+            <div className="settings-section">
+              <div className="section-header">
+                <h2>My Profile</h2>
+              </div>
+              {!showEditProfile ? (
+                <div className="profile-view">
+                  <div className="profile-header">
+                    <div className="profile-left">
+                      <div className="profile-avatar">{(user?.name||'').charAt(0).toUpperCase()}</div>
+                      <div>
+                        <h3 style={{margin:0}}>{user?.name}</h3>
+                        <div className="info-text">{user?.email}</div>
+                      </div>
+                    </div>
+                    <div className="profile-actions">
+                      <button className="btn btn-primary" onClick={handleEditProfileClick}>Edit</button>
+                    </div>
+                  </div>
+
+                  <div className="profile-details-grid">
+                    <div className="info-row"><label>First Name:</label><div className="profile-static-field">{(user?.name || '').split(' ')[0] || ''}</div></div>
+                    <div className="info-row"><label>Middle Name:</label><div className="profile-static-field">{(() => { const p=(user?.name||'').split(' '); return p.length>2 ? p.slice(1,-1).join(' ') : ''; })()}</div></div>
+                    <div className="info-row"><label>Last Name:</label><div className="profile-static-field">{(() => { const p=(user?.name||'').split(' '); return p.length ? p[p.length-1] : ''; })()}</div></div>
+                    <div className="info-row"><label>Email:</label><div className="profile-static-field">{user.email}</div></div>
+                    <div className="info-row">
+                      <label>Role:</label>
+                      <span className="role-badge">{user.role}</span>
+                    </div>
+                    <div className="info-row">
+                      <label>Phone Number:</label>
+                      <span>{user.mobile_number || 'Not set'}</span>
+                    </div>
+                    <div className="info-row">
+                      <label>Address:</label>
+                      <span>{user.address || 'Not set'}</span>
+                    </div>
+                    <div className="info-row">
+                      <label>Birthday:</label>
+                      <span>{user.birthday || 'Not set'}</span>
+                    </div>
+                    <div className="info-row">
+                      <label>Gender:</label>
+                      <span>{user.gender || 'Not set'}</span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleUpdateProfile} className="profile-form">
+                  <div className="form-group">
+                    <label>First Name *</label>
+                    <input
+                      type="text"
+                      value={editForm.firstName}
+                      onChange={(e) => handleProfileFormChange('firstName', e.target.value)}
+                      className={profileErrors.firstName ? 'error' : ''}
+                    />
+                    {profileErrors.firstName && <span className="error-text">{profileErrors.firstName}</span>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Middle Name</label>
+                    <input
+                      type="text"
+                      value={editForm.middleName}
+                      onChange={(e) => handleProfileFormChange('middleName', e.target.value)}
+                      className={profileErrors.middleName ? 'error' : ''}
+                    />
+                    {profileErrors.middleName && <span className="error-text">{profileErrors.middleName}</span>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Last Name *</label>
+                    <input
+                      type="text"
+                      value={editForm.lastName}
+                      onChange={(e) => handleProfileFormChange('lastName', e.target.value)}
+                      className={profileErrors.lastName ? 'error' : ''}
+                    />
+                    {profileErrors.lastName && <span className="error-text">{profileErrors.lastName}</span>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Email *</label>
+                    <input
+                      type="email"
+                      value={editForm.email}
+                      onChange={(e) => handleProfileFormChange('email', e.target.value)}
+                      className={profileErrors.email ? 'error' : ''}
+                    />
+                    {profileErrors.email && <span className="error-text">{profileErrors.email}</span>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Phone Number *</label>
+                    <input
+                      type="text"
+                      placeholder="09XXXXXXXXX"
+                      value={editForm.mobile_number}
+                      onChange={(e) => handleProfileFormChange('mobile_number', e.target.value)}
+                      className={profileErrors.mobile_number ? 'error' : ''}
+                    />
+                    {profileErrors.mobile_number && <span className="error-text">{profileErrors.mobile_number}</span>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Address</label>
+                    <input
+                      type="text"
+                      value={editForm.address}
+                      onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Birthday *</label>
+                    <input
+                      type="date"
+                      max={today}
+                      value={editForm.birthday}
+                      onChange={(e) => {
+                        const selectedDate = new Date(e.target.value);
+                        const todayDate = new Date();
+                        if (selectedDate <= todayDate) {
+                          setEditForm({ ...editForm, birthday: e.target.value });
+                        } else {
+                          setEditForm({ ...editForm, birthday: '' });
+                        }
+                      }}
+                    />
+                    {profileErrors.birthday && <span className="error-text">{profileErrors.birthday}</span>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Gender</label>
+                    <select
+                      value={editForm.gender || ''}
+                      onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })}
+                      className="gender-select"
+                    >
+                      <option value="">Select gender</option>
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                    </select>
+                  </div>
+
+                  <div className="form-actions">
+                    <button
+                      type="submit"
+                      className="btn btn-success"
+                      disabled={profileUpdating}
+                    >
+                      {profileUpdating ? 'Saving...' : 'Save Changes'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setShowEditProfile(false)}
+                      disabled={profileUpdating}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
+          {/* Change Password Tab */}
+          {activeTab === 'password' && (
+            <div className="settings-section">
+              <div className="section-header">
+                <h2>Change Password</h2>
+              </div>
+              {!showChangePassword ? (
+                <div className="password-view">
+                  <p className="info-text">Update your password to keep your account secure. You'll need to verify with OTP.</p>
+                  <button className="btn btn-primary" onClick={handleChangePasswordClick}>
+                    Change Password
+                  </button>
+                </div>
+              ) : passwordStep === 1 ? (
+                <form onSubmit={handleRequestChangePassword} className="password-form">
+                  <div className="form-group">
+                    <label>Current Password *</label>
+                    <div className="password-input-wrapper">
+                      <input
+                        type={showPasswords.current ? 'text' : 'password'}
+                        value={passwordForm.currentPassword}
+                        onChange={(e) => handlePasswordFormChange('currentPassword', e.target.value)}
+                        className={passwordErrors.currentPassword ? 'error' : ''}
+                      />
+                      {passwordForm.currentPassword?.length > 0 && (
+                        <button
+                          type="button"
+                          className="eye-btn"
+                          onClick={() => setShowPasswords({ ...showPasswords, current: !showPasswords.current })}
+                        >
+                          {showPasswords.current ? <EyeOffIcon /> : <EyeIcon />}
+                        </button>
+                      )}
+                    </div>
+                    {passwordErrors.currentPassword && <span className="error-text">{passwordErrors.currentPassword}</span>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>New Password *</label>
+                    <div className="password-input-wrapper">
+                      <input
+                        type={showPasswords.new ? 'text' : 'password'}
+                        value={passwordForm.newPassword}
+                        onChange={(e) => handlePasswordFormChange('newPassword', e.target.value)}
+                        className={passwordErrors.newPassword ? 'error' : ''}
+                        placeholder="At least 12 characters"
+                      />
+                      {passwordForm.newPassword?.length > 0 && (
+                        <button
+                          type="button"
+                          className="eye-btn"
+                          onClick={() => setShowPasswords({ ...showPasswords, new: !showPasswords.new })}
+                        >
+                          {showPasswords.new ? <EyeOffIcon /> : <EyeIcon />}
+                        </button>
+                      )}
+                    </div>
+                    {passwordErrors.newPassword && <span className="error-text">{passwordErrors.newPassword}</span>}
+                  </div>
+
+                  <div className="form-group">
+                    <label>Confirm New Password *</label>
+                    <div className="password-input-wrapper">
+                      <input
+                        type={showPasswords.confirm ? 'text' : 'password'}
+                        value={passwordForm.confirmPassword}
+                        onChange={(e) => handlePasswordFormChange('confirmPassword', e.target.value)}
+                        className={passwordErrors.confirmPassword ? 'error' : ''}
+                      />
+                      {passwordForm.confirmPassword?.length > 0 && (
+                        <button
+                          type="button"
+                          className="eye-btn"
+                          onClick={() => setShowPasswords({ ...showPasswords, confirm: !showPasswords.confirm })}
+                        >
+                          {showPasswords.confirm ? <EyeOffIcon /> : <EyeIcon />}
+                        </button>
+                      )}
+                    </div>
+                    {passwordErrors.confirmPassword && <span className="error-text">{passwordErrors.confirmPassword}</span>}
+                  </div>
+
+                  <div className="form-actions">
+                    <button
+                      type="submit"
+                      className="btn btn-success"
+                      disabled={passwordUpdating}
+                    >
+                      {passwordUpdating ? '⏳ Sending OTP...' : 'Send OTP'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setShowChangePassword(false)}
+                      disabled={passwordUpdating}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleVerifyAndChangePassword} className="otp-form">
+                  <p className="info-text">An OTP has been sent to your email. Please enter it below.</p>
+                  
+                  <div className="form-group">
+                    <label>OTP Code *</label>
+                    <input
+                      type="text"
+                      placeholder="Enter 6-digit code"
+                      maxLength="6"
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
+                      className="otp-input"
+                    />
+                  </div>
+
+                  <div className="form-actions">
+                    <button
+                      type="submit"
+                      className="btn btn-success"
+                      disabled={passwordUpdating || !otpCode}
+                    >
+                      {passwordUpdating ? '⏳ Verifying...' : '✅ Verify & Change Password'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setPasswordStep(1)}
+                      disabled={passwordUpdating}
+                    >
+                      ⬅️ Back
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
+          {/* Appearance Tab */}
+          {activeTab === 'appearance' && (
+            <div className="settings-section">
+              <div className="section-header">
+                <h2>Appearance</h2>
+              </div>
+              <div className="appearance-view">
+                <p className="info-text">Choose your preferred theme for the application.</p>
+
+                <div className="theme-selector">
+                  <div
+                    className={`theme-option ${theme === 'light' ? 'active' : ''}`}
+                    onClick={() => handleThemeChange('light')}
+                  >
+                    <div className="theme-preview light"></div>
+                    <span>Light Theme</span>
+                  </div>
+
+                  <div
+                    className={`theme-option ${theme === 'dark' ? 'active' : ''}`}
+                    onClick={() => handleThemeChange('dark')}
+                  >
+                    <div className="theme-preview dark"></div>
+                    <span>Dark Theme</span>
+                  </div>
+                </div>
+
+                <div className="theme-info">
+                  <p><strong>Current Theme:</strong> {theme.charAt(0).toUpperCase() + theme.slice(1)}</p>
+                  <p>Your theme preference will be saved and applied across the application.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* Footer removed (back button moved to header) */}
+
+      {/* Inline error message */}
+      {errorMessage && (
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          backgroundColor: theme === 'dark' ? '#5a2a2a' : '#f8d7da',
+          color: theme === 'dark' ? '#ffb3b3' : '#721c24',
+          padding: '12px 20px',
+          borderRadius: '4px',
+          border: theme === 'dark' ? '1px solid #8b3d3d' : '1px solid #f5c6cb',
+          zIndex: 1000,
+          maxWidth: '400px'
+        }}>
+          {errorMessage}
+          <button 
+            onClick={() => setErrorMessage('')}
+            style={{
+              marginLeft: '10px',
+              background: 'none',
+              border: 'none',
+              color: theme === 'dark' ? '#ffb3b3' : '#721c24',
+              cursor: 'pointer',
+              fontSize: '18px'
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
+// --------------------------------------------------------------------------------
+
+// ================================================================================
+// FILE: C:\Users\vince\Downloads\Theresian's Quest- Web\capstone\src\components\TeacherDashboard.js
+// ================================================================================
+
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import logoImage from '../assets/images/STS_Logo.png';
+import '../styles/teacherdashboard.css';
+
+export default function TeacherDashboard() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [activeNav, setActiveNav] = useState('dashboard');
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: '', email: '', password: '', mobile_number: '', address: '', birthday: ''
+  });
+  const [showPassword, setShowPassword] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [updating, setUpdating] = useState(false);
+
+  const [deleting, setDeleting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const today = new Date().toISOString().split("T")[0];
+
+  // --- Icons ---
+  const EyeIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+
+  const EyeOffIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+
+  // --- Validations ---
+  const validateName = (name) => !name ? 'Full name is required' : (/\d/.test(name) ? 'No numbers allowed' : '');
+  const validateEmail = (email) => !email ? 'Email is required' : (!email.endsWith('@gmail.com') ? 'Use @gmail.com' : '');
+  const validatePhone = (phone) => !phone ? 'Required' : (!phone.startsWith('09') || phone.length !== 11 ? 'Must be 11 digits (09...)' : '');
+  const validatePassword = (pw) => (pw && pw.length < 12) ? 'At least 12 characters' : '';
+  const validateBirthday = (date) => {
+    if (!date) return 'Birthday is required';
+    const birthDate = new Date(date);
+    const today = new Date();
+    if (birthDate > today) {
+      return 'Birthday cannot be in the future';
+    }
+    return '';
+  };
+
+  const handleEditFormChange = (field, value) => {
+    let finalValue = value;
+    if (field === 'name') finalValue = value.replace(/[0-9]/g, '');
+    if (field === 'mobile_number') finalValue = value.replace(/[^0-9]/g, '').slice(0, 11);
+
+    setEditForm({ ...editForm, [field]: finalValue });
+
+    let error = '';
+  if (field === 'name') error = validateName(finalValue);
+  else if (field === 'email') error = validateEmail(finalValue);
+  else if (field === 'mobile_number') error = validatePhone(finalValue);
+  else if (field === 'password') {
+    error = (finalValue === '') ? '' : validatePassword(finalValue);
+  }
+  else if (field === 'birthday') error = validateBirthday(finalValue);
+    setErrors({ ...errors, [field]: error });
+  };
+
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        // Load and apply theme
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+
+        const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
+        if (!loggedInUser || loggedInUser.role?.toLowerCase() !== 'teacher') { 
+          navigate('/login'); 
+          return; 
+        }
+        setUser(loggedInUser);
+      } catch (e) { navigate('/login'); } finally { setLoading(false); }
+    };
+    loadUser();
+  }, [navigate]);
+
+  // Logout with Backend Status Update
+  const handleLogout = async () => {
+    try {
+      if (user?.id) {
+        await fetch('http://localhost:5000/api/logout-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.id }),
+        });
+      }
+    } catch (err) {
+      console.error("Logout status sync failed", err);
+    }
+    localStorage.clear();
+    navigate('/');
+  };
+
+  const handleEditProfileClick = () => {
+    setEditForm({
+      name: user.name,
+      email: user.email,
+      password: '',
+      mobile_number: user.mobile_number || '',
+      address: user.address || '',
+      birthday: user.birthday || ''
+    });
+    setErrors({});
+    setShowEditProfile(true);
+  };
+
+  const handleUpdateProfile = async (e) => {
+  e.preventDefault();
+  
+  if (Object.values(errors).some(err => err !== '')) {
+    setErrorMessage('Please fix errors before saving.');
+    return;
+  }
+
+  setUpdating(true);
+  try {
+    const finalPassword = editForm.password.trim() !== '' ? editForm.password : user.password;
+
+    const payload = {
+      name: editForm.name,
+      email: editForm.email,
+      role: user.role || 'Teacher',
+      password: finalPassword, 
+      mobile_number: editForm.mobile_number,
+      address: editForm.address,
+      birthday: editForm.birthday,
+      status: 'Active' 
+    };
+
+    const response = await fetch(`http://localhost:5000/api/accounts/${user.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.ok) {
+      const updatedUserData = { ...user, ...payload };
+      delete updatedUserData.password; 
+      localStorage.setItem('loggedInUser', JSON.stringify(updatedUserData));
+      setUser(updatedUserData);
+      setShowEditProfile(false);
+      setErrorMessage('Profile updated successfully!');
+    } else {
+      const errorData = await response.json();
+      setErrorMessage(errorData.error || 'Failed to update profile.');
+    }
+  } catch (err) {
+    setErrorMessage('Cannot connect to server.');
+  } finally {
+    setUpdating(false);
+  }
+};
+
+  const handleDeleteAccount = async () => {
+    if (!window.confirm('Delete account? This is permanent.')) return;
+    setDeleting(true);
+    try {
+      const resp = await fetch(`http://localhost:5000/api/accounts/${user.id}`, { method: 'DELETE' });
+      if (resp.ok) {
+        localStorage.clear();
+        navigate('/');
+      } else {
+        setErrorMessage('Failed to delete account.');
+      }
+    } catch (err) { 
+      setErrorMessage('Failed to delete account.');
+    } finally { 
+      setDeleting(false); 
+    }
+  };
+
+  if (loading) return <div className="loading-container"><div className="spinner"></div><p>Loading STS Portal...</p></div>;
+
+  return (
+    <div className="dashboard-sts-container">
+      <aside className="sts-sidebar">
+        <div className="sidebar-brand">
+          <div className="sts-logo-circle-sidebar">
+            <img src={logoImage} alt="Logo" style={{ width: '100%', borderRadius: '50%' }} />
+          </div>
+          <div className="brand-text">
+            <div className="school-name">ST. THERESE</div>
+            <div className="portal-label">Teacher Portal</div>
+          </div>
+        </div>
+        <nav className="sidebar-nav">
+          <div className={`nav-item ${activeNav === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveNav('dashboard')}>📊 Dashboard</div>
+          <div className={`nav-item ${activeNav === 'progress' ? 'active' : ''}`} onClick={() => setActiveNav('progress')}>📊 Progress</div>
+          <div className={`nav-item ${activeNav === 'lesson' ? 'active' : ''}`} onClick={() => setActiveNav('lesson')}>📝 Lesson</div>
+          <div className={`nav-item ${activeNav === 'topachievers' ? 'active' : ''}`} onClick={() => setActiveNav('topachievers')}>🏆 Top Achievers</div>
+          <div className={`nav-item ${activeNav === 'settings' ? 'active' : ''}`} onClick={() => navigate('/settings')}>⚙️ Settings</div>
+        </nav>
+      </aside>
+
+      <main className="sts-main-panel">
+        <header className="sts-header-bar">
+          <div className="welcome-section">
+            <h1>Teacher Dashboard</h1>
+            <p>Welcome, {user?.name}</p>
+          </div>
+          {/* Logout moved to Settings screen */}
+        </header>
+
+        <div className="dashboard-padding-content">
+          {activeNav === 'dashboard' && (
+            <>
+              <section className="sts-metrics-grid">
+                <div className="sts-metric-card">
+                  <div className="metric-label">QUESTS COMPLETED</div>
+                  <div className="metric-value">45</div>
+                  <div className="metric-footer">This month</div>
+                </div>
+                <div className="sts-metric-card">
+                  <div className="metric-label">STUDENTS ENGAGED</div>
+                  <div className="metric-value">120</div>
+                  <div className="metric-footer">Active learners</div>
+                </div>
+                <div className="sts-metric-card">
+                  <div className="metric-label">ACHIEVEMENTS UNLOCKED</div>
+                  <div className="metric-value">28</div>
+                  <div className="metric-footer">By students</div>
+                </div>
+              </section>
+
+              <div className="sts-reminder-dash">
+                <div className="reminder-icon">🎯</div>
+                <div className="reminder-text">
+                  <div className="reminder-title">NEW QUEST AVAILABLE</div>
+                  <p>Check out the latest Mathematics quest for Grade 10 students. Gamified learning awaits!</p>
+                </div>
+              </div>
+
+              <section className="subjects-section">
+                <h2 className="section-title">Mathematics Subjects</h2>
+                <div className="subjects-grid">
+                  <SubjectCard title="Mathematics - Grade 9" schedule="Students: 30" prof="Quest Progress: 87%" />
+                  <SubjectCard title="Mathematics - Grade 10" schedule="Students: 32" prof="Quest Progress: 85%" />
+                  <SubjectCard title="Mathematics - Grade 11" schedule="Students: 28" prof="Quest Progress: 90%" />
+                  <SubjectCard title="Mathematics - Grade 12" schedule="Students: 30" prof="Quest Progress: 83%" />
+                </div>
+              </section>
+            </>
+          )}
+
+          {activeNav === 'progress' && (
+            <div className="progress-dashboard-wrapper">
+              <h2 className="section-title">Student Quest Progress</h2>
+              <div className="progress-grid">
+                <ProgressCard studentName="Juan Dela Cruz" grade="Grade 1" quest="Basic Addition" progress={85} status="In Progress" />
+                <ProgressCard studentName="Maria Santos" grade="Grade 2" quest="Number Patterns" progress={92} status="Completed" />
+                <ProgressCard studentName="Pedro Reyes" grade="Grade 1" quest="Counting Objects" progress={78} status="In Progress" />
+                <ProgressCard studentName="Ana Garcia" grade="Grade 3" quest="Simple Fractions" progress={88} status="Completed" />
+                <ProgressCard studentName="Carlos Lopez" grade="Grade 2" quest="Basic Shapes" progress={65} status="Needs Help" />
+                <ProgressCard studentName="Sofia Martinez" grade="Grade 4" quest="Multiplication" progress={95} status="Completed" />
+              </div>
+            </div>
+          )}
+
+          {activeNav === 'lesson' && (
+            <div className="lesson-dashboard-wrapper">
+              <h2 className="section-title">Mathematics Lessons</h2>
+              <div className="lesson-grid">
+                <LessonCard title="Basic Addition" grade="Grade 1" difficulty="Beginner" quests={5} />
+                <LessonCard title="Number Patterns" grade="Grade 2" difficulty="Beginner" quests={7} />
+                <LessonCard title="Simple Fractions" grade="Grade 3" difficulty="Intermediate" quests={6} />
+                <LessonCard title="Multiplication" grade="Grade 4" difficulty="Intermediate" quests={8} />
+                <LessonCard title="Basic Geometry" grade="Grade 5" difficulty="Advanced" quests={6} />
+                <LessonCard title="Word Problems" grade="Grade 6" difficulty="Advanced" quests={8} />
+              </div>
+            </div>
+          )}
+
+          {activeNav === 'topachievers' && (
+            <div className="achievers-dashboard-wrapper">
+              <h2 className="section-title">🏆 Top Achievers This Month</h2>
+              <div className="achievers-list">
+                <AchieverCard rank={1} name="Sofia Martinez" grade="Grade 4" questsCompleted={45} points={2850} />
+                <AchieverCard rank={2} name="Ana Garcia" grade="Grade 3" questsCompleted={42} points={2680} />
+                <AchieverCard rank={3} name="Carlos Lopez" grade="Grade 2" questsCompleted={38} points={2420} />
+                <AchieverCard rank={4} name="Maria Santos" grade="Grade 2" questsCompleted={35} points={2240} />
+                <AchieverCard rank={5} name="Pedro Reyes" grade="Grade 1" questsCompleted={32} points={2050} />
+              </div>
+            </div>
+          )}
+
+          {activeNav === 'profile' && (
+            <div className="profile-dashboard-wrapper">
+              <div className="profile-header-banner">
+                <div className="profile-user-info">
+                  <div className="profile-avatar-large">👤</div>
+                  <div className="profile-name-email">
+                    <h2>{user?.name}</h2>
+                    <p>{user?.email}</p>
+                  </div>
+                </div>
+                <button className="btn-edit-profile-main" onClick={handleEditProfileClick}>Edit Profile</button>
+              </div>
+
+              <div className="profile-details-grid">
+                <div className="profile-input-group"><label>First Name</label><div className="profile-static-field">{(user?.name||'').split(' ')[0] || ''}</div></div>
+                <div className="profile-input-group"><label>Middle Name</label><div className="profile-static-field">{(() => { const p=(user?.name||'').split(' '); return p.length>2 ? p.slice(1,-1).join(' ') : ''; })()}</div></div>
+                <div className="profile-input-group"><label>Last Name</label><div className="profile-static-field">{(() => { const p=(user?.name||'').split(' '); return p.length ? p[p.length-1] : ''; })()}</div></div>
+                <div className="profile-input-group"><label>Email Address</label><div className="profile-static-field">{user?.email}</div></div>
+                <div className="profile-input-group"><label>Mobile Number</label><div className="profile-static-field">{user?.mobile_number || 'Not set'}</div></div>
+                <div className="profile-input-group"><label>Birthday</label><div className="profile-static-field">{user?.birthday || 'Not set'}</div></div>
+                <div className="profile-input-group" style={{ gridColumn: 'span 2' }}><label>Address</label><div className="profile-static-field">{user?.address || 'Not set'}</div></div>
+              </div>
+
+              <div style={{ borderTop: '1px solid #eee', paddingTop: '20px', marginTop: '20px' }}>
+                <button className="btn-profile-delete" onClick={handleDeleteAccount} disabled={deleting}>
+                  {deleting ? 'Deleting...' : 'Delete Account'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {showEditProfile && (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <h2>Update Profile</h2>
+            <form onSubmit={handleUpdateProfile}>
+              <div className="form-field name-group">
+                <label>First Name:</label>
+                <input type="text" value={(editForm.name||'').split(' ')[0]||''} onChange={(e) => {
+                  const parts = (editForm.name||'').split(' ').filter(Boolean);
+                  parts[0] = e.target.value;
+                  const newName = parts.join(' ').trim();
+                  handleEditFormChange('name', newName);
+                }} required />
+                {errors.name && <p className="error-msg">{errors.name}</p>}
+              </div>
+
+              <div className="form-field name-group">
+                <label>Middle Name:</label>
+                <input type="text" value={(() => { const p=(editForm.name||'').split(' ').filter(Boolean); return p.length>2 ? p.slice(1,-1).join(' ') : ''; })()} onChange={(e) => {
+                  const p=(editForm.name||'').split(' ').filter(Boolean);
+                  const first = p[0] || '';
+                  const last = p.length ? p[p.length-1] : '';
+                  const middle = e.target.value;
+                  const newName = `${first}${middle ? ' '+middle : ''}${last ? ' '+last : ''}`.trim();
+                  handleEditFormChange('name', newName);
+                }} />
+              </div>
+
+              <div className="form-field name-group">
+                <label>Last Name:</label>
+                <input type="text" value={(() => { const p=(editForm.name||'').split(' ').filter(Boolean); return p.length ? p[p.length-1] : ''; })()} onChange={(e) => {
+                  const p=(editForm.name||'').split(' ').filter(Boolean);
+                  p[p.length-1] = e.target.value;
+                  const newName = p.join(' ').trim();
+                  handleEditFormChange('name', newName);
+                }} required />
+              </div>
+
+              <div className="form-field">
+                <label>Email:</label>
+                <input type="email" value={editForm.email} onChange={(e) => handleEditFormChange('email', e.target.value)} required />
+                {errors.email && <p className="error-msg">{errors.email}</p>}
+              </div>
+
+              <div className="form-field">
+                <label>New Password (Optional):</label>
+                <div className="pass-wrapper">
+                  <input type={showPassword ? 'text' : 'password'} value={editForm.password} onChange={(e) => handleEditFormChange('password', e.target.value)} placeholder="Leave blank to keep current" />
+                  <button type="button" className="btn-eye-toggle" onClick={() => setShowPassword(!showPassword)}>
+                    {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+                  </button>
+                </div>
+                {errors.password && <p className="error-msg">{errors.password}</p>}
+              </div>
+
+              <div className="form-field">
+                <label>Mobile Number:</label>
+                <input type="text" value={editForm.mobile_number} onChange={(e) => handleEditFormChange('mobile_number', e.target.value)} required />
+                {errors.mobile_number && <p className="error-msg">{errors.mobile_number}</p>}
+              </div>
+
+              <div className="form-field">
+                <label>Address:</label>
+                <input type="text" value={editForm.address} onChange={(e) => handleEditFormChange('address', e.target.value)} />
+              </div>
+
+              <div className="form-field">
+                <label>Birthday:</label>
+                <input type="date" value={editForm.birthday} max={today} onChange={(e) => {
+                  const selectedDate = new Date(e.target.value);
+                  const todayDate = new Date();
+                  if (selectedDate <= todayDate) {
+                    handleEditFormChange('birthday', e.target.value);
+                  }
+                }} required />
+              </div>
+
+              <div className="modal-btns">
+                <button type="button" className="btn-cancel" onClick={() => setShowEditProfile(false)}>Cancel</button>
+                <button type="submit" className="btn-save" disabled={updating}>{updating ? 'Saving...' : 'Save Changes'}</button>
+              </div>
+            </form>
+
+                {/* Inline error message */}
+                {errorMessage && (
+                  <div style={{
+                    position: 'fixed',
+                    top: '20px',
+                    right: '20px',
+                    backgroundColor: document.documentElement.getAttribute('data-theme') === 'dark' ? '#5a2a2a' : '#f8d7da',
+                    color: document.documentElement.getAttribute('data-theme') === 'dark' ? '#ffb3b3' : '#721c24',
+                    padding: '12px 20px',
+                    borderRadius: '4px',
+                    border: document.documentElement.getAttribute('data-theme') === 'dark' ? '1px solid #8b3d3d' : '1px solid #f5c6cb',
+                    zIndex: 1000,
+                    maxWidth: '400px'
+                  }}>
+                    {errorMessage}
+                    <button 
+                      onClick={() => setErrorMessage('')}
+                      style={{
+                        marginLeft: '10px',
+                        background: 'none',
+                        border: 'none',
+                        color: document.documentElement.getAttribute('data-theme') === 'dark' ? '#ffb3b3' : '#721c24',
+                        cursor: 'pointer',
+                        fontSize: '18px'
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Bottom Navigation */}
+      {isMobile && (
+        <nav className="mobile-bottom-nav">
+          <div className={`mobile-nav-item ${activeNav === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveNav('dashboard')}>
+            <div className="mobile-nav-icon">📊</div>
+            <div className="mobile-nav-label">Dashboard</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'progress' ? 'active' : ''}`} onClick={() => setActiveNav('progress')}>
+            <div className="mobile-nav-icon">📈</div>
+            <div className="mobile-nav-label">Progress</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'lesson' ? 'active' : ''}`} onClick={() => setActiveNav('lesson')}>
+            <div className="mobile-nav-icon">📝</div>
+            <div className="mobile-nav-label">Lesson</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'topachievers' ? 'active' : ''}`} onClick={() => setActiveNav('topachievers')}>
+            <div className="mobile-nav-icon">🏆</div>
+            <div className="mobile-nav-label">Achievers</div>
+          </div>
+          <div className={`mobile-nav-item ${activeNav === 'settings' ? 'active' : ''}`} onClick={() => navigate('/settings')}>
+            <div className="mobile-nav-icon">⚙️</div>
+            <div className="mobile-nav-label">Settings</div>
+          </div>
+        </nav>
+      )}
+    </div>
+  );
+}
+
+function SubjectCard({ title, schedule, prof }) {
+  return (
+    <div className="subject-card">
+      <div className="subject-card-header">
+        <h3>{title}</h3>
+        <span className="status-tag">Active</span>
+      </div>
+      <p className="subject-time">{schedule}</p>
+      <p className="subject-prof">{prof}</p>
+    </div>
+  );
+}
+
+function ProgressCard({ studentName, grade, quest, progress, status }) {
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'Completed': return '#28a745';
+      case 'In Progress': return '#ffc107';
+      case 'Needs Help': return '#dc3545';
+      default: return '#6c757d';
+    }
+  };
+
+  return (
+    <div className="progress-card">
+      <div className="progress-header">
+        <h4>{studentName}</h4>
+        <span className="grade-badge">{grade}</span>
+      </div>
+      <p className="quest-name">{quest}</p>
+      <div className="progress-bar-container">
+        <div className="progress-bar" style={{ width: `${progress}%` }}></div>
+        <span className="progress-text">{progress}%</span>
+      </div>
+      <div className="status-indicator" style={{ backgroundColor: getStatusColor(status) }}>
+        {status}
+      </div>
+    </div>
+  );
+}
+
+function LessonCard({ title, grade, difficulty, quests }) {
+  const getDifficultyColor = (difficulty) => {
+    switch (difficulty) {
+      case 'Beginner': return '#28a745';
+      case 'Intermediate': return '#ffc107';
+      case 'Advanced': return '#dc3545';
+      default: return '#6c757d';
+    }
+  };
+
+  return (
+    <div className="lesson-card">
+      <div className="lesson-header">
+        <h4>{title}</h4>
+        <span className="difficulty-badge" style={{ backgroundColor: getDifficultyColor(difficulty) }}>
+          {difficulty}
+        </span>
+      </div>
+      <p className="lesson-grade">{grade}</p>
+      <div className="lesson-stats">
+        <span>{quests} Quests</span>
+      </div>
+    </div>
+  );
+}
+
+function AchieverCard({ rank, name, grade, questsCompleted, points }) {
+  const getRankIcon = (rank) => {
+    switch (rank) {
+      case 1: return '🥇';
+      case 2: return '🥈';
+      case 3: return '🥉';
+      default: return `🏅`;
+    }
+  };
+
+  return (
+    <div className="achiever-card">
+      <div className="rank-section">
+        <span className="rank-icon">{getRankIcon(rank)}</span>
+        <span className="rank-number">#{rank}</span>
+      </div>
+      <div className="achiever-info">
+        <h4>{name}</h4>
+        <p>{grade}</p>
+      </div>
+      <div className="achiever-stats">
+        <div className="stat-item">
+          <span className="stat-label">Quests:</span>
+          <span className="stat-value">{questsCompleted}</span>
+        </div>
+        <div className="stat-item">
+          <span className="stat-label">Points:</span>
+          <span className="stat-value">{points.toLocaleString()}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+// --------------------------------------------------------------------------------
+

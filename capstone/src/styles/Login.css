@@ -1,0 +1,240 @@
+/* --- GLOBAL FONT --- */
+* {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Helvetica Neue', sans-serif;
+}
+
+.login-page-wrapper {
+  min-height: 100vh;
+  background: linear-gradient(rgba(11, 36, 71, 0.85), rgba(11, 36, 71, 0.85)), 
+              url('../assets/images/BG.jpg') no-repeat center center/cover;
+  font-family: 'Courier New', Courier, monospace; 
+  animation: pageFadeIn 0.6s ease-out;
+}
+
+html, body {
+  background-color: #0b2447;
+  margin: 0;
+  padding: 0;
+}
+
+.sts-header-bar {
+  background-color: #505050;
+  padding: 10px 50px;
+  display: flex;
+  align-items: center;
+  transition: all 0.3s ease;
+}
+
+.sts-logo-circle {
+  width: 45px; 
+  height: 45px;
+  background-color: white; 
+  border-radius: 50%;
+  border: 2px solid #000;
+  object-fit: contain; 
+  padding: 4px; 
+  margin-right: 15px; 
+  display: block;
+}
+
+.sts-header-text {
+  color: #0b2447; 
+  font-size: 22px;
+}
+
+[data-theme='dark'] .sts-header-text {
+  color: #ffffff !important;
+}
+
+.login-flex-container {
+  display: flex; 
+  justify-content: center; 
+  align-items: flex-start;
+  padding-top: 50px;
+}
+
+.login-card-main {
+  background: white;
+  padding: 40px;
+  border-radius: 8px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+  width: 100%;
+  max-width: 450px;
+  animation: cardSlideUp 0.8s ease-out;
+}
+
+[data-theme='dark'] .login-card-main {
+  background: #333;
+}
+.password-input-relative {
+  position: relative;
+  width: 100%;
+}
+
+.login-password-field {
+  position: relative;
+}
+
+.login-password-field .sts-input-field {
+  padding-right: 48px;
+}
+
+.login-password-field .password-toggle-button {
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  z-index: 2;
+}
+
+.login-password-field .password-toggle-button:hover {
+  background: rgba(80, 80, 80, 0.08);
+}
+
+.login-password-field input[type="password"]::-ms-reveal,
+.login-password-field input[type="password"]::-ms-clear,
+.login-password-field input[type="text"]::-ms-reveal,
+.login-password-field input[type="text"]::-ms-clear {
+  display: none;
+}
+
+.eye-icon-inside {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: pointer;
+  color: #666;
+  display: flex;
+  align-items: center;
+  transition: color 0.2s;
+  z-index: 5;
+}
+
+.eye-icon-inside:hover {
+  color: #333;
+}
+
+.pw-footer-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.forgot-pass-link-bottom {
+  font-size: 12px;
+  color: #505050;
+  text-decoration: underline;
+  cursor: pointer;
+  transition: color 0.3s ease;
+}
+
+.forgot-pass-link-bottom:hover {
+  color: #0b2447;
+}
+
+.sts-input-group {
+  display: flex; 
+  flex-direction: column; 
+  margin-bottom: 20px;
+}
+
+[data-theme='dark'] .sts-input-group {
+  color: #000000 !important;
+}
+
+.sts-label {
+  font-weight: bold;
+  margin-bottom: 8px; 
+  font-size: 16px;
+}
+
+[data-theme='dark'] .sts-label {
+  color: #000000 !important;
+}
+
+.sts-input-field {
+  width: 100%;
+  padding: 12px; 
+  border: 1px solid #ccc; 
+  border-radius: 4px;
+  font-family: inherit; 
+  font-size: 15px;
+  box-sizing: border-box; /* Mahalaga ito para hindi lumampas ang input */
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.sts-input-field:focus {
+  border-color: #505050;
+  box-shadow: 0 0 5px rgba(80, 80, 80, 0.5);
+  outline: none;
+}
+
+[data-theme='dark'] .login-title-sts {
+  color: #ffffff !important;
+}
+
+.sts-login-button {
+  width: 100%; 
+  background-color: #505050; 
+  color: white;
+  padding: 14px; 
+  border: none; 
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold; 
+  font-size: 16px; 
+  margin-top: 10px;
+  transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+.sts-login-button:hover:not(:disabled) {
+  background-color: #4a7ba3;
+  transform: scale(1.01);
+}
+
+.sts-login-button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.back-home-link {
+  background: none; 
+  border: none; 
+  color: #666; 
+  cursor: pointer;
+  font-family: inherit; 
+  margin-bottom: 20px; 
+  font-size: 14px;
+  transition: color 0.3s ease;
+}
+
+.back-login-btn {
+  background: none;
+  border: none;
+  color: #505050;
+  display: block;
+  margin: 15px auto 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+@keyframes pageFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.verification-instruction {
+  color: #333;
+}
+
+[data-theme='dark'] .verification-instruction {
+  color: #ffffff !important;
+}
+
+@keyframes cardSlideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
