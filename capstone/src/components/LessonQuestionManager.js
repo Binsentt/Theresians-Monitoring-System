@@ -1,35 +1,28 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import logoImage from '../assets/images/STS_Logo.png';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import { DataTable, TableFilters } from './layout/Table';
+import { canAccessRole, normalizeRole } from './manageUsers.utils';
+import {
+  filterLearningFiles,
+  getFolderContents,
+  getMathTopicsForGrade,
+  GRADE_LEVELS,
+  isValidGradeLevel,
+  isValidMathTopicForGrade,
+  MATH_TOPICS,
+  normalizeMathTopicForGrade,
+} from './lessonQuestionManager.utils';
 import '../styles/lessonQuestionManager.css';
-
-const MATH_TOPICS = [
-  'Addition',
-  'Subtraction',
-  'Multiplication',
-  'Division',
-  'Fractions',
-  'Decimals',
-  'Geometry',
-  'Basic Algebra',
-  'Word Problems',
-];
-
-const GRADE_LEVELS = [
-  'Grade 1',
-  'Grade 2',
-  'Grade 3',
-  'Grade 4',
-  'Grade 5',
-  'Grade 6',
-];
 
 const FILE_TYPES = [
   { value: 'lesson', label: 'Lesson' },
   { value: 'fixed_questions', label: 'Fixed Questions' },
 ];
+
+const API_BASE = 'http://localhost:5000';
 
 const initialFormState = {
   title: '',
@@ -40,9 +33,6 @@ const initialFormState = {
   file: null,
 };
 
-const isValidGradeLevel = (value) => GRADE_LEVELS.includes(String(value || '').trim());
-const isValidMathTopic = (value) => MATH_TOPICS.includes(String(value || '').trim());
-
 function formatUploadDate(dateString) {
   if (!dateString) return '-';
   const date = new Date(dateString);
@@ -51,7 +41,7 @@ function formatUploadDate(dateString) {
 
 function getPublicUrl(path) {
   if (!path) return null;
-  return path.startsWith('http') ? path : `${window.location.origin}${path}`;
+  return path.startsWith('http') ? path : `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
 function buildQueryString(params) {
@@ -71,7 +61,9 @@ export default function LessonQuestionManager() {
   const [editingFile, setEditingFile] = useState(null);
   const [editingFolder, setEditingFolder] = useState(null);
   const [newFolderName, setNewFolderName] = useState('');
-  const [filters, setFilters] = useState({ search: '', folder: '', grade_level: '', math_topic: '' });
+  const [folderSearch, setFolderSearch] = useState('');
+  const [openedFolder, setOpenedFolder] = useState(null);
+  const [filters, setFilters] = useState({ search: '', folder: '', grade_level: '', math_topic: '', file_type: '' });
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
@@ -101,31 +93,71 @@ export default function LessonQuestionManager() {
 
   useEffect(() => {
     const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
-    if (!loggedInUser || !['teacher', 'admin'].includes((loggedInUser.role || '').toLowerCase())) {
+    const role = normalizeRole(loggedInUser?.role);
+    if (!loggedInUser || (!canAccessRole(role, 'teacher') && !canAccessRole(role, 'admin'))) {
       navigate('/login');
       return;
     }
-    setUser(loggedInUser);
+    setUser({ ...loggedInUser, role });
     loadFilesAndFolders();
   }, [navigate]);
 
-  const filteredFiles = useMemo(() => {
-    return files.filter((file) => {
-      const folderMatch = filters.folder ? String(file.folder_name || '').toLowerCase() === String(filters.folder).toLowerCase() : true;
-      const gradeMatch = filters.grade_level ? file.grade_level === filters.grade_level : true;
-      const topicMatch = filters.math_topic ? file.math_topic === filters.math_topic : true;
-      const searchMatch = filters.search
-        ? [file.title, file.file_name, file.math_topic, file.grade_level, file.folder_name]
-            .join(' ')
-            .toLowerCase()
-            .includes(filters.search.toLowerCase())
-        : true;
-      return folderMatch && gradeMatch && topicMatch && searchMatch;
-    });
-  }, [files, filters]);
+  const filteredFiles = useMemo(() => filterLearningFiles(files, filters), [files, filters]);
+
+  const activeFolder = useMemo(() => {
+    if (!openedFolder) return null;
+    return folders.find((folder) => String(folder.id) === String(openedFolder.id)) || openedFolder;
+  }, [folders, openedFolder]);
+
+  const folderContents = useMemo(() => getFolderContents(files, activeFolder), [activeFolder, files]);
+
+  const filteredFolders = useMemo(() => {
+    const search = folderSearch.trim().toLowerCase();
+    if (!search) return folders;
+    return folders.filter((folder) => String(folder.name || '').toLowerCase().includes(search));
+  }, [folders, folderSearch]);
+
+  const formTopicOptions = useMemo(() => getMathTopicsForGrade(form.grade_level), [form.grade_level]);
+  const filterTopicOptions = useMemo(
+    () => (filters.grade_level ? getMathTopicsForGrade(filters.grade_level) : MATH_TOPICS),
+    [filters.grade_level]
+  );
+  const editTopicOptions = useMemo(
+    () => (editingFile ? getMathTopicsForGrade(editingFile.grade_level) : MATH_TOPICS),
+    [editingFile]
+  );
+
+  const selectedFolderFileCount = useMemo(() => {
+    if (!filters.folder) return 0;
+    const folderName = String(filters.folder).toLowerCase();
+    return files.filter((file) => String(file.folder_name || '').toLowerCase() === folderName).length;
+  }, [files, filters.folder]);
+
+  const tableEmptyMessage = filters.folder && selectedFolderFileCount === 0
+    ? `Folder "${filters.folder}" is empty.`
+    : 'No math content found. Upload a new lesson or question set.';
 
   const handleFormChange = (field, value) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
+    setForm((prev) => {
+      if (field === 'grade_level') {
+        return {
+          ...prev,
+          grade_level: value,
+          math_topic: normalizeMathTopicForGrade(value, prev.math_topic),
+        };
+      }
+      return { ...prev, [field]: value };
+    });
+  };
+
+  const handleFilterChange = (field, value) => {
+    setFilters((prev) => {
+      if (field === 'grade_level') {
+        const shouldResetTopic = value && prev.math_topic && !isValidMathTopicForGrade(value, prev.math_topic);
+        return { ...prev, grade_level: value, math_topic: shouldResetTopic ? '' : prev.math_topic };
+      }
+      return { ...prev, [field]: value };
+    });
   };
 
   const handleFileSelect = (event) => {
@@ -144,7 +176,7 @@ export default function LessonQuestionManager() {
       return;
     }
 
-    if (!isValidGradeLevel(form.grade_level) || !isValidMathTopic(form.math_topic)) {
+    if (!isValidGradeLevel(form.grade_level) || !isValidMathTopicForGrade(form.grade_level, form.math_topic)) {
       showNotification('Invalid grade level or math topic. Only Grade 1–6 mathematics content is supported.', 'error');
       return;
     }
@@ -226,7 +258,13 @@ export default function LessonQuestionManager() {
   };
 
   const beginEditFile = (file) => {
-    setEditingFile({ ...file });
+    const gradeLevel = isValidGradeLevel(file.grade_level) ? file.grade_level : initialFormState.grade_level;
+    setEditingFile({
+      ...file,
+      grade_level: gradeLevel,
+      math_topic: normalizeMathTopicForGrade(gradeLevel, file.math_topic),
+      folder_id: file.folder_id || '',
+    });
   };
 
   const cancelEditFile = () => {
@@ -238,7 +276,7 @@ export default function LessonQuestionManager() {
       showNotification('Complete all required file metadata fields before saving.', 'error');
       return;
     }
-    if (!isValidGradeLevel(editingFile.grade_level) || !isValidMathTopic(editingFile.math_topic)) {
+    if (!isValidGradeLevel(editingFile.grade_level) || !isValidMathTopicForGrade(editingFile.grade_level, editingFile.math_topic)) {
       showNotification('Invalid metadata. Only Grade 1–6 mathematics topics are supported.', 'error');
       return;
     }
@@ -323,6 +361,32 @@ export default function LessonQuestionManager() {
     }
   };
 
+  const handleOpenFolder = (folder) => {
+    setOpenedFolder(folder);
+    setEditingFile(null);
+    setFilters((prev) => ({
+      ...prev,
+      search: '',
+      folder: '',
+      grade_level: '',
+      math_topic: '',
+      file_type: '',
+    }));
+    setForm((prev) => ({ ...prev, folder_id: folder.id ? String(folder.id) : '' }));
+  };
+
+  const handleCloseFolder = () => {
+    setOpenedFolder(null);
+    setEditingFile(null);
+  };
+
+  const handleFolderKeyDown = (event, folder) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      handleOpenFolder(folder);
+    }
+  };
+
   const tableColumns = [
     {
       key: 'title',
@@ -371,9 +435,10 @@ export default function LessonQuestionManager() {
     <DashboardContainer
       sidebar={
         <AnalyticsSidebar
-          role={user?.role === 'teacher' ? 'teacher' : 'admin'}
+          role={normalizeRole(user?.role) === 'admin' ? 'admin' : normalizeRole(user?.role) === 'parent_teacher' ? 'parent_teacher' : 'teacher'}
           activeItem="lesson-question-manager"
-          portalLabel={user?.role === 'teacher' ? 'Teacher Portal' : 'Admin Portal'}
+          logoSrc={logoImage}
+          portalLabel={normalizeRole(user?.role) === 'admin' ? 'Admin Portal' : 'Teacher Portal'}
         />
       }
       main={
@@ -394,7 +459,37 @@ export default function LessonQuestionManager() {
               </div>
             )}
 
-            <ContentSection>
+            {activeFolder ? (
+              <ContentSection>
+                <div className="folder-view-panel card card-hover">
+                  <div className="folder-breadcrumb">
+                    <button type="button" className="folder-breadcrumb-button" onClick={handleCloseFolder}>
+                      Lesson & Question Management
+                    </button>
+                    <span className="folder-breadcrumb-separator">/</span>
+                    <span>{activeFolder.name}</span>
+                  </div>
+
+                  <div className="folder-view-header">
+                    <div>
+                      <h2>{activeFolder.name}</h2>
+                      <p>{folderContents.length} {folderContents.length === 1 ? 'file' : 'files'} inside this folder</p>
+                    </div>
+                    <button type="button" className="btn btn-secondary" onClick={handleCloseFolder}>
+                      Back to folders
+                    </button>
+                  </div>
+
+                  <DataTable
+                    columns={tableColumns}
+                    data={folderContents}
+                    emptyMessage="This folder is empty."
+                  />
+                </div>
+              </ContentSection>
+            ) : (
+              <>
+                <ContentSection>
               <div className="manager-grid">
                 <div className="upload-panel card card-hover">
                   <h2>Upload Math Content</h2>
@@ -431,7 +526,7 @@ export default function LessonQuestionManager() {
                         value={form.math_topic}
                         onChange={(e) => handleFormChange('math_topic', e.target.value)}
                       >
-                        {MATH_TOPICS.map((topic) => (
+                        {formTopicOptions.map((topic) => (
                           <option key={topic} value={topic}>{topic}</option>
                         ))}
                       </select>
@@ -448,7 +543,6 @@ export default function LessonQuestionManager() {
                           <option key={type.value} value={type.value}>{type.label}</option>
                         ))}
                       </select>
-                      <div className="field-helper">Lessons accept PDF; fixed questions accept JSON or CSV.</div>
                     </div>
 
                     <div className="form-group">
@@ -497,16 +591,65 @@ export default function LessonQuestionManager() {
                     <button type="submit" className="btn btn-primary">Create Folder</button>
                   </form>
 
+                  <div className="folder-search">
+                    <label className="form-label" htmlFor="folder-search">Search Folders</label>
+                    <input
+                      id="folder-search"
+                      type="text"
+                      className="input-field"
+                      value={folderSearch}
+                      onChange={(e) => setFolderSearch(e.target.value)}
+                      placeholder="Search by folder name"
+                    />
+                  </div>
+
                   <div className="folder-list">
                     {folders.length === 0 ? (
                       <p className="empty-text">No folders yet. Create one to organize files.</p>
+                    ) : filteredFolders.length === 0 ? (
+                      <p className="empty-text">No folders match your search.</p>
                     ) : (
-                      folders.map((folder) => (
-                        <div key={folder.id} className="folder-item">
+                      filteredFolders.map((folder) => (
+                        <div
+                          key={folder.id}
+                          className={`folder-item ${activeFolder && String(activeFolder.id) === String(folder.id) ? 'folder-item-active' : ''}`}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => handleOpenFolder(folder)}
+                          onKeyDown={(event) => handleFolderKeyDown(event, folder)}
+                        >
                           <span>{folder.name}</span>
-                          <div className="folder-actions">
-                            <button type="button" className="btn btn-outline" onClick={() => handleRenameFolder(folder)}>Rename</button>
-                            <button type="button" className="btn btn-tertiary" onClick={() => handleDeleteFolder(folder)}>Delete</button>
+                          <div className="folder-actions" onKeyDown={(event) => event.stopPropagation()}>
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleOpenFolder(folder);
+                              }}
+                            >
+                              Open
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-outline"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleRenameFolder(folder);
+                              }}
+                            >
+                              Rename
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-tertiary"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleDeleteFolder(folder);
+                              }}
+                            >
+                              Delete
+                            </button>
                           </div>
                         </div>
                       ))
@@ -516,55 +659,67 @@ export default function LessonQuestionManager() {
               </div>
             </ContentSection>
 
-            <ContentSection title="Uploaded Mathematics Content">
-              <TableFilters className="manager-filters">
-                <div className="filter-group">
-                  <input
-                    type="text"
-                    className="input-field"
-                    value={filters.search}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
-                    placeholder="Search files, topics, grades, folders"
-                  />
-                  <select
-                    className="select-field"
-                    value={filters.folder}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, folder: e.target.value }))}
-                  >
-                    <option value="">All folders</option>
-                    {folders.map((folder) => (
-                      <option key={folder.id} value={folder.name}>{folder.name}</option>
-                    ))}
-                  </select>
-                  <select
-                    className="select-field"
-                    value={filters.grade_level}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, grade_level: e.target.value }))}
-                  >
-                    <option value="">All grades</option>
-                    {GRADE_LEVELS.map((level) => (
-                      <option key={level} value={level}>{level}</option>
-                    ))}
-                  </select>
-                  <select
-                    className="select-field"
-                    value={filters.math_topic}
-                    onChange={(e) => setFilters((prev) => ({ ...prev, math_topic: e.target.value }))}
-                  >
-                    <option value="">All topics</option>
-                    {MATH_TOPICS.map((topic) => (
-                      <option key={topic} value={topic}>{topic}</option>
-                    ))}
-                  </select>
-                </div>
-              </TableFilters>
+                <ContentSection title="Uploaded Mathematics Content">
+                  <TableFilters className="manager-filters">
+                    <div className="filter-group">
+                      <input
+                        type="text"
+                        className="input-field"
+                        value={filters.search}
+                        onChange={(e) => handleFilterChange('search', e.target.value)}
+                        placeholder="Search files, topics, grades, folders"
+                      />
+                      <select
+                        className="select-field"
+                        value={filters.folder}
+                        onChange={(e) => handleFilterChange('folder', e.target.value)}
+                      >
+                        <option value="">All folders</option>
+                        {folders.map((folder) => (
+                          <option key={folder.id} value={folder.name}>{folder.name}</option>
+                        ))}
+                      </select>
+                      <select
+                        className="select-field"
+                        value={filters.grade_level}
+                        onChange={(e) => handleFilterChange('grade_level', e.target.value)}
+                      >
+                        <option value="">All grades</option>
+                        {GRADE_LEVELS.map((level) => (
+                          <option key={level} value={level}>{level}</option>
+                        ))}
+                      </select>
+                      <select
+                        className="select-field"
+                        value={filters.math_topic}
+                        onChange={(e) => handleFilterChange('math_topic', e.target.value)}
+                      >
+                        <option value="">All topics</option>
+                        {filterTopicOptions.map((topic) => (
+                          <option key={topic} value={topic}>{topic}</option>
+                        ))}
+                      </select>
+                      <select
+                        className="select-field"
+                        value={filters.file_type}
+                        onChange={(e) => handleFilterChange('file_type', e.target.value)}
+                      >
+                        <option value="">All types</option>
+                        {FILE_TYPES.map((type) => (
+                          <option key={type.value} value={type.value}>{type.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </TableFilters>
 
-              <DataTable
-                columns={tableColumns}
-                data={filteredFiles}
-                emptyMessage="No math content found. Upload a new lesson or question set."
-              />
-            </ContentSection>
+                  <DataTable
+                    columns={tableColumns}
+                    data={filteredFiles}
+                    emptyMessage={tableEmptyMessage}
+                  />
+                </ContentSection>
+              </>
+            )}
 
             {editingFile && (
               <ContentSection title="Edit File Details">
@@ -583,14 +738,18 @@ export default function LessonQuestionManager() {
                     <select
                       className="select-field"
                       value={editingFile.grade_level}
-                      onChange={(e) => setEditingFile((prev) => ({ ...prev, grade_level: e.target.value }))}
+                      onChange={(e) => {
+                        const gradeLevel = e.target.value;
+                        setEditingFile((prev) => ({
+                          ...prev,
+                          grade_level: gradeLevel,
+                          math_topic: normalizeMathTopicForGrade(gradeLevel, prev.math_topic),
+                        }));
+                      }}
                     >
                       {GRADE_LEVELS.map((level) => (
                         <option key={level} value={level}>{level}</option>
                       ))}
-                      {!GRADE_LEVELS.includes(editingFile.grade_level) && editingFile.grade_level ? (
-                        <option value={editingFile.grade_level}>{editingFile.grade_level} (Legacy)</option>
-                      ) : null}
                     </select>
                   </div>
                   <div className="form-group">
@@ -600,12 +759,9 @@ export default function LessonQuestionManager() {
                       value={editingFile.math_topic}
                       onChange={(e) => setEditingFile((prev) => ({ ...prev, math_topic: e.target.value }))}
                     >
-                      {MATH_TOPICS.map((topic) => (
+                      {editTopicOptions.map((topic) => (
                         <option key={topic} value={topic}>{topic}</option>
                       ))}
-                      {!MATH_TOPICS.includes(editingFile.math_topic) && editingFile.math_topic ? (
-                        <option value={editingFile.math_topic}>{editingFile.math_topic} (Legacy)</option>
-                      ) : null}
                     </select>
                   </div>
                   <div className="form-group">

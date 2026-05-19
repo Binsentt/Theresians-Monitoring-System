@@ -6,7 +6,7 @@ export const buildScopedApiUrl = (path, role, userId) => {
   const url = new URL(`${API_BASE_URL}${path}`);
   const normalizedRole = normalizeRole(role);
 
-  if (normalizedRole === 'teacher' && userId) {
+  if ((normalizedRole === 'teacher' || normalizedRole === 'parent_teacher') && userId) {
     url.searchParams.set('teacher_id', String(userId));
   }
 

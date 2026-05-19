@@ -162,6 +162,19 @@
   background: rgba(255, 255, 255, 0.14);
 }
 
+.analytics-sidebar-item.logout {
+  margin-top: auto;
+}
+
+.analytics-sidebar-item.logout .analytics-sidebar-item-icon {
+  background: rgba(239, 68, 68, 0.14);
+}
+
+.analytics-sidebar-item.logout:hover {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(248, 113, 113, 0.22);
+}
+
 @media (max-width: 767px) {
   .analytics-sidebar-toggle {
     display: block;

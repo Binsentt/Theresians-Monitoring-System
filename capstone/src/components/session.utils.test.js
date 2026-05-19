@@ -31,8 +31,29 @@ describe('session utilities', () => {
     expect(resolveAuthorizedSession('teacher', storage)).toEqual({
       id: 9,
       role: 'teacher',
+      activeRole: 'teacher',
       email: 'teacher@example.com',
     });
+  });
+
+  test('allows Parent/Teacher sessions through parent and teacher guards only', () => {
+    const storage = createStorage({
+      [SESSION_STORAGE_KEY]: JSON.stringify({ id: 12, role: 'Parent/Teacher', email: 'dual@example.com' }),
+    });
+
+    expect(resolveAuthorizedSession('parent', storage)).toEqual({
+      id: 12,
+      role: 'parent_teacher',
+      activeRole: 'parent',
+      email: 'dual@example.com',
+    });
+    expect(resolveAuthorizedSession('teacher', storage)).toEqual({
+      id: 12,
+      role: 'parent_teacher',
+      activeRole: 'teacher',
+      email: 'dual@example.com',
+    });
+    expect(resolveAuthorizedSession('admin', storage)).toBeNull();
   });
 
   test('rejects unauthorized or incomplete teacher sessions', () => {

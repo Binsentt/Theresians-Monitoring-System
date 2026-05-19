@@ -3,7 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
-import { filterUsers, formatRoleLabel, normalizeRole, paginateItems } from './manageUsers.utils';
+import {
+  buildAccountCreationSuccessModal,
+  filterUsers,
+  formatRoleLabel,
+  isParentRole,
+  isTeacherRole,
+  normalizeRole,
+  paginateItems,
+} from './manageUsers.utils';
 import '../styles/manageusers.css';
 
 export default function ManageUsers() {
@@ -23,7 +31,6 @@ export default function ManageUsers() {
     middleName: '',
     lastName: '',
     email: '',
-    password: '',
     mobile_number: '',
     address: '',
     birthday: '',
@@ -33,7 +40,6 @@ export default function ManageUsers() {
   const [adding, setAdding] = useState(false);
   const [addErrors, setAddErrors] = useState({});
   const [validationModal, setValidationModal] = useState(null);
-  const [showPassword, setShowPassword] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [editForm, setEditForm] = useState({
     firstName: '',
@@ -96,15 +102,6 @@ export default function ManageUsers() {
     return '';
   };
 
-  const validatePassword = (password) => {
-    if (!password) return 'Password is required';
-    if (password.length < 12) return 'Password must be at least 12 characters long';
-    if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter';
-    if (!/[a-z]/.test(password)) return 'Password must contain at least one lowercase letter';
-    if (!/\d/.test(password)) return 'Password must contain at least one number';
-    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) return 'Password must contain at least one symbol';
-    return '';
-  };
   const restrictInput = (field, value) => {
     let cleanedValue = value;
     if (field === 'firstName' || field === 'middleName' || field === 'lastName') {
@@ -124,13 +121,6 @@ export default function ManageUsers() {
     if (field === 'firstName' || field === 'middleName' || field === 'lastName') error = validateNameField(finalValue);
     else if (field === 'email') error = validateEmail(finalValue);
     else if (field === 'mobile_number') error = validatePhone(finalValue);
-    else if (field === 'password') {
-      if (selectedRole === 'Teacher' && !finalValue) {
-        error = 'Password is required for teachers';
-      } else if (finalValue) {
-        error = validatePassword(finalValue);
-      }
-    }
     else if (field === 'birthday') error = validateBirthday(finalValue);
     else if (field === 'gender') {
       if ((selectedRole || '').toLowerCase() !== 'admin' && finalValue === '') error = 'Gender is required';
@@ -149,7 +139,7 @@ export default function ManageUsers() {
     else if (field === 'mobile_number') error = validatePhone(finalValue);
     else if (field === 'birthday') error = validateBirthday(finalValue);
     else if (field === 'gender') {
-      const roleToCheck = (editForm.role || editingUser?.role || '').toLowerCase();
+      const roleToCheck = normalizeRole(editingUser?.role || editForm.role);
       if (roleToCheck !== 'admin' && finalValue === '') error = 'Gender is required';
     }
 
@@ -164,7 +154,7 @@ export default function ManageUsers() {
         document.documentElement.setAttribute('data-theme', savedTheme);
 
         const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-        if (!loggedInUser || loggedInUser.role !== 'admin') {
+        if (!loggedInUser || normalizeRole(loggedInUser.role) !== 'admin') {
           navigate('/login');
           return;
         }
@@ -192,7 +182,7 @@ export default function ManageUsers() {
     try {
       const response = await fetch(`http://localhost:5000/api/accounts?archived=${showArchived}`);
       const data = await response.json();
-      setUsers(data);
+      setUsers(Array.isArray(data) ? data.filter((account) => normalizeRole(account.role) !== 'admin') : []);
     } catch (error) {
       console.error('Error loading users:', error);
     }
@@ -200,12 +190,12 @@ export default function ManageUsers() {
 
   const handleAddUser = async (e) => {
     e.preventDefault();
-    const roleIsTeacher = (selectedRole || '').toLowerCase() === 'teacher';
-    const missingPassword = roleIsTeacher && !newUser.password;
-    if (!newUser.firstName || !newUser.lastName || !newUser.email || !newUser.birthday || !newUser.gender || missingPassword) {
+    const selectedRoleValue = normalizeRole(selectedRole);
+    const roleIsTeacher = isTeacherRole(selectedRoleValue);
+    if (!newUser.firstName || !newUser.lastName || !newUser.email || !newUser.birthday || !newUser.gender) {
       setValidationModal({
         title: 'Missing Required Fields',
-        message: `Please fill in all required fields (${roleIsTeacher ? 'First Name, Last Name, Email, Password, Birthday, Gender' : 'First Name, Last Name, Email, Birthday, Gender'})`
+        message: 'Please fill in all required fields (First Name, Last Name, Email, Birthday, Gender)'
       });
       return;
     }
@@ -230,12 +220,11 @@ export default function ManageUsers() {
       const payload = {
         name: fullName,
         email: newUser.email,
-        password: newUser.password || undefined,
         mobile_number: newUser.mobile_number,
         address: newUser.address,
         birthday: newUser.birthday,
         gender: newUser.gender || '',
-        role: selectedRole.toLowerCase(),
+        role: selectedRoleValue,
       };
       if (roleIsTeacher) payload.employee_id = newUser.employee_id;
 
@@ -246,14 +235,8 @@ export default function ManageUsers() {
       });
       const data = await response.json();
       if (response.ok) {
-        const passwordMessage = data.tempPassword
-          ? ` Temporary login password: ${data.tempPassword}`
-          : '';
-        setValidationModal({
-          title: 'Success',
-          message: `${selectedRole} added successfully!${passwordMessage}`
-        });
-        setNewUser({ firstName: '', middleName: '', lastName: '', email: '', password: '', mobile_number: '', address: '', birthday: '', gender: '', employee_id: '' });
+        setValidationModal(buildAccountCreationSuccessModal(selectedRole, data));
+        setNewUser({ firstName: '', middleName: '', lastName: '', email: '', mobile_number: '', address: '', birthday: '', gender: '', employee_id: '' });
         setShowAddForm(false);
         setSelectedRole('Parent');
         loadUsers();
@@ -291,7 +274,7 @@ export default function ManageUsers() {
       employee_id: u.employee_id || '',
       role: formatRoleLabel(u.role || 'Parent')
     });
-    if (normalizeRole(u.role) === 'teacher') {
+    if (isTeacherRole(u.role)) {
       loadTeacherRelationships(u.id);
     } else {
       setTeacherRelations([]);
@@ -358,7 +341,7 @@ export default function ManageUsers() {
 
   const handleUpdateUser = async (e) => {
     e.preventDefault();
-    const selectedRole = editForm.role || editingUser.role;
+    const selectedRole = normalizeRole(editingUser.role);
     if (!editForm.firstName || !editForm.lastName || !editForm.email || !editForm.birthday) {
       setValidationModal({
         title: 'Missing Required Fields',
@@ -366,7 +349,7 @@ export default function ManageUsers() {
       });
       return;
     }
-    if (selectedRole === 'Teacher' && !editForm.employee_id) {
+    if (isTeacherRole(selectedRole) && !editForm.employee_id) {
       setValidationModal({
         title: 'Missing Employee ID',
         message: 'Teachers must have an employee ID.'
@@ -387,7 +370,6 @@ export default function ManageUsers() {
       const payload = {
         name: fullName,
         email: editForm.email,
-        role: selectedRole,
         mobile_number: editForm.mobile_number,
         address: editForm.address,
         birthday: editForm.birthday,
@@ -579,7 +561,7 @@ export default function ManageUsers() {
                     <option value="All">All Roles</option>
                     <option value="Parent">Parent</option>
                     <option value="Teacher">Teacher</option>
-                    <option value="Admin">Admin</option>
+                    <option value="Parent/Teacher">Parent/Teacher</option>
                   </select>
                   <button
                     className="sts-add-btn"
@@ -609,14 +591,12 @@ export default function ManageUsers() {
                     value={selectedRole}
                     onChange={(e) => {
                       setSelectedRole(e.target.value);
-                      if (e.target.value === 'Parent' || e.target.value === 'Admin') {
-                        setNewUser({ ...newUser, password: '' });
-                      }
                     }}
                     className="sts-input"
                   >
                     <option value="Parent">Parent</option>
                     <option value="Teacher">Teacher</option>
+                    <option value="Parent/Teacher">Parent/Teacher</option>
                     <option value="Admin">Admin</option>
                   </select>
                 </div>
@@ -669,40 +649,12 @@ export default function ManageUsers() {
                     {addErrors.email && <p className="error-text">{addErrors.email}</p>}
                   </div>
 
-                  {selectedRole === 'Teacher' ? (
                   <div className="form-group">
-                    <label>Password: *</label>
-                    <div className="password-field-wrapper">
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        placeholder="Enter password"
-                        value={newUser.password}
-                        onChange={(e) => handleAddFormChange('password', e.target.value)}
-                        className="sts-input"
-                      />
-                      <button
-                        type="button"
-                        className="password-toggle-button"
-                        aria-label={showPassword ? 'Hide password' : 'Show password'}
-                        onClick={() => setShowPassword(!showPassword)}
-                      >
-                        {showPassword ? (
-                          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                        ) : (
-                          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                        )}
-                      </button>
-                    </div>
-                    {addErrors.password && <p className="error-text">{addErrors.password}</p>}
-                  </div>
-                ) : (
-                  <div className="form-group">
-                    <label>Password:</label>
+                    <label>Temporary Password:</label>
                     <div className="profile-static-field" style={{ padding: '12px 14px', background: '#f8fafc', borderRadius: '4px', border: '1px solid #d1d5db' }}>
-                      A strong password will be generated automatically for parent and admin accounts.
+                      A strong temporary password will be generated and emailed automatically.
                     </div>
                   </div>
-                )}
 
                   <div className="form-group">
                     <label>Mobile Number:</label>
@@ -761,7 +713,7 @@ export default function ManageUsers() {
                     {addErrors.gender && <p className="error-text">{addErrors.gender}</p>}
                   </div>
 
-                  {selectedRole === 'Teacher' && (
+                  {isTeacherRole(selectedRole) && (
                     <div className="form-group">
                       <label>Employee ID: *</label>
                       <input
@@ -788,6 +740,7 @@ export default function ManageUsers() {
                     <th>USER NAME</th>
                     <th>EMAIL</th>
                     <th>ROLE</th>
+                    <th>PARENT ID</th>
                     <th>MOBILE NUMBER</th>
                     <th>BIRTHDAY</th>
                     <th>ACTIONS</th>
@@ -796,7 +749,7 @@ export default function ManageUsers() {
                 <tbody>
                   {filteredUsers.length === 0 ? (
                     <tr>
-                      <td colSpan="6" className="empty-table-msg">
+                      <td colSpan="7" className="empty-table-msg">
                         {searchTerm ? `No results found for "${searchTerm}"` : "No users found."}
                       </td>
                     </tr>
@@ -810,6 +763,7 @@ export default function ManageUsers() {
                             {formatRoleLabel(u.role)}
                           </span>
                         </td>
+                        <td>{isParentRole(u.role) ? (u.parent_id || 'Not generated') : '-'}</td>
                         <td>{u.mobile_number || '-'}</td>
                         <td>{u.birthday ? new Date(u.birthday).toLocaleDateString() : 'Not set'}</td>
                         <td className="actions-cell">
@@ -862,15 +816,21 @@ export default function ManageUsers() {
             )}
 
             {validationModal && (
-              <div className="modal-overlay" onClick={() => setValidationModal(null)}>
+              <div className="modal-overlay" onClick={() => { setValidationModal(null); }}>
                 <div className="modal-content" onClick={(e) => e.stopPropagation()}>
                   <h2>{validationModal.title}</h2>
                   <p>{validationModal.message}</p>
+                  {validationModal.parentId && (
+                    <div className="generated-credential-panel">
+                      <span className="generated-credential-label">Parent ID</span>
+                      <strong className="generated-credential-value">{validationModal.parentId}</strong>
+                    </div>
+                  )}
                   <div className="modal-actions">
                     <button
                       type="button"
                       className="update-btn"
-                      onClick={() => setValidationModal(null)}
+                      onClick={() => { setValidationModal(null); }}
                     >
                       OK
                     </button>
@@ -960,32 +920,12 @@ export default function ManageUsers() {
 
                     <div className="form-group">
                       <label>Role:</label>
-                      <select
-                        value={editForm.role}
-                        onChange={(e) => {
-                          const nextRole = e.target.value;
-                          setEditForm((prev) => ({
-                            ...prev,
-                            role: nextRole,
-                            employee_id: nextRole === 'Teacher' ? prev.employee_id : '',
-                          }));
-                          if (nextRole !== 'Teacher') {
-                            setTeacherRelations([]);
-                            setRelationEmail('');
-                            setRelationMessage('');
-                          } else if (editingUser?.id) {
-                            loadTeacherRelationships(editingUser.id);
-                          }
-                        }}
-                        className="sts-input"
-                      >
-                        <option value="Parent">Parent</option>
-                        <option value="Teacher">Teacher</option>
-                        <option value="Admin">Admin</option>
-                      </select>
+                      <div className="profile-static-field" style={{ padding: '12px 14px', background: '#f8fafc', borderRadius: '4px', border: '1px solid #d1d5db' }}>
+                        {formatRoleLabel(editingUser.role)}
+                      </div>
                     </div>
 
-                    {editForm.role === 'Teacher' && (
+                    {isTeacherRole(editingUser.role) && (
                       <div className="form-group">
                         <label>Employee ID: *</label>
                         <input
@@ -994,6 +934,15 @@ export default function ManageUsers() {
                           onChange={(e) => setEditForm({ ...editForm, employee_id: e.target.value })}
                           className="sts-input"
                         />
+                      </div>
+                    )}
+
+                    {isParentRole(editingUser.role) && (
+                      <div className="form-group">
+                        <label>Parent ID:</label>
+                        <div className="profile-static-field" style={{ padding: '12px 14px', background: '#f8fafc', borderRadius: '4px', border: '1px solid #d1d5db' }}>
+                          {editingUser.parent_id || 'Not generated yet'}
+                        </div>
                       </div>
                     )}
 
@@ -1044,7 +993,7 @@ export default function ManageUsers() {
                       {editErrors.gender && <p className="error-text">{editErrors.gender}</p>}
                     </div>
 
-                    {editForm.role === 'Teacher' && (
+                    {isTeacherRole(editingUser.role) && (
                       <div className="form-container-card edit-user-teacher-panel">
                         <h3>Assigned Students</h3>
                         <p className="edit-user-helper-text">

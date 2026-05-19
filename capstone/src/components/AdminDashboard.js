@@ -7,6 +7,7 @@ import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } 
 import { ResponsiveGrid } from './layout/Grid';
 import { DataTable } from './layout/Table';
 import { MetricCard, InfoCard } from './layout/Card';
+import { formatRoleLabel, isParentRole, isTeacherRole, normalizeRole } from './manageUsers.utils';
 import '../styles/admindashboard.css';
 
 export default function AdminDashboard() {
@@ -124,13 +125,13 @@ export default function AdminDashboard() {
                 />
                 <MetricCard
                   label="Parents"
-                  value={users.filter(u => u.role?.toLowerCase() === 'parent').length}
+                  value={users.filter(u => isParentRole(u.role)).length}
                   footer="Active accounts"
                   icon={<UserCheck size={24} />}
                 />
                 <MetricCard
                   label="Teachers"
-                  value={users.filter(u => u.role?.toLowerCase() === 'teacher').length}
+                  value={users.filter(u => isTeacherRole(u.role)).length}
                   footer="Active accounts"
                   icon={<GraduationCap size={24} />}
                 />
@@ -169,8 +170,8 @@ export default function AdminDashboard() {
                     header: 'Role',
                     className: 'recent-user-role-col',
                     render: (value) => (
-                      <span className={`recent-user-role-badge ${value?.toLowerCase() === 'teacher' ? 'teacher' : 'parent'}`}>
-                        {value || 'Parent'}
+                      <span className={`recent-user-role-badge ${normalizeRole(value) === 'teacher' ? 'teacher' : 'parent'}`}>
+                        {formatRoleLabel(value || 'Parent')}
                       </span>
                     )
                   }

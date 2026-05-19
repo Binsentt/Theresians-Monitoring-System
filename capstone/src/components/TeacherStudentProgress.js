@@ -5,6 +5,7 @@ import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
 import { buildScopedApiUrl } from './analyticsEndpoints';
 import { buildAuthHeaders, resolveAuthorizedSession } from './session.utils';
+import { normalizeRole } from './manageUsers.utils';
 import {
   filterStudentProgress,
   getDefaultSection,
@@ -123,7 +124,7 @@ export default function TeacherStudentProgress() {
     <DashboardContainer
       sidebar={
         <AnalyticsSidebar
-          role="teacher"
+          role={normalizeRole(user?.role) === 'parent_teacher' ? 'parent_teacher' : 'teacher'}
           activeItem="student-progress"
           logoSrc={logoImage}
           portalLabel="Teacher Portal"

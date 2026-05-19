@@ -19,6 +19,12 @@ describe('analytics endpoint helpers', () => {
     );
   });
 
+  test('adds teacher_id for Parent/Teacher users on teacher-scoped requests', () => {
+    expect(buildScopedApiUrl('/api/students/progress', 'parent_teacher', 16)).toBe(
+      'http://localhost:5000/api/students/progress?teacher_id=16'
+    );
+  });
+
   test('builds parent-scoped student detail URLs', () => {
     expect(buildStudentProgressDetailUrl(20, 'parent', 19)).toBe(
       'http://localhost:5000/api/student-progress/20?parent_id=19'

@@ -19,6 +19,7 @@ import ResetPassword from './components/ResetPassword';
 import LoginScreen from './components/LoginScreen';
 import LessonQuestionManager from './components/LessonQuestionManager';
 import SettingsScreen from './components/SettingsScreen';
+import AnnouncementPage from './components/AnnouncementPage';
 
 import './styles/Login.css';
 import './styles/homePageStyles.css';
@@ -41,6 +42,7 @@ function App() {
         <Route path="/admin/student-progress/:studentId" element={<StudentAnalytics />} />
         <Route path="/admin/top-achievers" element={<AdminTopAchievers />} />
         <Route path="/admin/activity-log" element={<AdminActivityLog />} />
+        <Route path="/admin/announcements" element={<AnnouncementPage mode="admin" />} />
         
         {/* Teacher Routes */}
         <Route path="/teacher-dashboard" element={<TeacherDashboard />} />
@@ -48,12 +50,14 @@ function App() {
         <Route path="/teacher/student-progress/:studentId" element={<StudentAnalytics />} />
         <Route path="/teacher/top-achievers" element={<TeacherTopAchievers />} />
         <Route path="/teacher/activity-log" element={<TeacherActivityLog />} />
+        <Route path="/teacher/announcements" element={<AnnouncementPage mode="teacher" />} />
         <Route path="/lesson-question-manager" element={<LessonQuestionManager />} />
         
         {/* Parent Routes */}
         <Route path="/parent-dashboard" element={<ParentDashboard />} />
         <Route path="/parent/child-progress" element={<ParentChildProgress />} />
         <Route path="/parent/activity-log" element={<ParentActivityLog />} />
+        <Route path="/parent/announcements" element={<AnnouncementPage mode="parent" />} />
         
         {/* Common Routes */}
         <Route path="/manage-users" element={<ManageUsers />} />

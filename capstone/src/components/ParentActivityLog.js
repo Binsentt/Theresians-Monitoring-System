@@ -65,7 +65,7 @@ export default function ParentActivityLog() {
     <DashboardContainer
       sidebar={
         <AnalyticsSidebar
-          role="parent"
+          role={normalizeRole(user?.role) === 'parent_teacher' ? 'parent_teacher' : 'parent'}
           activeItem="activity-log"
           onSelect={handleSidebarSelection}
           logoSrc={logoImage}

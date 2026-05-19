@@ -33,7 +33,8 @@
 
 .upload-panel,
 .folder-panel,
-.edit-panel {
+.edit-panel,
+.folder-view-panel {
   padding: 24px;
 }
 
@@ -63,6 +64,10 @@
   margin-top: 16px;
 }
 
+.folder-search {
+  margin-top: 18px;
+}
+
 .folder-item {
   display: flex;
   justify-content: space-between;
@@ -72,12 +77,77 @@
   background: var(--panel-bg, #fff);
   border: 1px solid var(--border-color, #e5e7eb);
   border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.folder-item:hover,
+.folder-item:focus {
+  border-color: rgba(37, 99, 235, 0.45);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.folder-item-active {
+  border-color: rgba(37, 99, 235, 0.65);
+  background: rgba(37, 99, 235, 0.08);
 }
 
 .folder-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.folder-view-panel {
+  display: grid;
+  gap: 20px;
+}
+
+.folder-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-muted, #64748b);
+  font-size: 0.95rem;
+}
+
+.folder-breadcrumb-button {
+  border: 0;
+  background: transparent;
+  color: var(--primary-color, #2563eb);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0;
+}
+
+.folder-breadcrumb-button:hover,
+.folder-breadcrumb-button:focus {
+  text-decoration: underline;
+  outline: none;
+}
+
+.folder-breadcrumb-separator {
+  color: var(--text-muted, #94a3b8);
+}
+
+.folder-view-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.folder-view-header h2 {
+  margin: 0 0 6px;
+}
+
+.folder-view-header p {
+  margin: 0;
+  color: var(--text-muted, #64748b);
 }
 
 .empty-text {
@@ -94,7 +164,7 @@
 .filter-group {
   display: grid;
   width: 100%;
-  grid-template-columns: 1.8fr 1fr 1fr 1fr;
+  grid-template-columns: minmax(180px, 1.8fr) repeat(4, minmax(140px, 1fr));
   gap: 16px;
 }
 
@@ -130,5 +200,8 @@
   }
   .filter-group {
     grid-template-columns: 1fr;
+  }
+  .folder-view-header {
+    flex-direction: column;
   }
 }

@@ -1,4 +1,4 @@
-import { normalizeRole } from './manageUsers.utils';
+import { canAccessRole, normalizeRole } from './manageUsers.utils';
 
 export const SESSION_STORAGE_KEY = 'loggedInUser';
 export const TOKEN_STORAGE_KEY = 'token';
@@ -21,11 +21,12 @@ export const resolveAuthorizedSession = (requiredRole, storage = window.localSto
 
   const sessionRole = normalizeRole(session.role);
   const expectedRole = normalizeRole(requiredRole);
-  if (!sessionRole || sessionRole !== expectedRole) return null;
+  if (!sessionRole || !canAccessRole(sessionRole, expectedRole)) return null;
 
   return {
     ...session,
     role: sessionRole,
+    activeRole: expectedRole,
   };
 };
 

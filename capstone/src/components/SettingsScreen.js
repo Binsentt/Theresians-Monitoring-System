@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import logoImage from '../assets/images/STS_Logo.png';
+import { formatRoleLabel, getDefaultDashboardRoute, isParentRole, normalizeRole } from './manageUsers.utils';
 import '../styles/settings.css';
 
 export default function SettingsScreen() {
@@ -490,9 +491,7 @@ export default function SettingsScreen() {
         <button
           className="back-btn"
           onClick={() => {
-            if (user?.role === 'admin') navigate('/admin-dashboard');
-            else if (user?.role === 'teacher') navigate('/teacher-dashboard');
-            else navigate('/parent-dashboard');
+            navigate(getDefaultDashboardRoute(user?.role));
           }}
         >
           Back
@@ -523,13 +522,6 @@ export default function SettingsScreen() {
           >
             <GearIcon /> Appearance
           </button>
-          <button
-            className={`sidebar-btn ${activeTab === 'logout' ? 'active' : ''}`}
-            onClick={handleLogout}
-            style={{ marginTop: '5px' }}
-          >
-            Logout
-          </button>
         </aside>
         <main className="settings-main">
           {activeTab === 'profile' && (
@@ -559,8 +551,14 @@ export default function SettingsScreen() {
                     <div className="info-row"><label>Email:</label><div className="profile-static-field">{user.email}</div></div>
                     <div className="info-row">
                       <label>Role:</label>
-                      <span className="role-badge">{user?.role ? `${user.role.charAt(0).toUpperCase()}${user.role.slice(1)}` : 'User'}</span>
+                      <span className="role-badge">{formatRoleLabel(user?.role || 'User')}</span>
                     </div>
+                    {isParentRole(user?.role) && (
+                      <div className="info-row">
+                        <label>Parent ID:</label>
+                        <div className="profile-static-field">{user.parent_id || 'Not generated yet'}</div>
+                      </div>
+                    )}
                     <div className="info-row">
                       <label>Phone Number:</label>
                       <span>{user.mobile_number || 'Not set'}</span>
@@ -697,8 +695,6 @@ export default function SettingsScreen() {
               )}
             </div>
           )}
-
-          {/* Change Password Tab */}
           {activeTab === 'password' && (
             <div className="settings-section">
               <div className="section-header">
@@ -875,8 +871,6 @@ export default function SettingsScreen() {
           )}
         </main>
       </div>
-
-      {/* Footer removed (back button moved to header) */}
 
       {/* Inline error message */}
       {errorMessage && (

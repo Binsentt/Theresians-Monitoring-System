@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
+import { isTeacherRole, normalizeRole } from './manageUsers.utils';
 import '../styles/topachievers.css';
 
 export default function TeacherTopAchievers() {
@@ -23,12 +24,12 @@ export default function TeacherTopAchievers() {
         document.documentElement.setAttribute('data-theme', savedTheme);
 
         const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-        if (!loggedInUser || loggedInUser.role !== 'teacher') {
+        if (!loggedInUser || !isTeacherRole(loggedInUser.role)) {
           navigate('/login');
           return;
         }
 
-        setUser(loggedInUser);
+        setUser({ ...loggedInUser, role: normalizeRole(loggedInUser.role) });
 
         // Fetch top achievers data for teacher's assigned students
         const response = await fetch(`http://localhost:5000/api/top-achievers?teacher_id=${loggedInUser.id}`);
@@ -78,7 +79,7 @@ export default function TeacherTopAchievers() {
       <DashboardContainer
         sidebar={
           <AnalyticsSidebar
-            role="teacher"
+            role={normalizeRole(user?.role) === 'parent_teacher' ? 'parent_teacher' : 'teacher'}
             activeItem="top-achievers"
             logoSrc={logoImage}
             portalLabel="Teacher Portal"
@@ -102,7 +103,7 @@ export default function TeacherTopAchievers() {
     <DashboardContainer
       sidebar={
         <AnalyticsSidebar
-          role="teacher"
+          role={normalizeRole(user?.role) === 'parent_teacher' ? 'parent_teacher' : 'teacher'}
           activeItem="top-achievers"
           logoSrc={logoImage}
           portalLabel="Teacher Portal"

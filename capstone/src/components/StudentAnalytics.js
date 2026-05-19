@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { buildStudentProgressDetailUrl } from './analyticsEndpoints';
+import { normalizeRole } from './manageUsers.utils';
+import logoImage from '../assets/images/STS_Logo.png';
 import '../styles/studentprogress.css';
 
 export default function StudentAnalytics() {
   const { studentId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [progress, setProgress] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -20,7 +23,7 @@ export default function StudentAnalytics() {
       // Determine user role
       const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
       if (loggedInUser && loggedInUser.role) {
-        setUserRole(loggedInUser.role.toLowerCase());
+        setUserRole(normalizeRole(loggedInUser.role));
       }
       
       try {
@@ -41,8 +44,11 @@ export default function StudentAnalytics() {
   }, [studentId]);
 
   const getBackRoute = () => {
+    if (location.pathname.startsWith('/teacher')) return '/teacher/student-progress';
+    if (location.pathname.startsWith('/parent')) return '/parent/child-progress';
     switch(userRole) {
       case 'teacher':
+      case 'parent_teacher':
         return '/teacher/student-progress';
       case 'parent':
         return '/parent/child-progress';
@@ -63,7 +69,10 @@ export default function StudentAnalytics() {
         <button className="back-action" onClick={() => navigate(getBackRoute())}>
           ← Back to Table
         </button>
-        <div>
+        <div className="student-analytics-logo" aria-label="Saint Theresa School logo">
+          <img src={logoImage} alt="Saint Theresa School logo" />
+        </div>
+        <div className="student-analytics-title">
           <p className="crumb">Analytics / Student Details</p>
           <h1>{progress?.student_name || 'Student analytics'}</h1>
           <p className="subtitle">Detailed performance insights, progress metrics, and AI recommendations for this student.</p>

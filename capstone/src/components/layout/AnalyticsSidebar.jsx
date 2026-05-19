@@ -32,6 +32,12 @@ const IconActivity = () => (
   </svg>
 );
 
+const IconAnnouncement = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M4 10v4h3l5 4V6l-5 4H4zm12.5 2a4.5 4.5 0 0 0-2.5-4.03v8.06A4.5 4.5 0 0 0 16.5 12zm-2.5-9v2.06A7.01 7.01 0 0 1 18 12a7.01 7.01 0 0 1-4 6.94V21a9 9 0 0 0 0-18z" />
+  </svg>
+);
+
 const IconSettings = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
     <path d="M19.14 12.94a7.98 7.98 0 0 0 .06-1 7.98 7.98 0 0 0-.06-1l2.03-1.58a.5.5 0 0 0 .12-.65l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a8.03 8.03 0 0 0-1.73-1l-.36-2.54A.5.5 0 0 0 14.5 2h-4a.5.5 0 0 0-.5.42l-.36 2.54a8.03 8.03 0 0 0-1.73 1l-2.39-.96a.5.5 0 0 0-.61.22L2.81 8.71a.5.5 0 0 0 .12.65L4.96 11a7.98 7.98 0 0 0 0 2l-2.03 1.58a.5.5 0 0 0-.12.65l1.92 3.32c.13.23.39.31.61.22l2.39-.96a8.03 8.03 0 0 0 1.73 1l.36 2.54c.05.28.28.48.56.48h4c.28 0 .51-.2.56-.48l.36-2.54a8.03 8.03 0 0 0 1.73-1l2.39.96c.23.09.49.01.61-.22l1.92-3.32a.5.5 0 0 0-.12-.65l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5z" />
@@ -41,6 +47,12 @@ const IconSettings = () => (
 const IconChild = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
     <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-6 9v-1a4 4 0 0 1 4-4h2v-1a5 5 0 0 1 10 0v1h2a4 4 0 0 1 4 4v1H6z" />
+  </svg>
+);
+
+const IconLogout = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M10 17v-2h4V9h-4V7h6v10h-6zm-2 4H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3v2H5v14h3v2zm8.6-5.4L15.2 14.2 17.4 12l-2.2-2.2 1.4-1.4L21.2 13l-4.6 4.6z" />
   </svg>
 );
 
@@ -56,25 +68,49 @@ const sidebarItems = {
     { key: 'student-progress', label: 'Student Progress', icon: <IconProgress />, route: '/admin/student-progress' },
     { key: 'manage-users', label: 'Manage Users', icon: <IconUsers />, route: '/manage-users' },
     { key: 'learning-manager', label: 'Lesson & Question Manager', icon: <IconActivity />, route: '/lesson-question-manager' },
+    { key: 'announcements', label: 'Announcements', icon: <IconAnnouncement />, route: '/admin/announcements' },
     { key: 'top-achievers', label: 'Top Achievers', icon: <IconAchievers />, route: '/admin/top-achievers' },
     { key: 'activity-log', label: 'Activity Log', icon: <IconActivity />, route: '/admin/activity-log' },
     { key: 'settings', label: 'Settings', icon: <IconSettings />, route: '/settings' },
+    { key: 'logout', label: 'Logout', icon: <IconLogout />, actionKey: 'logout' },
   ],
   teacher: [
     { key: 'dashboard', label: 'Dashboard', icon: <IconDashboard />, actionKey: 'dashboard', route: '/teacher-dashboard' },
     { key: 'student-progress', label: 'Student Progress', icon: <IconProgress />, route: '/teacher/student-progress' },
     { key: 'learning-manager', label: 'Lesson & Question Manager', icon: <IconActivity />, route: '/lesson-question-manager' },
+    { key: 'announcements', label: 'Announcements', icon: <IconAnnouncement />, route: '/teacher/announcements' },
     { key: 'top-achievers', label: 'Top Achievers', icon: <IconAchievers />, route: '/teacher/top-achievers' },
     { key: 'activity-log', label: 'Activity Log', icon: <IconActivity />, route: '/teacher/activity-log' },
     { key: 'settings', label: 'Settings', icon: <IconSettings />, route: '/settings' },
+    { key: 'logout', label: 'Logout', icon: <IconLogout />, actionKey: 'logout' },
   ],
   parent: [
     { key: 'dashboard', label: 'Dashboard', icon: <IconDashboard />, actionKey: 'dashboard', route: '/parent-dashboard' },
     { key: 'child-progress', label: 'Child Progress', icon: <IconChild />, route: '/parent/child-progress' },
+    { key: 'announcements', label: 'Announcements', icon: <IconAnnouncement />, route: '/parent/announcements' },
     { key: 'activity-log', label: 'Activity Log', icon: <IconActivity />, route: '/parent/activity-log' },
     { key: 'settings', label: 'Settings', icon: <IconSettings />, route: '/settings' },
+    { key: 'logout', label: 'Logout', icon: <IconLogout />, actionKey: 'logout' },
+  ],
+  parent_teacher: [
+    { key: 'dashboard', label: 'Dashboard', icon: <IconDashboard />, actionKey: 'dashboard', route: '/teacher-dashboard' },
+    { key: 'student-progress', label: 'Student Progress', icon: <IconProgress />, route: '/teacher/student-progress' },
+    { key: 'learning-manager', label: 'Lesson & Question Manager', icon: <IconActivity />, route: '/lesson-question-manager' },
+    { key: 'announcements', label: 'Announcements', icon: <IconAnnouncement />, route: '/teacher/announcements' },
+    { key: 'top-achievers', label: 'Top Achievers', icon: <IconAchievers />, route: '/teacher/top-achievers' },
+    { key: 'activity-log', label: 'Activity Log', icon: <IconActivity />, route: '/teacher/activity-log' },
+    { key: 'child-progress', label: 'Child Progress', icon: <IconChild />, route: '/parent/child-progress' },
+    { key: 'settings', label: 'Settings', icon: <IconSettings />, route: '/settings' },
+    { key: 'logout', label: 'Logout', icon: <IconLogout />, actionKey: 'logout' },
   ],
 };
+
+const normalizeSidebarRole = (role) => {
+  const roleValue = String(role || 'admin').trim().toLowerCase();
+  return ['parent/teacher', 'parent teacher', 'parent-teacher'].includes(roleValue) ? 'parent_teacher' : roleValue;
+};
+
+export const getSidebarItemsForRole = (role) => sidebarItems[normalizeSidebarRole(role)] || sidebarItems.admin;
 
 export default function AnalyticsSidebar({ role = 'admin', activeItem, onSelect, logoSrc, portalLabel = 'Portal' }) {
   const navigate = useNavigate();
@@ -89,11 +125,20 @@ export default function AnalyticsSidebar({ role = 'admin', activeItem, onSelect,
   }, []);
 
   const items = useMemo(() => {
-    const roleKey = String(role || 'admin').toLowerCase();
-    return sidebarItems[roleKey] || sidebarItems.admin;
+    return getSidebarItemsForRole(role);
   }, [role]);
 
   const handleClick = (item) => {
+    if (item.actionKey === 'logout') {
+      localStorage.removeItem('loggedInUser');
+      localStorage.removeItem('token');
+      navigate('/');
+      if (isMobile) {
+        setIsOpen(false);
+      }
+      return;
+    }
+
     if (item.route) {
       navigate(item.route);
     }
@@ -136,7 +181,7 @@ export default function AnalyticsSidebar({ role = 'admin', activeItem, onSelect,
             <button
               type="button"
               key={item.key}
-              className={`analytics-sidebar-item ${getActiveKey(item, activeItem, location.pathname) ? 'active' : ''}`}
+              className={`analytics-sidebar-item ${item.key === 'logout' ? 'logout' : ''} ${getActiveKey(item, activeItem, location.pathname) ? 'active' : ''}`}
               onClick={() => handleClick(item)}
             >
               <span className="analytics-sidebar-item-icon">{item.icon}</span>

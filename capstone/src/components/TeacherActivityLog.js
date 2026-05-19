@@ -5,6 +5,7 @@ import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import ActivityLog from './ActivityLog';
 import logoImage from '../assets/images/STS_Logo.png';
 import { resolveAuthorizedSession } from './session.utils';
+import { normalizeRole } from './manageUsers.utils';
 import '../styles/activitylog.css';
 
 export default function TeacherActivityLog() {
@@ -71,7 +72,7 @@ export default function TeacherActivityLog() {
     <DashboardContainer
       sidebar={
         <AnalyticsSidebar
-          role="teacher"
+          role={normalizeRole(user?.role) === 'parent_teacher' ? 'parent_teacher' : 'teacher'}
           activeItem="activity-log"
           onSelect={handleSidebarSelection}
           logoSrc={logoImage}

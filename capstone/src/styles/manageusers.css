@@ -628,6 +628,11 @@
     color: #92400e;
 }
 
+.role-badge.role-parent_teacher {
+    background: #e0f2fe;
+    color: #075985;
+}
+
 .role-badge.role-admin {
     background: #fee2e2;
     color: #7f1d1d;
@@ -646,6 +651,11 @@
 [data-theme='dark'] .role-badge.role-teacher {
     background: #92400e;
     color: #fef3c7;
+}
+
+[data-theme='dark'] .role-badge.role-parent_teacher {
+    background: #0c4a6e;
+    color: #bae6fd;
 }
 
 [data-theme='dark'] .role-badge.role-admin {
@@ -791,6 +801,36 @@
     margin: 0 0 20px 0;
     color: #1e293b;
     font-size: 20px;
+}
+
+.generated-credential-panel {
+    display: grid;
+    gap: 10px;
+    margin: 16px 0;
+    padding: 14px;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: var(--border-radius-md, 8px);
+    background: var(--bg-secondary, #f8fafc);
+}
+
+.generated-credential-label {
+    color: var(--text-muted, #64748b);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.generated-credential-value {
+    color: var(--text-primary, #0b2447);
+    font-size: 1.08rem;
+    word-break: break-all;
+}
+
+.generated-credential-status {
+    color: var(--success-color, #16a34a);
+    font-size: 0.88rem;
+    font-weight: 600;
 }
 
 .delete-modal p {

@@ -36,6 +36,17 @@ const accountsPayload = [
     gender: 'Female',
     employee_id: 'EMP-7',
     address: 'Main Street',
+  },
+  {
+    id: 8,
+    name: 'Parent User',
+    email: 'parent@gmail.com',
+    role: 'parent',
+    mobile_number: '09987654321',
+    birthday: '1988-02-10T00:00:00.000Z',
+    gender: 'Female',
+    address: 'Parent Street',
+    parent_id: '482915',
   }
 ];
 
@@ -96,6 +107,32 @@ describe('ManageUsers edit flow', () => {
     expect(container.textContent).toContain('Edit User');
     expect(container.querySelector('input[value="Maria"]')).toBeTruthy();
     expect(container.querySelector('input[value="maria@gmail.com"]')).toBeTruthy();
+  });
+
+  test('shows generated Parent ID in the users table for parent accounts', async () => {
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    expect(container.textContent).toContain('PARENT ID');
+    expect(container.textContent).toContain('482915');
+  });
+
+  test('Add User form uses system-generated credentials without manual password input', async () => {
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    const addButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add'
+    );
+
+    await act(async () => {
+      addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('A strong temporary password will be generated and emailed automatically.');
+    expect(container.querySelector('input[type="password"]')).toBeNull();
   });
 
   test('submits updates for the selected user through the existing save flow', async () => {

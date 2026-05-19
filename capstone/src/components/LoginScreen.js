@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import logoImage from '../assets/images/STS_Logo.png';
+import { getDefaultDashboardRoute, normalizeRole } from './manageUsers.utils';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -82,12 +83,9 @@ export default function LoginScreen() {
           setRememberToken(data.rememberToken);
         }
         localStorage.setItem('loggedInUser', JSON.stringify(data.user));
-        const role = data.user.role?.toLowerCase();
+        const role = normalizeRole(data.user.role);
         alert(`Welcome back, ${data.user.name}!`);
-        if (role === 'admin') navigate('/admin-dashboard');
-        else if (role === 'teacher') navigate('/teacher-dashboard');
-        else if (role === 'parent') navigate('/parent-dashboard');
-        else navigate('/');
+        navigate(getDefaultDashboardRoute(role));
         return;
       }
 
@@ -128,18 +126,9 @@ export default function LoginScreen() {
           localStorage.setItem('rememberToken', result.rememberToken);
           setRememberToken(result.rememberToken);
         }
-        const role = result.user.role.toLowerCase();
+        const role = normalizeRole(result.user.role);
         alert(`Welcome back, ${result.user.name}!`);
-        
-        if (role === 'admin') {
-          navigate('/admin-dashboard');
-        } else if (role === 'teacher') {
-          navigate('/teacher-dashboard');
-        } else if (role === 'parent') {
-          navigate('/parent-dashboard');
-        } else {
-          navigate('/');
-        }
+        navigate(getDefaultDashboardRoute(role));
       }
     } catch (err) {
       setErrorMessage('Network error while verifying OTP.');

@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS public.accounts (
     password CHARACTER VARYING(255) NOT NULL,
     mobile_number CHARACTER VARYING(20),
     role CHARACTER VARYING(50) NOT NULL DEFAULT 'Parent',
+    parent_id CHARACTER VARYING(6),
     employee_id CHARACTER VARYING(50),
     otp_code CHARACTER VARYING(10),
     otp_expires_at TIMESTAMP WITH TIME ZONE,
@@ -18,9 +19,11 @@ CREATE TABLE IF NOT EXISTS public.accounts (
 
     CONSTRAINT accounts_pkey PRIMARY KEY (id),
     CONSTRAINT accounts_email_key UNIQUE (email),
+    CONSTRAINT accounts_parent_id_key UNIQUE (parent_id),
     CONSTRAINT accounts_employee_id_key UNIQUE (employee_id)
 );
 
+ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS parent_id CHARACTER VARYING(6);
 ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS address CHARACTER VARYING(255);
 ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS birthday DATE;
 ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS gender CHARACTER VARYING(20);
@@ -30,6 +33,8 @@ ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMP WI
 ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT false;
 ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false;
 ALTER TABLE public.accounts ADD CONSTRAINT IF NOT EXISTS accounts_employee_id_key UNIQUE (employee_id);
+UPDATE public.accounts SET parent_id = NULL WHERE parent_id IS NOT NULL AND parent_id !~ '^\d{6}$';
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_parent_id_key ON public.accounts(parent_id) WHERE parent_id IS NOT NULL;
 
 INSERT INTO public.accounts (name, email, password, mobile_number, role, employee_id, gender, status)
 VALUES ('Admin User', 'vincenttafalla2@gmail.com', 'Admin12345', '09463066523', 'admin', 'EMP-0001', 'Male', 'Online')
@@ -61,6 +66,7 @@ CREATE TABLE IF NOT EXISTS public.student_game_progress (
     total_questions INTEGER DEFAULT 0,
     accuracy_rate DECIMAL(5, 2) DEFAULT 0.00,
     progress_percentage DECIMAL(5, 2) DEFAULT 0.00,
+    lesson_progress DECIMAL(5, 2) DEFAULT 0.00,
     last_played TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -68,6 +74,8 @@ CREATE TABLE IF NOT EXISTS public.student_game_progress (
     CONSTRAINT student_game_progress_pkey PRIMARY KEY (id),
     CONSTRAINT student_game_progress_student_fk FOREIGN KEY (student_id) REFERENCES public.accounts(id) ON DELETE CASCADE
 );
+
+ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS lesson_progress DECIMAL(5, 2) DEFAULT 0.00;
 
 -- Table for activity logs (attendance and gameplay sessions)
 CREATE TABLE IF NOT EXISTS public.activity_logs (
@@ -80,11 +88,26 @@ CREATE TABLE IF NOT EXISTS public.activity_logs (
     logout_time TIMESTAMP WITH TIME ZONE,
     session_date DATE DEFAULT CURRENT_DATE,
     activity_description CHARACTER VARYING(255),
+    lesson_progress DECIMAL(5, 2) DEFAULT 0.00,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT activity_logs_pkey PRIMARY KEY (id),
     CONSTRAINT activity_logs_student_fk FOREIGN KEY (student_id) REFERENCES public.accounts(id) ON DELETE CASCADE
 );
+
+ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS lesson_progress DECIMAL(5, 2) DEFAULT 0.00;
+
+CREATE TABLE IF NOT EXISTS public.announcements (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(150) NOT NULL,
+    message TEXT NOT NULL,
+    created_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL,
+    created_by_role VARCHAR(50) NOT NULL,
+    target_role VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_announcements_target_created ON public.announcements(target_role, created_at DESC);
 
 -- === SAMPLE DATA FOR GAME PROGRESS (TOP ACHIEVERS) ===
 INSERT INTO public.student_game_progress (student_id, student_name, grade_level, current_quest, score, correct_answers, total_questions, accuracy_rate, progress_percentage, last_played)

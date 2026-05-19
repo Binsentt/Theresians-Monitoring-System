@@ -1,8 +1,34 @@
-export const normalizeRole = (role) => String(role || '').trim().toLowerCase();
+export const normalizeRole = (role) => {
+  const value = String(role || '').trim().toLowerCase();
+  if (['parent/teacher', 'parent_teacher', 'parent-teacher', 'parent teacher'].includes(value)) {
+    return 'parent_teacher';
+  }
+  return value;
+};
+
+export const isAdminRole = (role) => normalizeRole(role) === 'admin';
+export const isTeacherRole = (role) => ['teacher', 'parent_teacher'].includes(normalizeRole(role));
+export const isParentRole = (role) => ['parent', 'parent_teacher'].includes(normalizeRole(role));
+export const canAccessRole = (role, requiredRole) => {
+  const required = normalizeRole(requiredRole);
+  if (required === 'admin') return isAdminRole(role);
+  if (required === 'teacher') return isTeacherRole(role);
+  if (required === 'parent') return isParentRole(role);
+  return normalizeRole(role) === required;
+};
+
+export const getDefaultDashboardRoute = (role) => {
+  const normalizedRole = normalizeRole(role);
+  if (normalizedRole === 'admin') return '/admin-dashboard';
+  if (normalizedRole === 'teacher' || normalizedRole === 'parent_teacher') return '/teacher-dashboard';
+  if (normalizedRole === 'parent') return '/parent-dashboard';
+  return '/';
+};
 
 export const formatRoleLabel = (role) => {
   const normalizedRole = normalizeRole(role);
   if (!normalizedRole) return 'Parent';
+  if (normalizedRole === 'parent_teacher') return 'Parent/Teacher';
   return normalizedRole.charAt(0).toUpperCase() + normalizedRole.slice(1);
 };
 
@@ -44,3 +70,11 @@ export const paginateItems = (items, currentPage, pageSize) => {
     pageItems: Array.isArray(items) ? items.slice(startIndex, endIndex) : [],
   };
 };
+
+export const buildAccountCreationSuccessModal = (selectedRole, data = {}) => ({
+  title: data.warning ? 'Account Created - Email Issue' : 'Success',
+  message: data.warning || `${selectedRole} added successfully! Account credentials were sent to the user's email.`,
+  tempPassword: '',
+  parentId: data.user?.parent_id || '',
+  emailSent: !data.warning,
+});

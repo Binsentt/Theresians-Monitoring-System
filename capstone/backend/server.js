@@ -13,6 +13,30 @@ dns.setDefaultResultOrder('ipv4first');
 
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const pool = require('./database/db');
+const {
+  normalizeParentCode,
+  normalizeGameStudentName,
+  buildGameStudentEmail,
+  toNullableNumber,
+  resolveProgressPercentage,
+  resolveAccuracyRate,
+} = require('./parentIdGame.utils');
+const {
+  normalizeAnnouncementPayload,
+  normalizeAnnouncementTarget,
+  normalizeAnnouncementRole,
+  normalizeAnnouncementManagementPayload,
+  normalizeAnnouncementActorPayload,
+  canManageAnnouncement,
+} = require('./announcements.utils');
+const {
+  buildCredentialsEmail,
+  resolveGeneratedAccountPassword,
+} = require('./accountCreation.utils');
+const {
+  isValidGradeLevel,
+  isValidMathTopicForGrade,
+} = require('./learningContentRules.utils');
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -38,6 +62,31 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+const generateSixDigitCode = () => String(Math.floor(100000 + Math.random() * 900000));
+
+const generateUniqueParentCode = async () => {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const code = generateSixDigitCode();
+    const existing = await pool.query('SELECT 1 FROM public.accounts WHERE parent_id = $1 LIMIT 1', [code]);
+    if (existing.rows.length === 0) return code;
+  }
+  throw new Error('Unable to generate unique Parent ID');
+};
+
+const backfillParentCodes = async () => {
+  const result = await pool.query(
+    `SELECT id
+     FROM public.accounts
+     WHERE LOWER(role) IN ('parent', 'parent_teacher')
+       AND (parent_id IS NULL OR parent_id = '')`
+  );
+
+  for (const row of result.rows) {
+    const code = await generateUniqueParentCode();
+    await pool.query('UPDATE public.accounts SET parent_id = $1 WHERE id = $2', [code, row.id]);
+  }
+};
+
 transporter.verify(err => {
   if (err) console.error('❌ Email Error:', err.message);
   else console.log('✅ Email server ready');
@@ -49,7 +98,11 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT false');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS parent_id VARCHAR(6)');
     await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS accounts_employee_id_key ON public.accounts(employee_id)');
+    await pool.query("UPDATE public.accounts SET parent_id = NULL WHERE parent_id IS NOT NULL AND parent_id !~ '^\\d{6}$'");
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS accounts_parent_id_key ON public.accounts(parent_id) WHERE parent_id IS NOT NULL');
+    await backfillParentCodes();
     await pool.query(`CREATE TABLE IF NOT EXISTS public.student_game_progress (
       id SERIAL PRIMARY KEY,
       student_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
@@ -66,6 +119,7 @@ const ensureSchema = async () => {
       updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );`);
     await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS section CHARACTER VARYING(50)');
+    await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS lesson_progress DECIMAL(5, 2) DEFAULT 0.00');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_student_game_progress_student_id ON public.student_game_progress(student_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_student_game_progress_score ON public.student_game_progress(score DESC)');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.teacher_student_relationships (
@@ -97,9 +151,21 @@ const ensureSchema = async () => {
       status VARCHAR(50),
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );`);
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS lesson_progress DECIMAL(5, 2) DEFAULT 0.00');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_timestamp ON public.activity_logs(activity_timestamp DESC)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_student_name ON public.activity_logs(student_name)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_grade_section ON public.activity_logs(grade_level, section)');
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.announcements (
+      id SERIAL PRIMARY KEY,
+      title VARCHAR(150) NOT NULL,
+      message TEXT NOT NULL,
+      created_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL,
+      created_by_role VARCHAR(50) NOT NULL,
+      target_role VARCHAR(50) NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_announcements_target_created ON public.announcements(target_role, created_at DESC)');
 
     await pool.query(`CREATE TABLE IF NOT EXISTS public.folders (
       id SERIAL PRIMARY KEY,
@@ -185,25 +251,15 @@ const generateDefaultEmail = (name) => {
   return `${cleaned || 'user'}${suffix}@gmail.com`;
 };
 
-const generateCredentialsEmail = async (email, password, role) => {
+const generateCredentialsEmail = async (email, password, role, name) => {
   const appUrl = process.env.APP_URL || 'http://localhost:3000/login';
+  const message = buildCredentialsEmail({ email, password, role, name, appUrl });
   try {
     await transporter.sendMail({
       from: `"Saint Therese School" <${MY_GMAIL}>`,
       to: email,
-      subject: 'Your STS Portal Account Credentials',
-      html: `<div style="font-family: Arial, sans-serif; border: 1px solid #ddd; padding: 20px; border-radius: 10px; background: #f8f9fa;">
-              <h2 style="color: #0b2447;">Welcome to STS Portal</h2>
-              <p>Your account has been created with the following credentials:</p>
-              <ul style="color: #333;">
-                <li><strong>Email:</strong> ${email}</li>
-                <li><strong>Role:</strong> ${role}</li>
-                <li><strong>Password:</strong> ${password}</li>
-              </ul>
-              <p>Please log in using the link below and change your password immediately.</p>
-              <p><a href="${appUrl}" style="display: inline-block; padding: 10px 16px; background: #2563eb; color: white; border-radius: 6px; text-decoration: none;">Login to STS Portal</a></p>
-              <p style="color: #777; font-size: 13px;">If you did not request this account, please contact your administrator.</p>
-            </div>`
+      subject: message.subject,
+      html: message.html,
     });
     return true;
   } catch (err) {
@@ -250,7 +306,16 @@ const calculateAge = (birthday) => {
   return age;
 };
 
-const normalizeAccountRole = (role) => String(role || '').trim().toLowerCase();
+const normalizeAccountRole = (role) => {
+  const value = String(role || '').trim().toLowerCase();
+  if (['parent/teacher', 'parent-teacher', 'parent teacher', 'parent_teacher'].includes(value)) {
+    return 'parent_teacher';
+  }
+  return value;
+};
+
+const accountHasTeacherAccess = (role) => ['teacher', 'parent_teacher'].includes(normalizeAccountRole(role));
+const accountHasParentAccess = (role) => ['parent', 'parent_teacher'].includes(normalizeAccountRole(role));
 
 const serializeUser = (user) => {
   if (!user) return null;
@@ -314,16 +379,25 @@ const appendParentScopeFilter = ({ parentId, params, studentColumn, relationship
   `;
 };
 
+const announcementSelectSql = `
+  SELECT an.id,
+         an.title,
+         an.message,
+         an.created_by,
+         an.created_by_role,
+         an.target_role,
+         an.created_at,
+         COALESCE(a.name, INITCAP(an.created_by_role)) AS posted_by
+  FROM public.announcements an
+  LEFT JOIN public.accounts a ON a.id = an.created_by
+`;
+
 const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const shuffleArray = (array) => array.sort(() => Math.random() - 0.5);
 const normalizeTopic = (topic) => String(topic || '').toLowerCase();
 
-const ALLOWED_GRADE_LEVELS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
-const ALLOWED_MATH_TOPICS = ['Addition', 'Subtraction', 'Multiplication', 'Division', 'Fractions', 'Decimals', 'Geometry', 'Basic Algebra', 'Word Problems'];
 const ALLOWED_FILE_TYPES = ['lesson', 'fixed_questions'];
 
-const isValidGradeLevel = (value) => ALLOWED_GRADE_LEVELS.includes(String(value || '').trim());
-const isValidMathTopic = (value) => ALLOWED_MATH_TOPICS.includes(String(value || '').trim());
 const isValidFileType = (value) => ALLOWED_FILE_TYPES.includes(String(value || '').trim().toLowerCase());
 const gradeNumber = (gradeLevel) => {
   const match = String(gradeLevel || '').trim().match(/^Grade\s*(\d+)$/i);
@@ -1456,7 +1530,7 @@ app.post('/api/logout-status', async (req, res) => {
 });
 
 app.post('/api/accounts', async (req, res) => {
-  const { name, email, password, role, mobile_number, address, birthday, gender, employee_id } = req.body;
+  const { name, email, role, mobile_number, address, birthday, gender, employee_id } = req.body;
   try {
     const finalName = (name || '').trim();
     const normalizedEmail = (email || '').toLowerCase().trim() || generateDefaultEmail(finalName);
@@ -1464,36 +1538,35 @@ app.post('/api/accounts', async (req, res) => {
       return res.status(400).json({ error: 'Name and email are required' });
     }
 
-    const finalRole = (role || 'Parent').toLowerCase();
+    const finalRole = normalizeAccountRole(role || 'Parent');
     const age = calculateAge(birthday);
     if (age < 18) {
       return res.status(400).json({ error: 'Users must be at least 18 years old' });
     }
 
-    if (finalRole === 'teacher' && !employee_id) {
-      return res.status(400).json({ error: 'Employee ID is required for teachers' });
+    if (accountHasTeacherAccess(finalRole) && !employee_id) {
+      return res.status(400).json({ error: 'Employee ID is required for teachers and Parent/Teacher users' });
     }
 
-    const generatedPassword = (!password || password.trim() === '') ? generateRandomPassword() : password;
+    const { password: generatedPassword, mustChangePassword } = resolveGeneratedAccountPassword(null, generateRandomPassword);
     const hashedPassword = await hashPassword(generatedPassword);
-    const mustChangePassword = !password || password.trim() === '';
+    const parentCode = accountHasParentAccess(finalRole) ? await generateUniqueParentCode() : null;
 
     const result = await pool.query(
-      `INSERT INTO accounts (name, email, password, role, mobile_number, address, birthday, gender, employee_id, status, is_archived, must_change_password)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11)
+      `INSERT INTO accounts (name, email, password, role, mobile_number, address, birthday, gender, employee_id, status, is_archived, must_change_password, parent_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11, $12)
        RETURNING *`,
-      [finalName, normalizedEmail, hashedPassword, finalRole, mobile_number, address, birthday, gender, employee_id, 'Offline', mustChangePassword]
+      [finalName, normalizedEmail, hashedPassword, finalRole, mobile_number, address, birthday, gender, employee_id, 'Offline', mustChangePassword, parentCode]
     );
 
     const created = serializeUser(result.rows[0]);
-    const emailSent = await generateCredentialsEmail(normalizedEmail, generatedPassword, finalRole);
-    const responsePayload = { user: created };
+    const emailSent = await generateCredentialsEmail(normalizedEmail, generatedPassword, finalRole, finalName);
     if (!emailSent) {
-      responsePayload.warning = 'Credentials email could not be sent. Please verify email settings.';
+      await pool.query('DELETE FROM accounts WHERE id = $1', [created.id]);
+      return res.status(502).json({ error: 'Account was not created because the generated credentials email could not be sent. Please verify the email settings and try again.' });
     }
-    if (!password || password.trim() === '') {
-      responsePayload.tempPassword = generatedPassword;
-    }
+
+    const responsePayload = { user: created };
 
     res.status(201).json(responsePayload);
   } catch (err) {
@@ -1508,7 +1581,7 @@ app.post('/api/accounts', async (req, res) => {
 app.get('/api/accounts', async (req, res) => {
   try {
     const archived = String(req.query.archived).toLowerCase() === 'true';
-    const roleFilter = req.query.role ? req.query.role.toLowerCase().trim() : null;
+    const roleFilter = req.query.role ? normalizeAccountRole(req.query.role) : null;
     let queryString;
     let queryParams = [];
 
@@ -1534,7 +1607,7 @@ app.get('/api/accounts', async (req, res) => {
 // --- UPDATED PUT ROUTE (FIXED: Properly handles all fields, includes comprehensive logging) ---
 app.put('/api/accounts/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, email, role, password, mobile_number, address, birthday, gender, status, employee_id, is_archived } = req.body;
+  const { name, email, password, mobile_number, address, birthday, gender, status, employee_id, is_archived } = req.body;
 
   try {
     const currentData = await pool.query('SELECT * FROM accounts WHERE id = $1', [id]);
@@ -1546,27 +1619,18 @@ app.put('/api/accounts/:id', async (req, res) => {
     const finalEmail = email && email.trim() !== '' ? email.toLowerCase().trim() : old.email;
     const finalBirthday = birthday && birthday.trim() !== '' ? birthday : old.birthday;
     const oldRole = normalizeAccountRole(old.role);
-    const finalRole = normalizeAccountRole(role || old.role);
+    const finalRole = oldRole;
     const finalEmployeeId = employee_id !== undefined ? employee_id : old.employee_id;
     const finalStatus = status || old.status || 'Active';
     const finalArchived = typeof is_archived === 'boolean' ? is_archived : old.is_archived;
+    const finalParentCode = accountHasParentAccess(finalRole) ? (old.parent_id || await generateUniqueParentCode()) : null;
 
     if (calculateAge(finalBirthday) < 18) {
       return res.status(400).json({ error: 'Users must be at least 18 years old' });
     }
 
-    if (finalRole === 'teacher' && !finalEmployeeId) {
-      return res.status(400).json({ error: 'Employee ID is required for teachers' });
-    }
-
-    if ((oldRole === 'teacher' || oldRole === 'parent') && finalRole !== 'teacher' && finalRole !== 'parent') {
-      const relations = await pool.query(
-        'SELECT * FROM public.teacher_student_relationships WHERE teacher_id = $1',
-        [id]
-      );
-      if (relations.rows.length > 0) {
-        return res.status(400).json({ error: 'Cannot change an account with linked students to this role. Remove relationships first.' });
-      }
+    if (accountHasTeacherAccess(finalRole) && !finalEmployeeId) {
+      return res.status(400).json({ error: 'Employee ID is required for teachers and Parent/Teacher users' });
     }
 
     let hashedPassword = old.password;
@@ -1577,8 +1641,8 @@ app.put('/api/accounts/:id', async (req, res) => {
     const updateResult = await pool.query(
       `UPDATE accounts
        SET name=$1, email=$2, role=$3, password=$4, mobile_number=$5, address=$6,
-           birthday=$7, gender=$8, status=$9, employee_id=$10, is_archived=$11
-       WHERE id=$12
+           birthday=$7, gender=$8, status=$9, employee_id=$10, is_archived=$11, parent_id=$12
+       WHERE id=$13
        RETURNING *`,
       [
         name || old.name,
@@ -1592,6 +1656,7 @@ app.put('/api/accounts/:id', async (req, res) => {
         finalStatus,
         finalEmployeeId,
         finalArchived,
+        finalParentCode,
         id,
       ]
     );
@@ -1635,7 +1700,7 @@ app.post('/api/teacher-student-relationships', async (req, res) => {
     if (resultTeacher.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
     const teacher = resultTeacher.rows[0];
     const ownerRole = normalizeAccountRole(teacher.role);
-    if (ownerRole !== 'teacher' && ownerRole !== 'parent') {
+    if (!accountHasTeacherAccess(ownerRole) && !accountHasParentAccess(ownerRole)) {
       return res.status(400).json({ error: 'Selected user must be a teacher or parent' });
     }
 
@@ -1741,6 +1806,23 @@ app.delete('/api/folders/:id', async (req, res) => {
   }
 });
 
+const resolveLearningFolderId = async (rawFolderId) => {
+  const value = String(rawFolderId ?? '').trim();
+  if (!value) return { folderId: null };
+
+  const folderId = parseInt(value, 10);
+  if (Number.isNaN(folderId)) {
+    return { error: 'Invalid folder ID.' };
+  }
+
+  const folder = await pool.query('SELECT id FROM public.folders WHERE id = $1', [folderId]);
+  if (folder.rows.length === 0) {
+    return { error: 'Selected folder was not found.' };
+  }
+
+  return { folderId };
+};
+
 app.post('/api/learning-files/upload', upload.single('file'), async (req, res) => {
   try {
     const { title, grade_level, math_topic, file_type, folder_id, uploaded_by } = req.body;
@@ -1753,9 +1835,9 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
     const normalizedTopic = String(math_topic).trim();
     const normalizedType = String(file_type).trim().toLowerCase();
 
-    if (!isValidGradeLevel(normalizedGrade) || !isValidMathTopic(normalizedTopic)) {
+    if (!isValidGradeLevel(normalizedGrade) || !isValidMathTopicForGrade(normalizedGrade, normalizedTopic)) {
       cleanTemporaryUpload(req.file.path);
-      return res.status(400).json({ error: 'Invalid grade level or math topic. Only Grade 1–6 mathematics content is supported.' });
+      return res.status(400).json({ error: 'Invalid math topic for the selected grade level.' });
     }
     if (!isValidFileType(normalizedType)) {
       cleanTemporaryUpload(req.file.path);
@@ -1767,6 +1849,12 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
     if (!allowedLesson && !allowedQuestions) {
       cleanTemporaryUpload(req.file.path);
       return res.status(400).json({ error: 'Invalid file type for the selected upload type' });
+    }
+
+    const folderResolution = await resolveLearningFolderId(folder_id);
+    if (folderResolution.error) {
+      cleanTemporaryUpload(req.file.path);
+      return res.status(400).json({ error: folderResolution.error });
     }
 
     const fileName = generateUploadFileName(req.file.originalname);
@@ -1785,7 +1873,7 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
         String(grade_level).trim(),
         String(math_topic).trim(),
         normalizedType,
-        folder_id ? parseInt(folder_id, 10) : null,
+        folderResolution.folderId,
         allowedLesson ? 'lesson' : 'fixed',
         uploaded_by ? parseInt(uploaded_by, 10) : null,
       ]
@@ -1844,11 +1932,16 @@ app.put('/api/learning-files/:id', async (req, res) => {
     const normalizedGrade = String(grade_level).trim();
     const normalizedTopic = String(math_topic).trim();
     const normalizedType = String(file_type).trim().toLowerCase();
-    if (!isValidGradeLevel(normalizedGrade) || !isValidMathTopic(normalizedTopic)) {
-      return res.status(400).json({ error: 'Invalid grade level or math topic. Only Grade 1–6 mathematics content is supported.' });
+    if (!isValidGradeLevel(normalizedGrade) || !isValidMathTopicForGrade(normalizedGrade, normalizedTopic)) {
+      return res.status(400).json({ error: 'Invalid math topic for the selected grade level.' });
     }
     if (!isValidFileType(normalizedType)) {
       return res.status(400).json({ error: 'Invalid file type.' });
+    }
+
+    const folderResolution = await resolveLearningFolderId(folder_id);
+    if (folderResolution.error) {
+      return res.status(400).json({ error: folderResolution.error });
     }
 
     const result = await pool.query(
@@ -1858,9 +1951,9 @@ app.put('/api/learning-files/:id', async (req, res) => {
            math_topic = $3,
            file_type = $4,
            folder_id = $5
-       WHERE id = $6
+      WHERE id = $6
        RETURNING *`,
-      [String(title).trim(), String(grade_level).trim(), String(math_topic).trim(), String(file_type).trim(), folder_id ? parseInt(folder_id, 10) : null, fileId]
+      [String(title).trim(), String(grade_level).trim(), String(math_topic).trim(), String(file_type).trim(), folderResolution.folderId, fileId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'File not found' });
     res.json(result.rows[0]);
@@ -1924,10 +2017,404 @@ app.get('/api/game/questions', async (req, res) => {
   }
 });
 
+app.get('/api/announcements', async (req, res) => {
+  try {
+    const targetRole = normalizeAnnouncementTarget(req.query.target_role);
+    if (!targetRole) {
+      return res.status(400).json({ error: 'Valid target_role is required.' });
+    }
+
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 5, 1), 20);
+    const filters = ['an.target_role = $1'];
+    const params = [targetRole];
+    const createdBy = Number.parseInt(req.query.created_by, 10);
+    const createdByRole = normalizeAnnouncementRole(req.query.created_by_role);
+
+    if (!Number.isNaN(createdBy)) {
+      params.push(createdBy);
+      filters.push(`an.created_by = $${params.length}`);
+    }
+
+    if (createdByRole) {
+      params.push(createdByRole);
+      filters.push(`an.created_by_role = $${params.length}`);
+    }
+
+    params.push(limit);
+    const result = await pool.query(
+      `${announcementSelectSql}
+       WHERE ${filters.join(' AND ')}
+       ORDER BY an.created_at DESC
+       LIMIT $${params.length}`,
+      params
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Fetch announcements failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch announcements' });
+  }
+});
+
+app.put('/api/announcements/:id', async (req, res) => {
+  try {
+    const announcementId = parseInt(req.params.id, 10);
+    const payload = normalizeAnnouncementManagementPayload(req.body);
+    if (Number.isNaN(announcementId) || !payload) {
+      return res.status(400).json({ error: 'Title, message, actor, and actor role are required.' });
+    }
+
+    const existing = await pool.query('SELECT * FROM public.announcements WHERE id = $1', [announcementId]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Announcement not found.' });
+    }
+
+    if (!canManageAnnouncement(existing.rows[0], payload)) {
+      return res.status(403).json({ error: 'You can only manage announcements you posted.' });
+    }
+
+    const result = await pool.query(
+      `UPDATE public.announcements
+       SET title = $1,
+           message = $2
+       WHERE id = $3
+       RETURNING *`,
+      [payload.title, payload.message, announcementId]
+    );
+
+    const hydrated = await pool.query(
+      `${announcementSelectSql}
+       WHERE an.id = $1`,
+      [result.rows[0].id]
+    );
+
+    res.json(hydrated.rows[0]);
+  } catch (err) {
+    console.error('Update announcement failed:', err.message);
+    res.status(500).json({ error: 'Failed to update announcement' });
+  }
+});
+
+app.delete('/api/announcements/:id', async (req, res) => {
+  try {
+    const announcementId = parseInt(req.params.id, 10);
+    const actor = normalizeAnnouncementActorPayload({ ...req.query, ...req.body });
+    if (Number.isNaN(announcementId) || !actor) {
+      return res.status(400).json({ error: 'Actor and actor role are required.' });
+    }
+
+    const existing = await pool.query('SELECT * FROM public.announcements WHERE id = $1', [announcementId]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Announcement not found.' });
+    }
+
+    if (!canManageAnnouncement(existing.rows[0], actor)) {
+      return res.status(403).json({ error: 'You can only manage announcements you posted.' });
+    }
+
+    await pool.query('DELETE FROM public.announcements WHERE id = $1', [announcementId]);
+    res.json({ success: true, id: announcementId });
+  } catch (err) {
+    console.error('Delete announcement failed:', err.message);
+    res.status(500).json({ error: 'Failed to delete announcement' });
+  }
+});
+
+app.post('/api/announcements', async (req, res) => {
+  try {
+    const payload = normalizeAnnouncementPayload(req.body);
+    if (!payload) {
+      return res.status(400).json({ error: 'Title, message, creator, creator role, and target role are required.' });
+    }
+
+    if (
+      (payload.createdByRole === 'admin' && payload.targetRole !== 'teacher') ||
+      (payload.createdByRole === 'teacher' && payload.targetRole !== 'parent')
+    ) {
+      return res.status(400).json({ error: 'Announcement target does not match creator role.' });
+    }
+
+    const creatorRoles = payload.createdByRole === 'teacher' ? ['teacher', 'parent_teacher'] : [payload.createdByRole];
+    const creatorResult = await pool.query(
+      'SELECT id, name, role FROM public.accounts WHERE id = $1 AND LOWER(role) = ANY($2::text[]) AND is_archived = false',
+      [payload.createdBy, creatorRoles]
+    );
+    if (creatorResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Announcement creator not found.' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO public.announcements (title, message, created_by, created_by_role, target_role)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [payload.title, payload.message, payload.createdBy, payload.createdByRole, payload.targetRole]
+    );
+
+    res.status(201).json({
+      ...result.rows[0],
+      posted_by: creatorResult.rows[0].name,
+    });
+  } catch (err) {
+    console.error('Create announcement failed:', err.message);
+    res.status(500).json({ error: 'Failed to create announcement' });
+  }
+});
+
+app.post('/api/game/parent/validate', async (req, res) => {
+  try {
+    const parentCode = normalizeParentCode(req.body?.parent_id);
+    if (!parentCode) {
+      return res.status(400).json({ error: 'Parent ID must be exactly 6 digits.' });
+    }
+
+    const result = await pool.query(
+      `SELECT id, name, parent_id
+       FROM public.accounts
+       WHERE parent_id = $1
+         AND LOWER(role) IN ('parent', 'parent_teacher')
+         AND is_archived = false
+       LIMIT 1`,
+      [parentCode]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Parent ID not found.' });
+    }
+
+    res.json({ success: true, parent: result.rows[0] });
+  } catch (err) {
+    console.error('Validate Parent ID failed:', err.message);
+    res.status(500).json({ error: 'Failed to validate Parent ID' });
+  }
+});
+
+app.post('/api/game/progress', async (req, res) => {
+  const {
+    parent_id,
+    student_name,
+    grade_level,
+    section,
+    current_quest,
+    quest_progress,
+    lesson_progress,
+    score,
+    correct_answers,
+    total_questions,
+    total_play_time,
+    save_status = 'saved',
+    activity_description = 'Gameplay progress saved',
+    login_time,
+    logout_time,
+    difficulty_level = 'Normal',
+  } = req.body || {};
+
+  const parentCode = normalizeParentCode(parent_id);
+  const studentName = normalizeGameStudentName(student_name);
+
+  if (!parentCode) {
+    return res.status(400).json({ error: 'Parent ID must be exactly 6 digits.' });
+  }
+  if (!studentName) {
+    return res.status(400).json({ error: 'Student/Player Name is required.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const parentResult = await client.query(
+      `SELECT id, name, parent_id
+       FROM public.accounts
+       WHERE parent_id = $1
+         AND LOWER(role) IN ('parent', 'parent_teacher')
+         AND is_archived = false
+       LIMIT 1`,
+      [parentCode]
+    );
+
+    if (parentResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Parent ID not found.' });
+    }
+
+    const parent = parentResult.rows[0];
+    let studentResult = await client.query(
+      `SELECT s.*
+       FROM public.accounts s
+       JOIN public.teacher_student_relationships r ON r.student_id = s.id
+       WHERE r.teacher_id = $1
+         AND LOWER(r.relationship_type) = 'parent'
+         AND LOWER(TRIM(s.name)) = LOWER($2)
+       ORDER BY s.id
+       LIMIT 1`,
+      [parent.id, studentName]
+    );
+
+    let student = studentResult.rows[0];
+    if (!student) {
+      const email = buildGameStudentEmail(parent.id, studentName);
+      studentResult = await client.query(
+        'SELECT * FROM public.accounts WHERE LOWER(email) = LOWER($1) LIMIT 1',
+        [email]
+      );
+    }
+
+    if (!student && studentResult.rows.length > 0) {
+      student = studentResult.rows[0];
+    }
+
+    if (!student) {
+      const studentPassword = await hashPassword(generateRandomPassword());
+      const email = buildGameStudentEmail(parent.id, studentName);
+      studentResult = await client.query(
+        `INSERT INTO public.accounts (name, email, password, role, status, is_archived, must_change_password)
+         VALUES ($1, $2, $3, 'student', 'Offline', false, false)
+         RETURNING *`,
+        [studentName, email, studentPassword]
+      );
+      student = studentResult.rows[0];
+    }
+
+    await client.query(
+      `INSERT INTO public.teacher_student_relationships (teacher_id, student_id, relationship_type)
+       VALUES ($1, $2, 'Parent')
+       ON CONFLICT (teacher_id, student_id, relationship_type) DO NOTHING`,
+      [parent.id, student.id]
+    );
+
+    const scoreValue = Math.round(toNullableNumber(score) ?? 0);
+    const correctAnswersValue = Math.round(toNullableNumber(correct_answers) ?? 0);
+    const totalQuestionsValue = Math.round(toNullableNumber(total_questions) ?? 0);
+    const questProgressValue = Math.min(100, Math.max(0, toNullableNumber(quest_progress) ?? 0));
+    const progressPercentageValue = resolveProgressPercentage({ lesson_progress, quest_progress });
+    const lessonProgressValue = Math.min(100, Math.max(0, toNullableNumber(lesson_progress) ?? progressPercentageValue));
+    const accuracyRateValue = resolveAccuracyRate(req.body);
+    const totalPlayTimeValue = Math.round(toNullableNumber(total_play_time) ?? 0);
+
+    const existingProgress = await client.query(
+      `SELECT id
+       FROM public.student_game_progress
+       WHERE student_id = $1
+       ORDER BY updated_at DESC NULLS LAST, id DESC
+       LIMIT 1`,
+      [student.id]
+    );
+
+    let progressResult;
+    if (existingProgress.rows.length > 0) {
+      progressResult = await client.query(
+        `UPDATE public.student_game_progress
+         SET student_name = $1,
+             grade_level = COALESCE($2, grade_level),
+             section = COALESCE($3, section),
+             current_quest = COALESCE($4, current_quest),
+             score = $5,
+             correct_answers = $6,
+             total_questions = $7,
+             accuracy_rate = $8,
+             progress_percentage = $9,
+             lesson_progress = $10,
+             last_played = NOW(),
+             updated_at = NOW()
+         WHERE id = $11
+         RETURNING *`,
+        [
+          studentName,
+          grade_level || null,
+          section || null,
+          current_quest || null,
+          scoreValue,
+          correctAnswersValue,
+          totalQuestionsValue,
+          accuracyRateValue,
+          progressPercentageValue,
+          lessonProgressValue,
+          existingProgress.rows[0].id,
+        ]
+      );
+    } else {
+      progressResult = await client.query(
+        `INSERT INTO public.student_game_progress (
+          student_id, student_name, grade_level, section, current_quest,
+          score, correct_answers, total_questions, accuracy_rate,
+          progress_percentage, lesson_progress, last_played, created_at, updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW()
+        )
+        RETURNING *`,
+        [
+          student.id,
+          studentName,
+          grade_level || null,
+          section || null,
+          current_quest || null,
+          scoreValue,
+          correctAnswersValue,
+          totalQuestionsValue,
+          accuracyRateValue,
+          progressPercentageValue,
+          lessonProgressValue,
+        ]
+      );
+    }
+
+    const activityResult = await client.query(
+      `INSERT INTO public.activity_logs (
+        student_id, student_name, grade_level, section, current_quest,
+        save_status, total_play_time, last_played, quest_progress, lesson_progress,
+        difficulty_level, role, status, activity_description,
+        login_time, logout_time, session_date, activity_timestamp, created_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, 'Student', 'Online', $11,
+        COALESCE($12, NOW()), $13, CURRENT_DATE, NOW(), NOW()
+      )
+      RETURNING *`,
+      [
+        student.id,
+        studentName,
+        grade_level || null,
+        section || null,
+        current_quest || null,
+        save_status,
+        totalPlayTimeValue,
+        questProgressValue,
+        lessonProgressValue,
+        difficulty_level,
+        activity_description,
+        login_time || null,
+        logout_time || null,
+      ]
+    );
+
+    await client.query('COMMIT');
+    res.status(201).json({
+      success: true,
+      parent,
+      student: serializeUser(student),
+      progress: progressResult.rows[0],
+      activityLog: activityResult.rows[0],
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Save game progress failed:', err.message);
+    res.status(500).json({ error: 'Failed to save game progress', details: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 app.delete('/api/accounts/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const permanent = String(req.query.permanent).toLowerCase() === 'true';
+    const accountResult = await pool.query('SELECT id, role FROM accounts WHERE id = $1', [id]);
+    if (accountResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+    if (normalizeAccountRole(accountResult.rows[0].role) === 'admin') {
+      return res.status(403).json({ error: 'Admin accounts cannot be archived or deleted from Manage Users.' });
+    }
+
     if (permanent) {
       await pool.query('DELETE FROM accounts WHERE id = $1', [id]);
       return res.json({ success: true, message: 'Account permanently deleted' });
@@ -2128,6 +2615,7 @@ app.get('/api/activity-logs', async (req, res) => {
         al.total_play_time,
         al.last_played,
         al.quest_progress,
+        al.lesson_progress,
         al.difficulty_level,
         al.login_time,
         al.logout_time,

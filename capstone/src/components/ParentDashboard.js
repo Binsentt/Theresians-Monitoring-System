@@ -6,6 +6,7 @@ import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } 
 import { MetricCard, InfoCard } from './layout/Card';
 import { ResponsiveGrid } from './layout/Grid';
 import { buildScopedApiUrl } from './analyticsEndpoints';
+import { normalizeRole } from './manageUsers.utils';
 import '../styles/parentdashboard.css';
 
 function AchieverCard({ name, grade, quest, score, accuracy }) {
@@ -38,6 +39,7 @@ export default function ParentDashboard() {
   const [loading, setLoading] = useState(true);
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [topAchievers, setTopAchievers] = useState([]);
+  const [connectedChildren, setConnectedChildren] = useState([]);
   const [analyticsSummary, setAnalyticsSummary] = useState(null);
   const [analyticsRecommendations, setAnalyticsRecommendations] = useState([]);
   const [error, setError] = useState('');
@@ -56,7 +58,7 @@ export default function ParentDashboard() {
       }
 
       const userData = JSON.parse(loggedInUser);
-      if (userData.role?.toLowerCase() !== 'parent') {
+      if (normalizeRole(userData.role) !== 'parent') {
         navigate('/login');
         return;
       }
@@ -85,10 +87,11 @@ export default function ParentDashboard() {
     try {
       const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
       const parentId = loggedInUser?.id;
-      const [achieversResult, overviewResult, recommendationsResult] = await Promise.allSettled([
+      const [achieversResult, overviewResult, recommendationsResult, childrenResult] = await Promise.allSettled([
         fetch(buildScopedApiUrl('/api/top-achievers', 'parent', parentId)),
         fetch(buildScopedApiUrl('/api/analytics/overview', 'parent', parentId)),
         fetch(buildScopedApiUrl('/api/analytics/recommendations', 'parent', parentId)),
+        fetch(buildScopedApiUrl('/api/students/progress', 'parent', parentId)),
       ]);
 
       if (achieversResult.status === 'fulfilled' && achieversResult.value.ok) {
@@ -111,6 +114,14 @@ export default function ParentDashboard() {
       } else {
         setAnalyticsRecommendations([]);
       }
+
+      if (childrenResult.status === 'fulfilled' && childrenResult.value.ok) {
+        const childrenData = await childrenResult.value.json();
+        setConnectedChildren(Array.isArray(childrenData) ? childrenData.slice(0, 6) : []);
+      } else {
+        setConnectedChildren([]);
+      }
+
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
       setError('Unable to load parent analytics at this time.');
@@ -136,7 +147,7 @@ export default function ParentDashboard() {
     <DashboardContainer
       sidebar={
         <AnalyticsSidebar
-          role="parent"
+          role={normalizeRole(user?.role) === 'parent_teacher' ? 'parent_teacher' : 'parent'}
           activeItem="dashboard"
           logoSrc={logoImage}
           portalLabel="Parent Portal"
@@ -173,6 +184,25 @@ export default function ParentDashboard() {
                   footer="Average progress"
                 />
               </ResponsiveGrid>
+            </ContentSection>
+
+            <ContentSection title="Connected Children">
+              {dashboardLoading ? (
+                <div className="fallback-note">Loading connected children...</div>
+              ) : connectedChildren.length === 0 ? (
+                <div className="fallback-note">No connected children yet.</div>
+              ) : (
+                <ResponsiveGrid minWidth="260px">
+                  {connectedChildren.map((child) => (
+                    <InfoCard key={child.id || child.student_id || child.student_name} title={child.student_name || 'Student'}>
+                      <p>Current quest: {child.current_quest || 'N/A'}</p>
+                      <p>Score: {child.score ?? 0}</p>
+                      <p>Progress: {Number(child.progress_percentage || child.performance_percentage || 0).toFixed(0)}%</p>
+                      <p>Latest update: {child.last_played ? new Date(child.last_played).toLocaleString() : 'Not available'}</p>
+                    </InfoCard>
+                  ))}
+                </ResponsiveGrid>
+              )}
             </ContentSection>
 
             <ContentSection title="Featured Student Highlights">

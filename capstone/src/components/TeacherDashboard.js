@@ -4,16 +4,30 @@ import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } 
 import { Card, MetricCard, InfoCard } from './layout/Card';
 import { ResponsiveGrid } from './layout/Grid';
 import logoImage from '../assets/images/STS_Logo.png';
+import { isTeacherRole, normalizeRole } from './manageUsers.utils';
 
 export default function TeacherDashboard() {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    setTimeout(() => {
-      setUser({ name: 'Teacher', email: 'teacher@example.com' });
-      setLoading(false);
-    }, 800);
+    const loadData = async () => {
+      try {
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
+        if (isTeacherRole(loggedInUser?.role)) {
+          setUser(loggedInUser);
+        } else {
+          setUser({ name: 'Teacher', email: 'teacher@example.com' });
+        }
+      } catch (err) {
+        console.error('Failed to load teacher dashboard:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadData();
   }, []);
 
   if (loading) return <div className="loading-container"><div className="spinner"></div><p>Loading Teacher Portal...</p></div>;
@@ -22,7 +36,7 @@ export default function TeacherDashboard() {
     <DashboardContainer
       sidebar={
         <AnalyticsSidebar 
-          role="teacher" 
+          role={normalizeRole(user?.role) === 'parent_teacher' ? 'parent_teacher' : 'teacher'} 
           activeItem="dashboard" 
           logoSrc={logoImage}
           portalLabel="Teacher Portal" 
@@ -33,7 +47,7 @@ export default function TeacherDashboard() {
           <TopBar>
             <div>
               <h1>Teacher Dashboard</h1>
-              <p>Welcome, {user?.name}</p>
+              <p>Welcome, {user?.name || 'Teacher'}</p>
             </div>
           </TopBar>
 
@@ -66,10 +80,10 @@ export default function TeacherDashboard() {
 
             <ContentSection title="Mathematics Subjects">
               <ResponsiveGrid minWidth="300px">
-                <SubjectCard title="Mathematics - Grade 9" schedule="Students: 30" prof="Quest Progress: 87%" />
-                <SubjectCard title="Mathematics - Grade 10" schedule="Students: 32" prof="Quest Progress: 85%" />
-                <SubjectCard title="Mathematics - Grade 11" schedule="Students: 28" prof="Quest Progress: 90%" />
-                <SubjectCard title="Mathematics - Grade 12" schedule="Students: 30" prof="Quest Progress: 83%" />
+                <SubjectCard title="Mathematics - Grade 2" schedule="Students: 30" prof="Quest Progress: 87%" />
+                <SubjectCard title="Mathematics - Grade 4" schedule="Students: 32" prof="Quest Progress: 85%" />
+                <SubjectCard title="Mathematics - Grade 4" schedule="Students: 28" prof="Quest Progress: 90%" />
+                <SubjectCard title="Mathematics - Grade 6" schedule="Students: 30" prof="Quest Progress: 83%" />
               </ResponsiveGrid>
             </ContentSection>
           </PageContent>
