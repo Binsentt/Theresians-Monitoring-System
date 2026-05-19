@@ -74,7 +74,7 @@ export const paginateItems = (items, currentPage, pageSize) => {
 export const buildAccountCreationSuccessModal = (selectedRole, data = {}) => ({
   title: data.warning ? 'Account Created - Email Issue' : 'Success',
   message: data.warning || `${selectedRole} added successfully! Account credentials were sent to the user's email.`,
-  tempPassword: '',
+  tempPassword: data.warning ? data.tempPassword || '' : '',
   parentId: data.user?.parent_id || '',
   emailSent: !data.warning,
 });

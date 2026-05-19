@@ -826,6 +826,13 @@ export default function ManageUsers() {
                       <strong className="generated-credential-value">{validationModal.parentId}</strong>
                     </div>
                   )}
+                  {validationModal.tempPassword && (
+                    <div className="generated-credential-panel">
+                      <span className="generated-credential-label">Temporary Password</span>
+                      <strong className="generated-credential-value">{validationModal.tempPassword}</strong>
+                      <span className="generated-credential-status">Copy this now. It will not be shown again.</span>
+                    </div>
+                  )}
                   <div className="modal-actions">
                     <button
                       type="button"

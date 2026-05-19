@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import { Card, MetricCard, InfoCard } from './layout/Card';
 import { ResponsiveGrid } from './layout/Grid';
 import logoImage from '../assets/images/STS_Logo.png';
-import { isTeacherRole, normalizeRole } from './manageUsers.utils';
+import { normalizeRole } from './manageUsers.utils';
+import { resolveAuthorizedSession } from './session.utils';
 
 export default function TeacherDashboard() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
 
@@ -15,22 +18,24 @@ export default function TeacherDashboard() {
       try {
         const savedTheme = localStorage.getItem('theme') || 'light';
         document.documentElement.setAttribute('data-theme', savedTheme);
-        const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
-        if (isTeacherRole(loggedInUser?.role)) {
-          setUser(loggedInUser);
-        } else {
-          setUser({ name: 'Teacher', email: 'teacher@example.com' });
+        const authorizedUser = resolveAuthorizedSession('teacher');
+        if (!authorizedUser) {
+          navigate('/login');
+          return;
         }
+        setUser(authorizedUser);
       } catch (err) {
         console.error('Failed to load teacher dashboard:', err);
+        navigate('/login');
       } finally {
         setLoading(false);
       }
     };
     loadData();
-  }, []);
+  }, [navigate]);
 
   if (loading) return <div className="loading-container"><div className="spinner"></div><p>Loading Teacher Portal...</p></div>;
+  if (!user) return null;
 
   return (
     <DashboardContainer

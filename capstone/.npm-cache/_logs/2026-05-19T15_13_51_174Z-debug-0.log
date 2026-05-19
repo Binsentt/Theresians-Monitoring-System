@@ -1,0 +1,249 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.6.2
+2 info using node@v24.13.0
+3 silly config load:file:C:\Program Files\nodejs\node_modules\npm\npmrc
+4 silly config load:file:C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npmrc
+5 silly config load:file:C:\Users\vince\.npmrc
+6 silly config load:file:C:\Users\vince\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm exec @railway/cli --version
+8 verbose argv "exec" "--" "@railway/cli" "--version"
+9 verbose logfile logs-max:10 dir:C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npm-cache\_logs\2026-05-19T15_13_51_174Z-
+10 verbose logfile C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npm-cache\_logs\2026-05-19T15_13_51_174Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:2348810240 maxSize:587202560 maxEntrySize:293601280
+13 verbose shrinkwrap failed to load node_modules/.package-lock.json missing from lockfile: node_modules/ansi-align
+14 http fetch GET 200 https://registry.npmjs.org/@railway%2fcli 849ms (cache miss)
+15 silly packumentCache heap:2348810240 maxSize:587202560 maxEntrySize:293601280
+16 silly packumentCache heap:2348810240 maxSize:587202560 maxEntrySize:293601280
+17 warn exec The following package was not found and will be installed: @railway/cli@4.59.0
+18 silly idealTree buildDeps
+19 silly fetch manifest @railway/cli@4.59.0
+20 silly packumentCache full:https://registry.npmjs.org/@railway%2fcli cache-miss
+21 http fetch GET 200 https://registry.npmjs.org/@railway%2fcli 598ms (cache miss)
+22 silly packumentCache full:https://registry.npmjs.org/@railway%2fcli set size:undefined disposed:false
+23 silly placeDep ROOT @railway/cli@4.59.0 OK for:  want: 4.59.0
+24 silly fetch manifest @napi-rs/triples@^1.1.0
+25 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2ftriples cache-miss
+26 silly fetch manifest node-fetch@^3.1.0
+27 silly packumentCache full:https://registry.npmjs.org/node-fetch cache-miss
+28 silly fetch manifest tar@^6.1.11
+29 silly packumentCache full:https://registry.npmjs.org/tar cache-miss
+30 http fetch GET 200 https://registry.npmjs.org/@napi-rs%2ftriples 134ms (cache miss)
+31 silly packumentCache full:https://registry.npmjs.org/@napi-rs%2ftriples set size:undefined disposed:false
+32 http fetch GET 200 https://registry.npmjs.org/tar 330ms (cache miss)
+33 silly packumentCache full:https://registry.npmjs.org/tar set size:undefined disposed:false
+34 http fetch GET 200 https://registry.npmjs.org/node-fetch 384ms (cache miss)
+35 silly packumentCache full:https://registry.npmjs.org/node-fetch set size:undefined disposed:false
+36 silly placeDep ROOT @napi-rs/triples@1.2.0 OK for: @railway/cli@4.59.0 want: ^1.1.0
+37 silly placeDep ROOT node-fetch@3.3.2 OK for: @railway/cli@4.59.0 want: ^3.1.0
+38 silly placeDep ROOT tar@6.2.1 OK for: @railway/cli@4.59.0 want: ^6.1.11
+39 silly fetch manifest data-uri-to-buffer@^4.0.0
+40 silly packumentCache full:https://registry.npmjs.org/data-uri-to-buffer cache-miss
+41 silly fetch manifest fetch-blob@^3.1.4
+42 silly packumentCache full:https://registry.npmjs.org/fetch-blob cache-miss
+43 silly fetch manifest formdata-polyfill@^4.0.10
+44 silly packumentCache full:https://registry.npmjs.org/formdata-polyfill cache-miss
+45 silly fetch manifest chownr@^2.0.0
+46 silly packumentCache full:https://registry.npmjs.org/chownr cache-miss
+47 silly fetch manifest mkdirp@^1.0.3
+48 silly packumentCache full:https://registry.npmjs.org/mkdirp cache-miss
+49 silly fetch manifest yallist@^4.0.0
+50 silly packumentCache full:https://registry.npmjs.org/yallist cache-miss
+51 silly fetch manifest minipass@^5.0.0
+52 silly packumentCache full:https://registry.npmjs.org/minipass cache-miss
+53 http fetch GET 200 https://registry.npmjs.org/data-uri-to-buffer 212ms (cache miss)
+54 silly packumentCache full:https://registry.npmjs.org/data-uri-to-buffer set size:undefined disposed:false
+55 silly fetch manifest minizlib@^2.1.1
+56 silly packumentCache full:https://registry.npmjs.org/minizlib cache-miss
+57 http fetch GET 200 https://registry.npmjs.org/fetch-blob 225ms (cache miss)
+58 silly packumentCache full:https://registry.npmjs.org/fetch-blob set size:undefined disposed:false
+59 silly fetch manifest fs-minipass@^2.0.0
+60 silly packumentCache full:https://registry.npmjs.org/fs-minipass cache-miss
+61 http fetch GET 200 https://registry.npmjs.org/formdata-polyfill 259ms (cache miss)
+62 silly packumentCache full:https://registry.npmjs.org/formdata-polyfill set size:undefined disposed:false
+63 http fetch GET 200 https://registry.npmjs.org/chownr 341ms (cache miss)
+64 silly packumentCache full:https://registry.npmjs.org/chownr set size:undefined disposed:false
+65 http fetch GET 200 https://registry.npmjs.org/yallist 354ms (cache miss)
+66 silly packumentCache full:https://registry.npmjs.org/yallist set size:undefined disposed:false
+67 http fetch GET 200 https://registry.npmjs.org/minizlib 147ms (cache miss)
+68 silly packumentCache full:https://registry.npmjs.org/minizlib set size:undefined disposed:false
+69 http fetch GET 200 https://registry.npmjs.org/fs-minipass 139ms (cache miss)
+70 silly packumentCache full:https://registry.npmjs.org/fs-minipass set size:undefined disposed:false
+71 http fetch GET 200 https://registry.npmjs.org/mkdirp 382ms (cache miss)
+72 silly packumentCache full:https://registry.npmjs.org/mkdirp set size:undefined disposed:false
+73 http fetch GET 200 https://registry.npmjs.org/minipass 391ms (cache miss)
+74 silly packumentCache full:https://registry.npmjs.org/minipass set size:undefined disposed:false
+75 silly placeDep ROOT data-uri-to-buffer@4.0.1 OK for: node-fetch@3.3.2 want: ^4.0.0
+76 silly placeDep ROOT fetch-blob@3.2.0 OK for: node-fetch@3.3.2 want: ^3.1.4
+77 silly placeDep ROOT formdata-polyfill@4.0.10 OK for: node-fetch@3.3.2 want: ^4.0.10
+78 silly fetch manifest node-domexception@^1.0.0
+79 silly packumentCache full:https://registry.npmjs.org/node-domexception cache-miss
+80 silly fetch manifest web-streams-polyfill@^3.0.3
+81 silly packumentCache full:https://registry.npmjs.org/web-streams-polyfill cache-miss
+82 http fetch GET 200 https://registry.npmjs.org/node-domexception 88ms (cache miss)
+83 silly packumentCache full:https://registry.npmjs.org/node-domexception set size:undefined disposed:false
+84 http fetch GET 200 https://registry.npmjs.org/web-streams-polyfill 124ms (cache miss)
+85 silly packumentCache full:https://registry.npmjs.org/web-streams-polyfill set size:undefined disposed:false
+86 silly placeDep ROOT node-domexception@1.0.0 OK for: fetch-blob@3.2.0 want: ^1.0.0
+87 silly placeDep ROOT web-streams-polyfill@3.3.3 OK for: fetch-blob@3.2.0 want: ^3.0.3
+88 silly placeDep ROOT chownr@2.0.0 OK for: tar@6.2.1 want: ^2.0.0
+89 silly placeDep ROOT fs-minipass@2.1.0 OK for: tar@6.2.1 want: ^2.0.0
+90 silly placeDep ROOT minipass@5.0.0 OK for: tar@6.2.1 want: ^5.0.0
+91 silly placeDep ROOT minizlib@2.1.2 OK for: tar@6.2.1 want: ^2.1.1
+92 silly placeDep ROOT mkdirp@1.0.4 OK for: tar@6.2.1 want: ^1.0.3
+93 silly placeDep ROOT yallist@4.0.0 OK for: tar@6.2.1 want: ^4.0.0
+94 silly fetch manifest minipass@^3.0.0
+95 silly packumentCache full:https://registry.npmjs.org/minipass cache-miss
+96 silly fetch manifest minipass@^3.0.0
+97 silly packumentCache full:https://registry.npmjs.org/minipass cache-miss
+98 http cache https://registry.npmjs.org/minipass 61ms (cache hit)
+99 silly packumentCache full:https://registry.npmjs.org/minipass set size:276925 disposed:false
+100 http cache https://registry.npmjs.org/minipass 70ms (cache hit)
+101 silly packumentCache full:https://registry.npmjs.org/minipass set size:276925 disposed:false
+102 silly packumentCache full:https://registry.npmjs.org/minipass dispose
+103 silly placeDep node_modules/fs-minipass minipass@3.3.6 OK for: fs-minipass@2.1.0 want: ^3.0.0
+104 silly placeDep node_modules/minizlib minipass@3.3.6 OK for: minizlib@2.1.2 want: ^3.0.0
+105 silly reify moves {}
+106 silly audit bulk request {
+106 silly audit   '@railway/cli': [ '4.59.0' ],
+106 silly audit   '@napi-rs/triples': [ '1.2.0' ],
+106 silly audit   'node-fetch': [ '3.3.2' ],
+106 silly audit   tar: [ '6.2.1' ],
+106 silly audit   'data-uri-to-buffer': [ '4.0.1' ],
+106 silly audit   'fetch-blob': [ '3.2.0' ],
+106 silly audit   'formdata-polyfill': [ '4.0.10' ],
+106 silly audit   'node-domexception': [ '1.0.0' ],
+106 silly audit   'web-streams-polyfill': [ '3.3.3' ],
+106 silly audit   chownr: [ '2.0.0' ],
+106 silly audit   'fs-minipass': [ '2.1.0' ],
+106 silly audit   minipass: [ '5.0.0', '3.3.6' ],
+106 silly audit   minizlib: [ '2.1.2' ],
+106 silly audit   mkdirp: [ '1.0.4' ],
+106 silly audit   yallist: [ '4.0.0' ]
+106 silly audit }
+107 http cache mkdirp@https://registry.npmjs.org/mkdirp/-/mkdirp-1.0.4.tgz 0ms (cache hit)
+108 http cache minizlib@https://registry.npmjs.org/minizlib/-/minizlib-2.1.2.tgz 0ms (cache hit)
+109 http cache minipass@https://registry.npmjs.org/minipass/-/minipass-5.0.0.tgz 0ms (cache hit)
+110 http cache fs-minipass@https://registry.npmjs.org/fs-minipass/-/fs-minipass-2.1.0.tgz 1ms (cache hit)
+111 http cache chownr@https://registry.npmjs.org/chownr/-/chownr-2.0.0.tgz 1ms (cache hit)
+112 http cache web-streams-polyfill@https://registry.npmjs.org/web-streams-polyfill/-/web-streams-polyfill-3.3.3.tgz 0ms (cache hit)
+113 http cache node-domexception@https://registry.npmjs.org/node-domexception/-/node-domexception-1.0.0.tgz 1ms (cache hit)
+114 http cache yallist@https://registry.npmjs.org/yallist/-/yallist-4.0.0.tgz 0ms (cache hit)
+115 http cache fetch-blob@https://registry.npmjs.org/fetch-blob/-/fetch-blob-3.2.0.tgz 0ms (cache hit)
+116 http cache formdata-polyfill@https://registry.npmjs.org/formdata-polyfill/-/formdata-polyfill-4.0.10.tgz 0ms (cache hit)
+117 http cache @napi-rs/triples@https://registry.npmjs.org/@napi-rs/triples/-/triples-1.2.0.tgz 1ms (cache hit)
+118 http cache tar@https://registry.npmjs.org/tar/-/tar-6.2.1.tgz 0ms (cache hit)
+119 http cache node-fetch@https://registry.npmjs.org/node-fetch/-/node-fetch-3.3.2.tgz 0ms (cache hit)
+120 http cache @railway/cli@https://registry.npmjs.org/@railway/cli/-/cli-4.59.0.tgz 0ms (cache hit)
+121 http cache data-uri-to-buffer@https://registry.npmjs.org/data-uri-to-buffer/-/data-uri-to-buffer-4.0.1.tgz 0ms (cache hit)
+122 silly tarball no local data for mkdirp@https://registry.npmjs.org/mkdirp/-/mkdirp-1.0.4.tgz. Extracting by manifest.
+123 silly tarball no local data for minizlib@https://registry.npmjs.org/minizlib/-/minizlib-2.1.2.tgz. Extracting by manifest.
+124 silly tarball no local data for minipass@https://registry.npmjs.org/minipass/-/minipass-5.0.0.tgz. Extracting by manifest.
+125 silly tarball no local data for fs-minipass@https://registry.npmjs.org/fs-minipass/-/fs-minipass-2.1.0.tgz. Extracting by manifest.
+126 silly tarball no local data for chownr@https://registry.npmjs.org/chownr/-/chownr-2.0.0.tgz. Extracting by manifest.
+127 http cache minipass@https://registry.npmjs.org/minipass/-/minipass-3.3.6.tgz 0ms (cache hit)
+128 silly tarball no local data for web-streams-polyfill@https://registry.npmjs.org/web-streams-polyfill/-/web-streams-polyfill-3.3.3.tgz. Extracting by manifest.
+129 silly tarball no local data for node-domexception@https://registry.npmjs.org/node-domexception/-/node-domexception-1.0.0.tgz. Extracting by manifest.
+130 silly tarball no local data for yallist@https://registry.npmjs.org/yallist/-/yallist-4.0.0.tgz. Extracting by manifest.
+131 silly tarball no local data for fetch-blob@https://registry.npmjs.org/fetch-blob/-/fetch-blob-3.2.0.tgz. Extracting by manifest.
+132 silly tarball no local data for formdata-polyfill@https://registry.npmjs.org/formdata-polyfill/-/formdata-polyfill-4.0.10.tgz. Extracting by manifest.
+133 silly tarball no local data for @napi-rs/triples@https://registry.npmjs.org/@napi-rs/triples/-/triples-1.2.0.tgz. Extracting by manifest.
+134 silly tarball no local data for tar@https://registry.npmjs.org/tar/-/tar-6.2.1.tgz. Extracting by manifest.
+135 silly tarball no local data for node-fetch@https://registry.npmjs.org/node-fetch/-/node-fetch-3.3.2.tgz. Extracting by manifest.
+136 silly tarball no local data for @railway/cli@https://registry.npmjs.org/@railway/cli/-/cli-4.59.0.tgz. Extracting by manifest.
+137 silly tarball no local data for data-uri-to-buffer@https://registry.npmjs.org/data-uri-to-buffer/-/data-uri-to-buffer-4.0.1.tgz. Extracting by manifest.
+138 http cache minipass@https://registry.npmjs.org/minipass/-/minipass-3.3.6.tgz 0ms (cache hit)
+139 silly tarball no local data for minipass@https://registry.npmjs.org/minipass/-/minipass-3.3.6.tgz. Extracting by manifest.
+140 silly tarball no local data for minipass@https://registry.npmjs.org/minipass/-/minipass-3.3.6.tgz. Extracting by manifest.
+141 http fetch POST 200 https://registry.npmjs.org/-/npm/v1/security/advisories/bulk 450ms
+142 silly audit report {
+142 silly audit report   tar: [
+142 silly audit report     {
+142 silly audit report       id: 1112659,
+142 silly audit report       url: 'https://github.com/advisories/GHSA-34x7-hfp2-rc4v',
+142 silly audit report       title: 'node-tar Vulnerable to Arbitrary File Creation/Overwrite via Hardlink Path Traversal',
+142 silly audit report       severity: 'high',
+142 silly audit report       vulnerable_versions: '<7.5.7',
+142 silly audit report       cwe: [Array],
+142 silly audit report       cvss: [Object]
+142 silly audit report     },
+142 silly audit report     {
+142 silly audit report       id: 1113300,
+142 silly audit report       url: 'https://github.com/advisories/GHSA-8qq5-rm4j-mr97',
+142 silly audit report       title: 'node-tar is Vulnerable to Arbitrary File Overwrite and Symlink Poisoning via Insufficient Path Sanitization',
+142 silly audit report       severity: 'high',
+142 silly audit report       vulnerable_versions: '<=7.5.2',
+142 silly audit report       cwe: [Array],
+142 silly audit report       cvss: [Object]
+142 silly audit report     },
+142 silly audit report     {
+142 silly audit report       id: 1113375,
+142 silly audit report       url: 'https://github.com/advisories/GHSA-83g3-92jg-28cx',
+142 silly audit report       title: 'Arbitrary File Read/Write via Hardlink Target Escape Through Symlink Chain in node-tar Extraction',
+142 silly audit report       severity: 'high',
+142 silly audit report       vulnerable_versions: '<7.5.8',
+142 silly audit report       cwe: [Array],
+142 silly audit report       cvss: [Object]
+142 silly audit report     },
+142 silly audit report     {
+142 silly audit report       id: 1114200,
+142 silly audit report       url: 'https://github.com/advisories/GHSA-qffp-2rhf-9h96',
+142 silly audit report       title: 'tar has Hardlink Path Traversal via Drive-Relative Linkpath',
+142 silly audit report       severity: 'high',
+142 silly audit report       vulnerable_versions: '<=7.5.9',
+142 silly audit report       cwe: [Array],
+142 silly audit report       cvss: [Object]
+142 silly audit report     },
+142 silly audit report     {
+142 silly audit report       id: 1114302,
+142 silly audit report       url: 'https://github.com/advisories/GHSA-9ppj-qmqm-q256',
+142 silly audit report       title: 'node-tar Symlink Path Traversal via Drive-Relative Linkpath',
+142 silly audit report       severity: 'high',
+142 silly audit report       vulnerable_versions: '<=7.5.10',
+142 silly audit report       cwe: [Array],
+142 silly audit report       cvss: [Object]
+142 silly audit report     },
+142 silly audit report     {
+142 silly audit report       id: 1114680,
+142 silly audit report       url: 'https://github.com/advisories/GHSA-r6q2-hw4h-h46w',
+142 silly audit report       title: 'Race Condition in node-tar Path Reservations via Unicode Ligature Collisions on macOS APFS',
+142 silly audit report       severity: 'high',
+142 silly audit report       vulnerable_versions: '<=7.5.3',
+142 silly audit report       cwe: [Array],
+142 silly audit report       cvss: [Object]
+142 silly audit report     }
+142 silly audit report   ]
+142 silly audit report }
+143 silly packumentCache corgi:https://registry.npmjs.org/tar cache-miss
+144 http fetch GET 200 https://registry.npmjs.org/mkdirp/-/mkdirp-1.0.4.tgz 617ms (cache miss)
+145 http fetch GET 200 https://registry.npmjs.org/chownr/-/chownr-2.0.0.tgz 624ms (cache miss)
+146 http fetch GET 200 https://registry.npmjs.org/fs-minipass/-/fs-minipass-2.1.0.tgz 646ms (cache miss)
+147 http fetch GET 200 https://registry.npmjs.org/minipass/-/minipass-3.3.6.tgz 631ms (cache miss)
+148 http fetch GET 200 https://registry.npmjs.org/minipass/-/minipass-3.3.6.tgz 607ms (cache miss)
+149 http fetch GET 200 https://registry.npmjs.org/minizlib/-/minizlib-2.1.2.tgz 766ms (cache miss)
+150 http fetch GET 200 https://registry.npmjs.org/yallist/-/yallist-4.0.0.tgz 755ms (cache miss)
+151 http fetch GET 200 https://registry.npmjs.org/data-uri-to-buffer/-/data-uri-to-buffer-4.0.1.tgz 778ms (cache miss)
+152 http fetch GET 200 https://registry.npmjs.org/@napi-rs/triples/-/triples-1.2.0.tgz 846ms (cache miss)
+153 http fetch GET 200 https://registry.npmjs.org/minipass/-/minipass-5.0.0.tgz 883ms (cache miss)
+154 http fetch GET 200 https://registry.npmjs.org/formdata-polyfill/-/formdata-polyfill-4.0.10.tgz 964ms (cache miss)
+155 http fetch GET 200 https://registry.npmjs.org/fetch-blob/-/fetch-blob-3.2.0.tgz 970ms (cache miss)
+156 http fetch GET 200 https://registry.npmjs.org/@railway/cli/-/cli-4.59.0.tgz 975ms (cache miss)
+157 http fetch GET 200 https://registry.npmjs.org/tar 625ms (cache miss)
+158 silly packumentCache corgi:https://registry.npmjs.org/tar set size:undefined disposed:false
+159 silly packumentCache corgi:https://registry.npmjs.org/@railway%2fcli cache-miss
+160 http cache https://registry.npmjs.org/@railway%2fcli 55ms (cache hit)
+161 silly packumentCache corgi:https://registry.npmjs.org/@railway%2fcli set size:324417 disposed:false
+162 http fetch GET 200 https://registry.npmjs.org/node-fetch/-/node-fetch-3.3.2.tgz 1444ms (cache miss)
+163 http fetch GET 200 https://registry.npmjs.org/tar/-/tar-6.2.1.tgz 1601ms (cache miss)
+164 warn deprecated tar@6.2.1: Old versions of tar are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+165 http fetch GET 200 https://registry.npmjs.org/node-domexception/-/node-domexception-1.0.0.tgz 1673ms (cache miss)
+166 warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+167 http fetch GET 200 https://registry.npmjs.org/web-streams-polyfill/-/web-streams-polyfill-3.3.3.tgz 2918ms (cache miss)
+168 info run @railway/cli@4.59.0 postinstall node_modules/@railway/cli node ./npm-install/postinstall.js
+169 info run @railway/cli@4.59.0 postinstall { code: 0, signal: null }
+170 verbose cwd C:\Users\vince\Documents\Theresian's Quest- Web\capstone
+171 verbose os Windows_NT 10.0.26200
+172 verbose node v24.13.0
+173 verbose npm  v11.6.2
+174 verbose exit 0
+175 info ok

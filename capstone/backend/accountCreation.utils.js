@@ -30,6 +30,30 @@ const resolveGeneratedAccountPassword = (_providedPassword, generatePassword) =>
   mustChangePassword: true,
 });
 
+const sanitizeCreatedUser = (createdUser = {}) => {
+  const { password, otp_code, otp_expires_at, ...safeUser } = createdUser;
+  return safeUser;
+};
+
+const buildAccountCreationResponse = ({ createdUser, generatedPassword, emailSent, role, roleLabel }) => {
+  const safeUser = sanitizeCreatedUser(createdUser);
+
+  if (emailSent) {
+    return {
+      user: safeUser,
+      emailSent: true,
+    };
+  }
+
+  const label = roleLabel || formatRoleLabel(role) || 'Account';
+  return {
+    user: safeUser,
+    emailSent: false,
+    tempPassword: generatedPassword,
+    warning: `${label} account was created, but the credential email could not be sent. Copy the temporary password now and share it securely with the user.`,
+  };
+};
+
 const buildCredentialsEmail = ({ email, password, role, name, appUrl }) => {
   const safeName = escapeHtml(name || 'User');
   const safeEmail = escapeHtml(email);
@@ -95,6 +119,7 @@ const buildCredentialsEmail = ({ email, password, role, name, appUrl }) => {
 };
 
 module.exports = {
+  buildAccountCreationResponse,
   buildCredentialsEmail,
   resolveGeneratedAccountPassword,
   shouldIncludeRoleInCredentialsEmail,

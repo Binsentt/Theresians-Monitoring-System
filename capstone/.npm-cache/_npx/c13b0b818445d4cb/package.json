@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "railway": "^2.0.17"
+  },
+  "_npx": {
+    "packages": [
+      "railway"
+    ]
+  }
+}

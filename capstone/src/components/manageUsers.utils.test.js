@@ -86,4 +86,20 @@ describe('manageUsers role helpers', () => {
       emailSent: true,
     });
   });
+
+  test('buildAccountCreationSuccessModal shows one-time temporary password only when email delivery fails', () => {
+    expect(
+      buildAccountCreationSuccessModal('Teacher', {
+        warning: 'Teacher account was created, but the credential email could not be sent. Copy the temporary password now and share it securely with the user.',
+        tempPassword: 'Generated!2345',
+        user: {},
+      })
+    ).toEqual({
+      title: 'Account Created - Email Issue',
+      message: 'Teacher account was created, but the credential email could not be sent. Copy the temporary password now and share it securely with the user.',
+      tempPassword: 'Generated!2345',
+      parentId: '',
+      emailSent: false,
+    });
+  });
 });

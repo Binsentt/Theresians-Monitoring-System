@@ -30,6 +30,7 @@ const {
   canManageAnnouncement,
 } = require('./announcements.utils');
 const {
+  buildAccountCreationResponse,
   buildCredentialsEmail,
   resolveGeneratedAccountPassword,
 } = require('./accountCreation.utils');
@@ -1561,12 +1562,12 @@ app.post('/api/accounts', async (req, res) => {
 
     const created = serializeUser(result.rows[0]);
     const emailSent = await generateCredentialsEmail(normalizedEmail, generatedPassword, finalRole, finalName);
-    if (!emailSent) {
-      await pool.query('DELETE FROM accounts WHERE id = $1', [created.id]);
-      return res.status(502).json({ error: 'Account was not created because the generated credentials email could not be sent. Please verify the email settings and try again.' });
-    }
-
-    const responsePayload = { user: created };
+    const responsePayload = buildAccountCreationResponse({
+      createdUser: created,
+      generatedPassword,
+      emailSent,
+      role: finalRole,
+    });
 
     res.status(201).json(responsePayload);
   } catch (err) {
