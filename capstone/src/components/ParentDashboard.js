@@ -1,4 +1,4 @@
-ï»¿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import logoImage from '../assets/images/STS_Logo.png';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
@@ -7,6 +7,7 @@ import { MetricCard, InfoCard } from './layout/Card';
 import { ResponsiveGrid } from './layout/Grid';
 import { buildScopedApiUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
+import { apiUrl } from '../api';
 import '../styles/parentdashboard.css';
 
 function AchieverCard({ name, grade, quest, score, accuracy }) {
@@ -21,11 +22,11 @@ function AchieverCard({ name, grade, quest, score, accuracy }) {
       </div>
       <div className="achiever-stats">
         <div className="stat-item">
-          <div className="stat-value">{score ?? 'â€”'}</div>
+          <div className="stat-value">{score ?? '—'}</div>
           <div className="stat-label">Score</div>
         </div>
         <div className="stat-item">
-          <div className="stat-value">{accuracy !== undefined ? `${accuracy.toFixed(0)}%` : 'â€”'}</div>
+          <div className="stat-value">{accuracy !== undefined ? `${accuracy.toFixed(0)}%` : '—'}</div>
           <div className="stat-label">Accuracy</div>
         </div>
       </div>
@@ -65,7 +66,7 @@ export default function ParentDashboard() {
 
       setUser(userData);
       try {
-        const userResponse = await fetch(`http://localhost:5000/api/user/${userData.id}`);
+        const userResponse = await fetch(apiUrl(`/api/user/${userData.id}`));
         if (userResponse.ok) {
           const freshUserData = await userResponse.json();
           delete freshUserData.password;

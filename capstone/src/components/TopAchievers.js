@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { apiUrl } from '../api';
 import '../styles/topachievers.css';
 
 export default function TopAchievers() {
@@ -9,7 +10,7 @@ export default function TopAchievers() {
   useEffect(() => {
     const fetchTopAchievers = async () => {
       try {
-        const response = await fetch('http://localhost:5000/api/top-achievers');
+        const response = await fetch(apiUrl('/api/top-achievers'));
         if (response.ok) {
           const data = await response.json();
           setTopAchievers(data);

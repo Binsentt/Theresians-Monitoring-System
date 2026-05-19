@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
+import { apiUrl } from '../api';
 import '../styles/studentprogress.css';
 
 const defaultSectionMap = {
@@ -46,9 +47,9 @@ export default function StudentProgress() {
         }
 
         const [studentsResult, overviewResult, recommendationsResult] = await Promise.allSettled([
-          fetch('http://localhost:5000/api/students/progress'),
-          fetch('http://localhost:5000/api/analytics/overview'),
-          fetch('http://localhost:5000/api/analytics/recommendations'),
+          fetch(apiUrl('/api/students/progress')),
+          fetch(apiUrl('/api/analytics/overview')),
+          fetch(apiUrl('/api/analytics/recommendations')),
         ]);
 
         if (studentsResult.status !== 'fulfilled' || !studentsResult.value.ok) {

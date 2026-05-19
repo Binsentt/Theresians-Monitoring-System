@@ -130,9 +130,9 @@ export default function TeacherDashboard() {
  * - sort_order: ASC or DESC (default: DESC)
  * 
  * Example URLs:
- * http://localhost:5000/api/activity-logs?limit=50&grade_level=Grade%205
- * http://localhost:5000/api/activity-logs?teacher_id=3&search=Juan
- * http://localhost:5000/api/activity-logs?grade_level=Grade%204&section=Section%20A
+ * /api/activity-logs?limit=50&grade_level=Grade%205
+ * /api/activity-logs?teacher_id=3&search=Juan
+ * /api/activity-logs?grade_level=Grade%204&section=Section%20A
  * 
  * Response Format:
  * {

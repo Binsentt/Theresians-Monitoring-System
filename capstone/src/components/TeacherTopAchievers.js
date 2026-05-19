@@ -4,6 +4,7 @@ import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } 
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
 import { isTeacherRole, normalizeRole } from './manageUsers.utils';
+import { apiUrl } from '../api';
 import '../styles/topachievers.css';
 
 export default function TeacherTopAchievers() {
@@ -32,7 +33,7 @@ export default function TeacherTopAchievers() {
         setUser({ ...loggedInUser, role: normalizeRole(loggedInUser.role) });
 
         // Fetch top achievers data for teacher's assigned students
-        const response = await fetch(`http://localhost:5000/api/top-achievers?teacher_id=${loggedInUser.id}`);
+        const response = await fetch(apiUrl(`/api/top-achievers?teacher_id=${loggedInUser.id}`));
         if (response.ok) {
           const data = await response.json();
           setTopAchievers(Array.isArray(data) ? data : []);

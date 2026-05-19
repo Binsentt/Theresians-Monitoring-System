@@ -15,14 +15,13 @@ import {
   MATH_TOPICS,
   normalizeMathTopicForGrade,
 } from './lessonQuestionManager.utils';
+import { apiUrl } from '../api';
 import '../styles/lessonQuestionManager.css';
 
 const FILE_TYPES = [
   { value: 'lesson', label: 'Lesson' },
   { value: 'fixed_questions', label: 'Fixed Questions' },
 ];
-
-const API_BASE = 'http://localhost:5000';
 
 const initialFormState = {
   title: '',
@@ -41,7 +40,7 @@ function formatUploadDate(dateString) {
 
 function getPublicUrl(path) {
   if (!path) return null;
-  return path.startsWith('http') ? path : `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
+  return path.startsWith('http') ? path : apiUrl(path);
 }
 
 function buildQueryString(params) {
@@ -74,8 +73,8 @@ export default function LessonQuestionManager() {
     try {
       setLoading(true);
       const [filesRes, foldersRes] = await Promise.all([
-        fetch('http://localhost:5000/api/learning-files'),
-        fetch('http://localhost:5000/api/folders'),
+        fetch(apiUrl('/api/learning-files')),
+        fetch(apiUrl('/api/folders')),
       ]);
       if (!filesRes.ok) throw new Error('Failed to load files');
       if (!foldersRes.ok) throw new Error('Failed to load folders');
@@ -199,7 +198,7 @@ export default function LessonQuestionManager() {
 
     try {
       setUploading(true);
-      const response = await fetch('http://localhost:5000/api/learning-files/upload', {
+      const response = await fetch(apiUrl('/api/learning-files/upload'), {
         method: 'POST',
         body: payload,
       });
@@ -221,7 +220,7 @@ export default function LessonQuestionManager() {
   const handleDelete = async (fileId) => {
     if (!window.confirm('Delete this file and all imported questions?')) return;
     try {
-      const response = await fetch(`http://localhost:5000/api/learning-files/${fileId}`, { method: 'DELETE' });
+      const response = await fetch(apiUrl(`/api/learning-files/${fileId}`), { method: 'DELETE' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Delete failed');
       showNotification('File deleted successfully.', 'success');
@@ -235,7 +234,7 @@ export default function LessonQuestionManager() {
   const handlePublishToggle = async (fileId, publish) => {
     try {
       const endpoint = publish ? 'publish' : 'unpublish';
-      const response = await fetch(`http://localhost:5000/api/questions/${endpoint}/${fileId}`, {
+      const response = await fetch(apiUrl(`/api/questions/${endpoint}/${fileId}`), {
         method: 'POST',
       });
       const data = await response.json();
@@ -281,7 +280,7 @@ export default function LessonQuestionManager() {
       return;
     }
     try {
-      const response = await fetch(`http://localhost:5000/api/learning-files/${editingFile.id}`, {
+      const response = await fetch(apiUrl(`/api/learning-files/${editingFile.id}`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -310,7 +309,7 @@ export default function LessonQuestionManager() {
       return;
     }
     try {
-      const response = await fetch('http://localhost:5000/api/folders/create', {
+      const response = await fetch(apiUrl('/api/folders/create'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newFolderName.trim() }),
@@ -330,7 +329,7 @@ export default function LessonQuestionManager() {
     const updatedName = window.prompt('Rename folder', folder.name);
     if (!updatedName || !updatedName.trim() || updatedName.trim() === folder.name) return;
     try {
-      const response = await fetch(`http://localhost:5000/api/folders/${folder.id}`, {
+      const response = await fetch(apiUrl(`/api/folders/${folder.id}`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: updatedName.trim() }),
@@ -348,7 +347,7 @@ export default function LessonQuestionManager() {
   const handleDeleteFolder = async (folder) => {
     if (!window.confirm(`Delete folder "${folder.name}"? Files will remain unassigned.`)) return;
     try {
-      const response = await fetch(`http://localhost:5000/api/folders/${folder.id}`, {
+      const response = await fetch(apiUrl(`/api/folders/${folder.id}`), {
         method: 'DELETE',
       });
       const data = await response.json();

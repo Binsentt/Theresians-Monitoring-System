@@ -1,9 +1,8 @@
 import { normalizeRole } from './manageUsers.utils';
-
-const API_BASE_URL = 'http://localhost:5000';
+import { apiUrl } from '../api';
 
 export const buildScopedApiUrl = (path, role, userId) => {
-  const url = new URL(`${API_BASE_URL}${path}`);
+  const url = new URL(apiUrl(path), 'http://app.local');
   const normalizedRole = normalizeRole(role);
 
   if ((normalizedRole === 'teacher' || normalizedRole === 'parent_teacher') && userId) {
@@ -14,7 +13,7 @@ export const buildScopedApiUrl = (path, role, userId) => {
     url.searchParams.set('parent_id', String(userId));
   }
 
-  return url.toString();
+  return `${url.pathname}${url.search}`;
 };
 
 export const buildStudentProgressDetailUrl = (studentId, role, userId) =>

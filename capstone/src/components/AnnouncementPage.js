@@ -12,8 +12,9 @@ import {
   updateAnnouncementCollection,
 } from './announcementDashboard.utils';
 import { canAccessRole, normalizeRole } from './manageUsers.utils';
+import { apiUrl } from '../api';
 
-const API_BASE = 'http://localhost:5000';
+const API_BASE = apiUrl('');
 
 const pageConfig = {
   admin: {

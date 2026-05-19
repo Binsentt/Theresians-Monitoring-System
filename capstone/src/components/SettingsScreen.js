@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import logoImage from '../assets/images/STS_Logo.png';
 import { formatRoleLabel, getDefaultDashboardRoute, isParentRole, normalizeRole } from './manageUsers.utils';
+import { apiUrl } from '../api';
 import '../styles/settings.css';
 
 export default function SettingsScreen() {
@@ -95,7 +96,7 @@ export default function SettingsScreen() {
 
         try {
           console.log('📥 Fetching fresh user data for ID:', loggedInUser.id);
-          const response = await fetch(`http://localhost:5000/api/user/${loggedInUser.id}`);
+          const response = await fetch(apiUrl(`/api/user/${loggedInUser.id}`));
           if (response.ok) {
             freshUserData = await response.json();
             console.log('✅ Fresh user data received:', { id: freshUserData.id, name: freshUserData.name, email: freshUserData.email, phone: freshUserData.mobile_number, address: freshUserData.address, birthday: freshUserData.birthday, gender: freshUserData.gender });
@@ -174,7 +175,7 @@ export default function SettingsScreen() {
     // FIX: Re-fetch fresh user data when Edit is clicked to ensure we have latest DB values
     try {
       console.log('📥 Re-fetching user data before edit for ID:', user?.id);
-      const response = await fetch(`http://localhost:5000/api/user/${user.id}`);
+      const response = await fetch(apiUrl(`/api/user/${user.id}`));
       let freshUserData = user;  // fallback to current user state
       
       if (response.ok) {
@@ -299,7 +300,7 @@ export default function SettingsScreen() {
 
       console.log('📤 Sending profile update payload:', payload);
 
-      const response = await fetch(`http://localhost:5000/api/accounts/${user.id}`, {
+      const response = await fetch(apiUrl(`/api/accounts/${user.id}`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -319,7 +320,7 @@ export default function SettingsScreen() {
         if (!updatedUserData.id) {
           console.log('⏳ Fetching fresh user data from database...');
           try {
-            const freshResponse = await fetch(`http://localhost:5000/api/user/${user.id}`);
+            const freshResponse = await fetch(apiUrl(`/api/user/${user.id}`));
             if (freshResponse.ok) {
               updatedUserData = await freshResponse.json();
               console.log('✅ Fresh user data fetched successfully:', { phone: updatedUserData.mobile_number, address: updatedUserData.address, birthday: updatedUserData.birthday, gender: updatedUserData.gender });
@@ -411,7 +412,7 @@ export default function SettingsScreen() {
     setPasswordUpdating(true);
     try {
       // Request OTP for password change
-      const response = await fetch('http://localhost:5000/api/request-password-change-otp', {
+      const response = await fetch(apiUrl('/api/request-password-change-otp'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: user.id, email: user.email }),
@@ -445,7 +446,7 @@ export default function SettingsScreen() {
     setPasswordUpdating(true);
     try {
       // Verify OTP and update password
-      const response = await fetch('http://localhost:5000/api/verify-password-change-otp', {
+      const response = await fetch(apiUrl('/api/verify-password-change-otp'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

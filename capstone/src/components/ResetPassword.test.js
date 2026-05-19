@@ -75,7 +75,7 @@ describe('ResetPassword auth theme integration', () => {
     });
 
     expect(global.fetch).toHaveBeenCalledWith(
-      'http://localhost:5000/api/reset-password/send-code',
+      '/api/reset-password/send-code',
       expect.objectContaining({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

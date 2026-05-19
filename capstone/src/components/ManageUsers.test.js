@@ -165,7 +165,7 @@ describe('ManageUsers edit flow', () => {
     });
 
     expect(global.fetch).toHaveBeenCalledWith(
-      'http://localhost:5000/api/accounts/7',
+      '/api/accounts/7',
       expect.objectContaining({
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },

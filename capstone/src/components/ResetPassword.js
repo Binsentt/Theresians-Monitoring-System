@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import logoImage from '../assets/images/STS_Logo.png';
+import { apiUrl } from '../api';
 import '../styles/resetpassword.css';
 
 function PasswordVisibilityIcon({ visible }) {
@@ -46,7 +47,7 @@ export default function ResetPassword() {
 
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:5000/api/reset-password/send-code', {
+      const response = await fetch(apiUrl('/api/reset-password/send-code'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
@@ -81,7 +82,7 @@ export default function ResetPassword() {
 
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:5000/api/reset-password/verify', {
+      const response = await fetch(apiUrl('/api/reset-password/verify'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

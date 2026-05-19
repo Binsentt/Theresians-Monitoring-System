@@ -12,6 +12,7 @@ import {
   normalizeRole,
   paginateItems,
 } from './manageUsers.utils';
+import { apiUrl } from '../api';
 import '../styles/manageusers.css';
 
 export default function ManageUsers() {
@@ -180,7 +181,7 @@ export default function ManageUsers() {
 
   const loadUsers = async () => {
     try {
-      const response = await fetch(`http://localhost:5000/api/accounts?archived=${showArchived}`);
+      const response = await fetch(apiUrl(`/api/accounts?archived=${showArchived}`));
       const data = await response.json();
       setUsers(Array.isArray(data) ? data.filter((account) => normalizeRole(account.role) !== 'admin') : []);
     } catch (error) {
@@ -228,7 +229,7 @@ export default function ManageUsers() {
       };
       if (roleIsTeacher) payload.employee_id = newUser.employee_id;
 
-      const response = await fetch('http://localhost:5000/api/accounts', {
+      const response = await fetch(apiUrl('/api/accounts'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -283,7 +284,7 @@ export default function ManageUsers() {
 
   const loadTeacherRelationships = async (teacherId) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/teacher-student-relationships?teacherId=${teacherId}`);
+      const response = await fetch(apiUrl(`/api/teacher-student-relationships?teacherId=${teacherId}`));
       const data = await response.json();
       if (response.ok) {
         setTeacherRelations(data.relationships || []);
@@ -303,7 +304,7 @@ export default function ManageUsers() {
     }
 
     try {
-      const response = await fetch('http://localhost:5000/api/teacher-student-relationships', {
+      const response = await fetch(apiUrl('/api/teacher-student-relationships'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ teacherId: editingUser.id, studentEmail: relationEmail, relationship_type: 'Parent' }),
@@ -324,7 +325,7 @@ export default function ManageUsers() {
 
   const handleRemoveTeacherRelation = async (relationId) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/teacher-student-relationships/${relationId}`, {
+      const response = await fetch(apiUrl(`/api/teacher-student-relationships/${relationId}`), {
         method: 'DELETE'
       });
       if (response.ok) {
@@ -377,7 +378,7 @@ export default function ManageUsers() {
         employee_id: editForm.employee_id || undefined
       };
 
-      const response = await fetch(`http://localhost:5000/api/accounts/${editingUser.id}`, {
+      const response = await fetch(apiUrl(`/api/accounts/${editingUser.id}`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -410,7 +411,7 @@ export default function ManageUsers() {
     if (!deletingUser?.id) return;
     setDeleting(true);
     try {
-      const response = await fetch(`http://localhost:5000/api/accounts/${deletingUser.id}`, {
+      const response = await fetch(apiUrl(`/api/accounts/${deletingUser.id}`), {
         method: 'DELETE',
       });
 
@@ -441,7 +442,7 @@ export default function ManageUsers() {
     if (!window.confirm(`Permanently delete ${userToDelete.name}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
-      const response = await fetch(`http://localhost:5000/api/accounts/${userToDelete.id}?permanent=true`, {
+      const response = await fetch(apiUrl(`/api/accounts/${userToDelete.id}?permanent=true`), {
         method: 'DELETE',
       });
 
@@ -469,7 +470,7 @@ export default function ManageUsers() {
 
   const handleRestoreUser = async (userToRestore) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/accounts/${userToRestore.id}/restore`, {
+      const response = await fetch(apiUrl(`/api/accounts/${userToRestore.id}/restore`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });

@@ -4,6 +4,7 @@ import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } 
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import ActivityLog from './ActivityLog';
 import logoImage from '../assets/images/STS_Logo.png';
+import { normalizeRole } from './manageUsers.utils';
 import '../styles/activitylog.css';
 
 export default function AdminActivityLog() {
@@ -18,7 +19,7 @@ export default function AdminActivityLog() {
         document.documentElement.setAttribute('data-theme', savedTheme);
 
         const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-        if (!loggedInUser || loggedInUser.role !== 'admin') {
+        if (!loggedInUser || normalizeRole(loggedInUser.role) !== 'admin') {
           navigate('/login');
           return;
         }

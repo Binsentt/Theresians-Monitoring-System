@@ -8,6 +8,7 @@ import { ResponsiveGrid } from './layout/Grid';
 import { DataTable } from './layout/Table';
 import { MetricCard, InfoCard } from './layout/Card';
 import { formatRoleLabel, isParentRole, isTeacherRole, normalizeRole } from './manageUsers.utils';
+import { apiUrl } from '../api';
 import '../styles/admindashboard.css';
 
 export default function AdminDashboard() {
@@ -24,14 +25,14 @@ export default function AdminDashboard() {
         document.documentElement.setAttribute('data-theme', savedTheme);
 
         const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-        if (!loggedInUser || loggedInUser.role !== 'admin') {
+        if (!loggedInUser || normalizeRole(loggedInUser.role) !== 'admin') {
           navigate('/login');
           return;
         }
 
 
         try {
-          const userResponse = await fetch(`http://localhost:5000/api/user/${loggedInUser.id}`);
+          const userResponse = await fetch(apiUrl(`/api/user/${loggedInUser.id}`));
           if (userResponse.ok) {
             const freshUserData = await userResponse.json();
             delete freshUserData.password;
@@ -45,7 +46,7 @@ export default function AdminDashboard() {
           setUser(loggedInUser);
         }
 
-        const response = await fetch('http://localhost:5000/api/accounts');
+        const response = await fetch(apiUrl('/api/accounts'));
         if (response.ok) {
           const allAccounts = await response.json();
 

@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
+import { normalizeRole } from './manageUsers.utils';
+import { apiUrl } from '../api';
 import '../styles/topachievers.css';
 
 export default function AdminTopAchievers() {
@@ -23,7 +25,7 @@ export default function AdminTopAchievers() {
         document.documentElement.setAttribute('data-theme', savedTheme);
 
         const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-        if (!loggedInUser || loggedInUser.role !== 'admin') {
+        if (!loggedInUser || normalizeRole(loggedInUser.role) !== 'admin') {
           navigate('/login');
           return;
         }
@@ -31,7 +33,7 @@ export default function AdminTopAchievers() {
         setUser(loggedInUser);
 
         // Fetch top achievers data (admin sees all)
-        const response = await fetch('http://localhost:5000/api/top-achievers');
+        const response = await fetch(apiUrl('/api/top-achievers'));
         if (response.ok) {
           const data = await response.json();
           setTopAchievers(Array.isArray(data) ? data : []);

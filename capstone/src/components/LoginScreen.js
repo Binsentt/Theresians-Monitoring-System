@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import logoImage from '../assets/images/STS_Logo.png';
+import { apiUrl } from '../api';
 import { getDefaultDashboardRoute, normalizeRole } from './manageUsers.utils';
 
 export default function LoginScreen() {
@@ -61,7 +62,7 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:5000/api/login', {
+      const response = await fetch(apiUrl('/api/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -114,7 +115,7 @@ export default function LoginScreen() {
     setErrorMessage('');
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/login/verify-otp', {
+      const res = await fetch(apiUrl('/api/login/verify-otp'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: pendingUserId, otp }),
@@ -149,7 +150,7 @@ export default function LoginScreen() {
     setErrorMessage('');
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/login/resend-otp', {
+      const res = await fetch(apiUrl('/api/login/resend-otp'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: pendingUserId, email: email.trim().toLowerCase() }),
