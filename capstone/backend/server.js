@@ -3040,6 +3040,14 @@ app.get('/api/student-progress/:studentId', async (req, res) => {
   }
 });
 
+const clientBuildPath = path.join(__dirname, '..', 'build');
+if (fs.existsSync(clientBuildPath)) {
+  app.use(express.static(clientBuildPath));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(clientBuildPath, 'index.html'));
+  });
+}
+
 app.listen(port, () => {
   console.log(`✅ Server running at http://localhost:${port}`);
 });
