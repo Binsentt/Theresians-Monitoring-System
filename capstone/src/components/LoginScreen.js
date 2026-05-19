@@ -93,7 +93,11 @@ export default function LoginScreen() {
         setPendingUserId(data.userId);
         setOtpExpiresAt(data.otpExpiresAt);
         setStep(2);
-        alert('Verification code sent to your email.');
+        if (data.warning) {
+          setErrorMessage(data.warning);
+        } else {
+          alert('Verification code sent to your email.');
+        }
       }
     } catch (error) {
       setErrorMessage('Network error. Please check if server is running.');
@@ -156,7 +160,7 @@ export default function LoginScreen() {
         return;
       }
       setOtpExpiresAt(data.otpExpiresAt);
-      setErrorMessage('A new code was sent to your email.');
+      setErrorMessage(data.warning || 'A new code was sent to your email.');
     } catch (err) {
       setErrorMessage('Network error while resending OTP.');
     } finally {

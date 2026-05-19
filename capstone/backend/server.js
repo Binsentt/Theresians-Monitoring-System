@@ -36,6 +36,13 @@ const {
   resolveGeneratedAccountPassword,
 } = require('./accountCreation.utils');
 const {
+  buildLoginAccountLookup,
+  buildLoginOtpResponse,
+  buildResendOtpResponse,
+  normalizeLoginEmail,
+  resolveOtpEmailDelivery,
+} = require('./loginOtp.utils');
+const {
   isValidGradeLevel,
   isValidMathTopicForGrade,
 } = require('./learningContentRules.utils');
@@ -275,6 +282,11 @@ const getCredentialEmailTimeoutMs = () => {
   return Number.isFinite(value) && value > 0 ? value : 8000;
 };
 
+const getOtpEmailTimeoutMs = () => {
+  const value = Number(process.env.OTP_EMAIL_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : 8000;
+};
+
 const verifyRememberToken = (token) => {
   try {
     return jwt.verify(token, JWT_SECRET);
@@ -296,8 +308,10 @@ const sendOtpEmail = async (email, otp, subject = 'Login Verification Code') => 
               <p style="color: #444;">This code expires in 3 minutes.</p>
             </div>`
     });
+    return true;
   } catch (mailErr) {
-    console.error('❌ Email Send Error:', mailErr.message);
+    console.error('OTP Email Send Error:', mailErr.message);
+    return false;
   }
 };
 
@@ -1422,7 +1436,7 @@ const generateStudentAnalysis = (record) => {
 
 app.get('/api/test', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM accounts');
+    const result = await pool.query('SELECT * FROM public.accounts');
     res.json({ 
       status: 'Connected', 
       accounts: result.rows,
@@ -1435,10 +1449,10 @@ app.get('/api/test', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   const { username, password, rememberToken } = req.body;
-  const email = (username || '').toLowerCase().trim();
+  const email = normalizeLoginEmail(username);
 
   try {
-    const result = await pool.query('SELECT * FROM accounts WHERE LOWER(email) = $1', [email]);
+    const result = await pool.query(buildLoginAccountLookup(email));
     if (result.rows.length === 0) return res.status(404).json({ error: 'Email not found' });
 
     const user = result.rows[0];
@@ -1449,17 +1463,20 @@ app.post('/api/login', async (req, res) => {
     if (rememberToken) {
       const decoded = verifyRememberToken(rememberToken);
       if (decoded && decoded.userId === user.id && decoded.email === user.email) {
-        await pool.query('UPDATE accounts SET status = $1 WHERE id = $2', ['Active', user.id]);
+        await pool.query('UPDATE public.accounts SET status = $1 WHERE id = $2', ['Active', user.id]);
         return res.json({ success: true, user: serializeUser(user), rememberToken });
       }
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 3 * 60 * 1000);
-    await pool.query('UPDATE accounts SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, expiresAt, user.id]);
-    await sendOtpEmail(user.email, otp);
+    await pool.query('UPDATE public.accounts SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, expiresAt, user.id]);
+    const emailSent = await resolveOtpEmailDelivery(
+      () => sendOtpEmail(user.email, otp),
+      getOtpEmailTimeoutMs()
+    );
 
-    return res.json({ success: true, step: 2, userId: user.id, email: user.email, otpExpiresAt: expiresAt });
+    return res.json(buildLoginOtpResponse({ user, expiresAt, emailSent }));
   } catch (err) {
     console.error('Login failed:', err.message);
     return res.status(500).json({ error: 'Login failed' });
@@ -1471,9 +1488,9 @@ app.post('/api/login/resend-otp', async (req, res) => {
   try {
     let query;
     if (userId) {
-      query = await pool.query('SELECT * FROM accounts WHERE id = $1', [userId]);
+      query = await pool.query('SELECT * FROM public.accounts WHERE id = $1', [userId]);
     } else if (email) {
-      query = await pool.query('SELECT * FROM accounts WHERE LOWER(email) = $1', [email.toLowerCase().trim()]);
+      query = await pool.query(buildLoginAccountLookup(email));
     } else {
       return res.status(400).json({ error: 'Missing user identifier' });
     }
@@ -1484,10 +1501,13 @@ app.post('/api/login/resend-otp', async (req, res) => {
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 3 * 60 * 1000);
-    await pool.query('UPDATE accounts SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, expiresAt, user.id]);
-    await sendOtpEmail(user.email, otp, 'Your new verification code');
+    await pool.query('UPDATE public.accounts SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, expiresAt, user.id]);
+    const emailSent = await resolveOtpEmailDelivery(
+      () => sendOtpEmail(user.email, otp, 'Your new verification code'),
+      getOtpEmailTimeoutMs()
+    );
 
-    return res.json({ success: true, otpExpiresAt: expiresAt });
+    return res.json(buildResendOtpResponse({ expiresAt, emailSent }));
   } catch (err) {
     console.error('Resend OTP failed:', err.message);
     return res.status(500).json({ error: 'Failed to resend OTP' });
@@ -1499,9 +1519,9 @@ app.post('/api/login/verify-otp', async (req, res) => {
   try {
     let result;
     if (userId) {
-      result = await pool.query('SELECT * FROM accounts WHERE id = $1 AND otp_code = $2', [userId, otp]);
+      result = await pool.query('SELECT * FROM public.accounts WHERE id = $1 AND otp_code = $2', [userId, otp]);
     } else if (email) {
-      result = await pool.query('SELECT * FROM accounts WHERE LOWER(email) = $1 AND otp_code = $2', [email.toLowerCase().trim(), otp]);
+      result = await pool.query('SELECT * FROM public.accounts WHERE LOWER(TRIM(email)) = $1 AND otp_code = $2', [normalizeLoginEmail(email), otp]);
     } else {
       return res.status(400).json({ error: 'Missing info' });
     }
@@ -1513,7 +1533,7 @@ app.post('/api/login/verify-otp', async (req, res) => {
     }
 
     const rememberToken = createRememberToken(user);
-    await pool.query('UPDATE accounts SET otp_code = NULL, otp_expires_at = NULL, status = $1 WHERE id = $2', ['Active', user.id]);
+    await pool.query('UPDATE public.accounts SET otp_code = NULL, otp_expires_at = NULL, status = $1 WHERE id = $2', ['Active', user.id]);
 
     res.json({
       success: true,
@@ -1529,7 +1549,7 @@ app.post('/api/login/verify-otp', async (req, res) => {
 app.post('/api/logout-status', async (req, res) => {
   const { userId } = req.body;
   try {
-    await pool.query('UPDATE accounts SET status = $1 WHERE id = $2', ['Offline', userId]);
+    await pool.query('UPDATE public.accounts SET status = $1 WHERE id = $2', ['Offline', userId]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update status' });
@@ -1560,7 +1580,7 @@ app.post('/api/accounts', async (req, res) => {
     const parentCode = accountHasParentAccess(finalRole) ? await generateUniqueParentCode() : null;
 
     const result = await pool.query(
-      `INSERT INTO accounts (name, email, password, role, mobile_number, address, birthday, gender, employee_id, status, is_archived, must_change_password, parent_id)
+      `INSERT INTO public.accounts (name, email, password, role, mobile_number, address, birthday, gender, employee_id, status, is_archived, must_change_password, parent_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11, $12)
        RETURNING *`,
       [finalName, normalizedEmail, hashedPassword, finalRole, mobile_number, address, birthday, gender, employee_id, 'Offline', mustChangePassword, parentCode]
@@ -1597,13 +1617,13 @@ app.get('/api/accounts', async (req, res) => {
 
     if (roleFilter) {
       queryString = archived
-        ? 'SELECT * FROM accounts WHERE is_archived = true AND LOWER(role) = $1 ORDER BY id'
-        : 'SELECT * FROM accounts WHERE is_archived = false AND LOWER(role) = $1 ORDER BY id';
+        ? 'SELECT * FROM public.accounts WHERE is_archived = true AND LOWER(role) = $1 ORDER BY id'
+        : 'SELECT * FROM public.accounts WHERE is_archived = false AND LOWER(role) = $1 ORDER BY id';
       queryParams.push(roleFilter);
     } else {
       queryString = archived
-        ? 'SELECT * FROM accounts WHERE is_archived = true ORDER BY id'
-        : 'SELECT * FROM accounts WHERE is_archived = false ORDER BY id';
+        ? 'SELECT * FROM public.accounts WHERE is_archived = true ORDER BY id'
+        : 'SELECT * FROM public.accounts WHERE is_archived = false ORDER BY id';
     }
 
     const result = await pool.query(queryString, queryParams);
@@ -1620,7 +1640,7 @@ app.put('/api/accounts/:id', async (req, res) => {
   const { name, email, password, mobile_number, address, birthday, gender, status, employee_id, is_archived } = req.body;
 
   try {
-    const currentData = await pool.query('SELECT * FROM accounts WHERE id = $1', [id]);
+    const currentData = await pool.query('SELECT * FROM public.accounts WHERE id = $1', [id]);
     if (currentData.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -1649,7 +1669,7 @@ app.put('/api/accounts/:id', async (req, res) => {
     }
 
     const updateResult = await pool.query(
-      `UPDATE accounts
+      `UPDATE public.accounts
        SET name=$1, email=$2, role=$3, password=$4, mobile_number=$5, address=$6,
            birthday=$7, gender=$8, status=$9, employee_id=$10, is_archived=$11, parent_id=$12
        WHERE id=$13
@@ -2417,7 +2437,7 @@ app.delete('/api/accounts/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const permanent = String(req.query.permanent).toLowerCase() === 'true';
-    const accountResult = await pool.query('SELECT id, role FROM accounts WHERE id = $1', [id]);
+    const accountResult = await pool.query('SELECT id, role FROM public.accounts WHERE id = $1', [id]);
     if (accountResult.rows.length === 0) {
       return res.status(404).json({ error: 'Account not found' });
     }
@@ -2426,11 +2446,11 @@ app.delete('/api/accounts/:id', async (req, res) => {
     }
 
     if (permanent) {
-      await pool.query('DELETE FROM accounts WHERE id = $1', [id]);
+      await pool.query('DELETE FROM public.accounts WHERE id = $1', [id]);
       return res.json({ success: true, message: 'Account permanently deleted' });
     }
 
-    await pool.query('UPDATE accounts SET is_archived = true WHERE id = $1', [id]);
+    await pool.query('UPDATE public.accounts SET is_archived = true WHERE id = $1', [id]);
     res.json({ success: true, message: 'Account archived' });
   } catch (err) {
     console.error('Delete/archive failed:', err.message);
@@ -2441,7 +2461,7 @@ app.delete('/api/accounts/:id', async (req, res) => {
 app.post('/api/accounts/:id/restore', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await pool.query('UPDATE accounts SET is_archived = false WHERE id = $1 RETURNING *', [id]);
+    const result = await pool.query('UPDATE public.accounts SET is_archived = false WHERE id = $1 RETURNING *', [id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
     res.json({ success: true, message: 'Account restored', user: serializeUser(result.rows[0]) });
   } catch (err) {
