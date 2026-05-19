@@ -1,4 +1,4 @@
-const DEFAULT_OTP_EMAIL_TIMEOUT_MS = 8000;
+const DEFAULT_OTP_EMAIL_TIMEOUT_MS = 30000;
 const OTP_EMAIL_FAILURE_WARNING = 'Verification code could not be sent. Please resend the code or contact an administrator.';
 
 const normalizeLoginEmail = (value) => String(value || '').toLowerCase().trim();

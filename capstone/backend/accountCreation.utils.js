@@ -30,7 +30,7 @@ const resolveGeneratedAccountPassword = (_providedPassword, generatePassword) =>
   mustChangePassword: true,
 });
 
-const DEFAULT_CREDENTIAL_EMAIL_TIMEOUT_MS = 8000;
+const DEFAULT_CREDENTIAL_EMAIL_TIMEOUT_MS = 30000;
 
 const resolveCredentialEmailDelivery = async (
   sendEmail,

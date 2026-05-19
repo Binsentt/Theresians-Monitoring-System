@@ -283,12 +283,12 @@ const generateCredentialsEmail = async (email, password, role, name) => {
 
 const getCredentialEmailTimeoutMs = () => {
   const value = Number(process.env.CREDENTIAL_EMAIL_TIMEOUT_MS);
-  return Number.isFinite(value) && value > 0 ? value : 8000;
+  return Number.isFinite(value) && value > 0 ? value : 30000;
 };
 
 const getOtpEmailTimeoutMs = () => {
   const value = Number(process.env.OTP_EMAIL_TIMEOUT_MS);
-  return Number.isFinite(value) && value > 0 ? value : 8000;
+  return Number.isFinite(value) && value > 0 ? value : 30000;
 };
 
 const verifyRememberToken = (token) => {
