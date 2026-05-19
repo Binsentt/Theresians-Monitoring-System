@@ -5,6 +5,7 @@ const {
   buildAccountCreationResponse,
   buildCredentialsEmail,
   resolveGeneratedAccountPassword,
+  resolveCredentialEmailDelivery,
   shouldIncludeRoleInCredentialsEmail,
 } = require('./accountCreation.utils');
 
@@ -104,4 +105,22 @@ test('account creation response never includes stored password fields', () => {
   assert.equal(response.user.password, undefined);
   assert.equal(response.user.otp_code, undefined);
   assert.equal(response.tempPassword, 'Generated!2345');
+});
+
+test('credential email delivery resolves false when sending stalls past the timeout', async () => {
+  const result = await resolveCredentialEmailDelivery(
+    () => new Promise(() => {}),
+    5
+  );
+
+  assert.equal(result, false);
+});
+
+test('credential email delivery returns the send result when it finishes before timeout', async () => {
+  const result = await resolveCredentialEmailDelivery(
+    async () => true,
+    100
+  );
+
+  assert.equal(result, true);
 });

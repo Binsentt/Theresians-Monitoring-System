@@ -30,6 +30,26 @@ const resolveGeneratedAccountPassword = (_providedPassword, generatePassword) =>
   mustChangePassword: true,
 });
 
+const DEFAULT_CREDENTIAL_EMAIL_TIMEOUT_MS = 8000;
+
+const resolveCredentialEmailDelivery = async (
+  sendEmail,
+  timeoutMs = DEFAULT_CREDENTIAL_EMAIL_TIMEOUT_MS
+) => {
+  let timeoutId;
+  const timeout = new Promise((resolve) => {
+    timeoutId = setTimeout(() => resolve(false), Math.max(1, Number(timeoutMs) || DEFAULT_CREDENTIAL_EMAIL_TIMEOUT_MS));
+  });
+
+  try {
+    return Boolean(await Promise.race([sendEmail(), timeout]));
+  } catch (error) {
+    return false;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 const sanitizeCreatedUser = (createdUser = {}) => {
   const { password, otp_code, otp_expires_at, ...safeUser } = createdUser;
   return safeUser;
@@ -121,6 +141,7 @@ const buildCredentialsEmail = ({ email, password, role, name, appUrl }) => {
 module.exports = {
   buildAccountCreationResponse,
   buildCredentialsEmail,
+  resolveCredentialEmailDelivery,
   resolveGeneratedAccountPassword,
   shouldIncludeRoleInCredentialsEmail,
 };

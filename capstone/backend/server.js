@@ -32,6 +32,7 @@ const {
 const {
   buildAccountCreationResponse,
   buildCredentialsEmail,
+  resolveCredentialEmailDelivery,
   resolveGeneratedAccountPassword,
 } = require('./accountCreation.utils');
 const {
@@ -267,6 +268,11 @@ const generateCredentialsEmail = async (email, password, role, name) => {
     console.error('❌ Credential Email Send Error:', err.message);
     return false;
   }
+};
+
+const getCredentialEmailTimeoutMs = () => {
+  const value = Number(process.env.CREDENTIAL_EMAIL_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : 8000;
 };
 
 const verifyRememberToken = (token) => {
@@ -1561,7 +1567,10 @@ app.post('/api/accounts', async (req, res) => {
     );
 
     const created = serializeUser(result.rows[0]);
-    const emailSent = await generateCredentialsEmail(normalizedEmail, generatedPassword, finalRole, finalName);
+    const emailSent = await resolveCredentialEmailDelivery(
+      () => generateCredentialsEmail(normalizedEmail, generatedPassword, finalRole, finalName),
+      getCredentialEmailTimeoutMs()
+    );
     const responsePayload = buildAccountCreationResponse({
       createdUser: created,
       generatedPassword,
