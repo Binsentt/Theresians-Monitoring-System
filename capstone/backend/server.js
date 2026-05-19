@@ -43,6 +43,10 @@ const {
   resolveOtpEmailDelivery,
 } = require('./loginOtp.utils');
 const {
+  buildAccountHealthCheckResponse,
+  serializeUser,
+} = require('./accountResponse.utils');
+const {
   isValidGradeLevel,
   isValidMathTopicForGrade,
 } = require('./learningContentRules.utils');
@@ -337,16 +341,6 @@ const normalizeAccountRole = (role) => {
 
 const accountHasTeacherAccess = (role) => ['teacher', 'parent_teacher'].includes(normalizeAccountRole(role));
 const accountHasParentAccess = (role) => ['parent', 'parent_teacher'].includes(normalizeAccountRole(role));
-
-const serializeUser = (user) => {
-  if (!user) return null;
-  const { password, otp_code, otp_expires_at, is_archived, must_change_password, ...rest } = user;
-  return {
-    ...rest,
-    mustChangePassword: !!must_change_password,
-    isArchived: !!is_archived,
-  };
-};
 
 const getDefaultSection = (gradeLevel, studentId) => {
   const letters = ['A', 'B', 'C'];
@@ -1437,11 +1431,7 @@ const generateStudentAnalysis = (record) => {
 app.get('/api/test', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM public.accounts');
-    res.json({ 
-      status: 'Connected', 
-      accounts: result.rows,
-      total: result.rows.length 
-    });
+    res.json(buildAccountHealthCheckResponse(result.rows));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
