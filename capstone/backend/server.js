@@ -51,11 +51,15 @@ const {
   isValidMathTopicForGrade,
 } = require('./learningContentRules.utils');
 const {
-  buildEmailFromAddress,
   buildEmailTransportConfig,
   buildMailDiagnostics,
+  buildResendEmailConfig,
   resolveAppUrl,
 } = require('./emailTransport.utils');
+const {
+  getEmailSendTimeoutMs,
+  sendEmailWithProviders,
+} = require('./emailDelivery.utils');
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -70,11 +74,22 @@ app.use('/uploads', express.static(uploadsDir));
 
 const upload = multer({ dest: uploadsDir, limits: { fileSize: 30 * 1024 * 1024 } });
 
+const resendEmailConfig = buildResendEmailConfig(process.env);
 const emailTransportConfig = buildEmailTransportConfig(process.env);
-const mailFromAddress = buildEmailFromAddress(process.env);
 const transporter = emailTransportConfig.enabled
   ? nodemailer.createTransport(emailTransportConfig.options)
   : null;
+
+const sendSystemEmail = async (message) => {
+  const result = await sendEmailWithProviders({
+    env: process.env,
+    message,
+    smtpTransporter: transporter,
+    timeoutMs: getEmailSendTimeoutMs(process.env),
+    logger: console,
+  });
+  return result.sent;
+};
 
 const generateSixDigitCode = () => String(Math.floor(100000 + Math.random() * 900000));
 
@@ -101,13 +116,17 @@ const backfillParentCodes = async () => {
   }
 };
 
+if (resendEmailConfig.enabled) {
+  console.log('Resend email delivery configured', buildMailDiagnostics(process.env));
+}
+
 if (transporter) {
   transporter.verify(err => {
     if (err) console.error('Email transport verify failed:', err.message, buildMailDiagnostics(process.env));
     else console.log('Email server ready', buildMailDiagnostics(process.env));
   });
-} else {
-  console.error('Email transport disabled:', emailTransportConfig.reason, buildMailDiagnostics(process.env));
+} else if (!resendEmailConfig.enabled) {
+  console.error('Email delivery disabled:', emailTransportConfig.reason, buildMailDiagnostics(process.env));
 }
 
 const ensureSchema = async () => {
@@ -270,35 +289,23 @@ const generateDefaultEmail = (name) => {
 };
 
 const generateCredentialsEmail = async (email, password, role, name) => {
-  if (!transporter) {
-    console.error('Credential email skipped:', emailTransportConfig.reason);
-    return false;
-  }
-
   const appUrl = resolveAppUrl(process.env);
   const message = buildCredentialsEmail({ email, password, role, name, appUrl });
-  try {
-    await transporter.sendMail({
-      from: mailFromAddress,
-      to: email,
-      subject: message.subject,
-      html: message.html,
-    });
-    return true;
-  } catch (err) {
-    console.error('❌ Credential Email Send Error:', err.message);
-    return false;
-  }
+  return sendSystemEmail({
+    to: email,
+    subject: message.subject,
+    html: message.html,
+  });
 };
 
 const getCredentialEmailTimeoutMs = () => {
   const value = Number(process.env.CREDENTIAL_EMAIL_TIMEOUT_MS);
-  return Number.isFinite(value) && value > 0 ? value : 30000;
+  return Number.isFinite(value) && value > 0 ? value : 12000;
 };
 
 const getOtpEmailTimeoutMs = () => {
   const value = Number(process.env.OTP_EMAIL_TIMEOUT_MS);
-  return Number.isFinite(value) && value > 0 ? value : 30000;
+  return Number.isFinite(value) && value > 0 ? value : 12000;
 };
 
 const verifyRememberToken = (token) => {
@@ -310,28 +317,16 @@ const verifyRememberToken = (token) => {
 };
 
 const sendOtpEmail = async (email, otp, subject = 'Login Verification Code') => {
-  if (!transporter) {
-    console.error('OTP email skipped:', emailTransportConfig.reason);
-    return false;
-  }
-
-  try {
-    await transporter.sendMail({
-      from: mailFromAddress,
-      to: email,
-      subject,
-      html: `<div style="font-family: Arial, sans-serif; border: 1px solid #ddd; padding: 20px; border-radius: 10px; background: #f8f9fa;">
+  return sendSystemEmail({
+    to: email,
+    subject,
+    html: `<div style="font-family: Arial, sans-serif; border: 1px solid #ddd; padding: 20px; border-radius: 10px; background: #f8f9fa;">
               <h2 style="color: #0b2447;">Security Verification</h2>
               <p>Your verification code is:</p>
               <p style="font-size: 32px; font-weight: 700; letter-spacing: 6px; margin: 12px 0;">${otp}</p>
               <p style="color: #444;">This code expires in 3 minutes.</p>
-            </div>`
-    });
-    return true;
-  } catch (mailErr) {
-    console.error('OTP Email Send Error:', mailErr.message);
-    return false;
-  }
+            </div>`,
+  });
 };
 
 const calculateAge = (birthday) => {
@@ -2483,13 +2478,12 @@ app.post('/api/reset-password/send-code', async (req, res) => {
     const result = await pool.query('SELECT * FROM accounts WHERE LOWER(email)=$1', [email]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Email not found' });
     await pool.query('UPDATE accounts SET otp_code=$1, otp_expires_at=$2 WHERE LOWER(email)=$3', [otp, expiresAt, email]);
-    if (!transporter) return res.status(503).json({ error: 'Email service unavailable' });
-    await transporter.sendMail({
-      from: mailFromAddress,
+    const emailSent = await sendSystemEmail({
       to: email,
       subject: 'Password Reset Code',
       html: `<p>Your code is: <b>${otp}</b></p><p>This code expires in 10 minutes.</p>`
     });
+    if (!emailSent) return res.status(503).json({ error: 'Email service unavailable' });
     res.json({ success: true, expiresAt });
   } catch (err) { console.error('Reset password code failed:', err.message); res.status(500).json({ error: 'Reset failed' }); }
 });
@@ -2522,19 +2516,16 @@ app.post('/api/request-password-change-otp', async (req, res) => {
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
     await pool.query('UPDATE accounts SET otp_code=$1, otp_expires_at=$2 WHERE id=$3', [otp, expiresAt, userId]);
 
-    try {
-      if (!transporter) throw new Error('Email service unavailable');
-      await transporter.sendMail({
-        from: mailFromAddress,
-        to: email,
-        subject: 'Password Change Verification Code',
-        html: `<div style="font-family: Arial; border: 1px solid #ddd; padding: 20px;">
+    const emailSent = await sendSystemEmail({
+      to: email,
+      subject: 'Password Change Verification Code',
+      html: `<div style="font-family: Arial; border: 1px solid #ddd; padding: 20px;">
                 <h2>Password Change Verification</h2>
                 <p>Your verification code is: <h1 style="color: #3498db;">${otp}</h1></p>
                 <p style="color: #888; font-size: 12px;">This code will expire in 10 minutes.</p>
-               </div>`
-      });
-    } catch (mailErr) { console.error('❌ Email Send Error:', mailErr.message); }
+               </div>`,
+    });
+    if (!emailSent) return res.status(503).json({ error: 'Email service unavailable' });
 
     return res.json({ success: true, message: 'OTP sent to email', expiresAt });
   } catch (err) {

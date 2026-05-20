@@ -5,6 +5,7 @@ const {
   buildEmailTransportConfig,
   buildEmailFromAddress,
   buildMailDiagnostics,
+  buildResendEmailConfig,
 } = require('./emailTransport.utils');
 
 test('builds explicit SMTP transport from Railway environment variables', () => {
@@ -51,6 +52,35 @@ test('does not fall back to bundled email credentials', () => {
   assert.match(config.reason, /EMAIL_PASS/);
 });
 
+test('enables Resend only when API key and sender address are configured', () => {
+  assert.deepEqual(buildResendEmailConfig({}), {
+    enabled: false,
+    apiKey: null,
+    from: null,
+    reason: 'RESEND_API_KEY and EMAIL_FROM are required for Resend email delivery.',
+  });
+
+  assert.deepEqual(buildResendEmailConfig({
+    RESEND_API_KEY: 're_secret_api_key',
+  }), {
+    enabled: false,
+    apiKey: null,
+    from: null,
+    reason: 'RESEND_API_KEY and EMAIL_FROM are required for Resend email delivery.',
+  });
+
+  const config = buildResendEmailConfig({
+    RESEND_API_KEY: 're_secret_api_key',
+    EMAIL_FROM: 'noreply@theresiansquest.com',
+    EMAIL_FROM_NAME: 'Saint Therese School',
+  });
+
+  assert.equal(config.enabled, true);
+  assert.equal(config.apiKey, 're_secret_api_key');
+  assert.equal(config.from, '"Saint Therese School" <noreply@theresiansquest.com>');
+  assert.equal(config.reason, null);
+});
+
 test('builds sender address without exposing credentials', () => {
   assert.equal(
     buildEmailFromAddress({
@@ -72,6 +102,7 @@ test('builds sender address without exposing credentials', () => {
 
 test('diagnostics report only safe mail configuration state', () => {
   const diagnostics = buildMailDiagnostics({
+    RESEND_API_KEY: 're_secret_api_key',
     SMTP_HOST: 'smtp.example.com',
     SMTP_PORT: '465',
     SMTP_SECURE: 'true',
@@ -82,6 +113,9 @@ test('diagnostics report only safe mail configuration state', () => {
   });
 
   assert.deepEqual(diagnostics, {
+    primaryProvider: 'resend',
+    resendEnabled: true,
+    hasResendApiKey: true,
     smtpHost: 'smtp.example.com',
     smtpPort: 465,
     smtpSecure: true,
@@ -91,4 +125,5 @@ test('diagnostics report only safe mail configuration state', () => {
     hasEmailFrom: true,
     appUrl: 'https://theresiansquest.com/login',
   });
+  assert.doesNotMatch(JSON.stringify(diagnostics), /secret-app-password|re_secret_api_key/);
 });
