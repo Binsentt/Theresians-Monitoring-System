@@ -50,6 +50,12 @@ const {
   isValidGradeLevel,
   isValidMathTopicForGrade,
 } = require('./learningContentRules.utils');
+const {
+  buildEmailFromAddress,
+  buildEmailTransportConfig,
+  buildMailDiagnostics,
+  resolveAppUrl,
+} = require('./emailTransport.utils');
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -64,16 +70,11 @@ app.use('/uploads', express.static(uploadsDir));
 
 const upload = multer({ dest: uploadsDir, limits: { fileSize: 30 * 1024 * 1024 } });
 
-const MY_GMAIL = process.env.EMAIL_USER || 'vincenttafalla2@gmail.com';
-const MY_APP_PASS = process.env.EMAIL_PASS || 'cuij whit wnoc gqcq';
-
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: MY_GMAIL,
-    pass: MY_APP_PASS,
-  },
-});
+const emailTransportConfig = buildEmailTransportConfig(process.env);
+const mailFromAddress = buildEmailFromAddress(process.env);
+const transporter = emailTransportConfig.enabled
+  ? nodemailer.createTransport(emailTransportConfig.options)
+  : null;
 
 const generateSixDigitCode = () => String(Math.floor(100000 + Math.random() * 900000));
 
@@ -100,10 +101,14 @@ const backfillParentCodes = async () => {
   }
 };
 
-transporter.verify(err => {
-  if (err) console.error('❌ Email Error:', err.message);
-  else console.log('✅ Email server ready');
-});
+if (transporter) {
+  transporter.verify(err => {
+    if (err) console.error('Email transport verify failed:', err.message, buildMailDiagnostics(process.env));
+    else console.log('Email server ready', buildMailDiagnostics(process.env));
+  });
+} else {
+  console.error('Email transport disabled:', emailTransportConfig.reason, buildMailDiagnostics(process.env));
+}
 
 const ensureSchema = async () => {
   try {
@@ -265,11 +270,16 @@ const generateDefaultEmail = (name) => {
 };
 
 const generateCredentialsEmail = async (email, password, role, name) => {
-  const appUrl = process.env.APP_URL || 'http://localhost:3000/login';
+  if (!transporter) {
+    console.error('Credential email skipped:', emailTransportConfig.reason);
+    return false;
+  }
+
+  const appUrl = resolveAppUrl(process.env);
   const message = buildCredentialsEmail({ email, password, role, name, appUrl });
   try {
     await transporter.sendMail({
-      from: `"Saint Therese School" <${MY_GMAIL}>`,
+      from: mailFromAddress,
       to: email,
       subject: message.subject,
       html: message.html,
@@ -300,9 +310,14 @@ const verifyRememberToken = (token) => {
 };
 
 const sendOtpEmail = async (email, otp, subject = 'Login Verification Code') => {
+  if (!transporter) {
+    console.error('OTP email skipped:', emailTransportConfig.reason);
+    return false;
+  }
+
   try {
     await transporter.sendMail({
-      from: `"Saint Therese School" <${MY_GMAIL}>`,
+      from: mailFromAddress,
       to: email,
       subject,
       html: `<div style="font-family: Arial, sans-serif; border: 1px solid #ddd; padding: 20px; border-radius: 10px; background: #f8f9fa;">
@@ -2468,8 +2483,9 @@ app.post('/api/reset-password/send-code', async (req, res) => {
     const result = await pool.query('SELECT * FROM accounts WHERE LOWER(email)=$1', [email]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Email not found' });
     await pool.query('UPDATE accounts SET otp_code=$1, otp_expires_at=$2 WHERE LOWER(email)=$3', [otp, expiresAt, email]);
+    if (!transporter) return res.status(503).json({ error: 'Email service unavailable' });
     await transporter.sendMail({
-      from: `"STS Support" <${MY_GMAIL}>`,
+      from: mailFromAddress,
       to: email,
       subject: 'Password Reset Code',
       html: `<p>Your code is: <b>${otp}</b></p><p>This code expires in 10 minutes.</p>`
@@ -2507,8 +2523,9 @@ app.post('/api/request-password-change-otp', async (req, res) => {
     await pool.query('UPDATE accounts SET otp_code=$1, otp_expires_at=$2 WHERE id=$3', [otp, expiresAt, userId]);
 
     try {
+      if (!transporter) throw new Error('Email service unavailable');
       await transporter.sendMail({
-        from: `"Saint Therese School" <${MY_GMAIL}>`,
+        from: mailFromAddress,
         to: email,
         subject: 'Password Change Verification Code',
         html: `<div style="font-family: Arial; border: 1px solid #ddd; padding: 20px;">
