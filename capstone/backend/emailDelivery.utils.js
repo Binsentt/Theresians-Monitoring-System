@@ -1,12 +1,13 @@
 const {
-  buildEmailFromAddress,
-  buildEmailTransportConfig,
   buildMailDiagnostics,
   buildResendEmailConfig,
 } = require('./emailTransport.utils');
 
+// Kept for compatibility with older tests/imports; delivery now uses the Resend SDK.
 const RESEND_EMAILS_URL = 'https://api.resend.com/emails';
 const DEFAULT_EMAIL_SEND_TIMEOUT_MS = 8000;
+
+let cachedResendClient = null;
 
 const parsePositiveInt = (value, fallback) => {
   const number = Number(value);
@@ -17,20 +18,91 @@ const getEmailSendTimeoutMs = (env = {}) => (
   parsePositiveInt(env.EMAIL_SEND_TIMEOUT_MS ?? env.RESEND_TIMEOUT_MS, DEFAULT_EMAIL_SEND_TIMEOUT_MS)
 );
 
-const createTimeoutSignal = (timeoutMs) => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), Math.max(1, Number(timeoutMs) || DEFAULT_EMAIL_SEND_TIMEOUT_MS));
-  return {
-    signal: controller.signal,
-    clear: () => clearTimeout(timeoutId),
-  };
+const isProductionEmailRuntime = (env = {}) => (
+  String(env.NODE_ENV || '').toLowerCase() === 'production'
+  || Boolean(env.RAILWAY_ENVIRONMENT || env.RAILWAY_PROJECT_ID || env.RAILWAY_SERVICE_ID)
+);
+
+const shouldUseSmtpFallback = (env = {}) => (
+  !isProductionEmailRuntime(env) && String(env.DISABLE_SMTP_FALLBACK || '').toLowerCase() !== 'true'
+);
+
+const loadResendClient = async () => {
+  if (!cachedResendClient) {
+    const resendModule = await import('resend');
+    cachedResendClient = resendModule.Resend;
+  }
+
+  if (typeof cachedResendClient !== 'function') {
+    const error = new Error('Resend SDK client is unavailable');
+    error.code = 'RESEND_SDK_UNAVAILABLE';
+    throw error;
+  }
+
+  return cachedResendClient;
 };
+
+const sanitizeReason = (value, fallback = 'send_failed') => {
+  const reason = String(value || fallback)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return reason || fallback;
+};
+
+const extractStatusCode = (error) => (
+  error?.statusCode
+  || error?.status_code
+  || error?.status
+  || error?.response?.status
+  || null
+);
 
 const classifySendError = (error) => {
   if (!error) return 'send_failed';
   if (error.name === 'AbortError') return 'timeout';
-  if (error.code) return String(error.code);
+
+  const statusCode = extractStatusCode(error);
+  if (statusCode) return `status_${statusCode}`;
+
+  if (['MODULE_NOT_FOUND', 'ERR_MODULE_NOT_FOUND', 'RESEND_SDK_UNAVAILABLE'].includes(error.code)) {
+    return 'sdk_unavailable';
+  }
+  if (error.code) return sanitizeReason(error.code);
+  if (error.name) return sanitizeReason(error.name);
+
   return 'send_failed';
+};
+
+const createTimeoutResult = (timeoutMs) => {
+  let timeoutId;
+  const timeout = new Promise((resolve) => {
+    timeoutId = setTimeout(
+      () => resolve({ timedOut: true }),
+      Math.max(1, Number(timeoutMs) || DEFAULT_EMAIL_SEND_TIMEOUT_MS)
+    );
+  });
+
+  return {
+    clear: () => clearTimeout(timeoutId),
+    timeout,
+  };
+};
+
+const withTimeout = async (operation, timeoutMs) => {
+  const { clear, timeout } = createTimeoutResult(timeoutMs);
+
+  try {
+    const result = await Promise.race([
+      Promise.resolve().then(operation),
+      timeout,
+    ]);
+    return result?.timedOut ? { timedOut: true, value: null } : { timedOut: false, value: result };
+  } finally {
+    clear();
+  }
 };
 
 const logSafe = (logger, level, message, details) => {
@@ -38,144 +110,110 @@ const logSafe = (logger, level, message, details) => {
   if (log) log.call(logger, message, details);
 };
 
-const sendViaResend = async ({ config, fetchImpl, message, timeoutMs }) => {
+const sendViaResend = async ({ config, message, ResendClient, timeoutMs }) => {
   if (!config.enabled) {
     return { sent: false, provider: 'resend', reason: 'not_configured' };
   }
 
-  if (typeof fetchImpl !== 'function') {
-    return { sent: false, provider: 'resend', reason: 'fetch_unavailable' };
-  }
-
-  const timeout = createTimeoutSignal(timeoutMs);
   try {
-    const response = await fetchImpl(RESEND_EMAILS_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-        'User-Agent': 'theresian-portal/1.0',
-      },
-      body: JSON.stringify({
+    const Client = ResendClient || await loadResendClient();
+    const resend = new Client(config.apiKey);
+    const result = await withTimeout(
+      () => resend.emails.send({
         from: config.from,
         to: message.to,
         subject: message.subject,
         html: message.html,
       }),
-      signal: timeout.signal,
-    });
+      timeoutMs
+    );
 
-    if (!response.ok) {
+    if (result.timedOut) {
+      return { sent: false, provider: 'resend', reason: 'timeout' };
+    }
+
+    const { data, error } = result.value || {};
+    if (error) {
       return {
         sent: false,
         provider: 'resend',
-        reason: `status_${response.status || 'unknown'}`,
-        statusCode: response.status || null,
+        reason: classifySendError(error),
+        statusCode: extractStatusCode(error),
       };
     }
 
     return {
       sent: true,
       provider: 'resend',
-      statusCode: response.status || null,
+      messageIdPresent: Boolean(data?.id),
     };
   } catch (error) {
     return {
       sent: false,
       provider: 'resend',
       reason: classifySendError(error),
-    };
-  } finally {
-    timeout.clear();
-  }
-};
-
-const sendViaSmtp = async ({ config, message, smtpTransporter }) => {
-  if (!config.enabled || !smtpTransporter) {
-    return { sent: false, provider: 'smtp', reason: 'not_configured' };
-  }
-
-  try {
-    await smtpTransporter.sendMail({
-      from: buildEmailFromAddress(config.env),
-      to: message.to,
-      subject: message.subject,
-      html: message.html,
-    });
-    return { sent: true, provider: 'smtp' };
-  } catch (error) {
-    return {
-      sent: false,
-      provider: 'smtp',
-      reason: classifySendError(error),
+      statusCode: extractStatusCode(error),
     };
   }
 };
 
 const sendEmailWithProviders = async ({
   env = process.env,
-  fetchImpl = globalThis.fetch,
+  fetchImpl: _fetchImpl = globalThis.fetch,
   logger = console,
   message,
-  smtpTransporter = null,
+  ResendClient = null,
+  smtpTransporter: _smtpTransporter = null,
   timeoutMs = getEmailSendTimeoutMs(env),
 }) => {
   const resendConfig = buildResendEmailConfig(env);
-  const smtpConfig = {
-    ...buildEmailTransportConfig(env),
-    env,
+  const diagnostics = {
+    ...buildMailDiagnostics(env),
+    productionEmailRuntime: isProductionEmailRuntime(env),
+    smtpFallbackAllowed: shouldUseSmtpFallback(env),
   };
-  const diagnostics = buildMailDiagnostics(env);
 
-  if (resendConfig.enabled) {
-    const resendResult = await sendViaResend({
-      config: resendConfig,
-      fetchImpl,
-      message,
-      timeoutMs,
-    });
-
-    if (resendResult.sent) {
-      logSafe(logger, 'info', 'Email sent', {
-        provider: 'resend',
-        statusCode: resendResult.statusCode || null,
-        diagnostics,
-      });
-      return resendResult;
-    }
-
-    logSafe(logger, 'warn', 'Resend email delivery failed', {
+  if (!resendConfig.enabled) {
+    logSafe(logger, 'warn', 'Resend email delivery is not configured', {
       provider: 'resend',
-      reason: resendResult.reason,
-      statusCode: resendResult.statusCode || null,
+      reason: resendConfig.reason || 'not_configured',
       diagnostics,
     });
+    return {
+      sent: false,
+      provider: 'resend',
+      reason: 'not_configured',
+    };
   }
 
-  const smtpResult = await sendViaSmtp({
-    config: smtpConfig,
+  const resendResult = await sendViaResend({
+    config: resendConfig,
     message,
-    smtpTransporter,
+    ResendClient,
+    timeoutMs,
   });
 
-  if (smtpResult.sent) {
+  if (resendResult.sent) {
     logSafe(logger, 'info', 'Email sent', {
-      provider: 'smtp',
+      provider: 'resend',
+      messageIdPresent: Boolean(resendResult.messageIdPresent),
       diagnostics,
     });
-    return smtpResult;
+    return resendResult;
   }
 
-  logSafe(logger, 'warn', 'Email delivery failed', {
-    provider: null,
-    reason: smtpResult.reason,
+  logSafe(logger, 'warn', 'Resend email delivery failed', {
+    provider: 'resend',
+    reason: resendResult.reason,
+    statusCode: resendResult.statusCode || null,
     diagnostics,
   });
 
   return {
     sent: false,
-    provider: null,
-    reason: smtpResult.reason,
+    provider: 'resend',
+    reason: resendResult.reason,
+    statusCode: resendResult.statusCode || null,
   };
 };
 
@@ -183,5 +221,7 @@ module.exports = {
   DEFAULT_EMAIL_SEND_TIMEOUT_MS,
   RESEND_EMAILS_URL,
   getEmailSendTimeoutMs,
+  isProductionEmailRuntime,
   sendEmailWithProviders,
+  shouldUseSmtpFallback,
 };

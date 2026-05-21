@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
 const path = require('path');
 const dns = require('dns');
 const jwt = require('jsonwebtoken');
@@ -51,7 +50,6 @@ const {
   isValidMathTopicForGrade,
 } = require('./learningContentRules.utils');
 const {
-  buildEmailTransportConfig,
   buildMailDiagnostics,
   buildResendEmailConfig,
   resolveAppUrl,
@@ -75,16 +73,11 @@ app.use('/uploads', express.static(uploadsDir));
 const upload = multer({ dest: uploadsDir, limits: { fileSize: 30 * 1024 * 1024 } });
 
 const resendEmailConfig = buildResendEmailConfig(process.env);
-const emailTransportConfig = buildEmailTransportConfig(process.env);
-const transporter = emailTransportConfig.enabled
-  ? nodemailer.createTransport(emailTransportConfig.options)
-  : null;
 
 const sendSystemEmail = async (message) => {
   const result = await sendEmailWithProviders({
     env: process.env,
     message,
-    smtpTransporter: transporter,
     timeoutMs: getEmailSendTimeoutMs(process.env),
     logger: console,
   });
@@ -118,15 +111,8 @@ const backfillParentCodes = async () => {
 
 if (resendEmailConfig.enabled) {
   console.log('Resend email delivery configured', buildMailDiagnostics(process.env));
-}
-
-if (transporter) {
-  transporter.verify(err => {
-    if (err) console.error('Email transport verify failed:', err.message, buildMailDiagnostics(process.env));
-    else console.log('Email server ready', buildMailDiagnostics(process.env));
-  });
 } else if (!resendEmailConfig.enabled) {
-  console.error('Email delivery disabled:', emailTransportConfig.reason, buildMailDiagnostics(process.env));
+  console.error('Email delivery disabled:', resendEmailConfig.reason, buildMailDiagnostics(process.env));
 }
 
 const ensureSchema = async () => {
