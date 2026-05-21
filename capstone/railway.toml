@@ -1,0 +1,5 @@
+[build]
+buildCommand = "npm run build && npm --prefix backend ci --omit=dev"
+
+[deploy]
+startCommand = "npm --prefix backend start"

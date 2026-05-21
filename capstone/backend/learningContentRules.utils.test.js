@@ -10,23 +10,23 @@ const {
 } = require('./learningContentRules.utils');
 
 test('maps math topics to the selected grade band', () => {
-  assert.deepEqual(getMathTopicsForGrade('Grade 1'), ['Addition', 'Subtraction']);
-  assert.deepEqual(getMathTopicsForGrade('Grade 3'), ['Multiplication', 'Division']);
-  assert.deepEqual(getMathTopicsForGrade('Grade 6'), [
+  assert.deepEqual(getMathTopicsForGrade('Grade 1-2'), ['Addition', 'Subtraction']);
+  assert.deepEqual(getMathTopicsForGrade('Grade 3-4'), ['Multiplication', 'Division']);
+  assert.deepEqual(getMathTopicsForGrade('Grade 5-6'), [
+    'Multiplication',
+    'Division',
     'Formulas',
     'Decimals',
-    'Word Problems',
-    'Fractions',
-    'Geometry',
-    'Basic Algebra',
+    'Word Problem',
   ]);
 });
 
 test('validates math topics against the selected grade level', () => {
-  assert.equal(isValidMathTopicForGrade('Grade 1', 'Addition'), true);
-  assert.equal(isValidMathTopicForGrade('Grade 1', 'Multiplication'), false);
-  assert.equal(isValidMathTopicForGrade('Grade 4', 'Division'), true);
-  assert.equal(isValidMathTopicForGrade('Grade 5', 'Formulas'), true);
+  assert.equal(isValidMathTopicForGrade('Grade 1-2', 'Addition'), true);
+  assert.equal(isValidMathTopicForGrade('Grade 1-2', 'Measurement'), true);
+  assert.equal(isValidMathTopicForGrade('Grade 3-4', 'Division'), true);
+  assert.equal(isValidMathTopicForGrade('Grade 5-6', 'Formulas'), true);
+  assert.equal(isValidMathTopicForGrade('Grade 5-6', ''), false);
   assert.equal(ALLOWED_MATH_TOPICS.includes('Formulas'), true);
 });
 

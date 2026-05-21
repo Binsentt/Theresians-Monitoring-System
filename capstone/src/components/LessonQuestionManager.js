@@ -10,9 +10,11 @@ import {
   calculateLearningStorage,
   countFixedQuestionRecords,
   filterLearningFiles,
+  formatLearningPreviewText,
   formatLearningFileSize,
   getLargestLearningFiles,
   getFolderContents,
+  getLearningFilePreviewKind,
   getMathTopicsForGrade,
   GRADE_LEVELS,
   inferLearningFileUploadType,
@@ -25,8 +27,10 @@ import { apiUrl } from '../api';
 import '../styles/lessonQuestionManager.css';
 
 const initialFormState = {
-  grade_level: 'Grade 1',
+  grade_level: 'Grade 1-2',
   math_topic: 'Addition',
+  folder_id: '',
+  file_type: 'fixed_questions',
   expected_question_count: '',
   file: null,
 };
@@ -68,6 +72,9 @@ export default function LessonQuestionManager() {
   const [openFileMenu, setOpenFileMenu] = useState(null);
   const [openFolderMenu, setOpenFolderMenu] = useState(null);
   const [openTrashMenu, setOpenTrashMenu] = useState(null);
+  const [previewFile, setPreviewFile] = useState(null);
+  const [previewContent, setPreviewContent] = useState('');
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [filters, setFilters] = useState({ search: '', folder: '', grade_level: '', math_topic: '', file_type: '' });
 
   const showNotification = (message, type = 'success') => {
@@ -126,7 +133,8 @@ export default function LessonQuestionManager() {
     () => (editingFile ? getMathTopicsForGrade(editingFile.grade_level) : MATH_TOPICS),
     [editingFile]
   );
-  const uploadType = inferLearningFileUploadType(form.file?.name);
+  const inferredFileType = inferLearningFileUploadType(form.file?.name);
+  const uploadType = form.file_type;
   const displayedFiles = activeFolder ? folderContents : filteredFiles;
   const tableEmptyMessage = activeFolder
     ? `Folder "${activeFolder.name}" is empty.`
@@ -163,11 +171,11 @@ export default function LessonQuestionManager() {
 
   const handleUpload = async (event) => {
     event.preventDefault();
-    if (!form.grade_level || !form.math_topic.trim() || !form.file) {
-      showNotification('Choose a grade, topic, and file before uploading.', 'error');
+    if (!form.grade_level || !form.math_topic.trim() || !form.folder_id || !form.file) {
+      showNotification('Grade level, topic, folder, and file are required.', 'error');
       return;
     }
-    if (!uploadType) {
+    if (!uploadType || inferredFileType !== uploadType) {
       showNotification('Lessons must be PDF files. Fixed questions must be JSON or CSV.', 'error');
       return;
     }
@@ -175,13 +183,8 @@ export default function LessonQuestionManager() {
       showNotification('Invalid grade level or math topic. Use a supported Mathematics topic for this grade.', 'error');
       return;
     }
-    if (uploadType === 'lesson') {
-      showNotification('Upload fixed-question JSON or CSV files from this workspace.', 'error');
-      return;
-    }
-
     const requestedCount = String(form.expected_question_count || '').trim();
-    if (requestedCount) {
+    if (uploadType === 'fixed_questions' && requestedCount) {
       try {
         const actualCount = countFixedQuestionRecords(await form.file.text(), form.file.name);
         if (actualCount !== Number(requestedCount)) {
@@ -200,9 +203,9 @@ export default function LessonQuestionManager() {
     payload.append('grade_level', form.grade_level);
     payload.append('math_topic', form.math_topic.trim());
     payload.append('file_type', uploadType);
-    payload.append('folder_id', activeFolder?.id ? String(activeFolder.id) : '');
+    payload.append('folder_id', String(form.folder_id));
     payload.append('uploaded_by', user.id);
-    if (requestedCount) {
+    if (uploadType === 'fixed_questions' && requestedCount) {
       payload.append('expected_question_count', requestedCount);
     }
     payload.append('file', form.file);
@@ -215,13 +218,20 @@ export default function LessonQuestionManager() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Upload failed.');
-      showNotification('Upload successful.');
+      const selectedFolder = folders.find((folder) => String(folder.id) === String(form.folder_id));
+      const uploadedFile = {
+        ...data.learningFile,
+        folder_id: data.learningFile?.folder_id || form.folder_id,
+        folder_name: selectedFolder?.name || activeFolder?.name || 'Unassigned',
+        uploaded_by_name: user?.name || user?.email || 'Unknown',
+      };
+      setFiles((current) => [uploadedFile, ...current.filter((file) => file.id !== uploadedFile.id)]);
+      showNotification('File uploaded successfully');
       resetForm();
       setShowUploadForm(false);
-      loadFilesAndFolders();
     } catch (error) {
       console.error(error);
-      showNotification(error.message || 'Upload failed.', 'error');
+      showNotification('Upload failed. Please try again.', 'error');
     } finally {
       setUploading(false);
     }
@@ -247,11 +257,19 @@ export default function LessonQuestionManager() {
       const response = await fetch(apiUrl(`/api/learning-files/${file.id}/restore`), { method: 'POST' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Restore failed');
-      showNotification('File restored.');
-      loadFilesAndFolders();
+      const restoredFile = data.learningFile || file;
+      const restoredFolder = folders.find((folder) => String(folder.id) === String(restoredFile.folder_id || file.folder_id));
+      setTrashFiles((current) => current.filter((item) => item.id !== file.id));
+      setFiles((current) => [{
+        ...restoredFile,
+        deleted_at: null,
+        folder_name: restoredFile.folder_name || restoredFolder?.name || 'Unassigned',
+      }, ...current.filter((item) => item.id !== file.id)]);
+      setOpenTrashMenu(null);
+      showNotification('File restored successfully');
     } catch (error) {
       console.error(error);
-      showNotification(error.message || 'Restore failed.', 'error');
+      showNotification('Failed to restore file. Please try again.', 'error');
     }
   };
 
@@ -284,6 +302,33 @@ export default function LessonQuestionManager() {
     link.click();
     link.remove();
     setOpenFileMenu(null);
+  };
+
+  const closePreview = () => {
+    setPreviewFile(null);
+    setPreviewContent('');
+    setPreviewLoading(false);
+  };
+
+  const previewLearningFile = async (file) => {
+    const previewKind = getLearningFilePreviewKind(file);
+    setOpenFileMenu(null);
+    setPreviewContent('');
+    setPreviewFile({ ...file, previewKind, publicUrl: getPublicUrl(file.file_url) });
+
+    if (previewKind !== 'text' || !file.file_url) return;
+
+    try {
+      setPreviewLoading(true);
+      const response = await fetch(getPublicUrl(file.file_url));
+      if (!response.ok) throw new Error('Preview fetch failed');
+      setPreviewContent(formatLearningPreviewText(await response.text(), file));
+    } catch (error) {
+      console.error(error);
+      setPreviewContent('');
+    } finally {
+      setPreviewLoading(false);
+    }
   };
 
   const beginEditFile = (file) => {
@@ -394,11 +439,18 @@ export default function LessonQuestionManager() {
       const response = await fetch(apiUrl(`/api/folders/${folder.id}/restore`), { method: 'POST' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Restore failed');
-      showNotification('Folder restored.');
+      const restoredFolder = data.folder || folder;
+      setTrashFolders((current) => current.filter((item) => item.id !== folder.id));
+      setFolders((current) => [{
+        ...restoredFolder,
+        deleted_at: null,
+      }, ...current.filter((item) => item.id !== folder.id)]);
+      setOpenTrashMenu(null);
+      showNotification('File restored successfully');
       loadFilesAndFolders();
     } catch (error) {
       console.error(error);
-      showNotification(error.message || 'Restore failed.', 'error');
+      showNotification('Failed to restore file. Please try again.', 'error');
     }
   };
 
@@ -454,6 +506,10 @@ export default function LessonQuestionManager() {
 
   const openUploadModal = () => {
     setShowNewMenu(false);
+    setForm((current) => ({
+      ...current,
+      folder_id: activeFolder?.id ? String(activeFolder.id) : current.folder_id,
+    }));
     setShowUploadForm(true);
   };
 
@@ -486,7 +542,9 @@ export default function LessonQuestionManager() {
         <div className="drive-file-name">
           <FileText size={18} aria-hidden="true" />
           <div className="file-name-cell">
-            <span className="file-name-title">{row.title}</span>
+            <button type="button" className="file-name-title file-preview-trigger" onClick={() => previewLearningFile(row)}>
+              {row.title}
+            </button>
             <span className="file-meta">{row.grade_level} | {row.math_topic}</span>
           </div>
         </div>
@@ -512,6 +570,7 @@ export default function LessonQuestionManager() {
           </button>
           {openFileMenu === row.id && (
             <div className="drive-row-menu">
+              <button type="button" onClick={() => previewLearningFile(row)}><FileText size={16} />Preview</button>
               <button type="button" onClick={() => beginEditFile(row)}><Pencil size={16} />Rename</button>
               <button type="button" onClick={() => downloadFile(row)}><Download size={16} />Download</button>
               <button type="button" onClick={() => moveFileToTrash(row)}><Trash2 size={16} />Move to Bin</button>
@@ -821,6 +880,21 @@ export default function LessonQuestionManager() {
                       </datalist>
                     </div>
                     <div className="form-group">
+                      <label className="form-label required">Select Folder</label>
+                      <select className="select-field" value={form.folder_id} onChange={(event) => handleFormChange('folder_id', event.target.value)}>
+                        <option value="">Choose a folder</option>
+                        {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label required">File Type</label>
+                      <select className="select-field" value={form.file_type} onChange={(event) => handleFormChange('file_type', event.target.value)}>
+                        <option value="lesson">Lesson File</option>
+                        <option value="fixed_questions">Fixed Question File</option>
+                      </select>
+                    </div>
+                    {form.file_type === 'fixed_questions' && (
+                      <div className="form-group">
                       <label className="form-label">Fixed Questions Count</label>
                       <input
                         type="number"
@@ -831,11 +905,22 @@ export default function LessonQuestionManager() {
                         onChange={(event) => handleFormChange('expected_question_count', event.target.value)}
                       />
                     </div>
+                    )}
                     <div className="form-group">
                       <label className="form-label required">File</label>
-                      <input type="file" accept=".json,.csv" onChange={(event) => handleFormChange('file', event.target.files[0] || null)} />
+                      <input
+                        type="file"
+                        accept={form.file_type === 'lesson' ? '.pdf,application/pdf' : '.json,.csv,application/json,text/csv'}
+                        onChange={(event) => handleFormChange('file', event.target.files[0] || null)}
+                      />
                     </div>
                   </div>
+                  {uploading && (
+                    <div className="upload-progress" role="status">
+                      <span className="upload-progress-bar" aria-hidden="true" />
+                      <strong>Uploading file...</strong>
+                    </div>
+                  )}
                   <div className="upload-actions">
                     <button type="submit" className="btn btn-primary" disabled={uploading}>
                       {uploading ? 'Uploading...' : 'Upload File'}
@@ -843,6 +928,43 @@ export default function LessonQuestionManager() {
                     <button type="button" className="btn btn-secondary" onClick={() => { resetForm(); setShowUploadForm(false); }} disabled={uploading}>Cancel</button>
                   </div>
                 </form>
+              </div>
+            )}
+
+            {previewFile && (
+              <div className="manager-modal-backdrop" role="presentation" onMouseDown={closePreview}>
+                <div className="manager-modal file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="preview-file-title" onMouseDown={(event) => event.stopPropagation()}>
+                  <div className="manager-modal-header">
+                    <h2 id="preview-file-title">{previewFile.file_name || previewFile.title || 'File Preview'}</h2>
+                    <button type="button" className="icon-button" aria-label="Close preview" onClick={closePreview}>x</button>
+                  </div>
+                  <div className="file-preview-body">
+                    {previewFile.previewKind === 'pdf' && previewFile.publicUrl && (
+                      <iframe title={`${previewFile.title || previewFile.file_name} preview`} src={previewFile.publicUrl} className="pdf-preview-frame" />
+                    )}
+                    {previewFile.previewKind === 'image' && previewFile.publicUrl && (
+                      <img className="image-preview" src={previewFile.publicUrl} alt={previewFile.title || previewFile.file_name || 'Uploaded file preview'} />
+                    )}
+                    {previewFile.previewKind === 'text' && (
+                      previewLoading ? (
+                        <p className="empty-text">Loading preview...</p>
+                      ) : previewContent ? (
+                        <pre className="text-file-preview">{previewContent}</pre>
+                      ) : (
+                        <p className="empty-text">Preview not available for this file type. Use the Download button.</p>
+                      )
+                    )}
+                    {(previewFile.previewKind === 'unsupported' || !previewFile.publicUrl) && (
+                      <p className="empty-text">Preview not available for this file type. Use the Download button.</p>
+                    )}
+                  </div>
+                  <div className="preview-actions">
+                    <button type="button" className="btn btn-primary" onClick={() => downloadFile(previewFile)}>
+                      <Download size={16} />Download
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={closePreview}>Close</button>
+                  </div>
+                </div>
               </div>
             )}
 

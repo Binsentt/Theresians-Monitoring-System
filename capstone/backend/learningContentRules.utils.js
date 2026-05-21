@@ -1,12 +1,9 @@
-const ALLOWED_GRADE_LEVELS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
+const ALLOWED_GRADE_LEVELS = ['Grade 1-2', 'Grade 3-4', 'Grade 5-6'];
 
 const GRADE_TOPIC_MAP = {
-  'Grade 1': ['Addition', 'Subtraction'],
-  'Grade 2': ['Addition', 'Subtraction'],
-  'Grade 3': ['Multiplication', 'Division'],
-  'Grade 4': ['Multiplication', 'Division'],
-  'Grade 5': ['Formulas', 'Decimals', 'Word Problems', 'Fractions', 'Geometry', 'Basic Algebra'],
-  'Grade 6': ['Formulas', 'Decimals', 'Word Problems', 'Fractions', 'Geometry', 'Basic Algebra'],
+  'Grade 1-2': ['Addition', 'Subtraction'],
+  'Grade 3-4': ['Multiplication', 'Division'],
+  'Grade 5-6': ['Multiplication', 'Division', 'Formulas', 'Decimals', 'Word Problem'],
 };
 
 const ALLOWED_MATH_TOPICS = Array.from(new Set(Object.values(GRADE_TOPIC_MAP).flat()));
@@ -18,7 +15,7 @@ const getMathTopicsForGrade = (gradeLevel) => {
 const isValidGradeLevel = (value) => ALLOWED_GRADE_LEVELS.includes(String(value || '').trim());
 
 const isValidMathTopicForGrade = (gradeLevel, topic) => {
-  return getMathTopicsForGrade(gradeLevel).includes(String(topic || '').trim());
+  return isValidGradeLevel(gradeLevel) && Boolean(String(topic || '').trim());
 };
 
 const parseExpectedQuestionCount = (value) => {

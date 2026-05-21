@@ -6,38 +6,28 @@ import {
   formatLearningFileSize,
   getFolderContents,
   getMathTopicsForGrade,
+  getLearningFilePreviewKind,
   inferLearningFileUploadType,
   normalizeMathTopicForGrade,
 } from './lessonQuestionManager.utils';
 
 describe('lesson question manager helpers', () => {
   test('returns grade-specific math topics', () => {
-    expect(getMathTopicsForGrade('Grade 1')).toEqual(['Addition', 'Subtraction']);
-    expect(getMathTopicsForGrade('Grade 2')).toEqual(['Addition', 'Subtraction']);
-    expect(getMathTopicsForGrade('Grade 3')).toEqual(['Multiplication', 'Division']);
-    expect(getMathTopicsForGrade('Grade 4')).toEqual(['Multiplication', 'Division']);
-    expect(getMathTopicsForGrade('Grade 5')).toEqual([
+    expect(getMathTopicsForGrade('Grade 1-2')).toEqual(['Addition', 'Subtraction']);
+    expect(getMathTopicsForGrade('Grade 3-4')).toEqual(['Multiplication', 'Division']);
+    expect(getMathTopicsForGrade('Grade 5-6')).toEqual([
+      'Multiplication',
+      'Division',
       'Formulas',
       'Decimals',
-      'Word Problems',
-      'Fractions',
-      'Geometry',
-      'Basic Algebra',
-    ]);
-    expect(getMathTopicsForGrade('Grade 6')).toEqual([
-      'Formulas',
-      'Decimals',
-      'Word Problems',
-      'Fractions',
-      'Geometry',
-      'Basic Algebra',
+      'Word Problem',
     ]);
   });
 
   test('resets invalid topics when the grade level changes', () => {
-    expect(normalizeMathTopicForGrade('Grade 1', 'Multiplication')).toBe('Addition');
-    expect(normalizeMathTopicForGrade('Grade 4', 'Division')).toBe('Division');
-    expect(normalizeMathTopicForGrade('Grade 6', 'Addition')).toBe('Formulas');
+    expect(normalizeMathTopicForGrade('Grade 1-2', 'Multiplication')).toBe('Addition');
+    expect(normalizeMathTopicForGrade('Grade 3-4', 'Division')).toBe('Division');
+    expect(normalizeMathTopicForGrade('Grade 5-6', 'Addition')).toBe('Multiplication');
   });
 
   test('filters learning files by search, folder, grade, topic, and file type', () => {
@@ -113,6 +103,13 @@ describe('lesson question manager helpers', () => {
     expect(inferLearningFileUploadType('notes.txt')).toBe('');
     expect(formatLearningFileSize(1536)).toBe('1.5 KB');
     expect(formatLearningFileSize(null)).toBe('-');
+  });
+
+  test('chooses preview renderers for supported uploaded files', () => {
+    expect(getLearningFilePreviewKind({ file_name: 'lesson.pdf' })).toBe('pdf');
+    expect(getLearningFilePreviewKind({ file_url: '/uploads/poster.png' })).toBe('image');
+    expect(getLearningFilePreviewKind({ title: 'questions', file_name: 'fixed.csv' })).toBe('text');
+    expect(getLearningFilePreviewKind({ file_name: 'archive.zip' })).toBe('unsupported');
   });
 
   test('counts fixed question files for optional upload validation', () => {

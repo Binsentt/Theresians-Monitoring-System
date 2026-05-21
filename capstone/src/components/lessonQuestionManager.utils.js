@@ -1,19 +1,13 @@
 export const GRADE_LEVELS = [
-  'Grade 1',
-  'Grade 2',
-  'Grade 3',
-  'Grade 4',
-  'Grade 5',
-  'Grade 6',
+  'Grade 1-2',
+  'Grade 3-4',
+  'Grade 5-6',
 ];
 
 export const GRADE_TOPIC_MAP = {
-  'Grade 1': ['Addition', 'Subtraction'],
-  'Grade 2': ['Addition', 'Subtraction'],
-  'Grade 3': ['Multiplication', 'Division'],
-  'Grade 4': ['Multiplication', 'Division'],
-  'Grade 5': ['Formulas', 'Decimals', 'Word Problems', 'Fractions', 'Geometry', 'Basic Algebra'],
-  'Grade 6': ['Formulas', 'Decimals', 'Word Problems', 'Fractions', 'Geometry', 'Basic Algebra'],
+  'Grade 1-2': ['Addition', 'Subtraction'],
+  'Grade 3-4': ['Multiplication', 'Division'],
+  'Grade 5-6': ['Multiplication', 'Division', 'Formulas', 'Decimals', 'Word Problem'],
 };
 
 export const MATH_TOPICS = Array.from(new Set(Object.values(GRADE_TOPIC_MAP).flat()));
@@ -25,12 +19,13 @@ export const getMathTopicsForGrade = (gradeLevel) => {
 export const isValidGradeLevel = (value) => GRADE_LEVELS.includes(String(value || '').trim());
 
 export const isValidMathTopicForGrade = (gradeLevel, topic) => {
-  return getMathTopicsForGrade(gradeLevel).includes(String(topic || '').trim());
+  return isValidGradeLevel(gradeLevel) && Boolean(String(topic || '').trim());
 };
 
 export const normalizeMathTopicForGrade = (gradeLevel, topic) => {
   const options = getMathTopicsForGrade(gradeLevel);
   const current = String(topic || '').trim();
+  if (current && !MATH_TOPICS.includes(current)) return current;
   return options.includes(current) ? current : options[0];
 };
 
@@ -97,6 +92,32 @@ export const getLargestLearningFiles = (files, limit = 5) => {
   return [...(Array.isArray(files) ? files : [])]
     .sort((left, right) => normalizeStorageSize(right?.file_size) - normalizeStorageSize(left?.file_size))
     .slice(0, limit);
+};
+
+const getLearningFilePath = (file) => {
+  return [file?.file_name, file?.file_url, file?.title]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .find(Boolean) || '';
+};
+
+export const getLearningFilePreviewKind = (file) => {
+  const path = getLearningFilePath(file);
+  if (path.endsWith('.pdf')) return 'pdf';
+  if (/\.(png|jpe?g|gif|webp|bmp|svg)$/.test(path)) return 'image';
+  if (/\.(json|csv)$/.test(path)) return 'text';
+  return 'unsupported';
+};
+
+export const formatLearningPreviewText = (content, file) => {
+  const value = String(content || '');
+  const path = getLearningFilePath(file);
+  if (!path.endsWith('.json')) return value;
+
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch (error) {
+    return value;
+  }
 };
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
