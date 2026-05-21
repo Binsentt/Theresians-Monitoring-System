@@ -21,10 +21,26 @@ const isValidMathTopicForGrade = (gradeLevel, topic) => {
   return getMathTopicsForGrade(gradeLevel).includes(String(topic || '').trim());
 };
 
+const parseExpectedQuestionCount = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const count = Number(value);
+  return Number.isInteger(count) && count > 0 ? count : null;
+};
+
+const validateExpectedQuestionCount = (questions, expectedCount) => {
+  const count = parseExpectedQuestionCount(expectedCount);
+  if (!count) return null;
+  const actualCount = Array.isArray(questions) ? questions.length : 0;
+  if (actualCount === count) return null;
+  return `Expected ${count} fixed questions, but the uploaded file contains ${actualCount}.`;
+};
+
 module.exports = {
   ALLOWED_GRADE_LEVELS,
   ALLOWED_MATH_TOPICS,
   getMathTopicsForGrade,
   isValidGradeLevel,
   isValidMathTopicForGrade,
+  parseExpectedQuestionCount,
+  validateExpectedQuestionCount,
 };

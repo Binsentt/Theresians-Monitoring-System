@@ -5,12 +5,15 @@ import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
 import {
   buildAccountCreationSuccessModal,
+  combineAddressFields,
   filterUsers,
   formatRoleLabel,
   isParentRole,
   isTeacherRole,
   normalizeRole,
   paginateItems,
+  splitAddressFields,
+  validateOptionalAdultBirthday,
 } from './manageUsers.utils';
 import { apiUrl } from '../api';
 import '../styles/manageusers.css';
@@ -33,7 +36,9 @@ export default function ManageUsers() {
     lastName: '',
     email: '',
     mobile_number: '',
-    address: '',
+    street: '',
+    city: '',
+    province: '',
     birthday: '',
     gender: '',
     employee_id: ''
@@ -48,7 +53,9 @@ export default function ManageUsers() {
     lastName: '',
     email: '',
     mobile_number: '',
-    address: '',
+    street: '',
+    city: '',
+    province: '',
     birthday: '',
     gender: '',
     employee_id: '',
@@ -66,22 +73,9 @@ export default function ManageUsers() {
   const filteredUsers = filterUsers(users, searchTerm, roleFilter);
   const usersPerPage = 8;
   const paginatedUsers = paginateItems(filteredUsers, currentPage, usersPerPage);
-  const getMaxBirthdate = () => {
-    const maxDate = new Date();
-    maxDate.setFullYear(maxDate.getFullYear() - 18);
-    return maxDate.toISOString().split('T')[0];
-  };
 
   const validateBirthday = (date) => {
-    if (!date) return 'Birthday is required';
-    const birthDate = new Date(date);
-    const today = new Date();
-    if (birthDate > today) {
-      return 'Birthday cannot be in the future';
-    }
-    const age = Math.floor((today - birthDate) / (1000 * 60 * 60 * 24 * 365.25));
-    if (age < 18) return 'User must be at least 18 years old';
-    return '';
+    return validateOptionalAdultBirthday(date);
   };
 
   const validateNameField = (name) => {
@@ -97,7 +91,7 @@ export default function ManageUsers() {
   };
 
   const validatePhone = (phone) => {
-    if (!phone) return 'Mobile number is required';
+    if (!phone) return '';
     if (!phone.startsWith('09')) return 'Mobile number must start with 09';
     if (phone.length !== 11) return 'Mobile number must be exactly 11 digits';
     return '';
@@ -193,10 +187,10 @@ export default function ManageUsers() {
     e.preventDefault();
     const selectedRoleValue = normalizeRole(selectedRole);
     const roleIsTeacher = isTeacherRole(selectedRoleValue);
-    if (!newUser.firstName || !newUser.lastName || !newUser.email || !newUser.birthday || !newUser.gender) {
+    if (!newUser.firstName || !newUser.lastName || !newUser.email || !newUser.gender) {
       setValidationModal({
         title: 'Missing Required Fields',
-        message: 'Please fill in all required fields (First Name, Last Name, Email, Birthday, Gender)'
+        message: 'Please fill in all required fields (First Name, Last Name, Email, Gender)'
       });
       return;
     }
@@ -222,7 +216,7 @@ export default function ManageUsers() {
         name: fullName,
         email: newUser.email,
         mobile_number: newUser.mobile_number,
-        address: newUser.address,
+        address: combineAddressFields(newUser),
         birthday: newUser.birthday,
         gender: newUser.gender || '',
         role: selectedRoleValue,
@@ -237,7 +231,7 @@ export default function ManageUsers() {
       const data = await response.json();
       if (response.ok) {
         setValidationModal(buildAccountCreationSuccessModal(selectedRole, data));
-        setNewUser({ firstName: '', middleName: '', lastName: '', email: '', mobile_number: '', address: '', birthday: '', gender: '', employee_id: '' });
+        setNewUser({ firstName: '', middleName: '', lastName: '', email: '', mobile_number: '', street: '', city: '', province: '', birthday: '', gender: '', employee_id: '' });
         setShowAddForm(false);
         setSelectedRole('Parent');
         loadUsers();
@@ -269,7 +263,7 @@ export default function ManageUsers() {
       lastName: nameParts[nameParts.length - 1] || '',
       email: u.email,
       mobile_number: u.mobile_number || '',
-      address: u.address || '',
+      ...splitAddressFields(u.address),
       birthday: u.birthday ? new Date(u.birthday).toISOString().split('T')[0] : '',
       gender: u.gender || '',
       employee_id: u.employee_id || '',
@@ -343,10 +337,10 @@ export default function ManageUsers() {
   const handleUpdateUser = async (e) => {
     e.preventDefault();
     const selectedRole = normalizeRole(editingUser.role);
-    if (!editForm.firstName || !editForm.lastName || !editForm.email || !editForm.birthday) {
+    if (!editForm.firstName || !editForm.lastName || !editForm.email) {
       setValidationModal({
         title: 'Missing Required Fields',
-        message: 'Please fill in all required fields (First Name, Last Name, Email, Birthday)'
+        message: 'Please fill in all required fields (First Name, Last Name, Email)'
       });
       return;
     }
@@ -372,7 +366,7 @@ export default function ManageUsers() {
         name: fullName,
         email: editForm.email,
         mobile_number: editForm.mobile_number,
-        address: editForm.address,
+        address: combineAddressFields(editForm),
         birthday: editForm.birthday,
         gender: editForm.gender || '',
         employee_id: editForm.employee_id || undefined
@@ -670,31 +664,44 @@ export default function ManageUsers() {
                   </div>
 
                   <div className="form-group">
-                    <label>Address:</label>
+                    <label>Street:</label>
                     <input
                       type="text"
-                      placeholder="Enter address"
-                      value={newUser.address}
-                      onChange={(e) => setNewUser({ ...newUser, address: e.target.value })}
+                      placeholder="Street"
+                      value={newUser.street}
+                      onChange={(e) => setNewUser({ ...newUser, street: e.target.value })}
                       className="sts-input"
                     />
                   </div>
 
                   <div className="form-group">
-                    <label>Birthday: *</label>
+                    <label>City:</label>
+                    <input
+                      type="text"
+                      placeholder="City"
+                      value={newUser.city}
+                      onChange={(e) => setNewUser({ ...newUser, city: e.target.value })}
+                      className="sts-input"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Province:</label>
+                    <input
+                      type="text"
+                      placeholder="Province"
+                      value={newUser.province}
+                      onChange={(e) => setNewUser({ ...newUser, province: e.target.value })}
+                      className="sts-input"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Birthday:</label>
                     <input
                       type="date"
-                      max={getMaxBirthdate()}
                       value={newUser.birthday}
-                      onChange={(e) => {
-                        const selectedDate = new Date(e.target.value);
-                        const maxDate = new Date(getMaxBirthdate());
-                        if (selectedDate <= maxDate) {
-                          handleAddFormChange('birthday', e.target.value);
-                        } else {
-                          handleAddFormChange('birthday', '');
-                        }
-                      }}
+                      onChange={(e) => handleAddFormChange('birthday', e.target.value)}
                       className="sts-input"
                     />
                     {addErrors.birthday && <p className="error-text">{addErrors.birthday}</p>}
@@ -966,20 +973,39 @@ export default function ManageUsers() {
                     </div>
 
                     <div className="form-group">
-                      <label>Address:</label>
+                      <label>Street:</label>
                       <input
                         type="text"
-                        value={editForm.address}
-                        onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                        value={editForm.street}
+                        onChange={(e) => setEditForm({ ...editForm, street: e.target.value })}
                         className="sts-input"
                       />
                     </div>
 
                     <div className="form-group">
-                      <label>Birthday: *</label>
+                      <label>City:</label>
+                      <input
+                        type="text"
+                        value={editForm.city}
+                        onChange={(e) => setEditForm({ ...editForm, city: e.target.value })}
+                        className="sts-input"
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label>Province:</label>
+                      <input
+                        type="text"
+                        value={editForm.province}
+                        onChange={(e) => setEditForm({ ...editForm, province: e.target.value })}
+                        className="sts-input"
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label>Birthday:</label>
                       <input
                         type="date"
-                        max={getMaxBirthdate()}
                         value={editForm.birthday}
                         onChange={(e) => handleEditFormChange('birthday', e.target.value)}
                         className="sts-input"

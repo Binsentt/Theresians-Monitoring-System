@@ -1,6 +1,7 @@
 import {
   buildAccountCreationSuccessModal,
   canAccessRole,
+  combineAddressFields,
   filterUsers,
   formatRoleLabel,
   getDefaultDashboardRoute,
@@ -8,6 +9,8 @@ import {
   isTeacherRole,
   normalizeRole,
   paginateItems,
+  splitAddressFields,
+  validateOptionalAdultBirthday,
 } from './manageUsers.utils';
 
 describe('manageUsers role helpers', () => {
@@ -101,5 +104,29 @@ describe('manageUsers role helpers', () => {
       parentId: '',
       emailSent: false,
     });
+  });
+
+  test('splits and recombines stored address strings for three-field address forms', () => {
+    expect(splitAddressFields('  123 Rizal St, Pasig City, Metro Manila  ')).toEqual({
+      street: '123 Rizal St',
+      city: 'Pasig City',
+      province: 'Metro Manila',
+    });
+    expect(splitAddressFields('Street only')).toEqual({
+      street: 'Street only',
+      city: '',
+      province: '',
+    });
+    expect(combineAddressFields({
+      street: ' 123 Rizal St ',
+      city: '',
+      province: ' Laguna ',
+    })).toBe('123 Rizal St, Laguna');
+  });
+
+  test('optional birthday validation allows blank values and requires adults when filled', () => {
+    expect(validateOptionalAdultBirthday('')).toBe('');
+    expect(validateOptionalAdultBirthday('2010-05-21', new Date('2026-05-21T00:00:00Z'))).toBe('Must be at least 18 years old');
+    expect(validateOptionalAdultBirthday('1998-05-21', new Date('2026-05-21T00:00:00Z'))).toBe('');
   });
 });

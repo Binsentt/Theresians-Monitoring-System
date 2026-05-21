@@ -34,6 +34,22 @@ export const normalizeMathTopicForGrade = (gradeLevel, topic) => {
   return options.includes(current) ? current : options[0];
 };
 
+export const inferLearningFileUploadType = (fileName) => {
+  const normalizedName = String(fileName || '').trim().toLowerCase();
+  if (normalizedName.endsWith('.pdf')) return 'lesson';
+  if (normalizedName.endsWith('.json') || normalizedName.endsWith('.csv')) return 'fixed_questions';
+  return '';
+};
+
+export const formatLearningFileSize = (value) => {
+  if (value === undefined || value === null || value === '') return '-';
+  const size = Number(value);
+  if (!Number.isFinite(size) || size < 0) return '-';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+};
+
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 
 export const filterLearningFiles = (files, filters) => {

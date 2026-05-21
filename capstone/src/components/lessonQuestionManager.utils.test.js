@@ -1,7 +1,9 @@
 import {
   filterLearningFiles,
+  formatLearningFileSize,
   getFolderContents,
   getMathTopicsForGrade,
+  inferLearningFileUploadType,
   normalizeMathTopicForGrade,
 } from './lessonQuestionManager.utils';
 
@@ -99,5 +101,14 @@ describe('lesson question manager helpers', () => {
     ];
 
     expect(getFolderContents(files, folder)).toEqual([files[0]]);
+  });
+
+  test('infers upload type and formats learning file sizes for the drive table', () => {
+    expect(inferLearningFileUploadType('lesson.pdf')).toBe('lesson');
+    expect(inferLearningFileUploadType('quiz.csv')).toBe('fixed_questions');
+    expect(inferLearningFileUploadType('quiz.json')).toBe('fixed_questions');
+    expect(inferLearningFileUploadType('notes.txt')).toBe('');
+    expect(formatLearningFileSize(1536)).toBe('1.5 KB');
+    expect(formatLearningFileSize(null)).toBe('-');
   });
 });

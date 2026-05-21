@@ -48,6 +48,7 @@ const {
 const {
   isValidGradeLevel,
   isValidMathTopicForGrade,
+  validateExpectedQuestionCount,
 } = require('./learningContentRules.utils');
 const {
   buildMailDiagnostics,
@@ -195,6 +196,7 @@ const ensureSchema = async () => {
       name VARCHAR(255) UNIQUE NOT NULL,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );`);
+    await pool.query('ALTER TABLE public.folders ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.learning_files (
       id SERIAL PRIMARY KEY,
       title VARCHAR(255) NOT NULL,
@@ -210,6 +212,8 @@ const ensureSchema = async () => {
       uploaded_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL,
       uploaded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );`);
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS file_size BIGINT');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.questions (
       id SERIAL PRIMARY KEY,
       learning_file_id INTEGER REFERENCES public.learning_files(id) ON DELETE CASCADE,
@@ -603,7 +607,7 @@ const unpublishLearningFile = async (fileId) => {
 };
 
 const buildPublishedQueryClause = (params, { grade_level, math_topic }) => {
-  let clause = ' WHERE lf.subject = $1 AND lf.published = true';
+  let clause = ' WHERE lf.subject = $1 AND lf.published = true AND lf.trashed_at IS NULL';
   params.push('Mathematics');
   if (grade_level) {
     params.push(grade_level);
@@ -738,6 +742,7 @@ const getPublishedGameData = async ({ grade_level, math_topic }) => {
      JOIN public.learning_files lf ON q.learning_file_id = lf.id
      WHERE q.published = true
        AND lf.subject = 'Mathematics'
+       AND lf.trashed_at IS NULL
        ${grade_level ? `AND q.grade_level = ${params.length + 1}` : ''}
        ${math_topic ? `AND q.math_topic = ${params.length + (grade_level ? 2 : 1)}` : ''}
      ORDER BY q.created_at DESC`
@@ -803,7 +808,7 @@ const getLearningFiles = async () => {
 
 const getGameQuestions = async ({ grade_level, math_topic }) => {
   const params = ['Mathematics'];
-  let clause = 'WHERE lf.subject = $1 AND lf.published = true';
+  let clause = 'WHERE lf.subject = $1 AND lf.published = true AND lf.trashed_at IS NULL';
   if (grade_level) {
     params.push(grade_level);
     clause += ` AND lf.grade_level = $${params.length}`;
@@ -870,7 +875,7 @@ const needQuestionParser = async (fileType, file) => {
 
 const getGameFiles = async ({ grade_level, math_topic }) => {
   const params = ['Mathematics'];
-  let clause = 'WHERE subject = $1 AND published = true';
+  let clause = 'WHERE subject = $1 AND published = true AND trashed_at IS NULL';
   if (grade_level) {
     params.push(grade_level);
     clause += ` AND grade_level = $${params.length}`;
@@ -940,7 +945,7 @@ const readJsonFile = (pathInput) => JSON.parse(fs.readFileSync(pathInput, 'utf8'
 
 const buildPublishedGameQuery = ({ grade_level, math_topic }) => {
   const params = ['Mathematics'];
-  let clause = 'lf.subject = $1 AND lf.published = true';
+  let clause = 'lf.subject = $1 AND lf.published = true AND lf.trashed_at IS NULL';
   if (grade_level) {
     params.push(grade_level);
     clause += ` AND lf.grade_level = $${params.length}`;
@@ -1045,7 +1050,7 @@ const getFileMetadata = async (id) => {
 
 const buildPublishedLearningFilesQuery = ({ grade_level, math_topic }) => {
   const params = ['Mathematics'];
-  let clause = 'WHERE lf.subject = $1 AND lf.published = true';
+  let clause = 'WHERE lf.subject = $1 AND lf.published = true AND lf.trashed_at IS NULL';
   if (grade_level) {
     params.push(grade_level);
     clause += ` AND lf.grade_level = $${params.length}`;
@@ -1762,11 +1767,21 @@ app.delete('/api/teacher-student-relationships/:id', async (req, res) => {
 
 app.get('/api/folders', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM public.folders ORDER BY name ASC');
+    const result = await pool.query('SELECT * FROM public.folders WHERE trashed_at IS NULL ORDER BY name ASC');
     res.json(result.rows);
   } catch (err) {
     console.error('Fetch folders failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch folders' });
+  }
+});
+
+app.get('/api/folders/trash', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM public.folders WHERE trashed_at IS NOT NULL ORDER BY trashed_at DESC, name ASC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Fetch trashed folders failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch trashed folders' });
   }
 });
 
@@ -1813,12 +1828,72 @@ app.delete('/api/folders/:id', async (req, res) => {
   try {
     const folderId = parseInt(req.params.id, 10);
     if (Number.isNaN(folderId)) return res.status(400).json({ error: 'Invalid folder ID' });
-    await pool.query('UPDATE public.learning_files SET folder_id = NULL WHERE folder_id = $1', [folderId]);
-    await pool.query('DELETE FROM public.folders WHERE id = $1', [folderId]);
+    const result = await pool.query(
+      'UPDATE public.folders SET trashed_at = COALESCE(trashed_at, CURRENT_TIMESTAMP) WHERE id = $1 RETURNING *',
+      [folderId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Folder not found' });
+    await pool.query(
+      `UPDATE public.learning_files
+       SET trashed_at = COALESCE(trashed_at, CURRENT_TIMESTAMP),
+           published = false
+       WHERE folder_id = $1`,
+      [folderId]
+    );
+    await pool.query(
+      `UPDATE public.questions q
+       SET published = false
+       FROM public.learning_files lf
+       WHERE q.learning_file_id = lf.id
+         AND lf.folder_id = $1`,
+      [folderId]
+    );
     res.json({ success: true });
   } catch (err) {
-    console.error('Delete folder failed:', err.message);
-    res.status(500).json({ error: 'Failed to delete folder' });
+    console.error('Move folder to trash failed:', err.message);
+    res.status(500).json({ error: 'Failed to move folder to trash' });
+  }
+});
+
+app.post('/api/folders/:id/restore', async (req, res) => {
+  try {
+    const folderId = parseInt(req.params.id, 10);
+    if (Number.isNaN(folderId)) return res.status(400).json({ error: 'Invalid folder ID' });
+    const result = await pool.query(
+      'UPDATE public.folders SET trashed_at = NULL WHERE id = $1 AND trashed_at IS NOT NULL RETURNING *',
+      [folderId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Trashed folder not found' });
+    await pool.query('UPDATE public.learning_files SET trashed_at = NULL WHERE folder_id = $1', [folderId]);
+    res.json({ success: true, folder: result.rows[0] });
+  } catch (err) {
+    console.error('Restore folder failed:', err.message);
+    res.status(500).json({ error: 'Failed to restore folder' });
+  }
+});
+
+app.delete('/api/folders/:id/permanent', async (req, res) => {
+  try {
+    const folderId = parseInt(req.params.id, 10);
+    if (Number.isNaN(folderId)) return res.status(400).json({ error: 'Invalid folder ID' });
+    const fileResult = await pool.query(
+      'SELECT id, file_url FROM public.learning_files WHERE folder_id = $1 AND trashed_at IS NOT NULL',
+      [folderId]
+    );
+    for (const file of fileResult.rows) {
+      await pool.query('DELETE FROM public.questions WHERE learning_file_id = $1', [file.id]);
+      await pool.query('DELETE FROM public.learning_files WHERE id = $1', [file.id]);
+      removeFileFromDisk(file.file_url);
+    }
+    const result = await pool.query(
+      'DELETE FROM public.folders WHERE id = $1 AND trashed_at IS NOT NULL RETURNING id',
+      [folderId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Trashed folder not found' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Permanent folder delete failed:', err.message);
+    res.status(500).json({ error: 'Failed to permanently delete folder' });
   }
 });
 
@@ -1831,7 +1906,7 @@ const resolveLearningFolderId = async (rawFolderId) => {
     return { error: 'Invalid folder ID.' };
   }
 
-  const folder = await pool.query('SELECT id FROM public.folders WHERE id = $1', [folderId]);
+  const folder = await pool.query('SELECT id FROM public.folders WHERE id = $1 AND trashed_at IS NULL', [folderId]);
   if (folder.rows.length === 0) {
     return { error: 'Selected folder was not found.' };
   }
@@ -1841,7 +1916,7 @@ const resolveLearningFolderId = async (rawFolderId) => {
 
 app.post('/api/learning-files/upload', upload.single('file'), async (req, res) => {
   try {
-    const { title, grade_level, math_topic, file_type, folder_id, uploaded_by } = req.body;
+    const { title, grade_level, math_topic, file_type, folder_id, uploaded_by, expected_question_count } = req.body;
     if (!req.file) return res.status(400).json({ error: 'File is required' });
     if (!title || !grade_level || !math_topic || !file_type) {
       return res.status(400).json({ error: 'Missing required metadata' });
@@ -1873,14 +1948,25 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
       return res.status(400).json({ error: folderResolution.error });
     }
 
+    const fixedQuestions = normalizedType === 'fixed_questions'
+      ? await parseFixedQuestionsFile({ path: req.file.path, originalname: req.file.originalname })
+      : [];
+    const fixedQuestionCountError = normalizedType === 'fixed_questions'
+      ? validateExpectedQuestionCount(fixedQuestions, expected_question_count)
+      : null;
+    if (fixedQuestionCountError) {
+      cleanTemporaryUpload(req.file.path);
+      return res.status(400).json({ error: fixedQuestionCountError });
+    }
+
     const fileName = generateUploadFileName(req.file.originalname);
     const destinationPath = path.join(uploadsDir, fileName);
     fs.renameSync(req.file.path, destinationPath);
     const fileUrl = buildFileUrl(fileName);
 
     const insertResult = await pool.query(
-      `INSERT INTO public.learning_files (title, file_name, file_url, grade_level, math_topic, file_type, subject, folder_id, published, source, uploaded_by)
-       VALUES ($1, $2, $3, $4, $5, $6, 'Mathematics', $7, false, $8, $9)
+      `INSERT INTO public.learning_files (title, file_name, file_url, grade_level, math_topic, file_type, subject, folder_id, published, source, uploaded_by, file_size)
+       VALUES ($1, $2, $3, $4, $5, $6, 'Mathematics', $7, false, $8, $9, $10)
        RETURNING *`,
       [
         String(title).trim(),
@@ -1892,6 +1978,7 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
         folderResolution.folderId,
         allowedLesson ? 'lesson' : 'fixed',
         uploaded_by ? parseInt(uploaded_by, 10) : null,
+        req.file.size || null,
       ]
     );
 
@@ -1905,8 +1992,7 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
         source: 'ai',
       })));
     } else {
-      const questions = await parseFixedQuestionsFile({ path: destinationPath, originalname: req.file.originalname });
-      await saveQuestionsForFile(learningFile.id, questions.map((question) => ({
+      await saveQuestionsForFile(learningFile.id, fixedQuestions.map((question) => ({
         ...question,
         grade_level: learningFile.grade_level,
         math_topic: learningFile.math_topic,
@@ -1925,9 +2011,14 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
 app.get('/api/learning-files', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT lf.*, f.name AS folder_name
+      `SELECT lf.*,
+              f.name AS folder_name,
+              COALESCE(NULLIF(TRIM(a.name), ''), a.email, 'Unknown') AS uploaded_by_name
        FROM public.learning_files lf
        LEFT JOIN public.folders f ON lf.folder_id = f.id
+       LEFT JOIN public.accounts a ON lf.uploaded_by = a.id
+       WHERE lf.trashed_at IS NULL
+         AND (f.id IS NULL OR f.trashed_at IS NULL)
        ORDER BY lf.uploaded_at DESC`
     );
     res.json(result.rows.map((row) => ({ ...row, folder_name: row.folder_name || 'Unassigned' })));
@@ -1968,6 +2059,7 @@ app.put('/api/learning-files/:id', async (req, res) => {
            file_type = $4,
            folder_id = $5
       WHERE id = $6
+        AND trashed_at IS NULL
        RETURNING *`,
       [String(title).trim(), String(grade_level).trim(), String(math_topic).trim(), String(file_type).trim(), folderResolution.folderId, fileId]
     );
@@ -1983,16 +2075,56 @@ app.delete('/api/learning-files/:id', async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
-    const fileResult = await pool.query('SELECT * FROM public.learning_files WHERE id = $1', [fileId]);
+    const fileResult = await pool.query(
+      `UPDATE public.learning_files
+       SET trashed_at = COALESCE(trashed_at, CURRENT_TIMESTAMP),
+           published = false
+       WHERE id = $1
+       RETURNING *`,
+      [fileId]
+    );
     if (fileResult.rows.length === 0) return res.status(404).json({ error: 'File not found' });
+    await pool.query('UPDATE public.questions SET published = false WHERE learning_file_id = $1', [fileId]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Move learning file to trash failed:', err.message);
+    res.status(500).json({ error: 'Failed to move file to trash' });
+  }
+});
+
+app.post('/api/learning-files/:id/restore', async (req, res) => {
+  try {
+    const fileId = parseInt(req.params.id, 10);
+    if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
+    const result = await pool.query(
+      'UPDATE public.learning_files SET trashed_at = NULL WHERE id = $1 AND trashed_at IS NOT NULL RETURNING *',
+      [fileId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Trashed file not found' });
+    res.json({ success: true, learningFile: result.rows[0] });
+  } catch (err) {
+    console.error('Restore learning file failed:', err.message);
+    res.status(500).json({ error: 'Failed to restore file' });
+  }
+});
+
+app.delete('/api/learning-files/:id/permanent', async (req, res) => {
+  try {
+    const fileId = parseInt(req.params.id, 10);
+    if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
+    const fileResult = await pool.query(
+      'SELECT * FROM public.learning_files WHERE id = $1 AND trashed_at IS NOT NULL',
+      [fileId]
+    );
+    if (fileResult.rows.length === 0) return res.status(404).json({ error: 'Trashed file not found' });
     const file = fileResult.rows[0];
     await pool.query('DELETE FROM public.questions WHERE learning_file_id = $1', [fileId]);
     await pool.query('DELETE FROM public.learning_files WHERE id = $1', [fileId]);
     removeFileFromDisk(file.file_url);
     res.json({ success: true });
   } catch (err) {
-    console.error('Delete learning file failed:', err.message);
-    res.status(500).json({ error: 'Failed to delete file' });
+    console.error('Permanent learning file delete failed:', err.message);
+    res.status(500).json({ error: 'Failed to permanently delete file' });
   }
 });
 
@@ -2030,6 +2162,25 @@ app.get('/api/game/questions', async (req, res) => {
   } catch (err) {
     console.error('Fetch game questions failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch game content' });
+  }
+});
+
+app.get('/api/learning-files/trash', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT lf.*,
+              f.name AS folder_name,
+              COALESCE(NULLIF(TRIM(a.name), ''), a.email, 'Unknown') AS uploaded_by_name
+       FROM public.learning_files lf
+       LEFT JOIN public.folders f ON lf.folder_id = f.id
+       LEFT JOIN public.accounts a ON lf.uploaded_by = a.id
+       WHERE lf.trashed_at IS NOT NULL
+       ORDER BY lf.trashed_at DESC, lf.uploaded_at DESC`
+    );
+    res.json(result.rows.map((row) => ({ ...row, folder_name: row.folder_name || 'Unassigned' })));
+  } catch (err) {
+    console.error('Fetch trashed learning files failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch trashed files' });
   }
 });
 

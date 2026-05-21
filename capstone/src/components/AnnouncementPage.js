@@ -244,9 +244,8 @@ export default function AnnouncementPage({ mode = 'parent' }) {
       setAnnouncements((prev) => removeAnnouncementFromCollection(prev, announcement.id));
       if (editingAnnouncement?.id === announcement.id) {
         resetComposer();
-      } else {
-        setStatus('Announcement deleted.');
       }
+      setStatus('Announcement deleted.');
     } catch (err) {
       setStatus('Connection error while deleting announcement.');
     } finally {
@@ -283,6 +282,12 @@ export default function AnnouncementPage({ mode = 'parent' }) {
           </TopBar>
 
           <PageContent>
+            {status && (
+              <div className={`announcement-banner announcement-banner-${statusType}`} aria-live="polite" role="status">
+                {status}
+              </div>
+            )}
+
             {mode === 'teacher' && (
               <ContentSection title="Admin Announcements">
                 {adminAnnouncements.length === 0 ? (
@@ -345,22 +350,12 @@ export default function AnnouncementPage({ mode = 'parent' }) {
                         Cancel Edit
                       </button>
                     )}
-                    {status && (
-                      <span className={`announcement-status announcement-status-${statusType}`} aria-live="polite">
-                        {status}
-                      </span>
-                    )}
                   </div>
                 </form>
               </ContentSection>
             )}
 
             <ContentSection title={config.listTitle}>
-              {config.readOnly && status && (
-                <div className={`announcement-status announcement-status-${statusType}`} aria-live="polite">
-                  {status}
-                </div>
-              )}
               {announcements.length === 0 ? (
                 <AnnouncementEmptyState
                   title={config.emptyTitle}

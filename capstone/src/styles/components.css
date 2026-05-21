@@ -595,6 +595,32 @@ label {
   background: rgba(220, 38, 38, 0.1);
 }
 
+.announcement-banner {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  z-index: 1200;
+  width: min(520px, calc(100vw - 32px));
+  padding: 14px 18px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
+  font-weight: 700;
+  transform: translateX(-50%);
+}
+
+.announcement-banner-success {
+  color: var(--success-color, #166534);
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.announcement-banner-error {
+  color: var(--error-color, #991b1b);
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
 .announcement-list {
   display: grid;
   gap: 16px;

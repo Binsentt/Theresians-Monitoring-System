@@ -1,7 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import logoImage from '../assets/images/STS_Logo.png';
-import { formatRoleLabel, getDefaultDashboardRoute, isParentRole, normalizeRole } from './manageUsers.utils';
+import {
+  combineAddressFields,
+  formatRoleLabel,
+  getDefaultDashboardRoute,
+  isParentRole,
+  normalizeRole,
+  splitAddressFields,
+  validateOptionalAdultBirthday,
+} from './manageUsers.utils';
 import { apiUrl } from '../api';
 import '../styles/settings.css';
 
@@ -22,7 +30,9 @@ export default function SettingsScreen() {
     lastName: '',
     email: '',
     mobile_number: '',
-    address: '',
+    street: '',
+    city: '',
+    province: '',
     birthday: '',
     gender: ''
   });
@@ -46,12 +56,6 @@ export default function SettingsScreen() {
     confirm: false
   });
   const [passwordUpdating, setPasswordUpdating] = useState(false);
-
-  const getMaxBirthdate = () => {
-    const maxDate = new Date();
-    maxDate.setFullYear(maxDate.getFullYear() - 18);
-    return maxDate.toISOString().split('T')[0];
-  };
 
   const formatDate = (dateStr) => {
     if (!dateStr) return 'Not set';
@@ -153,21 +157,13 @@ export default function SettingsScreen() {
   };
   const validateEmail = (email) => !email ? 'Email is required' : (!email.endsWith('@gmail.com') ? 'Use @gmail.com' : '');
   const validatePhone = (phone) => {
-    if (!phone) return 'Phone is required';
+    if (!phone) return '';
     if (!phone.startsWith('09') || phone.length !== 11) return 'Must be 11 digits (09...)';
     return '';
   };
   const validatePassword = (pw) => (pw && pw.length < 12) ? 'At least 12 characters' : '';
   const validateBirthday = (date) => {
-    if (!date) return 'Birthday is required';
-    const birthDate = new Date(date);
-    const today = new Date();
-    if (birthDate > today) {
-      return 'Birthday cannot be in the future';
-    }
-    const age = Math.floor((today - birthDate) / (1000 * 60 * 60 * 24 * 365.25));
-    if (age < 18) return 'User must be at least 18 years old';
-    return '';
+    return validateOptionalAdultBirthday(date);
   };
 
   // Profile handlers
@@ -194,7 +190,7 @@ export default function SettingsScreen() {
         lastName: nameParts.length ? nameParts[nameParts.length - 1] : '',
         email: freshUserData.email || '',
         mobile_number: freshUserData.mobile_number || '',
-        address: freshUserData.address || '',
+        ...splitAddressFields(freshUserData.address),
         birthday: freshUserData.birthday || '',
         gender: freshUserData.gender || ''
       });
@@ -212,7 +208,7 @@ export default function SettingsScreen() {
         lastName: nameParts.length ? nameParts[nameParts.length - 1] : '',
         email: user.email,
         mobile_number: user.mobile_number || '',
-        address: user.address || '',
+        ...splitAddressFields(user.address),
         birthday: user.birthday || '',
         gender: user.gender || ''
       });
@@ -258,17 +254,11 @@ export default function SettingsScreen() {
     if (!editForm.email) validationErrors.email = 'Email is required';
     else if (!editForm.email.endsWith('@gmail.com')) validationErrors.email = 'Use @gmail.com';
     
-    if (!editForm.mobile_number) validationErrors.mobile_number = 'Phone is required';
-    else if (!editForm.mobile_number.startsWith('09') || editForm.mobile_number.length !== 11) 
+    if (editForm.mobile_number && (!editForm.mobile_number.startsWith('09') || editForm.mobile_number.length !== 11))
       validationErrors.mobile_number = 'Must be 11 digits (09...)';
     
-    if (editForm.birthday) {
-      const birthDate = new Date(editForm.birthday);
-      const todayDate = new Date();
-      if (birthDate > todayDate) {
-        validationErrors.birthday = 'Birthday cannot be in the future';
-      }
-    }
+    const birthdayError = validateBirthday(editForm.birthday);
+    if (birthdayError) validationErrors.birthday = birthdayError;
 
     // If there are validation errors, show them and don't save
     if (Object.keys(validationErrors).length > 0) {
@@ -292,7 +282,7 @@ export default function SettingsScreen() {
         email: editForm.email.toLowerCase().trim(),
         role: user.role || 'User',
         mobile_number: editForm.mobile_number || '',
-        address: editForm.address || '',
+        address: combineAddressFields(editForm),
         birthday: editForm.birthday || '', // Send empty string, backend converts to NULL
         gender: editForm.gender || '',
         status: user.status || 'Active'
@@ -625,7 +615,7 @@ export default function SettingsScreen() {
                   </div>
 
                   <div className="form-group">
-                    <label>Phone Number *</label>
+                    <label>Phone Number</label>
                     <input
                       type="text"
                       placeholder="09XXXXXXXXX"
@@ -637,11 +627,29 @@ export default function SettingsScreen() {
                   </div>
 
                   <div className="form-group">
-                    <label>Address</label>
+                    <label>Street</label>
                     <input
                       type="text"
-                      value={editForm.address}
-                      onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                      value={editForm.street}
+                      onChange={(e) => setEditForm({ ...editForm, street: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>City</label>
+                    <input
+                      type="text"
+                      value={editForm.city}
+                      onChange={(e) => setEditForm({ ...editForm, city: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Province</label>
+                    <input
+                      type="text"
+                      value={editForm.province}
+                      onChange={(e) => setEditForm({ ...editForm, province: e.target.value })}
                     />
                   </div>
 
@@ -649,7 +657,6 @@ export default function SettingsScreen() {
                     <label>Birthday</label>
                     <input
                       type="date"
-                      max={getMaxBirthdate()}
                       value={editForm.birthday}
                       onChange={(e) => {
                         const selectedDate = e.target.value;

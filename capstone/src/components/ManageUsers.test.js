@@ -135,6 +135,45 @@ describe('ManageUsers edit flow', () => {
     expect(container.querySelector('input[type="password"]')).toBeNull();
   });
 
+  test('Add User form exposes split address fields for new accounts', async () => {
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    const addButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add'
+    );
+
+    await act(async () => {
+      addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Street');
+    expect(container.textContent).toContain('City');
+    expect(container.textContent).toContain('Province');
+    expect(container.querySelector('input[placeholder="Enter address"]')).toBeNull();
+  });
+
+  test('Edit User form splits a stored address into street, city, and province inputs', async () => {
+    accountsPayload[0].address = 'T. Alonzo St, Manila, Metro Manila';
+
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    const editButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Edit'
+    );
+
+    await act(async () => {
+      editButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.querySelector('input[value="T. Alonzo St"]')).toBeTruthy();
+    expect(container.querySelector('input[value="Manila"]')).toBeTruthy();
+    expect(container.querySelector('input[value="Metro Manila"]')).toBeTruthy();
+  });
+
   test('submits updates for the selected user through the existing save flow', async () => {
     await act(async () => {
       root.render(<ManageUsers />);

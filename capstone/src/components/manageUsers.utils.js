@@ -71,6 +71,38 @@ export const paginateItems = (items, currentPage, pageSize) => {
   };
 };
 
+export const splitAddressFields = (address = '') => {
+  const [street = '', city = '', ...provinceParts] = String(address || '')
+    .split(',')
+    .map((value) => value.trim());
+
+  return {
+    street,
+    city,
+    province: provinceParts.join(', ').trim(),
+  };
+};
+
+export const combineAddressFields = ({ street = '', city = '', province = '' } = {}) => (
+  [street, city, province]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(', ')
+);
+
+export const validateOptionalAdultBirthday = (date, referenceDate = new Date()) => {
+  if (!date) return '';
+
+  const birthday = new Date(date);
+  const today = new Date(referenceDate);
+  if (Number.isNaN(birthday.getTime()) || Number.isNaN(today.getTime())) return '';
+  if (birthday > today) return 'Birthday cannot be in the future';
+
+  const adultBirthday = new Date(today);
+  adultBirthday.setFullYear(adultBirthday.getFullYear() - 18);
+  return birthday > adultBirthday ? 'Must be at least 18 years old' : '';
+};
+
 export const buildAccountCreationSuccessModal = (selectedRole, data = {}) => ({
   title: data.warning ? 'Account Created - Email Issue' : 'Success',
   message: data.warning || `${selectedRole} added successfully! Account credentials were sent to the user's email.`,

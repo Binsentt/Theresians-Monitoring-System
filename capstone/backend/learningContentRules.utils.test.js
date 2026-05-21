@@ -5,6 +5,8 @@ const {
   ALLOWED_MATH_TOPICS,
   getMathTopicsForGrade,
   isValidMathTopicForGrade,
+  parseExpectedQuestionCount,
+  validateExpectedQuestionCount,
 } = require('./learningContentRules.utils');
 
 test('maps math topics to the selected grade band', () => {
@@ -26,4 +28,15 @@ test('validates math topics against the selected grade level', () => {
   assert.equal(isValidMathTopicForGrade('Grade 4', 'Division'), true);
   assert.equal(isValidMathTopicForGrade('Grade 5', 'Formulas'), true);
   assert.equal(ALLOWED_MATH_TOPICS.includes('Formulas'), true);
+});
+
+test('parses and validates fixed question counts for uploaded question bundles', () => {
+  assert.equal(parseExpectedQuestionCount('12'), 12);
+  assert.equal(parseExpectedQuestionCount(''), null);
+  assert.equal(parseExpectedQuestionCount('0'), null);
+  assert.equal(validateExpectedQuestionCount([{ question: 'A' }, { question: 'B' }], '2'), null);
+  assert.equal(
+    validateExpectedQuestionCount([{ question: 'A' }], '2'),
+    'Expected 2 fixed questions, but the uploaded file contains 1.'
+  );
 });
