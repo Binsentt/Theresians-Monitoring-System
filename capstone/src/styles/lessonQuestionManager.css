@@ -1,9 +1,8 @@
 .manager-topbar {
   display: flex;
-  justify-content: space-between;
   align-items: flex-start;
+  justify-content: space-between;
   gap: 24px;
-  margin-bottom: 24px;
 }
 
 .manager-notification {
@@ -31,84 +30,189 @@
   background: #fef2f2;
 }
 
-.drive-toolbar,
-.drive-forms,
-.drive-inline-controls,
-.upload-actions,
-.edit-actions,
-.folder-actions,
-.trash-actions {
-  display: flex;
-  gap: 12px;
+.drive-workspace {
+  display: grid;
+  grid-template-columns: minmax(220px, 252px) minmax(0, 1fr);
+  gap: 18px;
+  min-height: calc(100vh - 182px);
 }
 
-.drive-toolbar {
-  flex-wrap: wrap;
-  margin-bottom: 20px;
-}
-
-.drive-primary-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 58px;
-  min-width: 200px;
-  border: 1px solid rgba(22, 101, 52, 0.18);
-  border-radius: 8px;
-  background: #15803d;
-  color: #ffffff;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 800;
-  box-shadow: 0 12px 28px rgba(21, 128, 61, 0.18);
-}
-
-.drive-upload-action {
-  border-color: rgba(14, 116, 144, 0.2);
-  background: #0e7490;
-  box-shadow: 0 12px 28px rgba(14, 116, 144, 0.18);
-}
-
-.drive-forms {
-  align-items: flex-start;
-  flex-wrap: wrap;
-  padding: 20px;
+.drive-manager-sidebar,
+.drive-panel {
   border: 1px solid var(--border-color, #e5e7eb);
   border-radius: 8px;
   background: var(--panel-bg, #ffffff);
+  box-shadow: 0 1px 3px var(--card-shadow, rgba(15, 23, 42, 0.08));
 }
 
-.drive-inline-form,
-.drive-upload-form {
+.drive-manager-sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
   display: grid;
-  gap: 14px;
-  flex: 1 1 340px;
+  gap: 18px;
+  padding: 18px 14px;
 }
 
-.drive-inline-controls {
+.drive-manager-sidebar h2,
+.drive-panel h2,
+.drive-storage-view h3 {
+  margin: 0;
+  color: var(--text-primary, #0b2447);
+  font-size: 1.04rem;
+}
+
+.drive-new-wrap,
+.drive-card-menu,
+.drive-row-actions {
+  position: relative;
+}
+
+.drive-new-button {
+  width: 100%;
+  min-height: 58px;
+  justify-content: flex-start;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 8px;
+  background: var(--accent-color, #2563eb);
+  color: #ffffff;
+  font-weight: 800;
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.16);
+}
+
+.drive-new-button:hover {
+  color: #ffffff;
+}
+
+.drive-new-menu,
+.drive-row-menu {
+  position: absolute;
+  z-index: 30;
+  display: grid;
+  overflow: hidden;
+  min-width: 190px;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 8px;
+  background: var(--panel-bg, #ffffff);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
+}
+
+.drive-new-menu {
+  top: calc(100% + 8px);
+  left: 0;
+  width: 100%;
+}
+
+.drive-row-menu {
+  top: calc(100% + 6px);
+  right: 0;
+}
+
+.drive-new-menu button,
+.drive-row-menu button,
+.drive-manager-nav button {
+  display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary, #0b2447);
+  padding: 10px 12px;
+  text-align: left;
+  box-shadow: none;
 }
 
-.drive-inline-controls .input-field {
-  flex: 1;
+.drive-new-menu button:hover,
+.drive-row-menu button:hover,
+.drive-manager-nav button:hover {
+  background: var(--bg-secondary, #f8fafc);
+  transform: none;
 }
 
-.drive-upload-form {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.drive-manager-nav {
+  display: grid;
+  gap: 4px;
 }
 
-.drive-upload-form .upload-actions {
-  grid-column: 1 / -1;
-  flex-wrap: wrap;
+.drive-manager-nav button {
+  border-radius: 8px;
 }
 
-.drive-folder-header {
+.drive-manager-nav button.active {
+  color: var(--accent-color, #2563eb);
+  background: var(--accent-bg, rgba(37, 99, 235, 0.1));
+  font-weight: 800;
+}
+
+.drive-sidebar-storage {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color, #e5e7eb);
+}
+
+.drive-storage-label,
+.storage-file-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.drive-storage-label {
+  color: var(--text-muted, #64748b);
+  font-size: 0.88rem;
+}
+
+.drive-storage-track {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-secondary, #f1f5f9);
+}
+
+.drive-storage-track span {
+  display: block;
+  min-height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0f766e, var(--accent-color, #2563eb));
+  transition: width 0.22s ease;
+}
+
+.drive-manager-surface {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-width: 0;
+}
+
+.drive-panel {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  padding: 20px;
+}
+
+.drive-panel-header,
+.drive-folder-card,
+.storage-file-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
+  gap: 14px;
+}
+
+.drive-panel-header {
+  align-items: flex-start;
+}
+
+.drive-panel-header p {
+  margin: 4px 0 0;
 }
 
 .folder-breadcrumb {
@@ -117,20 +221,19 @@
   flex-wrap: wrap;
   gap: 8px;
   color: var(--text-muted, #64748b);
+  font-size: 0.92rem;
 }
 
 .folder-breadcrumb-button {
   border: 0;
   background: transparent;
-  color: var(--primary-color, #2563eb);
-  cursor: pointer;
-  font: inherit;
-  font-weight: 700;
+  color: var(--accent-color, #2563eb);
   padding: 0;
+  font-weight: 800;
 }
 
-.folder-breadcrumb-separator {
-  color: var(--text-muted, #94a3b8);
+.folder-breadcrumb-button:hover {
+  transform: none;
 }
 
 .folder-search-field {
@@ -139,67 +242,55 @@
 
 .drive-folder-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
 }
 
 .drive-folder-card {
-  display: grid;
-  min-height: 164px;
-  padding: 18px;
+  min-height: 94px;
   border: 1px solid var(--border-color, #e5e7eb);
   border-radius: 8px;
-  background: var(--panel-bg, #ffffff);
+  background: var(--bg-secondary, #f8fafc);
+  padding: 14px;
   cursor: pointer;
   transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
 
 .drive-folder-card:hover,
 .drive-folder-card:focus {
-  border-color: rgba(37, 99, 235, 0.45);
+  border-color: rgba(37, 99, 235, 0.42);
   box-shadow: 0 12px 26px rgba(15, 23, 42, 0.1);
   outline: none;
   transform: translateY(-1px);
 }
 
-.drive-folder-card-main {
-  display: grid;
-  align-content: start;
-  gap: 18px;
+.drive-folder-card-main,
+.drive-file-name {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.drive-folder-card-main strong,
+.file-name-title {
+  overflow-wrap: anywhere;
 }
 
 .drive-folder-card-main svg {
-  color: #f59e0b;
-}
-
-.folder-actions {
-  align-items: center;
-  align-self: end;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  color: #d97706;
 }
 
 .icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   width: 38px;
+  min-width: 38px;
   height: 38px;
+  padding: 0;
   border: 1px solid var(--border-color, #e5e7eb);
   border-radius: 8px;
   background: var(--panel-bg, #ffffff);
-  color: var(--text-primary, #0f172a);
-  cursor: pointer;
-}
-
-.manager-filters {
-  margin-bottom: 20px;
-}
-
-.filter-group {
-  display: grid;
-  width: 100%;
-  grid-template-columns: minmax(180px, 1.8fr) repeat(4, minmax(130px, 1fr));
-  gap: 14px;
+  color: var(--text-primary, #0b2447);
 }
 
 .drive-table.data-table-container,
@@ -218,32 +309,23 @@
 
 .drive-table .data-table-th {
   color: var(--text-muted, #64748b);
-  font-weight: 700;
-}
-
-.drive-table .data-table-row:hover {
-  background: rgba(37, 99, 235, 0.05);
-}
-
-.drive-file-name {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  font-weight: 800;
 }
 
 .drive-file-name svg {
   flex: 0 0 auto;
-  color: #0e7490;
+  color: #0f766e;
 }
 
 .file-name-cell {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
+  min-width: 0;
 }
 
 .file-name-title {
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .file-meta,
@@ -257,75 +339,26 @@
 }
 
 .drive-row-actions {
-  position: relative;
   display: flex;
   justify-content: flex-end;
 }
 
-.drive-row-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 20;
+.storage-summary {
   display: grid;
-  min-width: 188px;
-  overflow: hidden;
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 8px;
-  background: var(--panel-bg, #ffffff);
-  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
 }
 
-.drive-row-menu button {
-  display: flex;
-  align-items: center;
+.storage-file-list {
+  display: grid;
   gap: 10px;
-  min-height: 40px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  padding: 8px 12px;
-  text-align: left;
 }
 
-.drive-row-menu button:hover,
-.drive-row-menu button:focus {
-  background: var(--bg-secondary, #f8fafc);
-}
-
-.trash-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-}
-
-.trash-panel {
-  padding: 18px;
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 8px;
-  background: var(--panel-bg, #ffffff);
-}
-
-.trash-panel h3 {
-  margin: 0 0 12px;
-}
-
-.trash-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 0;
+.storage-file-row {
+  min-height: 54px;
   border-top: 1px solid var(--border-color, #e5e7eb);
-}
-
-.trash-row span,
-.trash-actions button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  padding-top: 10px;
 }
 
 .manager-modal-backdrop {
@@ -335,25 +368,39 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(15, 23, 42, 0.48);
+  background: rgba(15, 23, 42, 0.52);
+  animation: manager-fade-in 0.18s ease;
 }
 
 .manager-modal {
-  width: min(620px, 100%);
   display: grid;
   gap: 18px;
-  padding: 24px;
+  width: min(620px, 100%);
   border: 1px solid var(--border-color, #e5e7eb);
   border-radius: 8px;
   background: var(--panel-bg, #ffffff);
+  padding: 24px;
   box-shadow: 0 28px 70px rgba(15, 23, 42, 0.28);
+  animation: manager-rise-in 0.18s ease;
 }
 
-.manager-modal-header {
+.drive-create-folder-modal {
+  width: min(480px, 100%);
+}
+
+.manager-modal-header,
+.upload-actions,
+.edit-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
+}
+
+.upload-actions,
+.edit-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .manager-modal-header h2 {
@@ -366,22 +413,85 @@
   gap: 16px;
 }
 
+[data-theme='dark'] .drive-manager-sidebar,
+[data-theme='dark'] .drive-panel,
+[data-theme='dark'] .manager-modal,
+[data-theme='dark'] .drive-new-menu,
+[data-theme='dark'] .drive-row-menu {
+  background: var(--panel-bg, #1e293b);
+}
+
+[data-theme='dark'] .drive-folder-card {
+  background: var(--bg-secondary, #0f1720);
+}
+
+[data-theme='dark'] .notification-success {
+  color: #bbf7d0;
+  border-color: rgba(74, 222, 128, 0.45);
+  background: rgba(20, 83, 45, 0.92);
+}
+
+[data-theme='dark'] .notification-error {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.44);
+  background: rgba(127, 29, 29, 0.92);
+}
+
+@keyframes manager-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes manager-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 980px) {
-  .drive-upload-form,
-  .filter-group,
-  .manager-modal-fields,
-  .trash-grid {
+  .drive-workspace {
     grid-template-columns: 1fr;
   }
 
-  .drive-folder-header,
-  .trash-row {
+  .drive-manager-sidebar {
+    position: static;
+  }
+
+  .drive-manager-nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .drive-panel-header,
+  .drive-folder-card {
     align-items: stretch;
     flex-direction: column;
   }
+}
 
-  .drive-inline-controls {
-    align-items: stretch;
+@media (max-width: 720px) {
+  .drive-manager-nav,
+  .manager-modal-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .drive-panel {
+    padding: 16px;
+  }
+
+  .drive-panel-header .btn,
+  .folder-search-field,
+  .upload-actions .btn,
+  .edit-actions .btn {
+    width: 100%;
+  }
+
+  .storage-file-row {
+    align-items: flex-start;
     flex-direction: column;
   }
 }

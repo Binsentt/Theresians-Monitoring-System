@@ -146,6 +146,123 @@ img, svg {
 [data-theme='dark'] .metric-label { color: var(--text-muted); }
 [data-theme='dark'] .metric-value { color: var(--status-color) !important; }
 
+/* Shared dark surfaces for legacy screens that still use plain HTML controls. */
+[data-theme='dark'] table,
+[data-theme='dark'] thead,
+[data-theme='dark'] tbody,
+[data-theme='dark'] tr,
+[data-theme='dark'] th,
+[data-theme='dark'] td {
+  border-color: var(--border-color) !important;
+  color: var(--text-primary);
+}
+
+[data-theme='dark'] table {
+  background: var(--panel-bg) !important;
+}
+
+[data-theme='dark'] thead,
+[data-theme='dark'] th {
+  background: var(--bg-secondary) !important;
+}
+
+[data-theme='dark'] tbody tr:nth-child(even) {
+  background: rgba(148, 163, 184, 0.06) !important;
+}
+
+[data-theme='dark'] tbody tr:hover {
+  background: rgba(59, 130, 246, 0.12) !important;
+}
+
+[data-theme='dark'] input:not([type='checkbox']):not([type='radio']),
+[data-theme='dark'] select,
+[data-theme='dark'] textarea,
+[data-theme='dark'] .dropdown-menu,
+[data-theme='dark'] .modal-content,
+[data-theme='dark'] [role='dialog'],
+[data-theme='dark'] .card,
+[data-theme='dark'] .form-container-card,
+[data-theme='dark'] .profile-view {
+  background-color: var(--panel-bg) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme='dark'] input::placeholder,
+[data-theme='dark'] textarea::placeholder {
+  color: var(--text-muted);
+}
+
+[data-theme='dark'] .btn,
+[data-theme='dark'] button {
+  background-color: var(--bg-secondary);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+
+[data-theme='dark'] .btn-primary,
+[data-theme='dark'] button.btn-primary,
+[data-theme='dark'] .logout-btn {
+  background-color: var(--navy-700) !important;
+  border-color: transparent !important;
+  color: #f8fafc !important;
+}
+
+[data-theme='dark'] .btn-secondary,
+[data-theme='dark'] button.btn-secondary,
+[data-theme='dark'] .icon-button {
+  background-color: var(--panel-bg) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme='dark'] .password-toggle-button,
+[data-theme='dark'] .folder-breadcrumb-button,
+[data-theme='dark'] .analytics-sidebar-item {
+  background-color: transparent;
+}
+
+[data-theme='dark'] .sts-sidebar,
+[data-theme='dark'] .settings-sidebar,
+[data-theme='dark'] .analytics-sidebar-panel {
+  background-color: #08111f !important;
+  border-color: rgba(148, 163, 184, 0.14) !important;
+}
+
+[data-theme='dark'] .student-analytics-logo,
+[data-theme='dark'] .student-ai-block,
+[data-theme='dark'] .child-selector-card,
+[data-theme='dark'] .child-activity-item,
+[data-theme='dark'] .student-progress-table .table-row,
+[data-theme='dark'] .empty-state,
+[data-theme='dark'] .loading-state,
+[data-theme='dark'] .analysis-modal {
+  background: var(--panel-bg) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme='dark'] .student-progress-table .table-row.header,
+[data-theme='dark'] .student-progress-table .table-row:not(.header):nth-child(odd),
+[data-theme='dark'] .child-selector-card.active {
+  background: var(--bg-secondary) !important;
+}
+
+[data-theme='dark'] .student-ai-block ul,
+[data-theme='dark'] .child-selector-card strong,
+[data-theme='dark'] .child-activity-item strong,
+[data-theme='dark'] .student-progress-table .table-row span,
+[data-theme='dark'] .analysis-modal h2 {
+  color: var(--text-primary) !important;
+}
+
+[data-theme='dark'] .child-selector-card span,
+[data-theme='dark'] .child-activity-item span,
+[data-theme='dark'] .child-activity-item small,
+[data-theme='dark'] .analysis-modal p {
+  color: var(--text-muted) !important;
+}
+
 /* Ensure main content text in dashboards and settings follows theme (but keep sidebar intact) */
 [data-theme='dark'] .dashboard-sts-container .sts-main-panel,
 [data-theme='dark'] .dashboard-sts-container .sts-main-panel *,

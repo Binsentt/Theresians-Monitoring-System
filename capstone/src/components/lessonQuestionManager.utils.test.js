@@ -1,5 +1,8 @@
 import {
   filterLearningFiles,
+  calculateLearningStorage,
+  countFixedQuestionRecords,
+  getLargestLearningFiles,
   formatLearningFileSize,
   getFolderContents,
   getMathTopicsForGrade,
@@ -110,5 +113,34 @@ describe('lesson question manager helpers', () => {
     expect(inferLearningFileUploadType('notes.txt')).toBe('');
     expect(formatLearningFileSize(1536)).toBe('1.5 KB');
     expect(formatLearningFileSize(null)).toBe('-');
+  });
+
+  test('counts fixed question files for optional upload validation', () => {
+    expect(countFixedQuestionRecords(JSON.stringify([
+      { question: 'What is 1 + 1?', correct_answer: '2' },
+      { question: 'What is 2 + 2?', answer: '4' },
+      { question: '', correct_answer: 'skip' },
+    ]), 'addition.json')).toBe(2);
+
+    expect(countFixedQuestionRecords([
+      'What is 3 + 3?,6,7,8',
+      '',
+      'What is 4 + 4?,8,9,10',
+    ].join('\n'), 'addition.csv')).toBe(2);
+  });
+
+  test('summarizes drive storage and returns the largest files', () => {
+    const files = [
+      { id: 1, title: 'Small', file_size: 512 },
+      { id: 2, title: 'Largest', file_size: 4096 },
+      { id: 3, title: 'Unknown', file_size: null },
+    ];
+
+    expect(calculateLearningStorage(files)).toEqual({
+      usedBytes: 4608,
+      limitBytes: 10 * 1024 * 1024 * 1024,
+      percentage: expect.any(Number),
+    });
+    expect(getLargestLearningFiles(files, 2)).toEqual([files[1], files[0]]);
   });
 });

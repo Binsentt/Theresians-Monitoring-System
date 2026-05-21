@@ -1,6 +1,8 @@
 import {
   buildAuthHeaders,
+  getOrCreateLoginDeviceId,
   getStoredUserSession,
+  LOGIN_DEVICE_STORAGE_KEY,
   resolveAuthorizedSession,
   SESSION_STORAGE_KEY,
 } from './session.utils';
@@ -83,5 +85,21 @@ describe('session utilities', () => {
       Authorization: 'Bearer remember-only',
     });
     expect(buildAuthHeaders(createStorage())).toEqual({});
+  });
+
+  test('creates and reuses a persistent login device id', () => {
+    const entries = {};
+    const storage = {
+      getItem: jest.fn((key) => entries[key] || null),
+      setItem: jest.fn((key, value) => {
+        entries[key] = value;
+      }),
+    };
+    const cryptoApi = { randomUUID: jest.fn(() => 'device-uuid-123') };
+
+    expect(getOrCreateLoginDeviceId(storage, cryptoApi)).toBe('device-uuid-123');
+    expect(storage.setItem).toHaveBeenCalledWith(LOGIN_DEVICE_STORAGE_KEY, 'device-uuid-123');
+    expect(getOrCreateLoginDeviceId(storage, cryptoApi)).toBe('device-uuid-123');
+    expect(cryptoApi.randomUUID).toHaveBeenCalledTimes(1);
   });
 });

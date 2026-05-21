@@ -32,7 +32,7 @@ const validateExpectedQuestionCount = (questions, expectedCount) => {
   if (!count) return null;
   const actualCount = Array.isArray(questions) ? questions.length : 0;
   if (actualCount === count) return null;
-  return `Expected ${count} fixed questions, but the uploaded file contains ${actualCount}.`;
+  return `File contains ${actualCount} questions but you specified ${count}. Please check your file.`;
 };
 
 module.exports = {

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import logoImage from '../assets/images/STS_Logo.png';
 import { apiUrl } from '../api';
 import { getDefaultDashboardRoute, normalizeRole } from './manageUsers.utils';
+import { getOrCreateLoginDeviceId } from './session.utils';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -14,6 +15,8 @@ export default function LoginScreen() {
   const [otpExpiresAt, setOtpExpiresAt] = useState(null);
   const [countdown, setCountdown] = useState(0);
   const [rememberToken, setRememberToken] = useState('');
+  const [deviceId, setDeviceId] = useState('');
+  const [skipOtpFor30Days, setSkipOtpFor30Days] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const navigate = useNavigate();
@@ -24,6 +27,7 @@ export default function LoginScreen() {
     document.documentElement.setAttribute('data-theme', savedTheme);
     const savedToken = localStorage.getItem('rememberToken');
     if (savedToken) setRememberToken(savedToken);
+    setDeviceId(getOrCreateLoginDeviceId());
   }, []);
 
   useEffect(() => {
@@ -69,6 +73,7 @@ export default function LoginScreen() {
           username: email.trim().toLowerCase(),
           password: password,
           rememberToken: rememberToken || undefined,
+          deviceId,
         }),
       });
 
@@ -118,7 +123,12 @@ export default function LoginScreen() {
       const res = await fetch(apiUrl('/api/login/verify-otp'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: pendingUserId, otp }),
+        body: JSON.stringify({
+          userId: pendingUserId,
+          otp,
+          deviceId,
+          skipOtpFor30Days,
+        }),
       });
       const result = await res.json();
       if (!res.ok) {
@@ -252,6 +262,15 @@ export default function LoginScreen() {
                   maxLength={6}
                 />
               </div>
+              <label className="otp-device-skip-option">
+                <input
+                  type="checkbox"
+                  checked={skipOtpFor30Days}
+                  onChange={(event) => setSkipOtpFor30Days(event.target.checked)}
+                  disabled={loading}
+                />
+                <span>Don't send OTP for 30 days on this device</span>
+              </label>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
                 <small style={{ color: '#555' }}>
                   {countdown > 0 ? `Code expires in ${countdown}s` : 'Code expired. Please resend.'}
@@ -275,6 +294,7 @@ export default function LoginScreen() {
                   setPendingUserId(null);
                   setOtp('');
                   setOtpExpiresAt(null);
+                  setSkipOtpFor30Days(false);
                   setErrorMessage('');
                 }}
                 className="back-login-btn"

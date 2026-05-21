@@ -37,6 +37,6 @@ test('parses and validates fixed question counts for uploaded question bundles',
   assert.equal(validateExpectedQuestionCount([{ question: 'A' }, { question: 'B' }], '2'), null);
   assert.equal(
     validateExpectedQuestionCount([{ question: 'A' }], '2'),
-    'Expected 2 fixed questions, but the uploaded file contains 1.'
+    'File contains 1 questions but you specified 2. Please check your file.'
   );
 });

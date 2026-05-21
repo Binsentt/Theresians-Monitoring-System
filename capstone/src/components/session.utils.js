@@ -3,6 +3,29 @@ import { canAccessRole, normalizeRole } from './manageUsers.utils';
 export const SESSION_STORAGE_KEY = 'loggedInUser';
 export const TOKEN_STORAGE_KEY = 'token';
 export const REMEMBER_TOKEN_STORAGE_KEY = 'rememberToken';
+export const LOGIN_DEVICE_STORAGE_KEY = 'loginDeviceId';
+
+const createFallbackLoginDeviceId = (cryptoApi) => {
+  if (cryptoApi?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    cryptoApi.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  return `device-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+};
+
+export const getOrCreateLoginDeviceId = (
+  storage = window.localStorage,
+  cryptoApi = window.crypto
+) => {
+  const savedDeviceId = String(storage?.getItem?.(LOGIN_DEVICE_STORAGE_KEY) || '').trim();
+  if (savedDeviceId) return savedDeviceId;
+
+  const newDeviceId = String(cryptoApi?.randomUUID?.() || createFallbackLoginDeviceId(cryptoApi)).trim();
+  storage?.setItem?.(LOGIN_DEVICE_STORAGE_KEY, newDeviceId);
+  return newDeviceId;
+};
 
 export const getStoredUserSession = (storage = window.localStorage) => {
   try {

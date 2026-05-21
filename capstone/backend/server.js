@@ -35,9 +35,12 @@ const {
   resolveGeneratedAccountPassword,
 } = require('./accountCreation.utils');
 const {
+  buildLoginDeviceSkipLookup,
+  buildLoginDeviceSkipUpsert,
   buildLoginAccountLookup,
   buildLoginOtpResponse,
   buildResendOtpResponse,
+  normalizeLoginDeviceId,
   normalizeLoginEmail,
   resolveOtpEmailDelivery,
 } = require('./loginOtp.utils');
@@ -123,6 +126,16 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS parent_id VARCHAR(6)');
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.login_otp_device_skips (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+      device_id VARCHAR(160) NOT NULL,
+      otp_skipped_until TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT login_otp_device_skips_user_device_unique UNIQUE (user_id, device_id)
+    );`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_login_otp_device_skips_expiry ON public.login_otp_device_skips(otp_skipped_until)');
     await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS accounts_employee_id_key ON public.accounts(employee_id)');
     await pool.query("UPDATE public.accounts SET parent_id = NULL WHERE parent_id IS NOT NULL AND parent_id !~ '^\\d{6}$'");
     await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS accounts_parent_id_key ON public.accounts(parent_id) WHERE parent_id IS NOT NULL');
@@ -197,6 +210,8 @@ const ensureSchema = async () => {
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );`);
     await pool.query('ALTER TABLE public.folders ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.folders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ');
+    await pool.query('UPDATE public.folders SET deleted_at = trashed_at WHERE deleted_at IS NULL AND trashed_at IS NOT NULL');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.learning_files (
       id SERIAL PRIMARY KEY,
       title VARCHAR(255) NOT NULL,
@@ -214,6 +229,8 @@ const ensureSchema = async () => {
     );`);
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS file_size BIGINT');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ');
+    await pool.query('UPDATE public.learning_files SET deleted_at = trashed_at WHERE deleted_at IS NULL AND trashed_at IS NOT NULL');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.questions (
       id SERIAL PRIMARY KEY,
       learning_file_id INTEGER REFERENCES public.learning_files(id) ON DELETE CASCADE,
@@ -607,7 +624,7 @@ const unpublishLearningFile = async (fileId) => {
 };
 
 const buildPublishedQueryClause = (params, { grade_level, math_topic }) => {
-  let clause = ' WHERE lf.subject = $1 AND lf.published = true AND lf.trashed_at IS NULL';
+  let clause = ' WHERE lf.subject = $1 AND lf.published = true AND lf.deleted_at IS NULL';
   params.push('Mathematics');
   if (grade_level) {
     params.push(grade_level);
@@ -742,7 +759,7 @@ const getPublishedGameData = async ({ grade_level, math_topic }) => {
      JOIN public.learning_files lf ON q.learning_file_id = lf.id
      WHERE q.published = true
        AND lf.subject = 'Mathematics'
-       AND lf.trashed_at IS NULL
+       AND lf.deleted_at IS NULL
        ${grade_level ? `AND q.grade_level = ${params.length + 1}` : ''}
        ${math_topic ? `AND q.math_topic = ${params.length + (grade_level ? 2 : 1)}` : ''}
      ORDER BY q.created_at DESC`
@@ -808,7 +825,7 @@ const getLearningFiles = async () => {
 
 const getGameQuestions = async ({ grade_level, math_topic }) => {
   const params = ['Mathematics'];
-  let clause = 'WHERE lf.subject = $1 AND lf.published = true AND lf.trashed_at IS NULL';
+  let clause = 'WHERE lf.subject = $1 AND lf.published = true AND lf.deleted_at IS NULL';
   if (grade_level) {
     params.push(grade_level);
     clause += ` AND lf.grade_level = $${params.length}`;
@@ -875,7 +892,7 @@ const needQuestionParser = async (fileType, file) => {
 
 const getGameFiles = async ({ grade_level, math_topic }) => {
   const params = ['Mathematics'];
-  let clause = 'WHERE subject = $1 AND published = true AND trashed_at IS NULL';
+  let clause = 'WHERE subject = $1 AND published = true AND deleted_at IS NULL';
   if (grade_level) {
     params.push(grade_level);
     clause += ` AND grade_level = $${params.length}`;
@@ -945,7 +962,7 @@ const readJsonFile = (pathInput) => JSON.parse(fs.readFileSync(pathInput, 'utf8'
 
 const buildPublishedGameQuery = ({ grade_level, math_topic }) => {
   const params = ['Mathematics'];
-  let clause = 'lf.subject = $1 AND lf.published = true AND lf.trashed_at IS NULL';
+  let clause = 'lf.subject = $1 AND lf.published = true AND lf.deleted_at IS NULL';
   if (grade_level) {
     params.push(grade_level);
     clause += ` AND lf.grade_level = $${params.length}`;
@@ -1050,7 +1067,7 @@ const getFileMetadata = async (id) => {
 
 const buildPublishedLearningFilesQuery = ({ grade_level, math_topic }) => {
   const params = ['Mathematics'];
-  let clause = 'WHERE lf.subject = $1 AND lf.published = true AND lf.trashed_at IS NULL';
+  let clause = 'WHERE lf.subject = $1 AND lf.published = true AND lf.deleted_at IS NULL';
   if (grade_level) {
     params.push(grade_level);
     clause += ` AND lf.grade_level = $${params.length}`;
@@ -1439,7 +1456,7 @@ app.get('/api/test', async (req, res) => {
 });
 
 app.post('/api/login', async (req, res) => {
-  const { username, password, rememberToken } = req.body;
+  const { username, password, deviceId } = req.body;
   const email = normalizeLoginEmail(username);
 
   try {
@@ -1451,11 +1468,20 @@ app.post('/api/login', async (req, res) => {
     const passwordMatches = await comparePassword(password, user.password);
     if (!passwordMatches) return res.status(401).json({ error: 'Incorrect password' });
 
-    if (rememberToken) {
-      const decoded = verifyRememberToken(rememberToken);
-      if (decoded && decoded.userId === user.id && decoded.email === user.email) {
-        await pool.query('UPDATE public.accounts SET status = $1 WHERE id = $2', ['Active', user.id]);
-        return res.json({ success: true, user: serializeUser(user), rememberToken });
+    const normalizedDeviceId = normalizeLoginDeviceId(deviceId);
+    if (normalizedDeviceId) {
+      const skipResult = await pool.query(buildLoginDeviceSkipLookup(user.id, normalizedDeviceId));
+      if (skipResult.rows.length > 0) {
+        const sessionToken = createRememberToken(user);
+        await pool.query(
+          'UPDATE public.accounts SET otp_code = NULL, otp_expires_at = NULL, status = $1 WHERE id = $2',
+          ['Active', user.id]
+        );
+        return res.json({
+          success: true,
+          user: serializeUser({ ...user, status: 'Active' }),
+          rememberToken: sessionToken,
+        });
       }
     }
 
@@ -1506,7 +1532,7 @@ app.post('/api/login/resend-otp', async (req, res) => {
 });
 
 app.post('/api/login/verify-otp', async (req, res) => {
-  const { userId, otp, email } = req.body;
+  const { userId, otp, email, deviceId, skipOtpFor30Days } = req.body;
   try {
     let result;
     if (userId) {
@@ -1525,6 +1551,11 @@ app.post('/api/login/verify-otp', async (req, res) => {
 
     const rememberToken = createRememberToken(user);
     await pool.query('UPDATE public.accounts SET otp_code = NULL, otp_expires_at = NULL, status = $1 WHERE id = $2', ['Active', user.id]);
+    const normalizedDeviceId = normalizeLoginDeviceId(deviceId);
+    if (skipOtpFor30Days && normalizedDeviceId) {
+      const otpSkipExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      await pool.query(buildLoginDeviceSkipUpsert(user.id, normalizedDeviceId, otpSkipExpiresAt));
+    }
 
     res.json({
       success: true,
@@ -1767,7 +1798,7 @@ app.delete('/api/teacher-student-relationships/:id', async (req, res) => {
 
 app.get('/api/folders', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM public.folders WHERE trashed_at IS NULL ORDER BY name ASC');
+    const result = await pool.query('SELECT * FROM public.folders WHERE deleted_at IS NULL ORDER BY name ASC');
     res.json(result.rows);
   } catch (err) {
     console.error('Fetch folders failed:', err.message);
@@ -1777,7 +1808,7 @@ app.get('/api/folders', async (req, res) => {
 
 app.get('/api/folders/trash', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM public.folders WHERE trashed_at IS NOT NULL ORDER BY trashed_at DESC, name ASC');
+    const result = await pool.query('SELECT * FROM public.folders WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC, name ASC');
     res.json(result.rows);
   } catch (err) {
     console.error('Fetch trashed folders failed:', err.message);
@@ -1829,13 +1860,13 @@ app.delete('/api/folders/:id', async (req, res) => {
     const folderId = parseInt(req.params.id, 10);
     if (Number.isNaN(folderId)) return res.status(400).json({ error: 'Invalid folder ID' });
     const result = await pool.query(
-      'UPDATE public.folders SET trashed_at = COALESCE(trashed_at, CURRENT_TIMESTAMP) WHERE id = $1 RETURNING *',
+      'UPDATE public.folders SET deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP) WHERE id = $1 RETURNING *',
       [folderId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Folder not found' });
     await pool.query(
       `UPDATE public.learning_files
-       SET trashed_at = COALESCE(trashed_at, CURRENT_TIMESTAMP),
+       SET deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP),
            published = false
        WHERE folder_id = $1`,
       [folderId]
@@ -1860,11 +1891,11 @@ app.post('/api/folders/:id/restore', async (req, res) => {
     const folderId = parseInt(req.params.id, 10);
     if (Number.isNaN(folderId)) return res.status(400).json({ error: 'Invalid folder ID' });
     const result = await pool.query(
-      'UPDATE public.folders SET trashed_at = NULL WHERE id = $1 AND trashed_at IS NOT NULL RETURNING *',
+      'UPDATE public.folders SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL RETURNING *',
       [folderId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Trashed folder not found' });
-    await pool.query('UPDATE public.learning_files SET trashed_at = NULL WHERE folder_id = $1', [folderId]);
+    await pool.query('UPDATE public.learning_files SET deleted_at = NULL WHERE folder_id = $1', [folderId]);
     res.json({ success: true, folder: result.rows[0] });
   } catch (err) {
     console.error('Restore folder failed:', err.message);
@@ -1877,7 +1908,7 @@ app.delete('/api/folders/:id/permanent', async (req, res) => {
     const folderId = parseInt(req.params.id, 10);
     if (Number.isNaN(folderId)) return res.status(400).json({ error: 'Invalid folder ID' });
     const fileResult = await pool.query(
-      'SELECT id, file_url FROM public.learning_files WHERE folder_id = $1 AND trashed_at IS NOT NULL',
+      'SELECT id, file_url FROM public.learning_files WHERE folder_id = $1 AND deleted_at IS NOT NULL',
       [folderId]
     );
     for (const file of fileResult.rows) {
@@ -1886,7 +1917,7 @@ app.delete('/api/folders/:id/permanent', async (req, res) => {
       removeFileFromDisk(file.file_url);
     }
     const result = await pool.query(
-      'DELETE FROM public.folders WHERE id = $1 AND trashed_at IS NOT NULL RETURNING id',
+      'DELETE FROM public.folders WHERE id = $1 AND deleted_at IS NOT NULL RETURNING id',
       [folderId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Trashed folder not found' });
@@ -1906,7 +1937,7 @@ const resolveLearningFolderId = async (rawFolderId) => {
     return { error: 'Invalid folder ID.' };
   }
 
-  const folder = await pool.query('SELECT id FROM public.folders WHERE id = $1 AND trashed_at IS NULL', [folderId]);
+  const folder = await pool.query('SELECT id FROM public.folders WHERE id = $1 AND deleted_at IS NULL', [folderId]);
   if (folder.rows.length === 0) {
     return { error: 'Selected folder was not found.' };
   }
@@ -2017,8 +2048,8 @@ app.get('/api/learning-files', async (req, res) => {
        FROM public.learning_files lf
        LEFT JOIN public.folders f ON lf.folder_id = f.id
        LEFT JOIN public.accounts a ON lf.uploaded_by = a.id
-       WHERE lf.trashed_at IS NULL
-         AND (f.id IS NULL OR f.trashed_at IS NULL)
+       WHERE lf.deleted_at IS NULL
+         AND (f.id IS NULL OR f.deleted_at IS NULL)
        ORDER BY lf.uploaded_at DESC`
     );
     res.json(result.rows.map((row) => ({ ...row, folder_name: row.folder_name || 'Unassigned' })));
@@ -2059,7 +2090,7 @@ app.put('/api/learning-files/:id', async (req, res) => {
            file_type = $4,
            folder_id = $5
       WHERE id = $6
-        AND trashed_at IS NULL
+        AND deleted_at IS NULL
        RETURNING *`,
       [String(title).trim(), String(grade_level).trim(), String(math_topic).trim(), String(file_type).trim(), folderResolution.folderId, fileId]
     );
@@ -2077,7 +2108,7 @@ app.delete('/api/learning-files/:id', async (req, res) => {
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
     const fileResult = await pool.query(
       `UPDATE public.learning_files
-       SET trashed_at = COALESCE(trashed_at, CURRENT_TIMESTAMP),
+       SET deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP),
            published = false
        WHERE id = $1
        RETURNING *`,
@@ -2097,7 +2128,7 @@ app.post('/api/learning-files/:id/restore', async (req, res) => {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
     const result = await pool.query(
-      'UPDATE public.learning_files SET trashed_at = NULL WHERE id = $1 AND trashed_at IS NOT NULL RETURNING *',
+      'UPDATE public.learning_files SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL RETURNING *',
       [fileId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Trashed file not found' });
@@ -2113,7 +2144,7 @@ app.delete('/api/learning-files/:id/permanent', async (req, res) => {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
     const fileResult = await pool.query(
-      'SELECT * FROM public.learning_files WHERE id = $1 AND trashed_at IS NOT NULL',
+      'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NOT NULL',
       [fileId]
     );
     if (fileResult.rows.length === 0) return res.status(404).json({ error: 'Trashed file not found' });
@@ -2174,8 +2205,8 @@ app.get('/api/learning-files/trash', async (req, res) => {
        FROM public.learning_files lf
        LEFT JOIN public.folders f ON lf.folder_id = f.id
        LEFT JOIN public.accounts a ON lf.uploaded_by = a.id
-       WHERE lf.trashed_at IS NOT NULL
-       ORDER BY lf.trashed_at DESC, lf.uploaded_at DESC`
+       WHERE lf.deleted_at IS NOT NULL
+       ORDER BY lf.deleted_at DESC, lf.uploaded_at DESC`
     );
     res.json(result.rows.map((row) => ({ ...row, folder_name: row.folder_name || 'Unassigned' })));
   } catch (err) {

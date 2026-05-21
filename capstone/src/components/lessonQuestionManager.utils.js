@@ -50,6 +50,55 @@ export const formatLearningFileSize = (value) => {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+const normalizeStorageSize = (value) => {
+  const size = Number(value);
+  return Number.isFinite(size) && size > 0 ? size : 0;
+};
+
+const countFixedQuestionJson = (content) => {
+  const payload = JSON.parse(content);
+  if (!Array.isArray(payload)) return 0;
+  return payload.filter((item) => {
+    const question = String(item?.question || '').trim();
+    const answer = String(item?.correct_answer || item?.answer || '').trim();
+    return question && answer;
+  }).length;
+};
+
+const countFixedQuestionCsv = (content) => {
+  return String(content || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => {
+      const [question, answer] = line.split(',').map((cell) => String(cell || '').trim());
+      return Boolean(question && answer);
+    }).length;
+};
+
+export const countFixedQuestionRecords = (content, fileName) => {
+  const normalizedName = String(fileName || '').trim().toLowerCase();
+  if (normalizedName.endsWith('.json')) return countFixedQuestionJson(content);
+  if (normalizedName.endsWith('.csv')) return countFixedQuestionCsv(content);
+  return 0;
+};
+
+export const calculateLearningStorage = (files, limitBytes = 10 * 1024 * 1024 * 1024) => {
+  const list = Array.isArray(files) ? files : [];
+  const usedBytes = list.reduce((total, file) => total + normalizeStorageSize(file?.file_size), 0);
+  return {
+    usedBytes,
+    limitBytes,
+    percentage: limitBytes > 0 ? Math.min(100, (usedBytes / limitBytes) * 100) : 0,
+  };
+};
+
+export const getLargestLearningFiles = (files, limit = 5) => {
+  return [...(Array.isArray(files) ? files : [])]
+    .sort((left, right) => normalizeStorageSize(right?.file_size) - normalizeStorageSize(left?.file_size))
+    .slice(0, limit);
+};
+
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 
 export const filterLearningFiles = (files, filters) => {

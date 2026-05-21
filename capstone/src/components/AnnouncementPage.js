@@ -109,10 +109,13 @@ export default function AnnouncementPage({ mode = 'parent' }) {
           fetch(`${API_BASE}/api/announcements?target_role=parent&created_by=${accountId}&created_by_role=teacher&limit=20`),
         ]);
 
+        let hasLoadError = false;
+
         if (adminResult.status === 'fulfilled' && adminResult.value.ok) {
           const data = await adminResult.value.json();
           setAdminAnnouncements(Array.isArray(data) ? data : []);
         } else {
+          hasLoadError = true;
           setAdminAnnouncements([]);
         }
 
@@ -120,7 +123,11 @@ export default function AnnouncementPage({ mode = 'parent' }) {
           const data = await ownResult.value.json();
           setAnnouncements(Array.isArray(data) ? data : []);
         } else {
+          hasLoadError = true;
           setAnnouncements([]);
+        }
+        if (hasLoadError) {
+          setStatus('Failed to load announcements.');
         }
         return;
       }
@@ -129,12 +136,11 @@ export default function AnnouncementPage({ mode = 'parent' }) {
         ? `${API_BASE}/api/announcements?target_role=${config.targetRole}&limit=20`
         : `${API_BASE}/api/announcements?target_role=${config.targetRole}&created_by=${accountId}&created_by_role=${config.creatorRole}&limit=20`;
       const response = await fetch(query);
-      if (response.ok) {
-        const data = await response.json();
-        setAnnouncements(Array.isArray(data) ? data : []);
-      } else {
-        setAnnouncements([]);
+      if (!response.ok) {
+        throw new Error(`Announcements request failed with status ${response.status}`);
       }
+      const data = await response.json();
+      setAnnouncements(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('Failed to load announcements:', err);
       setStatus('Failed to load announcements.');

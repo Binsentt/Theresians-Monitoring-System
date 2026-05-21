@@ -2,8 +2,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  buildLoginDeviceSkipLookup,
+  buildLoginDeviceSkipUpsert,
   buildLoginAccountLookup,
   buildLoginOtpResponse,
+  normalizeLoginDeviceId,
   normalizeLoginEmail,
   resolveOtpEmailDelivery,
 } = require('./loginOtp.utils');
@@ -18,6 +21,22 @@ test('login account lookup uses the public accounts table and trims stored email
   assert.match(lookup.text, /FROM public\.accounts/i);
   assert.match(lookup.text, /LOWER\(TRIM\(email\)\) = \$1/i);
   assert.deepEqual(lookup.values, ['parent.user@gmail.com']);
+});
+
+test('OTP device skip queries stay bound to a normalized user device pair', () => {
+  assert.equal(normalizeLoginDeviceId('  browser-device-123  '), 'browser-device-123');
+  assert.equal(normalizeLoginDeviceId(''), '');
+
+  const lookup = buildLoginDeviceSkipLookup(42, '  browser-device-123  ');
+  assert.match(lookup.text, /FROM public\.login_otp_device_skips/i);
+  assert.match(lookup.text, /otp_skipped_until > CURRENT_TIMESTAMP/i);
+  assert.deepEqual(lookup.values, [42, 'browser-device-123']);
+
+  const expiresAt = new Date('2026-06-20T00:00:00.000Z');
+  const upsert = buildLoginDeviceSkipUpsert(42, 'browser-device-123', expiresAt);
+  assert.match(upsert.text, /INSERT INTO public\.login_otp_device_skips/i);
+  assert.match(upsert.text, /ON CONFLICT \(user_id, device_id\)/i);
+  assert.deepEqual(upsert.values, [42, 'browser-device-123', expiresAt]);
 });
 
 test('OTP email delivery resolves false when sending stalls past the timeout', async () => {

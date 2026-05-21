@@ -1,14 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Download, FileText, Folder, MoreVertical, Pencil, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
+import { Download, FileText, Folder, HardDrive, MoreVertical, Pencil, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
-import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
-import { DataTable, TableFilters } from './layout/Table';
+import { DashboardContainer, MainContent, TopBar, PageContent } from './layout/AppLayout';
+import { DataTable } from './layout/Table';
 import { canAccessRole, normalizeRole } from './manageUsers.utils';
 import {
+  calculateLearningStorage,
+  countFixedQuestionRecords,
   filterLearningFiles,
   formatLearningFileSize,
+  getLargestLearningFiles,
   getFolderContents,
   getMathTopicsForGrade,
   GRADE_LEVELS,
@@ -20,11 +23,6 @@ import {
 } from './lessonQuestionManager.utils';
 import { apiUrl } from '../api';
 import '../styles/lessonQuestionManager.css';
-
-const FILE_TYPES = [
-  { value: 'lesson', label: 'Lesson' },
-  { value: 'fixed_questions', label: 'Fixed Questions' },
-];
 
 const initialFormState = {
   grade_level: 'Grade 1',
@@ -64,8 +62,12 @@ export default function LessonQuestionManager() {
   const [folderSearch, setFolderSearch] = useState('');
   const [openedFolder, setOpenedFolder] = useState(null);
   const [showFolderForm, setShowFolderForm] = useState(false);
-  const [showUploadForm, setShowUploadForm] = useState(true);
+  const [showUploadForm, setShowUploadForm] = useState(false);
+  const [showNewMenu, setShowNewMenu] = useState(false);
+  const [managerView, setManagerView] = useState('files');
   const [openFileMenu, setOpenFileMenu] = useState(null);
+  const [openFolderMenu, setOpenFolderMenu] = useState(null);
+  const [openTrashMenu, setOpenTrashMenu] = useState(null);
   const [filters, setFilters] = useState({ search: '', folder: '', grade_level: '', math_topic: '', file_type: '' });
 
   const showNotification = (message, type = 'success') => {
@@ -120,23 +122,29 @@ export default function LessonQuestionManager() {
     if (!search) return folders;
     return folders.filter((folder) => String(folder.name || '').toLowerCase().includes(search));
   }, [folders, folderSearch]);
-  const filterTopicOptions = useMemo(
-    () => (filters.grade_level ? getMathTopicsForGrade(filters.grade_level) : MATH_TOPICS),
-    [filters.grade_level]
-  );
   const editTopicOptions = useMemo(
     () => (editingFile ? getMathTopicsForGrade(editingFile.grade_level) : MATH_TOPICS),
     [editingFile]
   );
   const uploadType = inferLearningFileUploadType(form.file?.name);
-  const selectedFolderFileCount = useMemo(() => {
-    if (!filters.folder) return 0;
-    const folderName = String(filters.folder).toLowerCase();
-    return files.filter((file) => String(file.folder_name || '').toLowerCase() === folderName).length;
-  }, [files, filters.folder]);
-  const tableEmptyMessage = filters.folder && selectedFolderFileCount === 0
-    ? `Folder "${filters.folder}" is empty.`
-    : 'No math content found. Upload a new lesson or question set.';
+  const displayedFiles = activeFolder ? folderContents : filteredFiles;
+  const tableEmptyMessage = activeFolder
+    ? `Folder "${activeFolder.name}" is empty.`
+    : 'No math content found. Upload a question file to begin.';
+  const storageSummary = useMemo(() => calculateLearningStorage(files), [files]);
+  const largestFiles = useMemo(() => getLargestLearningFiles(files), [files]);
+  const trashRows = useMemo(() => [
+    ...trashFolders.map((folder) => ({
+      ...folder,
+      trashType: 'Folder',
+      trashName: folder.name,
+    })),
+    ...trashFiles.map((file) => ({
+      ...file,
+      trashType: 'File',
+      trashName: file.title,
+    })),
+  ].sort((left, right) => new Date(right.deleted_at || 0) - new Date(left.deleted_at || 0)), [trashFiles, trashFolders]);
 
   const handleFormChange = (field, value) => {
     setForm((prev) => {
@@ -146,16 +154,6 @@ export default function LessonQuestionManager() {
           grade_level: value,
           math_topic: normalizeMathTopicForGrade(value, prev.math_topic),
         };
-      }
-      return { ...prev, [field]: value };
-    });
-  };
-
-  const handleFilterChange = (field, value) => {
-    setFilters((prev) => {
-      if (field === 'grade_level') {
-        const shouldResetTopic = value && prev.math_topic && !isValidMathTopicForGrade(value, prev.math_topic);
-        return { ...prev, grade_level: value, math_topic: shouldResetTopic ? '' : prev.math_topic };
       }
       return { ...prev, [field]: value };
     });
@@ -177,9 +175,24 @@ export default function LessonQuestionManager() {
       showNotification('Invalid grade level or math topic. Use a supported Mathematics topic for this grade.', 'error');
       return;
     }
-    if (uploadType === 'fixed_questions' && !String(form.expected_question_count || '').trim()) {
-      showNotification('Enter the expected fixed questions count before uploading this file.', 'error');
+    if (uploadType === 'lesson') {
+      showNotification('Upload fixed-question JSON or CSV files from this workspace.', 'error');
       return;
+    }
+
+    const requestedCount = String(form.expected_question_count || '').trim();
+    if (requestedCount) {
+      try {
+        const actualCount = countFixedQuestionRecords(await form.file.text(), form.file.name);
+        if (actualCount !== Number(requestedCount)) {
+          showNotification(`File contains ${actualCount} questions but you specified ${requestedCount}. Please check your file.`, 'error');
+          return;
+        }
+      } catch (error) {
+        console.error(error);
+        showNotification('Unable to read the question file for count validation.', 'error');
+        return;
+      }
     }
 
     const payload = new FormData();
@@ -189,8 +202,8 @@ export default function LessonQuestionManager() {
     payload.append('file_type', uploadType);
     payload.append('folder_id', activeFolder?.id ? String(activeFolder.id) : '');
     payload.append('uploaded_by', user.id);
-    if (uploadType === 'fixed_questions') {
-      payload.append('expected_question_count', String(form.expected_question_count).trim());
+    if (requestedCount) {
+      payload.append('expected_question_count', requestedCount);
     }
     payload.append('file', form.file);
 
@@ -202,8 +215,9 @@ export default function LessonQuestionManager() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Upload failed.');
-      showNotification('Upload successful. Review and publish when ready.');
+      showNotification('Upload successful.');
       resetForm();
+      setShowUploadForm(false);
       loadFilesAndFolders();
     } catch (error) {
       console.error(error);
@@ -252,21 +266,6 @@ export default function LessonQuestionManager() {
     } catch (error) {
       console.error(error);
       showNotification(error.message || 'Permanent delete failed.', 'error');
-    }
-  };
-
-  const handlePublishToggle = async (fileId, publish) => {
-    try {
-      const endpoint = publish ? 'publish' : 'unpublish';
-      const response = await fetch(apiUrl(`/api/questions/${endpoint}/${fileId}`), { method: 'POST' });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Publish action failed');
-      setOpenFileMenu(null);
-      showNotification(data.message || (publish ? 'Published to game.' : 'Removed from game.'));
-      loadFilesAndFolders();
-    } catch (error) {
-      console.error(error);
-      showNotification(error.message || 'Publish action failed.', 'error');
     }
   };
 
@@ -365,6 +364,7 @@ export default function LessonQuestionManager() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Rename failed');
+      setOpenFolderMenu(null);
       showNotification('Folder renamed.');
       loadFilesAndFolders();
     } catch (error) {
@@ -380,6 +380,7 @@ export default function LessonQuestionManager() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Move to Trash failed');
       if (activeFolder?.id === folder.id) setOpenedFolder(null);
+      setOpenFolderMenu(null);
       showNotification('Folder moved to Trash.');
       loadFilesAndFolders();
     } catch (error) {
@@ -413,6 +414,55 @@ export default function LessonQuestionManager() {
       console.error(error);
       showNotification(error.message || 'Permanent delete failed.', 'error');
     }
+  };
+
+  const handleEmptyTrash = async () => {
+    if (trashRows.length === 0) return;
+    if (!window.confirm('Permanently delete every file and folder in Trash?')) return;
+
+    try {
+      const trashedFolderIds = new Set(trashFolders.map((folder) => String(folder.id)));
+      const standaloneFiles = trashFiles.filter((file) => !trashedFolderIds.has(String(file.folder_id || '')));
+
+      await Promise.all(
+        standaloneFiles.map(async (file) => {
+          const response = await fetch(apiUrl(`/api/learning-files/${file.id}/permanent`), { method: 'DELETE' });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Permanent file delete failed');
+        })
+      );
+      await Promise.all(
+        trashFolders.map(async (folder) => {
+          const response = await fetch(apiUrl(`/api/folders/${folder.id}/permanent`), { method: 'DELETE' });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Permanent folder delete failed');
+        })
+      );
+      showNotification('Trash emptied.');
+      setOpenTrashMenu(null);
+      loadFilesAndFolders();
+    } catch (error) {
+      console.error(error);
+      showNotification(error.message || 'Unable to empty Trash.', 'error');
+    }
+  };
+
+  const openCreateFolderModal = () => {
+    setShowNewMenu(false);
+    setShowFolderForm(true);
+  };
+
+  const openUploadModal = () => {
+    setShowNewMenu(false);
+    setShowUploadForm(true);
+  };
+
+  const switchManagerView = (nextView) => {
+    setManagerView(nextView);
+    setShowNewMenu(false);
+    setOpenFileMenu(null);
+    setOpenFolderMenu(null);
+    setOpenTrashMenu(null);
   };
 
   const handleOpenFolder = (folder) => {
@@ -465,8 +515,48 @@ export default function LessonQuestionManager() {
               <button type="button" onClick={() => beginEditFile(row)}><Pencil size={16} />Rename</button>
               <button type="button" onClick={() => downloadFile(row)}><Download size={16} />Download</button>
               <button type="button" onClick={() => moveFileToTrash(row)}><Trash2 size={16} />Move to Bin</button>
-              <button type="button" onClick={() => handlePublishToggle(row.id, !row.published)}>
-                {row.published ? 'Remove from Game' : 'Publish to Game'}
+            </div>
+          )}
+        </div>
+      ),
+    },
+  ];
+
+  const trashColumns = [
+    {
+      key: 'trashName',
+      header: 'Name',
+      render: (value, row) => (
+        <div className="drive-file-name">
+          {row.trashType === 'Folder' ? <Folder size={18} aria-hidden="true" /> : <FileText size={18} aria-hidden="true" />}
+          <span className="file-name-title">{value}</span>
+        </div>
+      ),
+    },
+    { key: 'trashType', header: 'Type' },
+    { key: 'deleted_at', header: 'Deleted date', render: (value) => formatUploadDate(value) },
+    {
+      key: 'actions',
+      header: '',
+      className: 'drive-actions-cell',
+      render: (_, row) => (
+        <div className="drive-row-actions">
+          <button
+            type="button"
+            className="icon-button"
+            title={`Trash actions for ${row.trashName}`}
+            aria-label={`Trash actions for ${row.trashName}`}
+            onClick={() => setOpenTrashMenu((current) => (current === `${row.trashType}-${row.id}` ? null : `${row.trashType}-${row.id}`))}
+          >
+            <MoreVertical size={18} />
+          </button>
+          {openTrashMenu === `${row.trashType}-${row.id}` && (
+            <div className="drive-row-menu">
+              <button type="button" onClick={() => (row.trashType === 'Folder' ? restoreFolder(row) : restoreFile(row))}>
+                <RotateCcw size={16} />Restore
+              </button>
+              <button type="button" onClick={() => (row.trashType === 'Folder' ? permanentDeleteFolder(row) : permanentDeleteFile(row))}>
+                <Trash2 size={16} />Permanently Delete
               </button>
             </div>
           )}
@@ -512,209 +602,249 @@ export default function LessonQuestionManager() {
               </div>
             )}
 
-            <ContentSection>
-              <div className="drive-toolbar">
-                <button type="button" className="drive-primary-action" onClick={() => setShowFolderForm((value) => !value)}>
-                  <Plus size={20} />Create Folder
-                </button>
-                <button type="button" className="drive-primary-action drive-upload-action" onClick={() => setShowUploadForm((value) => !value)}>
-                  <Upload size={20} />Upload Content
-                </button>
-              </div>
-
-              {(showFolderForm || showUploadForm) && (
-                <div className="drive-forms">
-                  {showFolderForm && (
-                    <form onSubmit={handleCreateFolder} className="drive-inline-form">
-                      <label className="form-label" htmlFor="new-folder-name">Folder name</label>
-                      <div className="drive-inline-controls">
-                        <input
-                          id="new-folder-name"
-                          type="text"
-                          className="input-field"
-                          value={newFolderName}
-                          onChange={(event) => setNewFolderName(event.target.value)}
-                          placeholder="Example: Grade 2 Multiplication"
-                        />
-                        <button type="submit" className="btn btn-primary">Create</button>
-                      </div>
-                    </form>
+            <div className="drive-workspace">
+              <aside className="drive-manager-sidebar">
+                <h2>Lesson &amp; Question Files</h2>
+                <div className="drive-new-wrap">
+                  <button type="button" className="drive-new-button" onClick={() => setShowNewMenu((value) => !value)}>
+                    <Plus size={20} />New
+                  </button>
+                  {showNewMenu && (
+                    <div className="drive-new-menu">
+                      <button type="button" onClick={openCreateFolderModal}><Folder size={18} />New Folder</button>
+                      <button type="button" onClick={openUploadModal}><Upload size={18} />Upload File</button>
+                    </div>
                   )}
+                </div>
+                <nav className="drive-manager-nav" aria-label="Lesson manager views">
+                  <button type="button" className={managerView === 'files' ? 'active' : ''} onClick={() => switchManagerView('files')}>
+                    <Folder size={18} />My Files
+                  </button>
+                  <button type="button" className={managerView === 'trash' ? 'active' : ''} onClick={() => switchManagerView('trash')}>
+                    <Trash2 size={18} />Trash Bin
+                  </button>
+                  <button type="button" className={managerView === 'storage' ? 'active' : ''} onClick={() => switchManagerView('storage')}>
+                    <HardDrive size={18} />Storage
+                  </button>
+                </nav>
+                <div className="drive-sidebar-storage">
+                  <div className="drive-storage-label">
+                    <HardDrive size={16} />
+                    <span>{formatLearningFileSize(storageSummary.usedBytes)} of 10 GB used</span>
+                  </div>
+                  <div className="drive-storage-track" aria-hidden="true">
+                    <span style={{ width: `${Math.max(storageSummary.percentage, storageSummary.usedBytes ? 1 : 0)}%` }} />
+                  </div>
+                </div>
+              </aside>
 
-                  {showUploadForm && (
-                    <form onSubmit={handleUpload} className="drive-upload-form">
-                      <div className="form-group">
-                        <label className="form-label required">Grade Level</label>
-                        <select
-                          className="select-field"
-                          value={form.grade_level}
-                          onChange={(event) => handleFormChange('grade_level', event.target.value)}
-                        >
-                          {GRADE_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
-                        </select>
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label required">Topic Name</label>
-                        <input
-                          type="text"
-                          className="input-field"
-                          value={form.math_topic}
-                          list="math-topic-options"
-                          onChange={(event) => handleFormChange('math_topic', event.target.value)}
-                          placeholder="Addition"
-                        />
-                        <datalist id="math-topic-options">
-                          {getMathTopicsForGrade(form.grade_level).map((topic) => <option key={topic} value={topic} />)}
-                        </datalist>
-                      </div>
-                      {uploadType === 'fixed_questions' && (
-                        <div className="form-group">
-                          <label className="form-label required">Fixed Questions Count</label>
+              <div className="drive-manager-surface">
+                {managerView === 'files' && (
+                  <>
+                    <section className="drive-panel">
+                      <div className="drive-panel-header">
+                        <div>
+                          <h2>{activeFolder ? activeFolder.name : 'My Files'}</h2>
+                          <div className="folder-breadcrumb">
+                            {activeFolder ? (
+                              <>
+                                <button type="button" className="folder-breadcrumb-button" onClick={() => setOpenedFolder(null)}>
+                                  All folders
+                                </button>
+                                <span className="folder-breadcrumb-separator">/</span>
+                                <span>{activeFolder.name}</span>
+                              </>
+                            ) : (
+                              <span>Folders</span>
+                            )}
+                          </div>
+                        </div>
+                        {!activeFolder && (
                           <input
-                            type="number"
-                            min="1"
-                            step="1"
-                            className="input-field"
-                            value={form.expected_question_count}
-                            onChange={(event) => handleFormChange('expected_question_count', event.target.value)}
+                            type="text"
+                            className="input-field folder-search-field"
+                            value={folderSearch}
+                            onChange={(event) => setFolderSearch(event.target.value)}
+                            placeholder="Search folders"
                           />
+                        )}
+                      </div>
+                      {!activeFolder && (
+                        <div className="drive-folder-grid">
+                          {filteredFolders.length === 0 ? (
+                            <p className="empty-text">No folders yet. Create one to organize files.</p>
+                          ) : filteredFolders.map((folder) => (
+                            <div
+                              key={folder.id}
+                              className="drive-folder-card"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => handleOpenFolder(folder)}
+                              onKeyDown={(event) => handleFolderKeyDown(event, folder)}
+                            >
+                              <div className="drive-folder-card-main">
+                                <Folder size={28} aria-hidden="true" />
+                                <strong>{folder.name}</strong>
+                              </div>
+                              <div className="drive-card-menu" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                                <button
+                                  type="button"
+                                  className="icon-button"
+                                  title={`Actions for ${folder.name}`}
+                                  aria-label={`Actions for ${folder.name}`}
+                                  onClick={() => setOpenFolderMenu((current) => (current === folder.id ? null : folder.id))}
+                                >
+                                  <MoreVertical size={18} />
+                                </button>
+                                {openFolderMenu === folder.id && (
+                                  <div className="drive-row-menu">
+                                    <button type="button" onClick={() => handleRenameFolder(folder)}><Pencil size={16} />Rename</button>
+                                    <button type="button" onClick={() => moveFolderToTrash(folder)}><Trash2 size={16} />Move to Bin</button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
-                      <div className="form-group">
-                        <label className="form-label required">File</label>
-                        <input type="file" accept=".pdf,.json,.csv" onChange={(event) => handleFormChange('file', event.target.files[0] || null)} />
-                      </div>
-                      <div className="upload-actions">
-                        <button type="submit" className="btn btn-primary" disabled={uploading}>
-                          {uploading ? 'Uploading...' : 'Upload Content'}
-                        </button>
-                        <button type="button" className="btn btn-secondary" onClick={resetForm} disabled={uploading}>Reset</button>
-                      </div>
-                    </form>
-                  )}
-                </div>
-              )}
-            </ContentSection>
+                    </section>
 
-            <ContentSection title={activeFolder ? activeFolder.name : 'Folders'}>
-              <div className="drive-folder-header">
-                <div className="folder-breadcrumb">
-                  {activeFolder ? (
-                    <>
-                      <button type="button" className="folder-breadcrumb-button" onClick={() => setOpenedFolder(null)}>
-                        All folders
+                    <section className="drive-panel">
+                      <div className="drive-panel-header">
+                        <div>
+                          <h2>{activeFolder ? 'Files in Folder' : 'Files'}</h2>
+                          <p className="empty-text">Uploaded Mathematics question files.</p>
+                        </div>
+                      </div>
+                      <DataTable columns={tableColumns} data={displayedFiles} emptyMessage={tableEmptyMessage} className="drive-table" />
+                    </section>
+                  </>
+                )}
+
+                {managerView === 'trash' && (
+                  <section className="drive-panel">
+                    <div className="drive-panel-header">
+                      <div>
+                        <h2>Trash Bin</h2>
+                        <p className="empty-text">Restore items or remove them permanently.</p>
+                      </div>
+                      <button type="button" className="btn btn-secondary" onClick={handleEmptyTrash} disabled={trashRows.length === 0}>
+                        <Trash2 size={16} />Empty Trash
                       </button>
-                      <span className="folder-breadcrumb-separator">/</span>
-                      <span>{activeFolder.name}</span>
-                    </>
-                  ) : (
-                    <span>Open a folder to upload directly into it.</span>
-                  )}
-                </div>
-                {!activeFolder && (
-                  <input
-                    type="text"
-                    className="input-field folder-search-field"
-                    value={folderSearch}
-                    onChange={(event) => setFolderSearch(event.target.value)}
-                    placeholder="Search folders"
-                  />
+                    </div>
+                    <DataTable columns={trashColumns} data={trashRows} emptyMessage="Trash is empty." className="drive-table" />
+                  </section>
+                )}
+
+                {managerView === 'storage' && (
+                  <section className="drive-panel drive-storage-view">
+                    <div className="drive-panel-header">
+                      <div>
+                        <h2>Storage</h2>
+                        <p className="empty-text">{formatLearningFileSize(storageSummary.usedBytes)} used of 10 GB maximum.</p>
+                      </div>
+                    </div>
+                    <div className="storage-summary">
+                      <div className="drive-storage-track" aria-label={`${storageSummary.percentage.toFixed(1)} percent of storage used`}>
+                        <span style={{ width: `${Math.max(storageSummary.percentage, storageSummary.usedBytes ? 1 : 0)}%` }} />
+                      </div>
+                      <strong>{storageSummary.percentage.toFixed(1)}%</strong>
+                    </div>
+                    <div className="storage-file-list">
+                      <h3>Largest files</h3>
+                      {largestFiles.length === 0 ? (
+                        <p className="empty-text">No files are using storage yet.</p>
+                      ) : largestFiles.map((file) => (
+                        <div key={file.id} className="storage-file-row">
+                          <span><FileText size={18} />{file.title}</span>
+                          <strong>{formatLearningFileSize(file.file_size)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
                 )}
               </div>
+            </div>
 
-              {activeFolder ? (
-                <DataTable columns={tableColumns} data={folderContents} emptyMessage="This folder is empty." className="drive-table" />
-              ) : (
-                <div className="drive-folder-grid">
-                  {filteredFolders.length === 0 ? (
-                    <p className="empty-text">No folders yet. Create one to organize files.</p>
-                  ) : filteredFolders.map((folder) => (
-                    <div
-                      key={folder.id}
-                      className="drive-folder-card"
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleOpenFolder(folder)}
-                      onKeyDown={(event) => handleFolderKeyDown(event, folder)}
-                    >
-                      <div className="drive-folder-card-main">
-                        <Folder size={28} aria-hidden="true" />
-                        <strong>{folder.name}</strong>
-                      </div>
-                      <div className="folder-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
-                        <button type="button" className="btn btn-secondary" onClick={() => handleOpenFolder(folder)}>Open</button>
-                        <button type="button" className="icon-button" title="Rename folder" aria-label={`Rename ${folder.name}`} onClick={() => handleRenameFolder(folder)}>
-                          <Pencil size={17} />
-                        </button>
-                        <button type="button" className="icon-button" title="Move folder to Bin" aria-label={`Move ${folder.name} to Bin`} onClick={() => moveFolderToTrash(folder)}>
-                          <Trash2 size={17} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </ContentSection>
-
-            <ContentSection title="Uploaded Mathematics Content">
-              <TableFilters className="manager-filters">
-                <div className="filter-group">
-                  <input
-                    type="text"
-                    className="input-field"
-                    value={filters.search}
-                    onChange={(event) => handleFilterChange('search', event.target.value)}
-                    placeholder="Search content"
-                  />
-                  <select className="select-field" value={filters.folder} onChange={(event) => handleFilterChange('folder', event.target.value)}>
-                    <option value="">All folders</option>
-                    {folders.map((folder) => <option key={folder.id} value={folder.name}>{folder.name}</option>)}
-                  </select>
-                  <select className="select-field" value={filters.grade_level} onChange={(event) => handleFilterChange('grade_level', event.target.value)}>
-                    <option value="">All grades</option>
-                    {GRADE_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
-                  </select>
-                  <select className="select-field" value={filters.math_topic} onChange={(event) => handleFilterChange('math_topic', event.target.value)}>
-                    <option value="">All topics</option>
-                    {filterTopicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)}
-                  </select>
-                  <select className="select-field" value={filters.file_type} onChange={(event) => handleFilterChange('file_type', event.target.value)}>
-                    <option value="">All types</option>
-                    {FILE_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
-                  </select>
-                </div>
-              </TableFilters>
-              <DataTable columns={tableColumns} data={filteredFiles} emptyMessage={tableEmptyMessage} className="drive-table" />
-            </ContentSection>
-
-            <ContentSection title="Trash Bin">
-              <div className="trash-grid">
-                <section className="trash-panel">
-                  <h3>Folders</h3>
-                  {trashFolders.length === 0 ? <p className="empty-text">No folders in Trash.</p> : trashFolders.map((folder) => (
-                    <div key={folder.id} className="trash-row">
-                      <span><Folder size={18} />{folder.name}</span>
-                      <div className="trash-actions">
-                        <button type="button" className="btn btn-secondary" onClick={() => restoreFolder(folder)}><RotateCcw size={16} />Restore</button>
-                        <button type="button" className="btn btn-tertiary" onClick={() => permanentDeleteFolder(folder)}><Trash2 size={16} />Delete</button>
-                      </div>
-                    </div>
-                  ))}
-                </section>
-                <section className="trash-panel">
-                  <h3>Files</h3>
-                  {trashFiles.length === 0 ? <p className="empty-text">No files in Trash.</p> : trashFiles.map((file) => (
-                    <div key={file.id} className="trash-row">
-                      <span><FileText size={18} />{file.title}</span>
-                      <div className="trash-actions">
-                        <button type="button" className="btn btn-secondary" onClick={() => restoreFile(file)}><RotateCcw size={16} />Restore</button>
-                        <button type="button" className="btn btn-tertiary" onClick={() => permanentDeleteFile(file)}><Trash2 size={16} />Delete</button>
-                      </div>
-                    </div>
-                  ))}
-                </section>
+            {showFolderForm && (
+              <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setShowFolderForm(false)}>
+                <form className="manager-modal drive-create-folder-modal" onSubmit={handleCreateFolder} role="dialog" aria-modal="true" aria-labelledby="create-folder-title" onMouseDown={(event) => event.stopPropagation()}>
+                  <div className="manager-modal-header">
+                    <h2 id="create-folder-title">New Folder</h2>
+                    <button type="button" className="icon-button" aria-label="Cancel folder creation" onClick={() => setShowFolderForm(false)}>x</button>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label required" htmlFor="new-folder-name">Folder name</label>
+                    <input
+                      id="new-folder-name"
+                      type="text"
+                      className="input-field"
+                      value={newFolderName}
+                      onChange={(event) => setNewFolderName(event.target.value)}
+                      placeholder="Grade 2 Multiplication"
+                    />
+                  </div>
+                  <div className="upload-actions">
+                    <button type="submit" className="btn btn-primary">Create</button>
+                    <button type="button" className="btn btn-secondary" onClick={() => setShowFolderForm(false)}>Cancel</button>
+                  </div>
+                </form>
               </div>
-            </ContentSection>
+            )}
+
+            {showUploadForm && (
+              <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setShowUploadForm(false)}>
+                <form className="manager-modal drive-upload-modal" onSubmit={handleUpload} role="dialog" aria-modal="true" aria-labelledby="upload-file-title" onMouseDown={(event) => event.stopPropagation()}>
+                  <div className="manager-modal-header">
+                    <h2 id="upload-file-title">Upload File</h2>
+                    <button type="button" className="icon-button" aria-label="Cancel upload" onClick={() => setShowUploadForm(false)}>x</button>
+                  </div>
+                  <div className="manager-modal-fields">
+                    <div className="form-group">
+                      <label className="form-label required">Grade Level</label>
+                      <select className="select-field" value={form.grade_level} onChange={(event) => handleFormChange('grade_level', event.target.value)}>
+                        {GRADE_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label required">Topic Name</label>
+                      <input
+                        type="text"
+                        className="input-field"
+                        value={form.math_topic}
+                        list="math-topic-options"
+                        onChange={(event) => handleFormChange('math_topic', event.target.value)}
+                        placeholder="Addition"
+                      />
+                      <datalist id="math-topic-options">
+                        {getMathTopicsForGrade(form.grade_level).map((topic) => <option key={topic} value={topic} />)}
+                      </datalist>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Fixed Questions Count</label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        className="input-field"
+                        value={form.expected_question_count}
+                        onChange={(event) => handleFormChange('expected_question_count', event.target.value)}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label required">File</label>
+                      <input type="file" accept=".json,.csv" onChange={(event) => handleFormChange('file', event.target.files[0] || null)} />
+                    </div>
+                  </div>
+                  <div className="upload-actions">
+                    <button type="submit" className="btn btn-primary" disabled={uploading}>
+                      {uploading ? 'Uploading...' : 'Upload File'}
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={() => { resetForm(); setShowUploadForm(false); }} disabled={uploading}>Cancel</button>
+                  </div>
+                </form>
+              </div>
+            )}
 
             {editingFile && (
               <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setEditingFile(null)}>
