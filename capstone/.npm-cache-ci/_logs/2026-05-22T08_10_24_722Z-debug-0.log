@@ -1,0 +1,40 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.6.2
+2 info using node@v24.13.0
+3 silly config load:file:C:\Program Files\nodejs\node_modules\npm\npmrc
+4 silly config load:file:C:\Users\vince\Documents\Theresian's Quest- Web\capstone\backend\.npmrc
+5 silly config load:file:C:\Users\vince\.npmrc
+6 silly config load:file:C:\Users\vince\Documents\Theresian's Quest- Web\capstone\backend\etc\npmrc
+7 verbose title npm ci
+8 verbose argv "--prefix" "backend" "ci" "--omit" "dev"
+9 verbose logfile logs-max:10 dir:C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npm-cache-ci\_logs\2026-05-22T08_10_24_722Z-
+10 verbose logfile C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npm-cache-ci\_logs\2026-05-22T08_10_24_722Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:2348810240 maxSize:587202560 maxEntrySize:293601280
+13 silly idealTree buildDeps
+14 verbose stack Error: EPERM: operation not permitted, unlink 'C:\Users\vince\Documents\Theresian's Quest- Web\capstone\backend\node_modules\bcrypt\lib\binding\napi-v3\bcrypt_lib.node'
+15 error code EPERM
+16 error syscall unlink
+17 error path C:\Users\vince\Documents\Theresian's Quest- Web\capstone\backend\node_modules\bcrypt\lib\binding\napi-v3\bcrypt_lib.node
+18 error errno -4048
+19 error [Error: EPERM: operation not permitted, unlink 'C:\Users\vince\Documents\Theresian's Quest- Web\capstone\backend\node_modules\bcrypt\lib\binding\napi-v3\bcrypt_lib.node'] {
+19 error   errno: -4048,
+19 error   code: 'EPERM',
+19 error   syscall: 'unlink',
+19 error   path: "C:\\Users\\vince\\Documents\\Theresian's Quest- Web\\capstone\\backend\\node_modules\\bcrypt\\lib\\binding\\napi-v3\\bcrypt_lib.node"
+19 error }
+20 error
+20 error The operation was rejected by your operating system.
+20 error It's possible that the file was already in use (by a text editor or antivirus),
+20 error or that you lack permissions to access it.
+20 error
+20 error If you believe this might be a permissions issue, please double-check the
+20 error permissions of the file and its containing directories, or try running
+20 error the command again as root/Administrator.
+21 verbose cwd C:\Users\vince\Documents\Theresian's Quest- Web\capstone
+22 verbose os Windows_NT 10.0.26200
+23 verbose node v24.13.0
+24 verbose npm  v11.6.2
+25 verbose exit -4048
+26 verbose code -4048
+27 error A complete log of this run can be found in: C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npm-cache-ci\_logs\2026-05-22T08_10_24_722Z-debug-0.log

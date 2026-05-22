@@ -1,0 +1,62 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.6.2
+2 info using node@v24.13.0
+3 silly config load:file:C:\Program Files\nodejs\node_modules\npm\npmrc
+4 silly config load:file:C:\Users\vince\Documents\Theresian's Quest- Web\capstone\backend\.npmrc
+5 silly config load:file:C:\Users\vince\.npmrc
+6 silly config load:file:C:\Users\vince\Documents\Theresian's Quest- Web\capstone\backend\etc\npmrc
+7 verbose title npm install
+8 verbose argv "--prefix" "backend" "install" "--package-lock-only" "--ignore-scripts" "--no-audit" "--no-fund"
+9 verbose logfile logs-max:10 dir:C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npm-cache-ci\_logs\2026-05-22T08_09_23_821Z-
+10 verbose logfile C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npm-cache-ci\_logs\2026-05-22T08_09_23_821Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:2348810240 maxSize:587202560 maxEntrySize:293601280
+13 silly idealTree buildDeps
+14 silly fetch manifest resend@^6.12.3
+15 silly packumentCache full:https://registry.npmjs.org/resend cache-miss
+16 http cache https://registry.npmjs.org/resend 82ms (cache hit)
+17 silly packumentCache full:https://registry.npmjs.org/resend set size:406950 disposed:false
+18 silly fetch manifest @react-email/render@*
+19 silly packumentCache full:https://registry.npmjs.org/@react-email%2frender cache-miss
+20 http cache https://registry.npmjs.org/@react-email%2frender 32ms (cache hit)
+21 silly packumentCache full:https://registry.npmjs.org/@react-email%2frender set size:250041 disposed:false
+22 silly fetch manifest react@^18.0 || ^19.0 || ^19.0.0-rc
+23 silly packumentCache full:https://registry.npmjs.org/react cache-miss
+24 http cache https://registry.npmjs.org/react 51ms (cache hit)
+25 silly packumentCache full:https://registry.npmjs.org/react set size:6650647 disposed:false
+26 silly fetch manifest react-dom@^18.0 || ^19.0 || ^19.0.0-rc
+27 silly packumentCache full:https://registry.npmjs.org/react-dom cache-miss
+28 http cache https://registry.npmjs.org/react-dom 148ms (cache hit)
+29 silly packumentCache full:https://registry.npmjs.org/react-dom set size:8868827 disposed:false
+30 silly placeDep ROOT resend@6.12.3 OK for: theresian-backend@1.0.0 want: ^6.12.3
+31 silly fetch manifest postal-mime@2.7.4
+32 silly packumentCache full:https://registry.npmjs.org/postal-mime cache-miss
+33 silly fetch manifest svix@1.92.2
+34 silly packumentCache full:https://registry.npmjs.org/svix cache-miss
+35 http cache https://registry.npmjs.org/postal-mime 80ms (cache hit)
+36 silly packumentCache full:https://registry.npmjs.org/postal-mime set size:121933 disposed:false
+37 http cache https://registry.npmjs.org/svix 85ms (cache hit)
+38 silly packumentCache full:https://registry.npmjs.org/svix set size:889305 disposed:false
+39 silly placeDep ROOT postal-mime@2.7.4 OK for: resend@6.12.3 want: 2.7.4
+40 silly placeDep ROOT svix@1.92.2 OK for: resend@6.12.3 want: 1.92.2
+41 silly fetch manifest standardwebhooks@1.0.0
+42 silly packumentCache full:https://registry.npmjs.org/standardwebhooks cache-miss
+43 http cache https://registry.npmjs.org/standardwebhooks 35ms (cache hit)
+44 silly packumentCache full:https://registry.npmjs.org/standardwebhooks set size:3445 disposed:false
+45 silly placeDep ROOT standardwebhooks@1.0.0 OK for: svix@1.92.2 want: 1.0.0
+46 silly fetch manifest @stablelib/base64@^1.0.0
+47 silly packumentCache full:https://registry.npmjs.org/@stablelib%2fbase64 cache-miss
+48 silly fetch manifest fast-sha256@^1.3.0
+49 silly packumentCache full:https://registry.npmjs.org/fast-sha256 cache-miss
+50 http cache https://registry.npmjs.org/fast-sha256 27ms (cache hit)
+51 silly packumentCache full:https://registry.npmjs.org/fast-sha256 set size:19367 disposed:false
+52 http cache https://registry.npmjs.org/@stablelib%2fbase64 43ms (cache hit)
+53 silly packumentCache full:https://registry.npmjs.org/@stablelib%2fbase64 set size:13566 disposed:false
+54 silly placeDep ROOT @stablelib/base64@1.0.1 OK for: standardwebhooks@1.0.0 want: ^1.0.0
+55 silly placeDep ROOT fast-sha256@1.3.0 OK for: standardwebhooks@1.0.0 want: ^1.3.0
+56 verbose cwd C:\Users\vince\Documents\Theresian's Quest- Web\capstone
+57 verbose os Windows_NT 10.0.26200
+58 verbose node v24.13.0
+59 verbose npm  v11.6.2
+60 verbose exit 0
+61 info ok

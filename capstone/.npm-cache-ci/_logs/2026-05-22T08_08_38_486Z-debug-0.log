@@ -1,0 +1,128 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.6.2
+2 info using node@v24.13.0
+3 silly config load:file:C:\Program Files\nodejs\node_modules\npm\npmrc
+4 silly config load:file:C:\Users\vince\Documents\Theresian's Quest- Web\capstone\backend\.npmrc
+5 silly config load:file:C:\Users\vince\.npmrc
+6 silly config load:file:C:\Users\vince\Documents\Theresian's Quest- Web\capstone\backend\etc\npmrc
+7 verbose title npm ci
+8 verbose argv "--prefix" "backend" "ci" "--omit" "dev"
+9 verbose logfile logs-max:10 dir:C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npm-cache-ci\_logs\2026-05-22T08_08_38_486Z-
+10 verbose logfile C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npm-cache-ci\_logs\2026-05-22T08_08_38_486Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:2348810240 maxSize:587202560 maxEntrySize:293601280
+13 silly idealTree buildDeps
+14 silly fetch manifest resend@^6.12.3
+15 silly packumentCache full:https://registry.npmjs.org/resend cache-miss
+16 http fetch GET 200 https://registry.npmjs.org/npm 684ms
+17 http fetch GET 200 https://registry.npmjs.org/resend 440ms (cache miss)
+18 silly packumentCache full:https://registry.npmjs.org/resend set size:undefined disposed:false
+19 silly fetch manifest @react-email/render@*
+20 silly packumentCache full:https://registry.npmjs.org/@react-email%2frender cache-miss
+21 http fetch GET 200 https://registry.npmjs.org/@react-email%2frender 152ms (cache miss)
+22 silly packumentCache full:https://registry.npmjs.org/@react-email%2frender set size:undefined disposed:false
+23 silly fetch manifest react@^18.0 || ^19.0 || ^19.0.0-rc
+24 silly packumentCache full:https://registry.npmjs.org/react cache-miss
+25 http fetch GET 200 https://registry.npmjs.org/react 470ms (cache miss)
+26 silly packumentCache full:https://registry.npmjs.org/react set size:undefined disposed:false
+27 silly fetch manifest react-dom@^18.0 || ^19.0 || ^19.0.0-rc
+28 silly packumentCache full:https://registry.npmjs.org/react-dom cache-miss
+29 http fetch GET 200 https://registry.npmjs.org/react-dom 985ms (cache miss)
+30 silly packumentCache full:https://registry.npmjs.org/react-dom set size:undefined disposed:false
+31 silly placeDep ROOT resend@6.12.3 OK for: theresian-backend@1.0.0 want: ^6.12.3
+32 silly fetch manifest postal-mime@2.7.4
+33 silly packumentCache full:https://registry.npmjs.org/postal-mime cache-miss
+34 silly fetch manifest svix@1.92.2
+35 silly packumentCache full:https://registry.npmjs.org/svix cache-miss
+36 http fetch GET 200 https://registry.npmjs.org/postal-mime 123ms (cache miss)
+37 silly packumentCache full:https://registry.npmjs.org/postal-mime set size:undefined disposed:false
+38 http fetch GET 200 https://registry.npmjs.org/svix 192ms (cache miss)
+39 silly packumentCache full:https://registry.npmjs.org/svix set size:undefined disposed:false
+40 silly placeDep ROOT postal-mime@2.7.4 OK for: resend@6.12.3 want: 2.7.4
+41 silly placeDep ROOT svix@1.92.2 OK for: resend@6.12.3 want: 1.92.2
+42 silly fetch manifest standardwebhooks@1.0.0
+43 silly packumentCache full:https://registry.npmjs.org/standardwebhooks cache-miss
+44 http fetch GET 200 https://registry.npmjs.org/standardwebhooks 247ms (cache miss)
+45 silly packumentCache full:https://registry.npmjs.org/standardwebhooks set size:undefined disposed:false
+46 silly placeDep ROOT standardwebhooks@1.0.0 OK for: svix@1.92.2 want: 1.0.0
+47 silly fetch manifest @stablelib/base64@^1.0.0
+48 silly packumentCache full:https://registry.npmjs.org/@stablelib%2fbase64 cache-miss
+49 silly fetch manifest fast-sha256@^1.3.0
+50 silly packumentCache full:https://registry.npmjs.org/fast-sha256 cache-miss
+51 http fetch GET 200 https://registry.npmjs.org/@stablelib%2fbase64 142ms (cache miss)
+52 silly packumentCache full:https://registry.npmjs.org/@stablelib%2fbase64 set size:undefined disposed:false
+53 http fetch GET 200 https://registry.npmjs.org/fast-sha256 681ms (cache miss)
+54 silly packumentCache full:https://registry.npmjs.org/fast-sha256 set size:undefined disposed:false
+55 silly placeDep ROOT @stablelib/base64@1.0.1 OK for: standardwebhooks@1.0.0 want: ^1.0.0
+56 silly placeDep ROOT fast-sha256@1.3.0 OK for: standardwebhooks@1.0.0 want: ^1.3.0
+57 verbose stack Error: 
+57 verbose stack `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.
+57 verbose stack
+57 verbose stack Missing: resend@6.12.3 from lock file
+57 verbose stack Missing: postal-mime@2.7.4 from lock file
+57 verbose stack Missing: svix@1.92.2 from lock file
+57 verbose stack Missing: standardwebhooks@1.0.0 from lock file
+57 verbose stack Missing: @stablelib/base64@1.0.1 from lock file
+57 verbose stack Missing: fast-sha256@1.3.0 from lock file
+57 verbose stack
+57 verbose stack Clean install a project
+57 verbose stack
+57 verbose stack Usage:
+57 verbose stack npm ci
+57 verbose stack
+57 verbose stack Options:
+57 verbose stack [--install-strategy <hoisted|nested|shallow|linked>] [--legacy-bundling]
+57 verbose stack [--global-style] [--omit <dev|optional|peer> [--omit <dev|optional|peer> ...]]
+57 verbose stack [--include <prod|dev|optional|peer> [--include <prod|dev|optional|peer> ...]]
+57 verbose stack [--strict-peer-deps] [--foreground-scripts] [--ignore-scripts] [--no-audit]
+57 verbose stack [--no-bin-links] [--no-fund] [--dry-run]
+57 verbose stack [-w|--workspace <workspace-name> [-w|--workspace <workspace-name> ...]]
+57 verbose stack [--workspaces] [--include-workspace-root] [--install-links]
+57 verbose stack
+57 verbose stack aliases: clean-install, ic, install-clean, isntall-clean
+57 verbose stack
+57 verbose stack Run "npm help ci" for more info
+57 verbose stack     at CI.usageError (C:\Program Files\nodejs\node_modules\npm\lib\base-cmd.js:111:26)
+57 verbose stack     at CI.exec (C:\Program Files\nodejs\node_modules\npm\lib\commands\ci.js:70:18)
+57 verbose stack     at async Npm.exec (C:\Program Files\nodejs\node_modules\npm\lib\npm.js:208:9)
+57 verbose stack     at async module.exports (C:\Program Files\nodejs\node_modules\npm\lib\cli\entry.js:67:5)
+58 error code EUSAGE
+59 error
+59 error `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.
+59 error
+59 error Missing: resend@6.12.3 from lock file
+59 error Missing: postal-mime@2.7.4 from lock file
+59 error Missing: svix@1.92.2 from lock file
+59 error Missing: standardwebhooks@1.0.0 from lock file
+59 error Missing: @stablelib/base64@1.0.1 from lock file
+59 error Missing: fast-sha256@1.3.0 from lock file
+59 error
+59 error Clean install a project
+59 error
+59 error Usage:
+59 error npm ci
+59 error
+59 error Options:
+59 error [--install-strategy <hoisted|nested|shallow|linked>] [--legacy-bundling]
+59 error [--global-style] [--omit <dev|optional|peer> [--omit <dev|optional|peer> ...]]
+59 error [--include <prod|dev|optional|peer> [--include <prod|dev|optional|peer> ...]]
+59 error [--strict-peer-deps] [--foreground-scripts] [--ignore-scripts] [--no-audit]
+59 error [--no-bin-links] [--no-fund] [--dry-run]
+59 error [-w|--workspace <workspace-name> [-w|--workspace <workspace-name> ...]]
+59 error [--workspaces] [--include-workspace-root] [--install-links]
+59 error
+59 error aliases: clean-install, ic, install-clean, isntall-clean
+59 error
+59 error Run "npm help ci" for more info
+60 verbose cwd C:\Users\vince\Documents\Theresian's Quest- Web\capstone
+61 verbose os Windows_NT 10.0.26200
+62 verbose node v24.13.0
+63 verbose npm  v11.6.2
+64 notice
+64 notice New minor version of npm available! 11.6.2 -> 11.15.0
+64 notice Changelog: https://github.com/npm/cli/releases/tag/v11.15.0
+64 notice To update run: npm install -g npm@11.15.0
+64 notice  { force: true, Symbol(proc-log.meta): true }
+65 verbose exit 1
+66 verbose code 1
+67 error A complete log of this run can be found in: C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npm-cache-ci\_logs\2026-05-22T08_08_38_486Z-debug-0.log
