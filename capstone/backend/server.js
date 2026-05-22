@@ -379,6 +379,14 @@ const normalizeStudentProgressRow = (row) => {
   };
 };
 
+const calculateGameResultPercentage = ({ score, totalItems }) => {
+  const scoreValue = toNullableNumber(score);
+  const totalItemsValue = toNullableNumber(totalItems);
+  if (scoreValue === null || totalItemsValue === null || totalItemsValue <= 0) return null;
+
+  return Math.min(100, Math.max(0, Number(((scoreValue / totalItemsValue) * 100).toFixed(2))));
+};
+
 const resolveScopeId = (value) => {
   if (value === undefined || value === null || value === '') return null;
   const parsed = parseInt(value, 10);
@@ -412,6 +420,40 @@ const appendParentScopeFilter = ({ parentId, params, studentColumn, relationship
         AND LOWER(tsr.relationship_type) = '${relationshipType}'
     )
   `;
+};
+
+const verifyParentChildAccess = async (req, res, next) => {
+  const parentId = resolveParentScopeId(req.query.parent_id);
+  const studentId = resolveScopeId(req.params.studentId);
+
+  if (!parentId || Number.isNaN(parentId)) {
+    return res.status(400).json({ error: 'A valid parent ID is required.' });
+  }
+  if (!studentId || Number.isNaN(studentId)) {
+    return res.status(400).json({ error: 'A valid student ID is required.' });
+  }
+
+  try {
+    const relationResult = await pool.query(
+      `SELECT 1
+       FROM public.teacher_student_relationships
+       WHERE teacher_id = $1
+         AND student_id = $2
+         AND LOWER(relationship_type) = 'parent'
+       LIMIT 1`,
+      [parentId, studentId]
+    );
+
+    if (relationResult.rows.length === 0) {
+      return res.status(403).json({ error: 'Parent cannot access this child.' });
+    }
+
+    req.parentChildAccess = { parentId, studentId };
+    next();
+  } catch (err) {
+    console.error('Parent child access verification failed:', err.message);
+    res.status(500).json({ error: 'Failed to verify parent child access.' });
+  }
 };
 
 const announcementSelectSql = `
@@ -2631,6 +2673,93 @@ app.post('/api/game/progress', async (req, res) => {
   }
 });
 
+app.post('/api/game/result', async (req, res) => {
+  const {
+    parent_id,
+    student_name,
+    grade_level,
+    difficulty,
+    math_topic,
+    score,
+    total_items,
+    played_at,
+  } = req.body || {};
+
+  const parentCode = normalizeParentCode(parent_id);
+  const studentName = normalizeGameStudentName(student_name);
+  const scoreValue = toNullableNumber(score);
+  const totalItemsValue = toNullableNumber(total_items);
+  const percentage = calculateGameResultPercentage({ score, totalItems: total_items });
+
+  if (!parentCode) {
+    return res.status(400).json({ error: 'Parent ID must be exactly 6 digits.' });
+  }
+  if (!studentName) {
+    return res.status(400).json({ error: 'Student/Player Name is required.' });
+  }
+  if (scoreValue === null || totalItemsValue === null || totalItemsValue <= 0 || percentage === null) {
+    return res.status(400).json({ error: 'score and total_items must be valid quiz totals.' });
+  }
+
+  try {
+    const parentResult = await pool.query(
+      `SELECT id, parent_id
+       FROM public.accounts
+       WHERE parent_id = $1
+         AND LOWER(role) IN ('parent', 'parent_teacher')
+         AND is_archived = false
+       LIMIT 1`,
+      [parentCode]
+    );
+
+    if (parentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Parent ID not found.' });
+    }
+
+    const parent = parentResult.rows[0];
+    // Keep result ingestion non-destructive: unresolved names stay reviewable instead of auto-creating a child here.
+    const studentResult = await pool.query(
+      `SELECT s.id
+       FROM public.accounts s
+       JOIN public.teacher_student_relationships r ON r.student_id = s.id
+       WHERE r.teacher_id = $1
+         AND LOWER(r.relationship_type) = 'parent'
+         AND LOWER(TRIM(s.name)) = LOWER($2)
+       ORDER BY s.id
+       LIMIT 1`,
+      [parent.id, studentName]
+    );
+    const resolvedStudentId = studentResult.rows[0]?.id || null;
+
+    await pool.query(
+      `INSERT INTO public.game_results (
+         parent_id, student_name, resolved_student_id, grade_level, difficulty,
+         math_topic, score, total_items, percentage, played_at, is_unlinked
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), $11
+       )`,
+      [
+        parentCode,
+        studentName,
+        resolvedStudentId,
+        grade_level || null,
+        difficulty || null,
+        math_topic || null,
+        Math.round(scoreValue),
+        Math.round(totalItemsValue),
+        percentage,
+        played_at || null,
+        !resolvedStudentId,
+      ]
+    );
+
+    res.status(201).json({ success: true, resolved: Boolean(resolvedStudentId) });
+  } catch (err) {
+    console.error('Save game result failed:', err.message);
+    res.status(500).json({ error: 'Failed to save game result', details: err.message });
+  }
+});
+
 app.delete('/api/accounts/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -3051,6 +3180,123 @@ app.post('/api/activity-logs', async (req, res) => {
   }
 });
 
+app.get('/api/parent/children', async (req, res) => {
+  try {
+    const parentId = resolveParentScopeId(req.query.parent_id);
+    if (!parentId || Number.isNaN(parentId)) {
+      return res.status(400).json({ error: 'A valid parent ID is required.' });
+    }
+
+    const childrenResult = await pool.query(
+      `SELECT s.id,
+              s.name,
+              s.name AS student_name,
+              s.email,
+              p.grade_level,
+              COALESCE(p.section, $2) AS section,
+              COUNT(gr.id)::INTEGER AS total_quizzes,
+              MAX(gr.played_at) AS last_quiz_date
+       FROM public.teacher_student_relationships tsr
+       JOIN public.accounts s ON s.id = tsr.student_id
+       LEFT JOIN LATERAL (
+         SELECT progress.grade_level, progress.section
+         FROM public.student_game_progress progress
+         WHERE progress.student_id = s.id
+         ORDER BY progress.updated_at DESC NULLS LAST, progress.id DESC
+         LIMIT 1
+       ) p ON true
+       LEFT JOIN public.game_results gr ON gr.resolved_student_id = s.id
+       WHERE tsr.teacher_id = $1
+         AND LOWER(tsr.relationship_type) = 'parent'
+         AND s.is_archived = false
+       GROUP BY s.id, s.name, s.email, p.grade_level, p.section
+       ORDER BY s.name`,
+      [parentId, 'Section A']
+    );
+
+    // Unlinked sessions only have the six-digit parent code until a student profile match is made.
+    const unlinkedResult = await pool.query(
+      `SELECT COUNT(gr.id)::INTEGER AS unlinked_count
+       FROM public.accounts parent
+       LEFT JOIN public.game_results gr
+         ON gr.parent_id = parent.parent_id
+        AND gr.is_unlinked = true
+       WHERE parent.id = $1`,
+      [parentId]
+    );
+
+    res.json({
+      children: childrenResult.rows,
+      unlinked_count: unlinkedResult.rows[0]?.unlinked_count || 0,
+    });
+  } catch (err) {
+    console.error('Fetch parent children failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch parent children' });
+  }
+});
+
+app.get('/api/parent/children/:studentId/quizzes', verifyParentChildAccess, async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const offset = (page - 1) * limit;
+    const { studentId } = req.parentChildAccess;
+
+    const [quizzesResult, countResult] = await Promise.all([
+      pool.query(
+        `SELECT id, parent_id, student_name, resolved_student_id, grade_level, difficulty,
+                math_topic, score, total_items, percentage, played_at
+         FROM public.game_results
+         WHERE resolved_student_id = $1
+         ORDER BY played_at DESC NULLS LAST, id DESC
+         LIMIT $2 OFFSET $3`,
+        [studentId, limit, offset]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::INTEGER AS total
+         FROM public.game_results
+         WHERE resolved_student_id = $1`,
+        [studentId]
+      ),
+    ]);
+
+    const total = countResult.rows[0]?.total || 0;
+    res.json({
+      data: quizzesResult.rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (err) {
+    console.error('Fetch child quizzes failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch child quizzes' });
+  }
+});
+
+app.get('/api/parent/children/:studentId/topics', verifyParentChildAccess, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT math_topic,
+              COUNT(*)::INTEGER AS times_played,
+              MAX(score) AS best_score
+       FROM public.game_results
+       WHERE resolved_student_id = $1
+         AND math_topic IS NOT NULL
+       GROUP BY math_topic
+       ORDER BY times_played DESC, math_topic`,
+      [req.parentChildAccess.studentId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Fetch child topics failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch child topics' });
+  }
+});
+
 app.get('/api/students', async (req, res) => {
   try {
     const result = await pool.query(
@@ -3274,6 +3520,10 @@ if (fs.existsSync(clientBuildPath)) {
   });
 }
 
-app.listen(port, () => {
-  console.log(`✅ Server running at http://localhost:${port}`);
-});
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`✅ Server running at http://localhost:${port}`);
+  });
+}
+
+module.exports = { app, verifyParentChildAccess };
