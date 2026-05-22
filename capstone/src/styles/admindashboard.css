@@ -319,7 +319,7 @@
     gap: 8px;
     align-items: center;
     padding: 16px 20px;
-    background: white;
+    background: var(--panel-bg, #ffffff);
     transition: background 0.2s ease, transform 0.2s ease;
     cursor: pointer;
 }
@@ -329,13 +329,13 @@
     font-size: 13px;
     letter-spacing: 0.02em;
     text-transform: uppercase;
-    color: #475569;
-    background: #f8fafc;
+    color: var(--text-muted, #475569);
+    background: var(--bg-secondary, #f8fafc);
     cursor: default;
 }
 
 .student-progress-table .table-row:not(.header):nth-child(odd) {
-    background: #f8fafc;
+    background: var(--bg-secondary, #f8fafc);
 }
 
 .student-progress-table .table-row:not(.header):hover {
@@ -344,7 +344,7 @@
 
 .student-progress-table .table-row span {
     font-size: 14px;
-    color: #0f172a;
+    color: var(--text-primary, #0f172a);
 }
 
 .student-progress-table .table-row span:last-child {
@@ -353,7 +353,7 @@
 
 .empty-state,
 .loading-state {
-    background: white;
+    background: var(--panel-bg, #ffffff);
     border: 1px solid rgba(15, 23, 42, 0.08);
     border-radius: 14px;
     padding: 28px;
@@ -367,7 +367,7 @@
     width: min(720px, calc(100% - 36px));
     max-height: 92vh;
     overflow-y: auto;
-    background: white;
+    background: var(--panel-bg, #ffffff);
     border-radius: 20px;
     padding: 28px;
     box-shadow: 0 24px 60px rgba(15, 32, 71, 0.18);
@@ -376,12 +376,12 @@
 .analysis-modal h2 {
     margin-top: 0;
     font-size: 24px;
-    color: #0f172a;
+    color: var(--text-primary, #0f172a);
 }
 
 .analysis-modal p {
     margin: 10px 0;
-    color: #475569;
+    color: var(--text-muted, #475569);
     line-height: 1.6;
 }
 
@@ -429,14 +429,14 @@
 
 .summary-card {
     border-radius: 18px;
-    background: #f8fafc;
+    background: var(--bg-secondary, #f8fafc);
     padding: 20px;
     border: 1px solid rgba(15, 23, 42, 0.08);
 }
 
 .summary-label {
     font-size: 13px;
-    color: #64748b;
+    color: var(--text-muted, #64748b);
     margin-bottom: 8px;
     display: block;
 }
@@ -444,7 +444,7 @@
 .summary-value {
     font-size: 28px;
     font-weight: 700;
-    color: #0f172a;
+    color: var(--text-primary, #0f172a);
 }
 
 /* Bottom Navigation Bar */

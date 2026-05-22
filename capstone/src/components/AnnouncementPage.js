@@ -16,6 +16,24 @@ import { apiUrl } from '../api';
 
 const API_BASE = apiUrl('');
 
+const readJsonResponse = async (response) => {
+  try {
+    return await response.json();
+  } catch (error) {
+    return null;
+  }
+};
+
+const readAnnouncementCollection = async (response) => {
+  if (response.status === 404) return [];
+  if (!response.ok) {
+    throw new Error(`Announcements request failed with status ${response.status}`);
+  }
+
+  const data = await readJsonResponse(response);
+  return Array.isArray(data) ? data : [];
+};
+
 const pageConfig = {
   admin: {
     requiredRole: 'admin',
@@ -77,7 +95,7 @@ const pageConfig = {
 };
 
 const buildDeleteUrl = (announcementId, actorId, actorRole) => {
-  const url = new URL(`${API_BASE}/api/announcements/${announcementId}`);
+  const url = new URL(`${API_BASE}/api/announcements/${announcementId}`, window.location.origin);
   url.searchParams.set('actor_id', String(actorId));
   url.searchParams.set('actor_role', actorRole);
   return url.toString();
@@ -105,28 +123,13 @@ export default function AnnouncementPage({ mode = 'parent' }) {
     try {
       if (mode === 'teacher') {
         const [adminResult, ownResult] = await Promise.allSettled([
-          fetch(`${API_BASE}/api/announcements?target_role=teacher&limit=20`),
-          fetch(`${API_BASE}/api/announcements?target_role=parent&created_by=${accountId}&created_by_role=teacher&limit=20`),
+          fetch(`${API_BASE}/api/announcements?target_role=teacher&limit=20`).then(readAnnouncementCollection),
+          fetch(`${API_BASE}/api/announcements?target_role=parent&created_by=${accountId}&created_by_role=teacher&limit=20`).then(readAnnouncementCollection),
         ]);
 
-        let hasLoadError = false;
-
-        if (adminResult.status === 'fulfilled' && adminResult.value.ok) {
-          const data = await adminResult.value.json();
-          setAdminAnnouncements(Array.isArray(data) ? data : []);
-        } else {
-          hasLoadError = true;
-          setAdminAnnouncements([]);
-        }
-
-        if (ownResult.status === 'fulfilled' && ownResult.value.ok) {
-          const data = await ownResult.value.json();
-          setAnnouncements(Array.isArray(data) ? data : []);
-        } else {
-          hasLoadError = true;
-          setAnnouncements([]);
-        }
-        if (hasLoadError) {
+        setAdminAnnouncements(adminResult.status === 'fulfilled' ? adminResult.value : []);
+        setAnnouncements(ownResult.status === 'fulfilled' ? ownResult.value : []);
+        if (adminResult.status === 'rejected' || ownResult.status === 'rejected') {
           setStatus('Failed to load announcements.');
         }
         return;
@@ -136,11 +139,7 @@ export default function AnnouncementPage({ mode = 'parent' }) {
         ? `${API_BASE}/api/announcements?target_role=${config.targetRole}&limit=20`
         : `${API_BASE}/api/announcements?target_role=${config.targetRole}&created_by=${accountId}&created_by_role=${config.creatorRole}&limit=20`;
       const response = await fetch(query);
-      if (!response.ok) {
-        throw new Error(`Announcements request failed with status ${response.status}`);
-      }
-      const data = await response.json();
-      setAnnouncements(Array.isArray(data) ? data : []);
+      setAnnouncements(await readAnnouncementCollection(response));
     } catch (err) {
       console.error('Failed to load announcements:', err);
       setStatus('Failed to load announcements.');
@@ -206,9 +205,9 @@ export default function AnnouncementPage({ mode = 'parent' }) {
           target_role: config.targetRole,
         }),
       });
-      const data = await response.json();
+      const data = await readJsonResponse(response);
       if (!response.ok) {
-        setStatus(data.error || (isEditing ? 'Failed to update announcement.' : 'Failed to post announcement.'));
+        setStatus(data?.error || (isEditing ? 'Failed to update announcement.' : 'Failed to post announcement.'));
         return;
       }
 
@@ -241,9 +240,9 @@ export default function AnnouncementPage({ mode = 'parent' }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actor_id: actorId, actor_role: config.creatorRole }),
       });
-      const data = await response.json();
+      const data = await readJsonResponse(response);
       if (!response.ok) {
-        setStatus(data.error || 'Failed to delete announcement.');
+        setStatus(data?.error || 'Failed to delete announcement.');
         return;
       }
 

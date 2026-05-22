@@ -123,6 +123,16 @@ img, svg {
 .section-title { color: var(--text-primary) !important; }
 .sts-data-table thead { background: rgba(0,0,0,0.03); }
 
+.table-container,
+.data-table-wrapper,
+.table-wrapper,
+.al-table-wrapper,
+.ta-table-wrapper {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* Dark theme overrides when data-theme=\"dark\" is applied on <html> */
 [data-theme='dark'] {
   --bg-primary: #0b1220;
@@ -260,6 +270,37 @@ img, svg {
 [data-theme='dark'] .child-activity-item span,
 [data-theme='dark'] .child-activity-item small,
 [data-theme='dark'] .analysis-modal p {
+  color: var(--text-muted) !important;
+}
+
+[data-theme='dark'] .metric-card,
+[data-theme='dark'] .stats-card,
+[data-theme='dark'] .stat-item,
+[data-theme='dark'] .analytics-card,
+[data-theme='dark'] .student-card,
+[data-theme='dark'] .activity-log-container,
+[data-theme='dark'] .al-summary-card,
+[data-theme='dark'] .al-filters,
+[data-theme='dark'] .student-progress-filters-card,
+[data-theme='dark'] .analytics-insights-panel,
+[data-theme='dark'] .student-chart-card,
+[data-theme='dark'] .summary-card,
+[data-theme='dark'] .analysis-block {
+  background: var(--panel-bg) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme='dark'] .al-summary-card span,
+[data-theme='dark'] .al-summary-card strong,
+[data-theme='dark'] .student-chart-card,
+[data-theme='dark'] .summary-card .summary-value,
+[data-theme='dark'] .summary-card .summary-label,
+[data-theme='dark'] .analysis-block {
+  color: var(--text-primary) !important;
+}
+
+[data-theme='dark'] .summary-card .summary-label {
   color: var(--text-muted) !important;
 }
 

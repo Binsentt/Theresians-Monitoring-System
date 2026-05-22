@@ -293,9 +293,13 @@
   color: var(--text-primary, #0b2447);
 }
 
-.drive-table.data-table-container,
-.drive-table .data-table-wrapper {
+.drive-table.data-table-container {
   overflow: visible;
+}
+
+.drive-table .data-table-wrapper {
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .drive-table.data-table-container {

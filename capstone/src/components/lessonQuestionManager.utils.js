@@ -1,13 +1,19 @@
 export const GRADE_LEVELS = [
-  'Grade 1-2',
-  'Grade 3-4',
-  'Grade 5-6',
+  'Grade 1',
+  'Grade 2',
+  'Grade 3',
+  'Grade 4',
+  'Grade 5',
+  'Grade 6',
 ];
 
 export const GRADE_TOPIC_MAP = {
-  'Grade 1-2': ['Addition', 'Subtraction'],
-  'Grade 3-4': ['Multiplication', 'Division'],
-  'Grade 5-6': ['Multiplication', 'Division', 'Formulas', 'Decimals', 'Word Problem'],
+  'Grade 1': ['Addition', 'Subtraction'],
+  'Grade 2': ['Addition', 'Subtraction'],
+  'Grade 3': ['Multiplication', 'Division'],
+  'Grade 4': ['Multiplication', 'Division'],
+  'Grade 5': ['Multiplication', 'Division', 'Formulas', 'Decimals', 'Word Problem'],
+  'Grade 6': ['Multiplication', 'Division', 'Formulas', 'Decimals', 'Word Problem'],
 };
 
 export const MATH_TOPICS = Array.from(new Set(Object.values(GRADE_TOPIC_MAP).flat()));

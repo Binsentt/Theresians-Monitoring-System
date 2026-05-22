@@ -27,7 +27,7 @@ import { apiUrl } from '../api';
 import '../styles/lessonQuestionManager.css';
 
 const initialFormState = {
-  grade_level: 'Grade 1-2',
+  grade_level: 'Grade 1',
   math_topic: 'Addition',
   folder_id: '',
   file_type: 'fixed_questions',

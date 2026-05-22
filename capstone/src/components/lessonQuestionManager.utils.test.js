@@ -13,9 +13,10 @@ import {
 
 describe('lesson question manager helpers', () => {
   test('returns grade-specific math topics', () => {
-    expect(getMathTopicsForGrade('Grade 1-2')).toEqual(['Addition', 'Subtraction']);
-    expect(getMathTopicsForGrade('Grade 3-4')).toEqual(['Multiplication', 'Division']);
-    expect(getMathTopicsForGrade('Grade 5-6')).toEqual([
+    expect(getMathTopicsForGrade('Grade 1')).toEqual(['Addition', 'Subtraction']);
+    expect(getMathTopicsForGrade('Grade 2')).toEqual(['Addition', 'Subtraction']);
+    expect(getMathTopicsForGrade('Grade 4')).toEqual(['Multiplication', 'Division']);
+    expect(getMathTopicsForGrade('Grade 6')).toEqual([
       'Multiplication',
       'Division',
       'Formulas',
@@ -25,9 +26,9 @@ describe('lesson question manager helpers', () => {
   });
 
   test('resets invalid topics when the grade level changes', () => {
-    expect(normalizeMathTopicForGrade('Grade 1-2', 'Multiplication')).toBe('Addition');
-    expect(normalizeMathTopicForGrade('Grade 3-4', 'Division')).toBe('Division');
-    expect(normalizeMathTopicForGrade('Grade 5-6', 'Addition')).toBe('Multiplication');
+    expect(normalizeMathTopicForGrade('Grade 1', 'Multiplication')).toBe('Addition');
+    expect(normalizeMathTopicForGrade('Grade 4', 'Division')).toBe('Division');
+    expect(normalizeMathTopicForGrade('Grade 6', 'Addition')).toBe('Multiplication');
   });
 
   test('filters learning files by search, folder, grade, topic, and file type', () => {
