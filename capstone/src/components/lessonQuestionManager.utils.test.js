@@ -2,55 +2,74 @@ import {
   filterLearningFiles,
   calculateLearningStorage,
   countFixedQuestionRecords,
+  DIFFICULTY_LEVELS,
   getLargestLearningFiles,
   formatLearningFileSize,
   getFolderContents,
   getMathTopicsForGrade,
+  getMathTopicsForGradeDifficulty,
   getLearningFilePreviewKind,
   inferLearningFileUploadType,
-  normalizeMathTopicForGrade,
+  normalizeMathTopicForGradeDifficulty,
 } from './lessonQuestionManager.utils';
 
 describe('lesson question manager helpers', () => {
-  test('returns grade-specific math topics', () => {
-    expect(getMathTopicsForGrade('Grade 1')).toEqual(['Addition', 'Subtraction']);
-    expect(getMathTopicsForGrade('Grade 2')).toEqual(['Addition', 'Subtraction']);
-    expect(getMathTopicsForGrade('Grade 4')).toEqual(['Multiplication', 'Division']);
-    expect(getMathTopicsForGrade('Grade 6')).toEqual([
-      'Multiplication',
-      'Division',
-      'Formulas',
-      'Decimals',
-      'Word Problem',
+  test('returns configured difficulty values and grade difficulty topics', () => {
+    expect(DIFFICULTY_LEVELS).toEqual(['Easy', 'Normal', 'Difficult']);
+    expect(getMathTopicsForGradeDifficulty('Grade 1', 'Easy')).toEqual([
+      'Basic Addition, Subtraction, Shapes, and Place Value',
+    ]);
+    expect(getMathTopicsForGradeDifficulty('Grade 3', 'Normal')).toEqual([
+      'Multiplication, Division, and Fractions',
+    ]);
+    expect(getMathTopicsForGradeDifficulty('Grade 6', 'Difficult')).toEqual([
+      'Rational Numbers and Geometric Measurements',
     ]);
   });
 
-  test('resets invalid topics when the grade level changes', () => {
-    expect(normalizeMathTopicForGrade('Grade 1', 'Multiplication')).toBe('Addition');
-    expect(normalizeMathTopicForGrade('Grade 4', 'Division')).toBe('Division');
-    expect(normalizeMathTopicForGrade('Grade 6', 'Addition')).toBe('Multiplication');
+  test('keeps grade topic helpers constrained to approved map topics', () => {
+    expect(getMathTopicsForGrade('Grade 4')).toEqual([
+      'Number Theory',
+      'Place Value of Whole Numbers',
+      'Reading, Writing, and Comparing Whole Numbers',
+    ]);
+    expect(getMathTopicsForGrade('Grade 4')).not.toContain('Division');
   });
 
-  test('filters learning files by search, folder, grade, topic, and file type', () => {
+  test('resets topics when grade or difficulty changes', () => {
+    expect(normalizeMathTopicForGradeDifficulty('Grade 1', '', 'Addition')).toBe('');
+    expect(normalizeMathTopicForGradeDifficulty('Grade 1', 'Easy', 'Addition')).toBe(
+      'Basic Addition, Subtraction, Shapes, and Place Value'
+    );
+    expect(normalizeMathTopicForGradeDifficulty(
+      'Grade 1',
+      'Normal',
+      'Addition, Multiplication, and Word Problems'
+    )).toBe('Addition, Multiplication, and Word Problems');
+  });
+
+  test('filters learning files by search, folder, grade, difficulty, topic, and file type', () => {
     const files = [
       {
         title: 'Addition Basics',
         file_name: 'add.pdf',
         folder_name: 'Grade 1 Folder',
         grade_level: 'Grade 1',
-        math_topic: 'Addition',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition, Subtraction, Shapes, and Place Value',
         file_type: 'lesson',
       },
       {
-        title: 'Division Quiz',
-        file_name: 'division.csv',
+        title: 'Number Theory Quiz',
+        file_name: 'number-theory.csv',
         folder_name: 'Grade 4 Folder',
         grade_level: 'Grade 4',
-        math_topic: 'Division',
+        difficulty: 'Easy',
+        math_topic: 'Number Theory',
         file_type: 'fixed_questions',
       },
       {
-        title: 'Decimals Review',
+        title: 'Legacy Decimals Review',
         file_name: 'decimals.pdf',
         folder_name: 'Grade 6 Folder',
         grade_level: 'Grade 6',
@@ -60,10 +79,11 @@ describe('lesson question manager helpers', () => {
     ];
 
     expect(filterLearningFiles(files, {
-      search: 'division',
+      search: 'number',
       folder: 'Grade 4 Folder',
       grade_level: 'Grade 4',
-      math_topic: 'Division',
+      difficulty: 'Easy',
+      math_topic: 'Number Theory',
       file_type: 'fixed_questions',
     })).toEqual([files[1]]);
 
@@ -71,9 +91,19 @@ describe('lesson question manager helpers', () => {
       search: '',
       folder: 'Grade 6 Folder',
       grade_level: 'Grade 6',
+      difficulty: '',
       math_topic: 'Decimals',
       file_type: 'lesson',
     })).toEqual([files[2]]);
+
+    expect(filterLearningFiles(files, {
+      search: '',
+      folder: 'Grade 6 Folder',
+      grade_level: 'Grade 6',
+      difficulty: 'Difficult',
+      math_topic: '',
+      file_type: 'lesson',
+    })).toEqual([]);
   });
 
   test('returns the uploaded files inside an opened folder', () => {

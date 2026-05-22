@@ -1,38 +1,57 @@
-export const GRADE_LEVELS = [
-  'Grade 1',
-  'Grade 2',
-  'Grade 3',
-  'Grade 4',
-  'Grade 5',
-  'Grade 6',
-];
+import {
+  DIFFICULTY_LEVELS,
+  GRADE_LEVELS,
+  GRADE_TOPIC_MAP,
+} from '../config/gradeTopicMap';
 
-export const GRADE_TOPIC_MAP = {
-  'Grade 1': ['Addition', 'Subtraction'],
-  'Grade 2': ['Addition', 'Subtraction'],
-  'Grade 3': ['Multiplication', 'Division'],
-  'Grade 4': ['Multiplication', 'Division'],
-  'Grade 5': ['Multiplication', 'Division', 'Formulas', 'Decimals', 'Word Problem'],
-  'Grade 6': ['Multiplication', 'Division', 'Formulas', 'Decimals', 'Word Problem'],
+export {
+  DIFFICULTY_LEVELS,
+  GRADE_LEVELS,
+  GRADE_TOPIC_MAP,
 };
 
-export const MATH_TOPICS = Array.from(new Set(Object.values(GRADE_TOPIC_MAP).flat()));
+export const MATH_TOPICS = Array.from(new Set(
+  Object.values(GRADE_TOPIC_MAP).flatMap((difficultyMap) => Object.values(difficultyMap).flat())
+));
+
+const normalizeLearningMetadataValue = (value) => String(value || '').trim();
+
+export const getMathTopicsForGradeDifficulty = (gradeLevel, difficulty) => {
+  const grade = normalizeLearningMetadataValue(gradeLevel);
+  const level = normalizeLearningMetadataValue(difficulty);
+  return GRADE_TOPIC_MAP[grade]?.[level] || [];
+};
 
 export const getMathTopicsForGrade = (gradeLevel) => {
-  return GRADE_TOPIC_MAP[String(gradeLevel || '').trim()] || MATH_TOPICS;
+  const grade = normalizeLearningMetadataValue(gradeLevel);
+  const difficultyMap = GRADE_TOPIC_MAP[grade];
+  return difficultyMap ? Object.values(difficultyMap).flat() : [];
 };
 
-export const isValidGradeLevel = (value) => GRADE_LEVELS.includes(String(value || '').trim());
+export const isValidGradeLevel = (value) => GRADE_LEVELS.includes(normalizeLearningMetadataValue(value));
+
+export const isValidDifficulty = (value) => DIFFICULTY_LEVELS.includes(normalizeLearningMetadataValue(value));
+
+export const isValidMathTopicForGradeDifficulty = (gradeLevel, difficulty, topic) => {
+  const selectedTopic = normalizeLearningMetadataValue(topic);
+  return getMathTopicsForGradeDifficulty(gradeLevel, difficulty).includes(selectedTopic);
+};
 
 export const isValidMathTopicForGrade = (gradeLevel, topic) => {
-  return isValidGradeLevel(gradeLevel) && Boolean(String(topic || '').trim());
+  const selectedTopic = normalizeLearningMetadataValue(topic);
+  return getMathTopicsForGrade(gradeLevel).includes(selectedTopic);
+};
+
+export const normalizeMathTopicForGradeDifficulty = (gradeLevel, difficulty, topic) => {
+  const options = getMathTopicsForGradeDifficulty(gradeLevel, difficulty);
+  const selectedTopic = normalizeLearningMetadataValue(topic);
+  return options.includes(selectedTopic) ? selectedTopic : options[0] || '';
 };
 
 export const normalizeMathTopicForGrade = (gradeLevel, topic) => {
   const options = getMathTopicsForGrade(gradeLevel);
-  const current = String(topic || '').trim();
-  if (current && !MATH_TOPICS.includes(current)) return current;
-  return options.includes(current) ? current : options[0];
+  const selectedTopic = normalizeLearningMetadataValue(topic);
+  return options.includes(selectedTopic) ? selectedTopic : options[0] || '';
 };
 
 export const inferLearningFileUploadType = (fileName) => {
@@ -131,13 +150,15 @@ const normalizeText = (value) => String(value || '').trim().toLowerCase();
 export const filterLearningFiles = (files, filters) => {
   const search = normalizeText(filters.search);
   const folder = normalizeText(filters.folder);
-  const gradeLevel = String(filters.grade_level || '').trim();
-  const mathTopic = String(filters.math_topic || '').trim();
-  const fileType = String(filters.file_type || '').trim();
+  const gradeLevel = normalizeLearningMetadataValue(filters.grade_level);
+  const difficulty = normalizeLearningMetadataValue(filters.difficulty);
+  const mathTopic = normalizeLearningMetadataValue(filters.math_topic);
+  const fileType = normalizeLearningMetadataValue(filters.file_type);
 
   return files.filter((file) => {
     const folderMatch = folder ? normalizeText(file.folder_name) === folder : true;
     const gradeMatch = gradeLevel ? file.grade_level === gradeLevel : true;
+    const difficultyMatch = difficulty ? file.difficulty === difficulty : true;
     const topicMatch = mathTopic ? file.math_topic === mathTopic : true;
     const typeMatch = fileType ? file.file_type === fileType : true;
     const searchMatch = search
@@ -146,12 +167,13 @@ export const filterLearningFiles = (files, filters) => {
           file.file_name,
           file.math_topic,
           file.grade_level,
+          file.difficulty,
           file.folder_name,
           file.file_type,
         ].join(' ').toLowerCase().includes(search)
       : true;
 
-    return folderMatch && gradeMatch && topicMatch && typeMatch && searchMatch;
+    return folderMatch && gradeMatch && difficultyMatch && topicMatch && typeMatch && searchMatch;
   });
 };
 
