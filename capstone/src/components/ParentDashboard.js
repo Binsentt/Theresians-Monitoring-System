@@ -22,11 +22,11 @@ function AchieverCard({ name, grade, quest, score, accuracy }) {
       </div>
       <div className="achiever-stats">
         <div className="stat-item">
-          <div className="stat-value">{score ?? '—'}</div>
+          <div className="stat-value">{score ?? 'â€”'}</div>
           <div className="stat-label">Score</div>
         </div>
         <div className="stat-item">
-          <div className="stat-value">{accuracy !== undefined ? `${accuracy.toFixed(0)}%` : '—'}</div>
+          <div className="stat-value">{accuracy !== undefined ? `${accuracy.toFixed(0)}%` : 'â€”'}</div>
           <div className="stat-label">Accuracy</div>
         </div>
       </div>
