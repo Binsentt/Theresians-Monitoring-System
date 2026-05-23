@@ -16,7 +16,7 @@ test('account creation always uses a generated temporary password', () => {
   assert.equal(result.mustChangePassword, true);
 });
 
-test('parent and teacher credential emails omit role labels', () => {
+test('credential email builder uses the approved Saint Therese welcome letter', () => {
   assert.equal(shouldIncludeRoleInCredentialsEmail('parent'), false);
   assert.equal(shouldIncludeRoleInCredentialsEmail('Teacher'), false);
 
@@ -28,16 +28,18 @@ test('parent and teacher credential emails omit role labels', () => {
     appUrl: 'http://localhost:3000/login',
   });
 
-  assert.equal(parentEmail.subject, 'Welcome to Theresian Portal');
-  assert.match(parentEmail.html, /Hello, Parent User!/);
-  assert.match(parentEmail.html, /Email\/Username:/);
+  assert.equal(parentEmail.subject, 'Welcome to Saint Therese School Portal — Your Account is Ready');
+  assert.match(parentEmail.html, /Dear Parent User,/);
+  assert.match(parentEmail.html, /Welcome to the Saint Therese School Monitoring System!/);
+  assert.match(parentEmail.html, /Your account has been created by the school administrator/);
+  assert.match(parentEmail.html, /Email:/);
   assert.match(parentEmail.html, /Temporary Password:/);
+  assert.match(parentEmail.html, /Monitoring and Learning Portal/);
+  assert.doesNotMatch(parentEmail.html, /Account Type:/);
   assert.doesNotMatch(parentEmail.html, /Role:\s*Parent/i);
 });
 
-test('future non-parent-teacher roles can still include role text when needed', () => {
-  assert.equal(shouldIncludeRoleInCredentialsEmail('admin'), true);
-
+test('credential email builder does not include role metadata in the approved letter', () => {
   const email = buildCredentialsEmail({
     email: 'admin@gmail.com',
     password: 'Generated!2345',
@@ -46,8 +48,8 @@ test('future non-parent-teacher roles can still include role text when needed', 
     appUrl: 'http://localhost:3000/login',
   });
 
-  assert.match(email.html, /Account Type:/);
-  assert.match(email.html, /Admin/);
+  assert.match(email.html, /Dear Admin User,/);
+  assert.doesNotMatch(email.html, /Account Type:/);
 });
 
 test('account creation response exposes temporary password only when credential email fails', () => {

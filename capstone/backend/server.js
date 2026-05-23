@@ -1532,9 +1532,11 @@ app.post('/api/login', async (req, res) => {
           'UPDATE public.accounts SET otp_code = NULL, otp_expires_at = NULL, status = $1 WHERE id = $2',
           ['Active', user.id]
         );
+        const serializedUser = serializeUser({ ...user, status: 'Active' });
         return res.json({
           success: true,
-          user: serializeUser({ ...user, status: 'Active' }),
+          user: serializedUser,
+          mustChangePassword: serializedUser.mustChangePassword,
           rememberToken: sessionToken,
         });
       }
@@ -1612,9 +1614,11 @@ app.post('/api/login/verify-otp', async (req, res) => {
       await pool.query(buildLoginDeviceSkipUpsert(user.id, normalizedDeviceId, otpSkipExpiresAt));
     }
 
+    const serializedUser = serializeUser({ ...user, status: 'Active' });
     res.json({
       success: true,
-      user: serializeUser({ ...user, status: 'Active' }),
+      user: serializedUser,
+      mustChangePassword: serializedUser.mustChangePassword,
       rememberToken,
     });
   } catch (err) {
@@ -1664,10 +1668,13 @@ app.post('/api/accounts', async (req, res) => {
     );
 
     const created = serializeUser(result.rows[0]);
-    const emailSent = await resolveCredentialEmailDelivery(
-      () => generateCredentialsEmail(normalizedEmail, generatedPassword, finalRole, finalName),
-      getCredentialEmailTimeoutMs()
-    );
+    const shouldSendCredentialEmail = ['parent', 'teacher', 'parent_teacher'].includes(finalRole);
+    const emailSent = shouldSendCredentialEmail
+      ? await resolveCredentialEmailDelivery(
+        () => generateCredentialsEmail(normalizedEmail, generatedPassword, finalRole, finalName),
+        getCredentialEmailTimeoutMs()
+      )
+      : true;
     const responsePayload = buildAccountCreationResponse({
       createdUser: created,
       generatedPassword,
@@ -2873,9 +2880,38 @@ app.post('/api/request-password-change-otp', async (req, res) => {
 
 // --- NEW: Change Password with OTP (Step 2: Verify OTP and Update Password) ---
 app.post('/api/verify-password-change-otp', async (req, res) => {
-  const { userId, otp, newPassword } = req.body;
+  const { userId, otp, newPassword, firstLogin } = req.body;
   try {
-    const result = await pool.query('SELECT * FROM accounts WHERE id=$1 AND otp_code=$2', [userId, otp]);
+    if (firstLogin) {
+      // First-login changes use the login-issued token because no OTP screen is shown.
+      const authHeader = String(req.headers.authorization || '');
+      const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+      const verified = verifyRememberToken(token);
+      if (!verified || Number(verified.userId) !== Number(userId)) {
+        return res.status(403).json({ error: 'Password change is not authorized' });
+      }
+
+      const result = await pool.query('SELECT * FROM public.accounts WHERE id=$1', [userId]);
+      if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+      const user = result.rows[0];
+      if (!user.must_change_password) {
+        return res.status(400).json({ error: 'Password change is not required' });
+      }
+
+      const hashedPassword = await hashPassword(newPassword);
+      await pool.query(
+        'UPDATE public.accounts SET password=$1, otp_code=NULL, otp_expires_at=NULL, must_change_password=false WHERE id=$2',
+        [hashedPassword, userId]
+      );
+
+      return res.json({
+        success: true,
+        message: 'Password changed successfully!'
+      });
+    }
+
+    const result = await pool.query('SELECT * FROM public.accounts WHERE id=$1 AND otp_code=$2', [userId, otp]);
     if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid or expired OTP' });
 
     const user = result.rows[0];
@@ -2884,7 +2920,10 @@ app.post('/api/verify-password-change-otp', async (req, res) => {
     }
 
     const hashedPassword = await hashPassword(newPassword);
-    await pool.query('UPDATE accounts SET password=$1, otp_code=NULL, otp_expires_at=NULL WHERE id=$2', [hashedPassword, userId]);
+    await pool.query(
+      'UPDATE public.accounts SET password=$1, otp_code=NULL, otp_expires_at=NULL, must_change_password=false WHERE id=$2',
+      [hashedPassword, userId]
+    );
 
     res.json({
       success: true,

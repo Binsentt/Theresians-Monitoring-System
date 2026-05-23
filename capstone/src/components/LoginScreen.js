@@ -48,6 +48,29 @@ export default function LoginScreen() {
     return () => clearInterval(interval);
   }, [otpExpiresAt]);
 
+  const persistSuccessfulLogin = (payload) => {
+    const sessionUser = {
+      ...payload.user,
+      mustChangePassword: Boolean(payload.mustChangePassword || payload.user?.mustChangePassword),
+    };
+
+    if (payload.rememberToken) {
+      localStorage.setItem('rememberToken', payload.rememberToken);
+      setRememberToken(payload.rememberToken);
+    }
+
+    localStorage.setItem('loggedInUser', JSON.stringify(sessionUser));
+    const role = normalizeRole(sessionUser.role);
+    alert(`Welcome back, ${sessionUser.name}!`);
+
+    if (sessionUser.mustChangePassword) {
+      navigate('/change-password', { replace: true });
+      return;
+    }
+
+    navigate(getDefaultDashboardRoute(role));
+  };
+
   const handleLogin = async () => {
   
     if (!email && !password) {
@@ -84,14 +107,7 @@ export default function LoginScreen() {
       }
 
       if (data.success && data.user) {
-        if (data.rememberToken) {
-          localStorage.setItem('rememberToken', data.rememberToken);
-          setRememberToken(data.rememberToken);
-        }
-        localStorage.setItem('loggedInUser', JSON.stringify(data.user));
-        const role = normalizeRole(data.user.role);
-        alert(`Welcome back, ${data.user.name}!`);
-        navigate(getDefaultDashboardRoute(role));
+        persistSuccessfulLogin(data);
         return;
       }
 
@@ -136,14 +152,7 @@ export default function LoginScreen() {
         return;
       }
       if (result.success && result.user) {
-        localStorage.setItem('loggedInUser', JSON.stringify(result.user));
-        if (result.rememberToken) {
-          localStorage.setItem('rememberToken', result.rememberToken);
-          setRememberToken(result.rememberToken);
-        }
-        const role = normalizeRole(result.user.role);
-        alert(`Welcome back, ${result.user.name}!`);
-        navigate(getDefaultDashboardRoute(role));
+        persistSuccessfulLogin(result);
       }
     } catch (err) {
       setErrorMessage('Network error while verifying OTP.');

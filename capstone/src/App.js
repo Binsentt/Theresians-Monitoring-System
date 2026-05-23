@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 
 import AdminDashboard from './components/AdminDashboard';
 import AdminStudentProgress from './components/AdminStudentProgress';
@@ -20,6 +20,7 @@ import LoginScreen from './components/LoginScreen';
 import LessonQuestionManager from './components/LessonQuestionManager';
 import SettingsScreen from './components/SettingsScreen';
 import AnnouncementPage from './components/AnnouncementPage';
+import ChangePasswordScreen from './components/ChangePasswordScreen';
 
 import './styles/Login.css';
 import './styles/homePageStyles.css';
@@ -29,45 +30,68 @@ import './styles/teacherdashboard.css';
 import './styles/admindashboard.css';
 import './styles/settings.css';
 
+const getStoredLoggedInUser = () => {
+  try {
+    const stored = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
+    return stored && typeof stored === 'object' ? stored : null;
+  } catch (error) {
+    return null;
+  }
+};
+
+function PasswordChangeGate({ children }) {
+  const location = useLocation();
+  const storedUser = getStoredLoggedInUser();
+
+  if (storedUser?.mustChangePassword && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />;
+  }
+
+  return children;
+}
+
 function App() {
   return (
     <Router>
-      <Routes>
-        <Route path="/" element={<HomePageScreen />} />
-        <Route path="/login" element={<LoginScreen />} />
+      <PasswordChangeGate>
+        <Routes>
+          <Route path="/" element={<HomePageScreen />} />
+          <Route path="/login" element={<LoginScreen />} />
+          <Route path="/change-password" element={<ChangePasswordScreen />} />
         
-        {/* Admin Routes */}
-        <Route path="/admin-dashboard" element={<AdminDashboard />} />
-        <Route path="/admin/student-progress" element={<AdminStudentProgress />} />
-        <Route path="/admin/student-progress/:studentId" element={<StudentAnalytics />} />
-        <Route path="/admin/top-achievers" element={<AdminTopAchievers />} />
-        <Route path="/admin/activity-log" element={<AdminActivityLog />} />
-        <Route path="/admin/announcements" element={<AnnouncementPage mode="admin" />} />
+          {/* Admin Routes */}
+          <Route path="/admin-dashboard" element={<AdminDashboard />} />
+          <Route path="/admin/student-progress" element={<AdminStudentProgress />} />
+          <Route path="/admin/student-progress/:studentId" element={<StudentAnalytics />} />
+          <Route path="/admin/top-achievers" element={<AdminTopAchievers />} />
+          <Route path="/admin/activity-log" element={<AdminActivityLog />} />
+          <Route path="/admin/announcements" element={<AnnouncementPage mode="admin" />} />
         
-        {/* Teacher Routes */}
-        <Route path="/teacher-dashboard" element={<TeacherDashboard />} />
-        <Route path="/teacher/student-progress" element={<TeacherStudentProgress />} />
-        <Route path="/teacher/student-progress/:studentId" element={<StudentAnalytics />} />
-        <Route path="/teacher/top-achievers" element={<TeacherTopAchievers />} />
-        <Route path="/teacher/activity-log" element={<TeacherActivityLog />} />
-        <Route path="/teacher/announcements" element={<AnnouncementPage mode="teacher" />} />
-        <Route path="/lesson-question-manager" element={<LessonQuestionManager />} />
+          {/* Teacher Routes */}
+          <Route path="/teacher-dashboard" element={<TeacherDashboard />} />
+          <Route path="/teacher/student-progress" element={<TeacherStudentProgress />} />
+          <Route path="/teacher/student-progress/:studentId" element={<StudentAnalytics />} />
+          <Route path="/teacher/top-achievers" element={<TeacherTopAchievers />} />
+          <Route path="/teacher/activity-log" element={<TeacherActivityLog />} />
+          <Route path="/teacher/announcements" element={<AnnouncementPage mode="teacher" />} />
+          <Route path="/lesson-question-manager" element={<LessonQuestionManager />} />
         
-        {/* Parent Routes */}
-        <Route path="/parent-dashboard" element={<ParentDashboard />} />
-        <Route path="/parent/child-progress" element={<ParentChildProgress />} />
-        <Route path="/parent/activity-log" element={<ParentActivityLog />} />
-        <Route path="/parent/announcements" element={<AnnouncementPage mode="parent" />} />
+          {/* Parent Routes */}
+          <Route path="/parent-dashboard" element={<ParentDashboard />} />
+          <Route path="/parent/child-progress" element={<ParentChildProgress />} />
+          <Route path="/parent/activity-log" element={<ParentActivityLog />} />
+          <Route path="/parent/announcements" element={<AnnouncementPage mode="parent" />} />
         
-        {/* Common Routes */}
-        <Route path="/manage-users" element={<ManageUsers />} />
-        <Route path="/reset-password" element={<ResetPassword />} />
-        <Route path="/settings" element={<SettingsScreen />} />
+          {/* Common Routes */}
+          <Route path="/manage-users" element={<ManageUsers />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/settings" element={<SettingsScreen />} />
         
-        {/* Legacy Routes (backward compatibility) */}
-        <Route path="/student-progress" element={<AdminStudentProgress />} />
-        <Route path="/student-progress/:studentId" element={<StudentAnalytics />} />
-      </Routes>
+          {/* Legacy Routes (backward compatibility) */}
+          <Route path="/student-progress" element={<AdminStudentProgress />} />
+          <Route path="/student-progress/:studentId" element={<StudentAnalytics />} />
+        </Routes>
+      </PasswordChangeGate>
     </Router>
   );
 }
