@@ -481,6 +481,60 @@
   gap: 18px;
 }
 
+.child-selector-screen {
+  display: grid;
+  gap: 16px;
+}
+
+.child-dashboard-switcher {
+  display: grid;
+  gap: 6px;
+  min-width: min(230px, 100%);
+  color: var(--text-muted, #64748b);
+  font-weight: 600;
+}
+
+.child-dashboard-switcher span {
+  font-size: 0.82rem;
+}
+
+.child-dashboard-switcher select {
+  min-height: 42px;
+  border: 1px solid var(--border-color, #dbe3ef);
+  border-radius: 8px;
+  background: var(--panel-bg, #ffffff);
+  color: var(--text-primary, #0f172a);
+  padding: 0 12px;
+}
+
+.parent-unlinked-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.14);
+  color: var(--text-primary, #0f172a);
+  padding: 14px 16px;
+}
+
+.parent-unlinked-warning p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.parent-unlinked-warning button {
+  min-height: 38px;
+  border: 1px solid rgba(180, 83, 9, 0.38);
+  border-radius: 8px;
+  background: var(--panel-bg, #ffffff);
+  color: var(--text-primary, #0f172a);
+  cursor: pointer;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
 .child-progress-selector {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -551,6 +605,53 @@
   color: var(--text-muted, #64748b);
 }
 
+.child-game-results-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.child-quiz-list,
+.child-topic-list {
+  display: grid;
+  gap: 10px;
+}
+
+.child-quiz-item,
+.child-topic-item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 8px;
+  background: var(--panel-bg, #ffffff);
+  padding: 12px 14px;
+}
+
+.child-quiz-item strong,
+.child-topic-item strong {
+  color: var(--text-primary, #0f172a);
+  overflow-wrap: anywhere;
+}
+
+.child-quiz-item span,
+.child-quiz-item small,
+.child-topic-item span,
+.child-topic-item small {
+  color: var(--text-muted, #64748b);
+}
+
+.child-score-chart {
+  min-height: 260px;
+  width: 100%;
+  overflow: hidden;
+}
+
+.child-achievements-panel {
+  align-content: start;
+  min-height: 150px;
+}
+
 @media (max-width: 980px) {
   .student-progress-summary-grid,
   .student-progress-panel,
@@ -558,7 +659,8 @@
   .student-charts-grid,
   .student-ai-panel,
   .child-progress-stats,
-  .child-progress-selector {
+  .child-progress-selector,
+  .child-game-results-grid {
     grid-template-columns: 1fr;
   }
 
@@ -587,5 +689,10 @@
   .student-progress-filters-card,
   .student-progress-table-shell {
     padding: 16px;
+  }
+
+  .parent-unlinked-warning {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

@@ -25,14 +25,38 @@ const readJsonResponse = async (response) => {
 };
 
 const readAnnouncementCollection = async (response) => {
-  if (response.status === 404) return [];
   if (!response.ok) {
     throw new Error(`Announcements request failed with status ${response.status}`);
   }
 
-  const data = await readJsonResponse(response);
-  return Array.isArray(data) ? data : [];
+  const data = await response.json();
+  if (!Array.isArray(data)) {
+    throw new Error('Announcements response must be a list.');
+  }
+
+  return data;
 };
+
+function AnnouncementListSkeleton({ count = 2 }) {
+  return (
+    <div className="announcement-list" aria-label="Loading announcements">
+      {Array.from({ length: count }, (_, index) => (
+        <article className="announcement-card announcement-skeleton" key={`announcement-skeleton-${index}`}>
+          <div className="announcement-card-icon" aria-hidden="true" />
+          <div className="announcement-card-body" aria-hidden="true">
+            <div className="announcement-card-meta-row">
+              <span className="announcement-skeleton-line announcement-skeleton-badge" />
+              <span className="announcement-skeleton-line announcement-skeleton-date" />
+            </div>
+            <span className="announcement-skeleton-line announcement-skeleton-title" />
+            <span className="announcement-skeleton-line announcement-skeleton-message" />
+            <span className="announcement-skeleton-line announcement-skeleton-message announcement-skeleton-message-short" />
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
 
 const pageConfig = {
   admin: {
@@ -106,6 +130,7 @@ export default function AnnouncementPage({ mode = 'parent' }) {
   const config = pageConfig[mode] || pageConfig.parent;
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [announcementsLoading, setAnnouncementsLoading] = useState(true);
   const [announcements, setAnnouncements] = useState([]);
   const [adminAnnouncements, setAdminAnnouncements] = useState([]);
   const [form, setForm] = useState({ title: '', message: '' });
@@ -120,6 +145,8 @@ export default function AnnouncementPage({ mode = 'parent' }) {
   const actorId = useMemo(() => getAnnouncementUserId(user), [user]);
 
   const loadAnnouncements = async (accountId) => {
+    setAnnouncementsLoading(true);
+
     try {
       if (mode === 'teacher') {
         const [adminResult, ownResult] = await Promise.allSettled([
@@ -145,6 +172,8 @@ export default function AnnouncementPage({ mode = 'parent' }) {
       setStatus('Failed to load announcements.');
       setAnnouncements([]);
       setAdminAnnouncements([]);
+    } finally {
+      setAnnouncementsLoading(false);
     }
   };
 
@@ -156,14 +185,14 @@ export default function AnnouncementPage({ mode = 'parent' }) {
 
         const stored = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
         const role = normalizeRole(stored?.role);
-        const hasAccess = mode === 'parent' ? role === 'parent' : canAccessRole(role, config.requiredRole);
+        const hasAccess = canAccessRole(role, config.requiredRole);
         if (!stored?.id || !hasAccess) {
           navigate('/login');
           return;
         }
 
         setUser({ ...stored, role });
-        await loadAnnouncements(stored.id);
+        loadAnnouncements(stored.id);
       } catch (err) {
         console.error('Announcement page load failed:', err);
         navigate('/login');
@@ -214,7 +243,7 @@ export default function AnnouncementPage({ mode = 'parent' }) {
       setAnnouncements((prev) => updateAnnouncementCollection(prev, data));
       setForm({ title: '', message: '' });
       setEditingAnnouncement(null);
-      setStatus(isEditing ? 'Announcement updated.' : `Announcement posted to ${config.targetRole === 'teacher' ? 'teachers' : 'parents'}.`);
+      setStatus(isEditing ? 'Announcement updated.' : 'Announcement posted successfully.');
     } catch (err) {
       setStatus('Connection error while saving announcement.');
     } finally {
@@ -295,7 +324,9 @@ export default function AnnouncementPage({ mode = 'parent' }) {
 
             {mode === 'teacher' && (
               <ContentSection title="Admin Announcements">
-                {adminAnnouncements.length === 0 ? (
+                {announcementsLoading ? (
+                  <AnnouncementListSkeleton count={1} />
+                ) : adminAnnouncements.length === 0 ? (
                   <AnnouncementEmptyState
                     title="No admin announcements yet"
                     message="New school-wide updates from the admin office will appear here."
@@ -361,7 +392,9 @@ export default function AnnouncementPage({ mode = 'parent' }) {
             )}
 
             <ContentSection title={config.listTitle}>
-              {announcements.length === 0 ? (
+              {announcementsLoading ? (
+                <AnnouncementListSkeleton />
+              ) : announcements.length === 0 ? (
                 <AnnouncementEmptyState
                   title={config.emptyTitle}
                   message={config.emptyMessage}

@@ -9,30 +9,41 @@ import { canAccessRole, normalizeRole } from './manageUsers.utils';
 import {
   calculateLearningStorage,
   countFixedQuestionRecords,
+  DIFFICULTY_LEVELS,
   filterLearningFiles,
   formatLearningPreviewText,
   formatLearningFileSize,
   getLargestLearningFiles,
   getFolderContents,
   getLearningFilePreviewKind,
-  getMathTopicsForGrade,
+  getMathTopicsForGradeDifficulty,
   GRADE_LEVELS,
   inferLearningFileUploadType,
+  isValidDifficulty,
   isValidGradeLevel,
-  isValidMathTopicForGrade,
-  MATH_TOPICS,
-  normalizeMathTopicForGrade,
+  isValidMathTopicForGradeDifficulty,
+  normalizeMathTopicForGradeDifficulty,
 } from './lessonQuestionManager.utils';
 import { apiUrl } from '../api';
 import '../styles/lessonQuestionManager.css';
 
 const initialFormState = {
-  grade_level: 'Grade 1',
-  math_topic: 'Addition',
+  grade_level: '',
+  difficulty: '',
+  math_topic: '',
   folder_id: '',
   file_type: 'fixed_questions',
   expected_question_count: '',
   file: null,
+};
+
+const initialFilterState = {
+  search: '',
+  folder: '',
+  grade_level: '',
+  difficulty: '',
+  math_topic: '',
+  file_type: '',
 };
 
 function formatUploadDate(dateString) {
@@ -48,6 +59,19 @@ function getPublicUrl(path) {
 
 function deriveUploadTitle(file) {
   return String(file?.name || '').replace(/\.[^.]+$/, '').trim() || 'Uploaded mathematics content';
+}
+
+function formatDifficultyLabel(gradeLevel, difficulty) {
+  if (gradeLevel === 'Grade 3' && difficulty === 'Normal') return 'Average Round';
+  return difficulty;
+}
+
+function normalizeDifficultyForEdit(value) {
+  return isValidDifficulty(value) ? value : '';
+}
+
+function buildNextTopicValue(gradeLevel, difficulty, currentTopic) {
+  return normalizeMathTopicForGradeDifficulty(gradeLevel, difficulty, currentTopic);
 }
 
 export default function LessonQuestionManager() {
@@ -75,7 +99,7 @@ export default function LessonQuestionManager() {
   const [previewFile, setPreviewFile] = useState(null);
   const [previewContent, setPreviewContent] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [filters, setFilters] = useState({ search: '', folder: '', grade_level: '', math_topic: '', file_type: '' });
+  const [filters, setFilters] = useState(initialFilterState);
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
@@ -129,9 +153,17 @@ export default function LessonQuestionManager() {
     if (!search) return folders;
     return folders.filter((folder) => String(folder.name || '').toLowerCase().includes(search));
   }, [folders, folderSearch]);
+  const uploadTopicOptions = useMemo(
+    () => getMathTopicsForGradeDifficulty(form.grade_level, form.difficulty),
+    [form.difficulty, form.grade_level]
+  );
   const editTopicOptions = useMemo(
-    () => (editingFile ? getMathTopicsForGrade(editingFile.grade_level) : MATH_TOPICS),
+    () => (editingFile ? getMathTopicsForGradeDifficulty(editingFile.grade_level, editingFile.difficulty) : []),
     [editingFile]
+  );
+  const filterTopicOptions = useMemo(
+    () => getMathTopicsForGradeDifficulty(filters.grade_level, filters.difficulty),
+    [filters.difficulty, filters.grade_level]
   );
   const inferredFileType = inferLearningFileUploadType(form.file?.name);
   const uploadType = form.file_type;
@@ -156,13 +188,34 @@ export default function LessonQuestionManager() {
 
   const handleFormChange = (field, value) => {
     setForm((prev) => {
-      if (field === 'grade_level') {
+      if (field === 'grade_level' || field === 'difficulty') {
+        const gradeLevel = field === 'grade_level' ? value : prev.grade_level;
+        const difficulty = field === 'difficulty' ? value : prev.difficulty;
         return {
           ...prev,
-          grade_level: value,
-          math_topic: normalizeMathTopicForGrade(value, prev.math_topic),
+          grade_level: gradeLevel,
+          difficulty,
+          math_topic: buildNextTopicValue(gradeLevel, difficulty, prev.math_topic),
         };
       }
+      return { ...prev, [field]: value };
+    });
+  };
+
+  const handleFilterChange = (field, value) => {
+    setFilters((prev) => {
+      if (field === 'grade_level' || field === 'difficulty') {
+        const gradeLevel = field === 'grade_level' ? value : prev.grade_level;
+        const difficulty = field === 'difficulty' ? value : prev.difficulty;
+        const nextTopicOptions = getMathTopicsForGradeDifficulty(gradeLevel, difficulty);
+        return {
+          ...prev,
+          grade_level: gradeLevel,
+          difficulty,
+          math_topic: nextTopicOptions.includes(prev.math_topic) ? prev.math_topic : '',
+        };
+      }
+
       return { ...prev, [field]: value };
     });
   };
@@ -171,16 +224,20 @@ export default function LessonQuestionManager() {
 
   const handleUpload = async (event) => {
     event.preventDefault();
-    if (!form.grade_level || !form.math_topic.trim() || !form.folder_id || !form.file) {
-      showNotification('Grade level, topic, folder, and file are required.', 'error');
+    if (!form.grade_level || !form.difficulty || !form.math_topic.trim() || !form.folder_id || !form.file) {
+      showNotification('Grade level, difficulty, topic, folder, and file are required.', 'error');
       return;
     }
     if (!uploadType || inferredFileType !== uploadType) {
       showNotification('Lessons must be PDF files. Fixed questions must be JSON or CSV.', 'error');
       return;
     }
-    if (!isValidGradeLevel(form.grade_level) || !isValidMathTopicForGrade(form.grade_level, form.math_topic)) {
-      showNotification('Invalid grade level or math topic. Use a supported Mathematics topic for this grade.', 'error');
+    if (
+      !isValidGradeLevel(form.grade_level)
+      || !isValidDifficulty(form.difficulty)
+      || !isValidMathTopicForGradeDifficulty(form.grade_level, form.difficulty, form.math_topic)
+    ) {
+      showNotification('Invalid grade level, difficulty, or topic for this Mathematics content.', 'error');
       return;
     }
     const requestedCount = String(form.expected_question_count || '').trim();
@@ -201,6 +258,7 @@ export default function LessonQuestionManager() {
     const payload = new FormData();
     payload.append('title', deriveUploadTitle(form.file));
     payload.append('grade_level', form.grade_level);
+    payload.append('difficulty', form.difficulty);
     payload.append('math_topic', form.math_topic.trim());
     payload.append('file_type', uploadType);
     payload.append('folder_id', String(form.folder_id));
@@ -224,6 +282,7 @@ export default function LessonQuestionManager() {
         folder_id: data.learningFile?.folder_id || form.folder_id,
         folder_name: selectedFolder?.name || activeFolder?.name || 'Unassigned',
         uploaded_by_name: user?.name || user?.email || 'Unknown',
+        difficulty: data.learningFile?.difficulty || form.difficulty,
       };
       setFiles((current) => [uploadedFile, ...current.filter((file) => file.id !== uploadedFile.id)]);
       showNotification('File uploaded successfully');
@@ -332,23 +391,31 @@ export default function LessonQuestionManager() {
   };
 
   const beginEditFile = (file) => {
-    const gradeLevel = isValidGradeLevel(file.grade_level) ? file.grade_level : initialFormState.grade_level;
+    const gradeLevel = isValidGradeLevel(file.grade_level) ? file.grade_level : '';
+    const difficulty = normalizeDifficultyForEdit(file.difficulty);
     setOpenFileMenu(null);
     setEditingFile({
       ...file,
       grade_level: gradeLevel,
-      math_topic: normalizeMathTopicForGrade(gradeLevel, file.math_topic),
+      difficulty,
+      math_topic: difficulty
+        ? buildNextTopicValue(gradeLevel, difficulty, file.math_topic)
+        : String(file.math_topic || '').trim(),
       folder_id: file.folder_id || '',
     });
   };
 
   const saveFileDetails = async () => {
-    if (!editingFile.title || !editingFile.grade_level || !editingFile.math_topic) {
+    if (!editingFile.title || !editingFile.grade_level || !editingFile.difficulty || !editingFile.math_topic) {
       showNotification('Complete the file details before saving.', 'error');
       return;
     }
-    if (!isValidGradeLevel(editingFile.grade_level) || !isValidMathTopicForGrade(editingFile.grade_level, editingFile.math_topic)) {
-      showNotification('Invalid file details for this Mathematics grade.', 'error');
+    if (
+      !isValidGradeLevel(editingFile.grade_level)
+      || !isValidDifficulty(editingFile.difficulty)
+      || !isValidMathTopicForGradeDifficulty(editingFile.grade_level, editingFile.difficulty, editingFile.math_topic)
+    ) {
+      showNotification('Invalid file details for this Mathematics grade and difficulty.', 'error');
       return;
     }
     try {
@@ -358,6 +425,7 @@ export default function LessonQuestionManager() {
         body: JSON.stringify({
           title: editingFile.title,
           grade_level: editingFile.grade_level,
+          difficulty: editingFile.difficulty,
           math_topic: editingFile.math_topic,
           file_type: editingFile.file_type,
           folder_id: editingFile.folder_id || null,
@@ -524,7 +592,7 @@ export default function LessonQuestionManager() {
   const handleOpenFolder = (folder) => {
     setOpenedFolder(folder);
     setEditingFile(null);
-    setFilters({ search: '', folder: '', grade_level: '', math_topic: '', file_type: '' });
+    setFilters(initialFilterState);
   };
 
   const handleFolderKeyDown = (event, folder) => {
@@ -545,7 +613,9 @@ export default function LessonQuestionManager() {
             <button type="button" className="file-name-title file-preview-trigger" onClick={() => previewLearningFile(row)}>
               {row.title}
             </button>
-            <span className="file-meta">{row.grade_level} | {row.math_topic}</span>
+            <span className="file-meta">
+              {row.grade_level || 'Unknown grade'} | {row.difficulty || 'Unknown difficulty'} | {row.math_topic || 'Unknown topic'}
+            </span>
           </div>
         </div>
       ),
@@ -772,9 +842,67 @@ export default function LessonQuestionManager() {
                       <div className="drive-panel-header">
                         <div>
                           <h2>{activeFolder ? 'Files in Folder' : 'Files'}</h2>
-                          <p className="empty-text">Uploaded Mathematics question files.</p>
+                          <p className="empty-text">Uploaded Mathematics lesson and question files.</p>
                         </div>
                       </div>
+                      {!activeFolder && (
+                        <div className="manager-modal-fields">
+                          <div className="form-group">
+                            <label className="form-label">Search Files</label>
+                            <input
+                              type="text"
+                              className="input-field"
+                              value={filters.search}
+                              onChange={(event) => handleFilterChange('search', event.target.value)}
+                              placeholder="Search file name or metadata"
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Grade Level</label>
+                            <select className="select-field" value={filters.grade_level} onChange={(event) => handleFilterChange('grade_level', event.target.value)}>
+                              <option value="">All grades</option>
+                              {GRADE_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
+                            </select>
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Difficulty</label>
+                            <select className="select-field" value={filters.difficulty} onChange={(event) => handleFilterChange('difficulty', event.target.value)}>
+                              <option value="">All difficulties</option>
+                              {DIFFICULTY_LEVELS.map((difficulty) => (
+                                <option key={difficulty} value={difficulty}>
+                                  {formatDifficultyLabel(filters.grade_level, difficulty)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Topic</label>
+                            <select
+                              className="select-field"
+                              value={filters.math_topic}
+                              disabled={!filters.grade_level || !filters.difficulty}
+                              onChange={(event) => handleFilterChange('math_topic', event.target.value)}
+                            >
+                              {!filters.grade_level || !filters.difficulty ? (
+                                <option value="">Select grade and difficulty first</option>
+                              ) : (
+                                <>
+                                  <option value="">All topics</option>
+                                  {filterTopicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)}
+                                </>
+                              )}
+                            </select>
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">File Type</label>
+                            <select className="select-field" value={filters.file_type} onChange={(event) => handleFilterChange('file_type', event.target.value)}>
+                              <option value="">All file types</option>
+                              <option value="lesson">Lesson File</option>
+                              <option value="fixed_questions">Fixed Question File</option>
+                            </select>
+                          </div>
+                        </div>
+                      )}
                       <DataTable columns={tableColumns} data={displayedFiles} emptyMessage={tableEmptyMessage} className="drive-table" />
                     </section>
                   </>
@@ -862,22 +990,35 @@ export default function LessonQuestionManager() {
                     <div className="form-group">
                       <label className="form-label required">Grade Level</label>
                       <select className="select-field" value={form.grade_level} onChange={(event) => handleFormChange('grade_level', event.target.value)}>
+                        <option value="">Select grade level</option>
                         {GRADE_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
                       </select>
                     </div>
                     <div className="form-group">
+                      <label className="form-label required">Difficulty</label>
+                      <select className="select-field" value={form.difficulty} onChange={(event) => handleFormChange('difficulty', event.target.value)}>
+                        <option value="">Select difficulty</option>
+                        {DIFFICULTY_LEVELS.map((difficulty) => (
+                          <option key={difficulty} value={difficulty}>
+                            {formatDifficultyLabel(form.grade_level, difficulty)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-group">
                       <label className="form-label required">Topic Name</label>
-                      <input
-                        type="text"
-                        className="input-field"
+                      <select
+                        className="select-field"
                         value={form.math_topic}
-                        list="math-topic-options"
+                        disabled={!form.grade_level || !form.difficulty}
                         onChange={(event) => handleFormChange('math_topic', event.target.value)}
-                        placeholder="Addition"
-                      />
-                      <datalist id="math-topic-options">
-                        {getMathTopicsForGrade(form.grade_level).map((topic) => <option key={topic} value={topic} />)}
-                      </datalist>
+                      >
+                        {!form.grade_level || !form.difficulty ? (
+                          <option value="">Select grade and difficulty first</option>
+                        ) : (
+                          uploadTopicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)
+                        )}
+                      </select>
                     </div>
                     <div className="form-group">
                       <label className="form-label required">Select Folder</label>
@@ -895,16 +1036,16 @@ export default function LessonQuestionManager() {
                     </div>
                     {form.file_type === 'fixed_questions' && (
                       <div className="form-group">
-                      <label className="form-label">Fixed Questions Count</label>
-                      <input
-                        type="number"
-                        min="1"
-                        step="1"
-                        className="input-field"
-                        value={form.expected_question_count}
-                        onChange={(event) => handleFormChange('expected_question_count', event.target.value)}
-                      />
-                    </div>
+                        <label className="form-label">Fixed Questions Count</label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          className="input-field"
+                          value={form.expected_question_count}
+                          onChange={(event) => handleFormChange('expected_question_count', event.target.value)}
+                        />
+                      </div>
                     )}
                     <div className="form-group">
                       <label className="form-label required">File</label>
@@ -990,17 +1131,49 @@ export default function LessonQuestionManager() {
                           setEditingFile((prev) => ({
                             ...prev,
                             grade_level: gradeLevel,
-                            math_topic: normalizeMathTopicForGrade(gradeLevel, prev.math_topic),
+                            math_topic: buildNextTopicValue(gradeLevel, prev.difficulty, prev.math_topic),
                           }));
                         }}
                       >
+                        <option value="">Select grade level</option>
                         {GRADE_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
                       </select>
                     </div>
                     <div className="form-group">
+                      <label className="form-label required">Difficulty</label>
+                      <select
+                        className="select-field"
+                        value={editingFile.difficulty || ''}
+                        onChange={(event) => {
+                          const difficulty = event.target.value;
+                          setEditingFile((prev) => ({
+                            ...prev,
+                            difficulty,
+                            math_topic: buildNextTopicValue(prev.grade_level, difficulty, prev.math_topic),
+                          }));
+                        }}
+                      >
+                        <option value="">Select difficulty</option>
+                        {DIFFICULTY_LEVELS.map((difficulty) => (
+                          <option key={difficulty} value={difficulty}>
+                            {formatDifficultyLabel(editingFile.grade_level, difficulty)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-group">
                       <label className="form-label required">Topic Name</label>
-                      <select className="select-field" value={editingFile.math_topic} onChange={(event) => setEditingFile((prev) => ({ ...prev, math_topic: event.target.value }))}>
-                        {editTopicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)}
+                      <select
+                        className="select-field"
+                        value={editingFile.grade_level && editingFile.difficulty ? editingFile.math_topic : ''}
+                        disabled={!editingFile.grade_level || !editingFile.difficulty}
+                        onChange={(event) => setEditingFile((prev) => ({ ...prev, math_topic: event.target.value }))}
+                      >
+                        {!editingFile.grade_level || !editingFile.difficulty ? (
+                          <option value="">Select grade and difficulty first</option>
+                        ) : (
+                          editTopicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)
+                        )}
                       </select>
                     </div>
                     <div className="form-group">

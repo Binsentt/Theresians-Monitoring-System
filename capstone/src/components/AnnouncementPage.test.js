@@ -84,7 +84,7 @@ describe('AnnouncementPage load states', () => {
     expect(container.textContent).toContain('Failed to load announcements.');
   });
 
-  test('treats a missing announcement collection as empty for admins', async () => {
+  test('shows a failure banner when the announcement collection is not found', async () => {
     global.fetch = jest.fn(() => Promise.resolve({
       ok: false,
       status: 404,
@@ -95,11 +95,10 @@ describe('AnnouncementPage load states', () => {
       root.render(<AnnouncementPage mode="admin" />);
     });
 
-    expect(container.textContent).toContain('No teacher announcements posted yet');
-    expect(container.textContent).not.toContain('Failed to load announcements.');
+    expect(container.textContent).toContain('Failed to load announcements.');
   });
 
-  test('treats missing admin and parent announcement collections as empty for teachers', async () => {
+  test('shows a failure banner when a teacher announcement collection request fails', async () => {
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 2, role: 'teacher', name: 'Teacher User' }));
     global.fetch = jest.fn(() => Promise.resolve({
       ok: false,
@@ -111,9 +110,70 @@ describe('AnnouncementPage load states', () => {
       root.render(<AnnouncementPage mode="teacher" />);
     });
 
-    expect(container.textContent).toContain('No admin announcements yet');
-    expect(container.textContent).toContain('No parent announcements posted yet');
+    expect(container.textContent).toContain('Failed to load announcements.');
+  });
+
+  test('shows a failure banner when the announcement response body is malformed', async () => {
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new Error('Unexpected token <');
+      },
+    }));
+
+    await act(async () => {
+      root.render(<AnnouncementPage mode="admin" />);
+    });
+
+    expect(container.textContent).toContain('Failed to load announcements.');
+  });
+
+  test('loads parent announcements silently when the response succeeds', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 3, role: 'parent', name: 'Parent User' }));
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => [],
+    }));
+
+    await act(async () => {
+      root.render(<AnnouncementPage mode="parent" />);
+    });
+
+    expect(container.textContent).toContain('No teacher announcements yet');
     expect(container.textContent).not.toContain('Failed to load announcements.');
+  });
+
+  test('shows a parent announcement load error banner on a failed response', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 3, role: 'parent', name: 'Parent User' }));
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: 'Server error' }),
+    }));
+
+    await act(async () => {
+      root.render(<AnnouncementPage mode="parent" />);
+    });
+
+    expect(container.textContent).toContain('Failed to load announcements.');
+  });
+
+  test('allows parent teacher accounts to access parent announcements', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 4, role: 'parent_teacher', name: 'Parent Teacher' }));
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => [],
+    }));
+
+    await act(async () => {
+      root.render(<AnnouncementPage mode="parent" />);
+    });
+
+    expect(mockNavigate).not.toHaveBeenCalledWith('/login');
+    expect(container.textContent).toContain('No teacher announcements yet');
   });
 
   test('keeps a failed announcement post out of the generic connection error path when the response is not JSON', async () => {
@@ -151,6 +211,28 @@ describe('AnnouncementPage load states', () => {
     expect(container.textContent).not.toContain('Connection error while saving announcement.');
   });
 
+  test('shows announcement skeletons while a collection request is still pending', async () => {
+    let resolveRequest;
+    global.fetch = jest.fn(() => new Promise((resolve) => {
+      resolveRequest = resolve;
+    }));
+
+    await act(async () => {
+      root.render(<AnnouncementPage mode="admin" />);
+    });
+
+    expect(container.querySelectorAll('.announcement-skeleton').length).toBeGreaterThan(0);
+    expect(container.textContent).not.toContain('Loading announcements...');
+
+    await act(async () => {
+      resolveRequest({
+        ok: true,
+        status: 200,
+        json: async () => [],
+      });
+    });
+  });
+
   test('clears the composer and renders the posted announcement after a successful save', async () => {
     global.fetch = jest.fn()
       .mockResolvedValueOnce({
@@ -186,7 +268,7 @@ describe('AnnouncementPage load states', () => {
 
     expect(titleInput.value).toBe('');
     expect(messageInput.value).toBe('');
-    expect(container.textContent).toContain('Announcement posted to teachers.');
+    expect(container.textContent).toContain('Announcement posted successfully.');
     expect(container.textContent).toContain('School reminder');
   });
 });

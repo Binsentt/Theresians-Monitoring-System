@@ -1,24 +1,85 @@
 const ALLOWED_GRADE_LEVELS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
+const ALLOWED_DIFFICULTIES = ['Easy', 'Normal', 'Difficult'];
 
 const GRADE_TOPIC_MAP = {
-  'Grade 1': ['Addition', 'Subtraction'],
-  'Grade 2': ['Addition', 'Subtraction'],
-  'Grade 3': ['Multiplication', 'Division'],
-  'Grade 4': ['Multiplication', 'Division'],
-  'Grade 5': ['Multiplication', 'Division', 'Formulas', 'Decimals', 'Word Problem'],
-  'Grade 6': ['Multiplication', 'Division', 'Formulas', 'Decimals', 'Word Problem'],
+  'Grade 1': {
+    Easy: ['Basic Addition, Subtraction, Shapes, and Place Value'],
+    Normal: ['Addition, Multiplication, and Word Problems'],
+    Difficult: ['Problem Solving (Addition and Subtraction)'],
+  },
+  'Grade 2': {
+    Easy: ['Shapes, Ordinal Numbers, and Basic Addition/Subtraction'],
+    Normal: ['Multiplication, Division, and Word Problems'],
+    Difficult: ['Problem Solving (Multiplication, Division, Fractions)'],
+  },
+  'Grade 3': {
+    Easy: ['Addition of Money and Whole Numbers'],
+    Normal: ['Multiplication, Division, and Fractions'],
+    Difficult: ['Multi-step Problem Solving'],
+  },
+  'Grade 4': {
+    Easy: ['Number Theory'],
+    Normal: ['Place Value of Whole Numbers'],
+    Difficult: ['Reading, Writing, and Comparing Whole Numbers'],
+  },
+  'Grade 5': {
+    Easy: ['Number Theory and Basic Arithmetic'],
+    Normal: ['Number Theory and Basic Arithmetic (Intermediate)'],
+    Difficult: ['Time Conversion, Number Theory, Word Problems, and Order of Operations'],
+  },
+  'Grade 6': {
+    Easy: ['Number Sense and Operations (Basic)'],
+    Normal: ['Number Sense and Operations (Intermediate)'],
+    Difficult: ['Rational Numbers and Geometric Measurements'],
+  },
 };
 
-const ALLOWED_MATH_TOPICS = Array.from(new Set(Object.values(GRADE_TOPIC_MAP).flat()));
+const ALLOWED_MATH_TOPICS = Array.from(new Set(
+  Object.values(GRADE_TOPIC_MAP).flatMap((difficultyMap) => Object.values(difficultyMap).flat())
+));
+
+const normalizeLearningMetadataValue = (value) => String(value || '').trim();
+
+const getMathTopicsForGradeDifficulty = (gradeLevel, difficulty) => {
+  const grade = normalizeLearningMetadataValue(gradeLevel);
+  const level = normalizeLearningMetadataValue(difficulty);
+  return GRADE_TOPIC_MAP[grade]?.[level] || [];
+};
 
 const getMathTopicsForGrade = (gradeLevel) => {
-  return GRADE_TOPIC_MAP[String(gradeLevel || '').trim()] || ALLOWED_MATH_TOPICS;
+  const grade = normalizeLearningMetadataValue(gradeLevel);
+  const difficultyMap = GRADE_TOPIC_MAP[grade];
+  return difficultyMap ? Object.values(difficultyMap).flat() : [];
 };
 
-const isValidGradeLevel = (value) => ALLOWED_GRADE_LEVELS.includes(String(value || '').trim());
+const isValidGradeLevel = (value) => ALLOWED_GRADE_LEVELS.includes(normalizeLearningMetadataValue(value));
+
+const isValidDifficulty = (value) => ALLOWED_DIFFICULTIES.includes(normalizeLearningMetadataValue(value));
+
+const isValidMathTopicForGradeDifficulty = (gradeLevel, difficulty, topic) => {
+  const selectedTopic = normalizeLearningMetadataValue(topic);
+  return getMathTopicsForGradeDifficulty(gradeLevel, difficulty).includes(selectedTopic);
+};
 
 const isValidMathTopicForGrade = (gradeLevel, topic) => {
-  return isValidGradeLevel(gradeLevel) && Boolean(String(topic || '').trim());
+  const selectedTopic = normalizeLearningMetadataValue(topic);
+  return getMathTopicsForGrade(gradeLevel).includes(selectedTopic);
+};
+
+const validateLearningMetadata = ({ grade_level: gradeLevel, difficulty, math_topic: mathTopic } = {}) => {
+  if (!isValidGradeLevel(gradeLevel)) {
+    return 'Grade level must be one of Grade 1 through Grade 6.';
+  }
+
+  if (!isValidDifficulty(difficulty)) {
+    return 'Difficulty must be Easy, Normal, or Difficult.';
+  }
+
+  if (!isValidMathTopicForGradeDifficulty(gradeLevel, difficulty, mathTopic)) {
+    return 'Topic must match the selected grade level and difficulty.';
+  }
+
+  return '';
 };
 
 const parseExpectedQuestionCount = (value) => {
@@ -37,10 +98,16 @@ const validateExpectedQuestionCount = (questions, expectedCount) => {
 
 module.exports = {
   ALLOWED_GRADE_LEVELS,
+  ALLOWED_DIFFICULTIES,
+  GRADE_TOPIC_MAP,
   ALLOWED_MATH_TOPICS,
   getMathTopicsForGrade,
+  getMathTopicsForGradeDifficulty,
   isValidGradeLevel,
+  isValidDifficulty,
   isValidMathTopicForGrade,
+  isValidMathTopicForGradeDifficulty,
+  validateLearningMetadata,
   parseExpectedQuestionCount,
   validateExpectedQuestionCount,
 };

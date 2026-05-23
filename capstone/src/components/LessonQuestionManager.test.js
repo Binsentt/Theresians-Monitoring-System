@@ -63,7 +63,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
           file_name: 'addition-quiz.json',
           folder_id: 17,
           grade_level: 'Grade 1',
-          math_topic: 'Addition',
+          difficulty: 'Normal',
+          math_topic: 'Addition, Multiplication, and Word Problems',
           file_type: 'fixed_questions',
         }];
         return okJson({ success: true, learningFile: fixtures.files[0] });
@@ -80,7 +81,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     delete global.fetch;
   });
 
-  test('upload modal exposes individual grades, topic, folder, and file type fields', async () => {
+  test('upload modal filters topic until grade and difficulty are selected', async () => {
     await act(async () => {
       root.render(<LessonQuestionManager />);
     });
@@ -92,11 +93,26 @@ describe('LessonQuestionManager upload and trash controls', () => {
       clickByText(container, 'Upload File');
     });
 
+    const selects = container.querySelectorAll('.drive-upload-modal select');
+    const topicSelect = selects[2];
+
     expect(container.textContent).toContain('Grade 1');
     expect(container.textContent).toContain('Grade 2');
     expect(container.textContent).toContain('Grade 6');
     expect(container.textContent).not.toContain('Grade 1-2');
+    expect(container.textContent).toContain('Difficulty');
     expect(container.textContent).toContain('Topic Name');
+    expect(topicSelect.disabled).toBe(true);
+    expect(topicSelect.textContent).toContain('Select grade and difficulty first');
+
+    await act(async () => {
+      setSelectValue(selects[0], 'Grade 3');
+      setSelectValue(selects[1], 'Normal');
+    });
+
+    expect(topicSelect.disabled).toBe(false);
+    expect(topicSelect.textContent).toContain('Multiplication, Division, and Fractions');
+    expect(container.textContent).toContain('Average Round');
     expect(container.textContent).toContain('Select Folder');
     expect(container.textContent).toContain('Lesson File');
     expect(container.textContent).toContain('Fixed Question File');
@@ -135,14 +151,16 @@ describe('LessonQuestionManager upload and trash controls', () => {
       clickByText(container, 'Upload File');
     });
 
-    const selects = container.querySelectorAll('select');
+    const selects = container.querySelectorAll('.drive-upload-modal select');
     const fileInput = container.querySelector('input[type="file"]');
     const file = new File([JSON.stringify([{ question: '1 + 1?', correct_answer: '2' }])], 'addition-quiz.json', {
       type: 'application/json',
     });
 
     await act(async () => {
-      setSelectValue(selects[1], '17');
+      setSelectValue(selects[0], 'Grade 1');
+      setSelectValue(selects[1], 'Normal');
+      setSelectValue(selects[3], '17');
       Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
       fileInput.dispatchEvent(new Event('change', { bubbles: true }));
     });
@@ -153,6 +171,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     expect(container.textContent).toContain('File uploaded successfully');
     expect(container.textContent).toContain('addition-quiz');
+    expect(container.textContent).toContain('Normal');
     expect(container.querySelector('.drive-upload-modal')).toBeNull();
   });
 });

@@ -626,6 +626,72 @@ label {
   gap: 16px;
 }
 
+.announcement-skeleton {
+  pointer-events: none;
+}
+
+.announcement-skeleton .announcement-card-icon,
+.announcement-skeleton-line {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: var(--bg-secondary, #e2e8f0);
+}
+
+.announcement-skeleton .announcement-card-icon::after,
+.announcement-skeleton-line::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.68), transparent);
+  animation: announcement-shimmer 1.4s ease-in-out infinite;
+  transform: translateX(-100%);
+}
+
+.announcement-skeleton-line {
+  min-height: 14px;
+  border-radius: 999px;
+}
+
+.announcement-skeleton-badge {
+  width: 86px;
+  min-height: 26px;
+}
+
+.announcement-skeleton-date {
+  width: 128px;
+  margin-left: auto;
+}
+
+.announcement-skeleton-title {
+  width: min(320px, 72%);
+  min-height: 20px;
+  margin-bottom: 12px;
+}
+
+.announcement-skeleton-message {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.announcement-skeleton-message-short {
+  width: min(420px, 82%);
+  margin-bottom: 0;
+}
+
+@keyframes announcement-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .announcement-skeleton .announcement-card-icon::after,
+  .announcement-skeleton-line::after {
+    animation: none;
+  }
+}
+
 .announcement-card {
   position: relative;
   display: flex;
@@ -1026,7 +1092,9 @@ label {
 
 [data-theme='dark'] .announcement-composer .input-field,
 [data-theme='dark'] .announcement-composer .textarea-field,
-[data-theme='dark'] .announcement-status {
+[data-theme='dark'] .announcement-status,
+[data-theme='dark'] .announcement-skeleton .announcement-card-icon,
+[data-theme='dark'] .announcement-skeleton-line {
   background: var(--bg-secondary, #0f1720);
 }
 

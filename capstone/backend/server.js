@@ -49,9 +49,8 @@ const {
   serializeUser,
 } = require('./accountResponse.utils');
 const {
-  isValidGradeLevel,
-  isValidMathTopicForGrade,
   validateExpectedQuestionCount,
+  validateLearningMetadata,
 } = require('./learningContentRules.utils');
 const {
   buildMailDiagnostics,
@@ -218,6 +217,7 @@ const ensureSchema = async () => {
       file_name VARCHAR(255) NOT NULL,
       file_url TEXT NOT NULL,
       grade_level VARCHAR(50) NOT NULL,
+      difficulty VARCHAR(20),
       math_topic VARCHAR(100) NOT NULL,
       file_type VARCHAR(50) NOT NULL,
       subject VARCHAR(50) NOT NULL DEFAULT 'Mathematics',
@@ -228,6 +228,7 @@ const ensureSchema = async () => {
       uploaded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );`);
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS file_size BIGINT');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS difficulty VARCHAR(20)');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ');
     await pool.query('UPDATE public.learning_files SET deleted_at = trashed_at WHERE deleted_at IS NULL AND trashed_at IS NOT NULL');
@@ -238,16 +239,18 @@ const ensureSchema = async () => {
       options JSONB,
       correct_answer TEXT NOT NULL,
       grade_level VARCHAR(50),
+      difficulty VARCHAR(20),
       math_topic VARCHAR(100),
       source VARCHAR(50) NOT NULL,
       published BOOLEAN DEFAULT false,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );`);
+    await pool.query('ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS difficulty VARCHAR(20)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_published ON public.learning_files(published)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_questions_published ON public.questions(published)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_grade_topic ON public.learning_files(grade_level, math_topic)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_questions_grade_topic ON public.questions(grade_level, math_topic)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_grade_difficulty_topic ON public.learning_files(grade_level, difficulty, math_topic)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_questions_grade_difficulty_topic ON public.questions(grade_level, difficulty, math_topic)');
   } catch (err) {
     console.error('Schema initialization failed:', err.message);
   }
@@ -376,6 +379,14 @@ const normalizeStudentProgressRow = (row) => {
   };
 };
 
+const calculateGameResultPercentage = ({ score, totalItems }) => {
+  const scoreValue = toNullableNumber(score);
+  const totalItemsValue = toNullableNumber(totalItems);
+  if (scoreValue === null || totalItemsValue === null || totalItemsValue <= 0) return null;
+
+  return Math.min(100, Math.max(0, Number(((scoreValue / totalItemsValue) * 100).toFixed(2))));
+};
+
 const resolveScopeId = (value) => {
   if (value === undefined || value === null || value === '') return null;
   const parsed = parseInt(value, 10);
@@ -409,6 +420,40 @@ const appendParentScopeFilter = ({ parentId, params, studentColumn, relationship
         AND LOWER(tsr.relationship_type) = '${relationshipType}'
     )
   `;
+};
+
+const verifyParentChildAccess = async (req, res, next) => {
+  const parentId = resolveParentScopeId(req.query.parent_id);
+  const studentId = resolveScopeId(req.params.studentId);
+
+  if (!parentId || Number.isNaN(parentId)) {
+    return res.status(400).json({ error: 'A valid parent ID is required.' });
+  }
+  if (!studentId || Number.isNaN(studentId)) {
+    return res.status(400).json({ error: 'A valid student ID is required.' });
+  }
+
+  try {
+    const relationResult = await pool.query(
+      `SELECT 1
+       FROM public.teacher_student_relationships
+       WHERE teacher_id = $1
+         AND student_id = $2
+         AND LOWER(relationship_type) = 'parent'
+       LIMIT 1`,
+      [parentId, studentId]
+    );
+
+    if (relationResult.rows.length === 0) {
+      return res.status(403).json({ error: 'Parent cannot access this child.' });
+    }
+
+    req.parentChildAccess = { parentId, studentId };
+    next();
+  } catch (err) {
+    console.error('Parent child access verification failed:', err.message);
+    res.status(500).json({ error: 'Failed to verify parent child access.' });
+  }
 };
 
 const announcementSelectSql = `
@@ -523,9 +568,9 @@ const buildMathQuestionTemplates = (grade_level, math_topic) => {
 const saveQuestionsForFile = async (learningFileId, questions) => {
   if (!Array.isArray(questions) || questions.length === 0) return;
   const insertPromises = questions.map((item) => pool.query(
-    `INSERT INTO public.questions (learning_file_id, question, options, correct_answer, grade_level, math_topic, source, published)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [learningFileId, item.question, JSON.stringify(item.options || []), item.correct_answer, item.grade_level, item.math_topic, item.source || 'ai', false]
+    `INSERT INTO public.questions (learning_file_id, question, options, correct_answer, grade_level, difficulty, math_topic, source, published)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [learningFileId, item.question, JSON.stringify(item.options || []), item.correct_answer, item.grade_level, item.difficulty || null, item.math_topic, item.source || 'ai', false]
   ));
   await Promise.all(insertPromises);
 };
@@ -823,12 +868,16 @@ const getLearningFiles = async () => {
   return result.rows.map(buildFileRecord);
 };
 
-const getGameQuestions = async ({ grade_level, math_topic }) => {
+const getGameQuestions = async ({ grade_level, difficulty, math_topic }) => {
   const params = ['Mathematics'];
   let clause = 'WHERE lf.subject = $1 AND lf.published = true AND lf.deleted_at IS NULL';
   if (grade_level) {
     params.push(grade_level);
     clause += ` AND lf.grade_level = $${params.length}`;
+  }
+  if (difficulty) {
+    params.push(difficulty);
+    clause += ` AND lf.difficulty = $${params.length}`;
   }
   if (math_topic) {
     params.push(math_topic);
@@ -849,6 +898,7 @@ const getGameQuestions = async ({ grade_level, math_topic }) => {
     options: row.options,
     correct_answer: row.correct_answer,
     grade_level: row.grade_level,
+    difficulty: row.difficulty,
     math_topic: row.math_topic,
     source: row.source,
   }));
@@ -890,12 +940,16 @@ const needQuestionParser = async (fileType, file) => {
   return [];
 };
 
-const getGameFiles = async ({ grade_level, math_topic }) => {
+const getGameFiles = async ({ grade_level, difficulty, math_topic }) => {
   const params = ['Mathematics'];
   let clause = 'WHERE subject = $1 AND published = true AND deleted_at IS NULL';
   if (grade_level) {
     params.push(grade_level);
     clause += ` AND grade_level = $${params.length}`;
+  }
+  if (difficulty) {
+    params.push(difficulty);
+    clause += ` AND difficulty = $${params.length}`;
   }
   if (math_topic) {
     params.push(math_topic);
@@ -907,6 +961,7 @@ const getGameFiles = async ({ grade_level, math_topic }) => {
     title: row.title,
     file_url: row.file_url,
     grade_level: row.grade_level,
+    difficulty: row.difficulty,
     math_topic: row.math_topic,
     file_type: row.file_type,
     published: row.published,
@@ -1947,19 +2002,25 @@ const resolveLearningFolderId = async (rawFolderId) => {
 
 app.post('/api/learning-files/upload', upload.single('file'), async (req, res) => {
   try {
-    const { title, grade_level, math_topic, file_type, folder_id, uploaded_by, expected_question_count } = req.body;
+    const { title, grade_level, difficulty, math_topic, file_type, folder_id, uploaded_by, expected_question_count } = req.body;
     if (!req.file) return res.status(400).json({ error: 'File is required' });
-    if (!title || !grade_level || !math_topic || !file_type) {
+    if (!title || !grade_level || !difficulty || !math_topic || !file_type) {
       return res.status(400).json({ error: 'Missing required metadata' });
     }
 
     const normalizedGrade = String(grade_level).trim();
+    const normalizedDifficulty = String(difficulty).trim();
     const normalizedTopic = String(math_topic).trim();
     const normalizedType = String(file_type).trim().toLowerCase();
 
-    if (!isValidGradeLevel(normalizedGrade) || !isValidMathTopicForGrade(normalizedGrade, normalizedTopic)) {
+    const learningMetadataError = validateLearningMetadata({
+      grade_level: normalizedGrade,
+      difficulty: normalizedDifficulty,
+      math_topic: normalizedTopic,
+    });
+    if (learningMetadataError) {
       cleanTemporaryUpload(req.file.path);
-      return res.status(400).json({ error: 'Invalid math topic for the selected grade level.' });
+      return res.status(400).json({ error: learningMetadataError });
     }
     if (!isValidFileType(normalizedType)) {
       cleanTemporaryUpload(req.file.path);
@@ -1996,15 +2057,16 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
     const fileUrl = buildFileUrl(fileName);
 
     const insertResult = await pool.query(
-      `INSERT INTO public.learning_files (title, file_name, file_url, grade_level, math_topic, file_type, subject, folder_id, published, source, uploaded_by, file_size)
-       VALUES ($1, $2, $3, $4, $5, $6, 'Mathematics', $7, false, $8, $9, $10)
+      `INSERT INTO public.learning_files (title, file_name, file_url, grade_level, difficulty, math_topic, file_type, subject, folder_id, published, source, uploaded_by, file_size)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Mathematics', $8, false, $9, $10, $11)
        RETURNING *`,
       [
         String(title).trim(),
         req.file.originalname,
         fileUrl,
-        String(grade_level).trim(),
-        String(math_topic).trim(),
+        normalizedGrade,
+        normalizedDifficulty,
+        normalizedTopic,
         normalizedType,
         folderResolution.folderId,
         allowedLesson ? 'lesson' : 'fixed',
@@ -2019,6 +2081,7 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
       await saveQuestionsForFile(learningFile.id, questions.map((question) => ({
         ...question,
         grade_level: learningFile.grade_level,
+        difficulty: learningFile.difficulty,
         math_topic: learningFile.math_topic,
         source: 'ai',
       })));
@@ -2026,6 +2089,7 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
       await saveQuestionsForFile(learningFile.id, fixedQuestions.map((question) => ({
         ...question,
         grade_level: learningFile.grade_level,
+        difficulty: learningFile.difficulty,
         math_topic: learningFile.math_topic,
         source: 'fixed',
       })));
@@ -2063,15 +2127,21 @@ app.put('/api/learning-files/:id', async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
-    const { title, grade_level, math_topic, file_type, folder_id } = req.body;
-    if (!title || !grade_level || !math_topic || !file_type) {
+    const { title, grade_level, difficulty, math_topic, file_type, folder_id } = req.body;
+    if (!title || !grade_level || !difficulty || !math_topic || !file_type) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
     const normalizedGrade = String(grade_level).trim();
+    const normalizedDifficulty = String(difficulty).trim();
     const normalizedTopic = String(math_topic).trim();
     const normalizedType = String(file_type).trim().toLowerCase();
-    if (!isValidGradeLevel(normalizedGrade) || !isValidMathTopicForGrade(normalizedGrade, normalizedTopic)) {
-      return res.status(400).json({ error: 'Invalid math topic for the selected grade level.' });
+    const learningMetadataError = validateLearningMetadata({
+      grade_level: normalizedGrade,
+      difficulty: normalizedDifficulty,
+      math_topic: normalizedTopic,
+    });
+    if (learningMetadataError) {
+      return res.status(400).json({ error: learningMetadataError });
     }
     if (!isValidFileType(normalizedType)) {
       return res.status(400).json({ error: 'Invalid file type.' });
@@ -2086,13 +2156,14 @@ app.put('/api/learning-files/:id', async (req, res) => {
       `UPDATE public.learning_files
        SET title = $1,
            grade_level = $2,
-           math_topic = $3,
-           file_type = $4,
-           folder_id = $5
-      WHERE id = $6
+           difficulty = $3,
+           math_topic = $4,
+           file_type = $5,
+           folder_id = $6
+     WHERE id = $7
         AND deleted_at IS NULL
        RETURNING *`,
-      [String(title).trim(), String(grade_level).trim(), String(math_topic).trim(), String(file_type).trim(), folderResolution.folderId, fileId]
+      [String(title).trim(), normalizedGrade, normalizedDifficulty, normalizedTopic, normalizedType, folderResolution.folderId, fileId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'File not found' });
     res.json(result.rows[0]);
@@ -2186,9 +2257,10 @@ app.post('/api/questions/unpublish/:id', async (req, res) => {
 app.get('/api/game/questions', async (req, res) => {
   try {
     const grade_level = req.query.grade_level || null;
+    const difficulty = req.query.difficulty || null;
     const math_topic = req.query.math_topic || null;
-    const learningFiles = await getGameFiles({ grade_level, math_topic });
-    const gameQuestions = await getGameQuestions({ grade_level, math_topic });
+    const learningFiles = await getGameFiles({ grade_level, difficulty, math_topic });
+    const gameQuestions = await getGameQuestions({ grade_level, difficulty, math_topic });
     res.json({ learning_files: learningFiles, questions: gameQuestions });
   } catch (err) {
     console.error('Fetch game questions failed:', err.message);
@@ -2598,6 +2670,93 @@ app.post('/api/game/progress', async (req, res) => {
     res.status(500).json({ error: 'Failed to save game progress', details: err.message });
   } finally {
     client.release();
+  }
+});
+
+app.post('/api/game/result', async (req, res) => {
+  const {
+    parent_id,
+    student_name,
+    grade_level,
+    difficulty,
+    math_topic,
+    score,
+    total_items,
+    played_at,
+  } = req.body || {};
+
+  const parentCode = normalizeParentCode(parent_id);
+  const studentName = normalizeGameStudentName(student_name);
+  const scoreValue = toNullableNumber(score);
+  const totalItemsValue = toNullableNumber(total_items);
+  const percentage = calculateGameResultPercentage({ score, totalItems: total_items });
+
+  if (!parentCode) {
+    return res.status(400).json({ error: 'Parent ID must be exactly 6 digits.' });
+  }
+  if (!studentName) {
+    return res.status(400).json({ error: 'Student/Player Name is required.' });
+  }
+  if (scoreValue === null || totalItemsValue === null || totalItemsValue <= 0 || percentage === null) {
+    return res.status(400).json({ error: 'score and total_items must be valid quiz totals.' });
+  }
+
+  try {
+    const parentResult = await pool.query(
+      `SELECT id, parent_id
+       FROM public.accounts
+       WHERE parent_id = $1
+         AND LOWER(role) IN ('parent', 'parent_teacher')
+         AND is_archived = false
+       LIMIT 1`,
+      [parentCode]
+    );
+
+    if (parentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Parent ID not found.' });
+    }
+
+    const parent = parentResult.rows[0];
+    // Keep result ingestion non-destructive: unresolved names stay reviewable instead of auto-creating a child here.
+    const studentResult = await pool.query(
+      `SELECT s.id
+       FROM public.accounts s
+       JOIN public.teacher_student_relationships r ON r.student_id = s.id
+       WHERE r.teacher_id = $1
+         AND LOWER(r.relationship_type) = 'parent'
+         AND LOWER(TRIM(s.name)) = LOWER($2)
+       ORDER BY s.id
+       LIMIT 1`,
+      [parent.id, studentName]
+    );
+    const resolvedStudentId = studentResult.rows[0]?.id || null;
+
+    await pool.query(
+      `INSERT INTO public.game_results (
+         parent_id, student_name, resolved_student_id, grade_level, difficulty,
+         math_topic, score, total_items, percentage, played_at, is_unlinked
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), $11
+       )`,
+      [
+        parentCode,
+        studentName,
+        resolvedStudentId,
+        grade_level || null,
+        difficulty || null,
+        math_topic || null,
+        Math.round(scoreValue),
+        Math.round(totalItemsValue),
+        percentage,
+        played_at || null,
+        !resolvedStudentId,
+      ]
+    );
+
+    res.status(201).json({ success: true, resolved: Boolean(resolvedStudentId) });
+  } catch (err) {
+    console.error('Save game result failed:', err.message);
+    res.status(500).json({ error: 'Failed to save game result', details: err.message });
   }
 });
 
@@ -3021,6 +3180,123 @@ app.post('/api/activity-logs', async (req, res) => {
   }
 });
 
+app.get('/api/parent/children', async (req, res) => {
+  try {
+    const parentId = resolveParentScopeId(req.query.parent_id);
+    if (!parentId || Number.isNaN(parentId)) {
+      return res.status(400).json({ error: 'A valid parent ID is required.' });
+    }
+
+    const childrenResult = await pool.query(
+      `SELECT s.id,
+              s.name,
+              s.name AS student_name,
+              s.email,
+              p.grade_level,
+              COALESCE(p.section, $2) AS section,
+              COUNT(gr.id)::INTEGER AS total_quizzes,
+              MAX(gr.played_at) AS last_quiz_date
+       FROM public.teacher_student_relationships tsr
+       JOIN public.accounts s ON s.id = tsr.student_id
+       LEFT JOIN LATERAL (
+         SELECT progress.grade_level, progress.section
+         FROM public.student_game_progress progress
+         WHERE progress.student_id = s.id
+         ORDER BY progress.updated_at DESC NULLS LAST, progress.id DESC
+         LIMIT 1
+       ) p ON true
+       LEFT JOIN public.game_results gr ON gr.resolved_student_id = s.id
+       WHERE tsr.teacher_id = $1
+         AND LOWER(tsr.relationship_type) = 'parent'
+         AND s.is_archived = false
+       GROUP BY s.id, s.name, s.email, p.grade_level, p.section
+       ORDER BY s.name`,
+      [parentId, 'Section A']
+    );
+
+    // Unlinked sessions only have the six-digit parent code until a student profile match is made.
+    const unlinkedResult = await pool.query(
+      `SELECT COUNT(gr.id)::INTEGER AS unlinked_count
+       FROM public.accounts parent
+       LEFT JOIN public.game_results gr
+         ON gr.parent_id = parent.parent_id
+        AND gr.is_unlinked = true
+       WHERE parent.id = $1`,
+      [parentId]
+    );
+
+    res.json({
+      children: childrenResult.rows,
+      unlinked_count: unlinkedResult.rows[0]?.unlinked_count || 0,
+    });
+  } catch (err) {
+    console.error('Fetch parent children failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch parent children' });
+  }
+});
+
+app.get('/api/parent/children/:studentId/quizzes', verifyParentChildAccess, async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const offset = (page - 1) * limit;
+    const { studentId } = req.parentChildAccess;
+
+    const [quizzesResult, countResult] = await Promise.all([
+      pool.query(
+        `SELECT id, parent_id, student_name, resolved_student_id, grade_level, difficulty,
+                math_topic, score, total_items, percentage, played_at
+         FROM public.game_results
+         WHERE resolved_student_id = $1
+         ORDER BY played_at DESC NULLS LAST, id DESC
+         LIMIT $2 OFFSET $3`,
+        [studentId, limit, offset]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::INTEGER AS total
+         FROM public.game_results
+         WHERE resolved_student_id = $1`,
+        [studentId]
+      ),
+    ]);
+
+    const total = countResult.rows[0]?.total || 0;
+    res.json({
+      data: quizzesResult.rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (err) {
+    console.error('Fetch child quizzes failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch child quizzes' });
+  }
+});
+
+app.get('/api/parent/children/:studentId/topics', verifyParentChildAccess, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT math_topic,
+              COUNT(*)::INTEGER AS times_played,
+              MAX(score) AS best_score
+       FROM public.game_results
+       WHERE resolved_student_id = $1
+         AND math_topic IS NOT NULL
+       GROUP BY math_topic
+       ORDER BY times_played DESC, math_topic`,
+      [req.parentChildAccess.studentId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Fetch child topics failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch child topics' });
+  }
+});
+
 app.get('/api/students', async (req, res) => {
   try {
     const result = await pool.query(
@@ -3244,6 +3520,10 @@ if (fs.existsSync(clientBuildPath)) {
   });
 }
 
-app.listen(port, () => {
-  console.log(`✅ Server running at http://localhost:${port}`);
-});
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`✅ Server running at http://localhost:${port}`);
+  });
+}
+
+module.exports = { app, verifyParentChildAccess };
