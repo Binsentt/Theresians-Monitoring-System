@@ -20,7 +20,7 @@ const readJsonResponse = async (response) => {
   try {
     return await response.json();
   } catch (error) {
-    return null;
+    throw new Error('Malformed announcement response.');
   }
 };
 
@@ -234,7 +234,9 @@ export default function AnnouncementPage({ mode = 'parent' }) {
           target_role: config.targetRole,
         }),
       });
-      const data = await readJsonResponse(response);
+      const data = response.ok
+        ? await readJsonResponse(response)
+        : await readJsonResponse(response).catch(() => null);
       if (!response.ok) {
         setStatus(data?.error || (isEditing ? 'Failed to update announcement.' : 'Failed to post announcement.'));
         return;
@@ -269,7 +271,9 @@ export default function AnnouncementPage({ mode = 'parent' }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actor_id: actorId, actor_role: config.creatorRole }),
       });
-      const data = await readJsonResponse(response);
+      const data = response.ok
+        ? await readJsonResponse(response)
+        : await readJsonResponse(response).catch(() => null);
       if (!response.ok) {
         setStatus(data?.error || 'Failed to delete announcement.');
         return;
