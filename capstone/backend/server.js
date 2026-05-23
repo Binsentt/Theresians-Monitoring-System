@@ -2166,6 +2166,16 @@ app.put('/api/learning-files/:id', async (req, res) => {
       [String(title).trim(), normalizedGrade, normalizedDifficulty, normalizedTopic, normalizedType, folderResolution.folderId, fileId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'File not found' });
+
+    await pool.query(
+      `UPDATE public.questions
+       SET grade_level = $1,
+           difficulty = $2,
+           math_topic = $3
+       WHERE learning_file_id = $4`,
+      [normalizedGrade, normalizedDifficulty, normalizedTopic, fileId]
+    );
+
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Update learning file failed:', err.message);
