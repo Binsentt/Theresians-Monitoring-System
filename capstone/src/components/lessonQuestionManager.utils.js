@@ -16,9 +16,15 @@ export const MATH_TOPICS = Array.from(new Set(
 
 const normalizeLearningMetadataValue = (value) => String(value || '').trim();
 
+export const normalizeDifficultyValue = (value) => {
+  const difficulty = normalizeLearningMetadataValue(value);
+  if (/^(average|normal\s*\/\s*average)$/i.test(difficulty)) return 'Normal';
+  return difficulty;
+};
+
 export const getMathTopicsForGradeDifficulty = (gradeLevel, difficulty) => {
   const grade = normalizeLearningMetadataValue(gradeLevel);
-  const level = normalizeLearningMetadataValue(difficulty);
+  const level = normalizeDifficultyValue(difficulty);
   return GRADE_TOPIC_MAP[grade]?.[level] || [];
 };
 
@@ -30,7 +36,7 @@ export const getMathTopicsForGrade = (gradeLevel) => {
 
 export const isValidGradeLevel = (value) => GRADE_LEVELS.includes(normalizeLearningMetadataValue(value));
 
-export const isValidDifficulty = (value) => DIFFICULTY_LEVELS.includes(normalizeLearningMetadataValue(value));
+export const isValidDifficulty = (value) => DIFFICULTY_LEVELS.includes(normalizeDifficultyValue(value));
 
 export const isValidMathTopicForGradeDifficulty = (gradeLevel, difficulty, topic) => {
   const selectedTopic = normalizeLearningMetadataValue(topic);
@@ -151,7 +157,7 @@ export const filterLearningFiles = (files, filters) => {
   const search = normalizeText(filters.search);
   const folder = normalizeText(filters.folder);
   const gradeLevel = normalizeLearningMetadataValue(filters.grade_level);
-  const difficulty = normalizeLearningMetadataValue(filters.difficulty);
+  const difficulty = normalizeDifficultyValue(filters.difficulty);
   const mathTopic = normalizeLearningMetadataValue(filters.math_topic);
   const fileType = normalizeLearningMetadataValue(filters.file_type);
 

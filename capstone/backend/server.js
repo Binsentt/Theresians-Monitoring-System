@@ -51,6 +51,7 @@ const {
 const {
   validateExpectedQuestionCount,
   validateLearningMetadata,
+  normalizeDifficultyValue,
 } = require('./learningContentRules.utils');
 const {
   buildMailDiagnostics,
@@ -125,6 +126,7 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS parent_id VARCHAR(6)');
+    await pool.query('UPDATE public.accounts SET is_archived = false WHERE is_archived IS NULL');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.login_otp_device_skips (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
@@ -1701,13 +1703,13 @@ app.get('/api/accounts', async (req, res) => {
 
     if (roleFilter) {
       queryString = archived
-        ? 'SELECT * FROM public.accounts WHERE is_archived = true AND LOWER(role) = $1 ORDER BY id'
-        : 'SELECT * FROM public.accounts WHERE is_archived = false AND LOWER(role) = $1 ORDER BY id';
+      ? 'SELECT * FROM public.accounts WHERE is_archived = true AND LOWER(role) = $1 ORDER BY id'
+        : 'SELECT * FROM public.accounts WHERE COALESCE(is_archived, false) = false AND LOWER(role) = $1 ORDER BY id';
       queryParams.push(roleFilter);
     } else {
       queryString = archived
         ? 'SELECT * FROM public.accounts WHERE is_archived = true ORDER BY id'
-        : 'SELECT * FROM public.accounts WHERE is_archived = false ORDER BY id';
+        : 'SELECT * FROM public.accounts WHERE COALESCE(is_archived, false) = false ORDER BY id';
     }
 
     const result = await pool.query(queryString, queryParams);
@@ -2016,7 +2018,7 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
     }
 
     const normalizedGrade = String(grade_level).trim();
-    const normalizedDifficulty = String(difficulty).trim();
+    const normalizedDifficulty = normalizeDifficultyValue(difficulty);
     const normalizedTopic = String(math_topic).trim();
     const normalizedType = String(file_type).trim().toLowerCase();
 
@@ -2139,7 +2141,7 @@ app.put('/api/learning-files/:id', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
     const normalizedGrade = String(grade_level).trim();
-    const normalizedDifficulty = String(difficulty).trim();
+    const normalizedDifficulty = normalizeDifficultyValue(difficulty);
     const normalizedTopic = String(math_topic).trim();
     const normalizedType = String(file_type).trim().toLowerCase();
     const learningMetadataError = validateLearningMetadata({
@@ -2423,7 +2425,7 @@ app.post('/api/announcements', async (req, res) => {
 
     const creatorRoles = payload.createdByRole === 'teacher' ? ['teacher', 'parent_teacher'] : [payload.createdByRole];
     const creatorResult = await pool.query(
-      'SELECT id, name, role FROM public.accounts WHERE id = $1 AND LOWER(role) = ANY($2::text[]) AND is_archived = false',
+      'SELECT id, name, role FROM public.accounts WHERE id = $1 AND LOWER(role) = ANY($2::text[]) AND COALESCE(is_archived, false) = false',
       [payload.createdBy, creatorRoles]
     );
     if (creatorResult.rows.length === 0) {
@@ -2459,7 +2461,7 @@ app.post('/api/game/parent/validate', async (req, res) => {
        FROM public.accounts
        WHERE parent_id = $1
          AND LOWER(role) IN ('parent', 'parent_teacher')
-         AND is_archived = false
+          AND COALESCE(is_archived, false) = false
        LIMIT 1`,
       [parentCode]
     );
@@ -2514,7 +2516,7 @@ app.post('/api/game/progress', async (req, res) => {
        FROM public.accounts
        WHERE parent_id = $1
          AND LOWER(role) IN ('parent', 'parent_teacher')
-         AND is_archived = false
+          AND COALESCE(is_archived, false) = false
        LIMIT 1`,
       [parentCode]
     );
@@ -2724,7 +2726,7 @@ app.post('/api/game/result', async (req, res) => {
        FROM public.accounts
        WHERE parent_id = $1
          AND LOWER(role) IN ('parent', 'parent_teacher')
-         AND is_archived = false
+         AND COALESCE(is_archived, false) = false
        LIMIT 1`,
       [parentCode]
     );
@@ -3257,7 +3259,7 @@ app.get('/api/parent/children', async (req, res) => {
        LEFT JOIN public.game_results gr ON gr.resolved_student_id = s.id
        WHERE tsr.teacher_id = $1
          AND LOWER(tsr.relationship_type) = 'parent'
-         AND s.is_archived = false
+         AND COALESCE(s.is_archived, false) = false
        GROUP BY s.id, s.name, s.email, p.grade_level, p.section
        ORDER BY s.name`,
       [parentId, 'Section A']
@@ -3353,7 +3355,7 @@ app.get('/api/students', async (req, res) => {
               p.score, p.correct_answers, p.total_questions, p.accuracy_rate, p.progress_percentage, p.current_quest
        FROM accounts a
        LEFT JOIN public.student_game_progress p ON a.id = p.student_id
-       WHERE LOWER(a.role) = 'student' AND a.is_archived = false
+      WHERE LOWER(a.role) = 'student' AND COALESCE(a.is_archived, false) = false
        ORDER BY a.name`
     );
     res.json(result.rows);

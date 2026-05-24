@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "@railway/cli": "^4.61.1"
+  },
+  "_npx": {
+    "packages": [
+      "@railway/cli@latest"
+    ]
+  }
+}

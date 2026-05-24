@@ -62,7 +62,7 @@ function deriveUploadTitle(file) {
 }
 
 function formatDifficultyLabel(gradeLevel, difficulty) {
-  if (gradeLevel === 'Grade 3' && difficulty === 'Normal') return 'Average Round';
+  if (difficulty === 'Normal') return 'Normal / Average';
   return difficulty;
 }
 

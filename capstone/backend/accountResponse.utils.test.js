@@ -21,7 +21,7 @@ test('serializeUser removes password and OTP fields from account responses', () 
   assert.equal(user.isArchived, false);
 });
 
-test('health check account payload never exposes password or OTP fields', () => {
+test('health check account payload does not expose account records', () => {
   const response = buildAccountHealthCheckResponse([
     {
       id: 1,
@@ -36,7 +36,5 @@ test('health check account payload never exposes password or OTP fields', () => 
 
   assert.equal(response.status, 'Connected');
   assert.equal(response.total, 1);
-  assert.equal(response.accounts[0].password, undefined);
-  assert.equal(response.accounts[0].otp_code, undefined);
-  assert.equal(response.accounts[0].otp_expires_at, undefined);
+  assert.equal(response.accounts, undefined);
 });

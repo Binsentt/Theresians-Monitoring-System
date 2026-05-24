@@ -111,8 +111,10 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
 
     expect(topicSelect.disabled).toBe(false);
-    expect(topicSelect.textContent).toContain('Multiplication, Division, and Fractions');
-    expect(container.textContent).toContain('Average Round');
+    expect(topicSelect.textContent).toContain('Multiplication');
+    expect(topicSelect.textContent).toContain('Division');
+    expect(topicSelect.textContent).toContain('Fractions');
+    expect(container.textContent).toContain('Normal / Average');
     expect(container.textContent).toContain('Select Folder');
     expect(container.textContent).toContain('Lesson File');
     expect(container.textContent).toContain('Fixed Question File');

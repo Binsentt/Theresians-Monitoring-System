@@ -1,0 +1,770 @@
+[
+  {
+    "time": "2026-05-24T17:07:45.604Z",
+    "step": "start",
+    "tokenPresent": true,
+    "repoRoot": "C:\\Users\\vince\\Documents\\Theresian's Quest- Web",
+    "targetCommit": "7c57831dcfb1a33be330eaa9061bca5ca87e263c"
+  },
+  {
+    "time": "2026-05-24T17:07:45.628Z",
+    "step": "railway-status",
+    "status": null,
+    "stdout": "",
+    "stderr": "",
+    "error": "spawnSync C:\\Program Files\\nodejs\\npx.cmd EINVAL",
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:07:45.630Z",
+    "step": "railway-service-list",
+    "status": null,
+    "stdout": "",
+    "stderr": "",
+    "error": "spawnSync C:\\Program Files\\nodejs\\npx.cmd EINVAL",
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:07:45.631Z",
+    "step": "railway-deployment-list",
+    "status": null,
+    "stdout": "",
+    "stderr": "",
+    "error": "spawnSync C:\\Program Files\\nodejs\\npx.cmd EINVAL",
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:07:46.398Z",
+    "step": "project-config-before",
+    "mode": "project-token",
+    "project": {
+      "id": "dd2c27df-22e4-4ee0-82dc-a1c510b07d0c",
+      "name": "overflowing-insight"
+    },
+    "service": {
+      "id": "efe9f84c-7d05-4698-be00-452c22b47ec7",
+      "name": "Theresians-Monitoring-System"
+    },
+    "instance": {
+      "id": "0ed7d803-8705-4239-8988-81d18b7aec98",
+      "environmentId": "f451f63b-55ed-46f5-abe3-53a439ac1fec",
+      "rootDirectory": "/capstone",
+      "buildCommand": "npm install && npm --prefix backend install && npm run build",
+      "startCommand": "npm run build && cd backend && npm start",
+      "railwayConfigFile": "/capstone/railway.toml",
+      "source": {
+        "image": null,
+        "repo": "Binsentt/Theresians-Monitoring-System"
+      }
+    },
+    "triggers": [
+      {
+        "id": "abca3527-0fe1-4bfe-a3fa-d40533767bb6",
+        "provider": "github",
+        "repository": "Binsentt/Theresians-Monitoring-System",
+        "branch": "main",
+        "serviceId": "efe9f84c-7d05-4698-be00-452c22b47ec7",
+        "environmentId": "f451f63b-55ed-46f5-abe3-53a439ac1fec",
+        "checkSuites": false,
+        "validCheckSuites": 0
+      }
+    ],
+    "variableNames": [
+      "DATABASE_URL",
+      "EMAIL_FROM",
+      "EMAIL_FROM_NAME",
+      "NODE_ENV",
+      "RAILPACK_INSTALL_CMD",
+      "RAILPACK_INSTALL_COMMAND",
+      "RAILPACK_START_CMD",
+      "RAILWAY_ENVIRONMENT",
+      "RAILWAY_ENVIRONMENT_ID",
+      "RAILWAY_ENVIRONMENT_NAME",
+      "RAILWAY_PRIVATE_DOMAIN",
+      "RAILWAY_PROJECT_ID",
+      "RAILWAY_PROJECT_NAME",
+      "RAILWAY_PUBLIC_DOMAIN",
+      "RAILWAY_SERVICE_ID",
+      "RAILWAY_SERVICE_NAME",
+      "RAILWAY_SERVICE_THERESIANS_MONITORING_SYSTEM_URL",
+      "RAILWAY_STATIC_URL",
+      "RESEND_API_KEY"
+    ]
+  },
+  {
+    "time": "2026-05-24T17:07:47.003Z",
+    "step": "service-instance-update-null-overrides",
+    "ok": true,
+    "mode": "project-token",
+    "requested": {
+      "rootDirectory": "/capstone",
+      "railwayConfigFile": "/capstone/railway.toml",
+      "buildCommand": null,
+      "startCommand": null,
+      "builder": "NIXPACKS"
+    }
+  },
+  {
+    "time": "2026-05-24T17:07:47.527Z",
+    "step": "project-config-after-null-update",
+    "mode": "project-token",
+    "project": {
+      "id": "dd2c27df-22e4-4ee0-82dc-a1c510b07d0c",
+      "name": "overflowing-insight"
+    },
+    "service": {
+      "id": "efe9f84c-7d05-4698-be00-452c22b47ec7",
+      "name": "Theresians-Monitoring-System"
+    },
+    "instance": {
+      "id": "0ed7d803-8705-4239-8988-81d18b7aec98",
+      "environmentId": "f451f63b-55ed-46f5-abe3-53a439ac1fec",
+      "rootDirectory": "/capstone",
+      "buildCommand": "npm install && npm --prefix backend install && npm run build",
+      "startCommand": "npm run build && cd backend && npm start",
+      "railwayConfigFile": "/capstone/railway.toml",
+      "source": {
+        "image": null,
+        "repo": "Binsentt/Theresians-Monitoring-System"
+      }
+    },
+    "triggers": [
+      {
+        "id": "abca3527-0fe1-4bfe-a3fa-d40533767bb6",
+        "provider": "github",
+        "repository": "Binsentt/Theresians-Monitoring-System",
+        "branch": "main",
+        "serviceId": "efe9f84c-7d05-4698-be00-452c22b47ec7",
+        "environmentId": "f451f63b-55ed-46f5-abe3-53a439ac1fec",
+        "checkSuites": false,
+        "validCheckSuites": 0
+      }
+    ],
+    "variableNames": [
+      "DATABASE_URL",
+      "EMAIL_FROM",
+      "EMAIL_FROM_NAME",
+      "NODE_ENV",
+      "RAILPACK_INSTALL_CMD",
+      "RAILPACK_INSTALL_COMMAND",
+      "RAILPACK_START_CMD",
+      "RAILWAY_ENVIRONMENT",
+      "RAILWAY_ENVIRONMENT_ID",
+      "RAILWAY_ENVIRONMENT_NAME",
+      "RAILWAY_PRIVATE_DOMAIN",
+      "RAILWAY_PROJECT_ID",
+      "RAILWAY_PROJECT_NAME",
+      "RAILWAY_PUBLIC_DOMAIN",
+      "RAILWAY_SERVICE_ID",
+      "RAILWAY_SERVICE_NAME",
+      "RAILWAY_SERVICE_THERESIANS_MONITORING_SYSTEM_URL",
+      "RAILWAY_STATIC_URL",
+      "RESEND_API_KEY"
+    ]
+  },
+  {
+    "time": "2026-05-24T17:07:47.785Z",
+    "step": "service-instance-update-explicit-commands",
+    "ok": true,
+    "mode": "project-token",
+    "requested": {
+      "rootDirectory": "/capstone",
+      "railwayConfigFile": "/capstone/railway.toml",
+      "buildCommand": "npm run build && npm --prefix backend ci --omit=dev",
+      "startCommand": "npm --prefix backend start",
+      "builder": "NIXPACKS"
+    }
+  },
+  {
+    "time": "2026-05-24T17:07:48.260Z",
+    "step": "project-config-after",
+    "mode": "project-token",
+    "project": {
+      "id": "dd2c27df-22e4-4ee0-82dc-a1c510b07d0c",
+      "name": "overflowing-insight"
+    },
+    "service": {
+      "id": "efe9f84c-7d05-4698-be00-452c22b47ec7",
+      "name": "Theresians-Monitoring-System"
+    },
+    "instance": {
+      "id": "0ed7d803-8705-4239-8988-81d18b7aec98",
+      "environmentId": "f451f63b-55ed-46f5-abe3-53a439ac1fec",
+      "rootDirectory": "/capstone",
+      "buildCommand": "npm run build && npm --prefix backend ci --omit=dev",
+      "startCommand": "npm --prefix backend start",
+      "railwayConfigFile": "/capstone/railway.toml",
+      "source": {
+        "image": null,
+        "repo": "Binsentt/Theresians-Monitoring-System"
+      }
+    },
+    "triggers": [
+      {
+        "id": "abca3527-0fe1-4bfe-a3fa-d40533767bb6",
+        "provider": "github",
+        "repository": "Binsentt/Theresians-Monitoring-System",
+        "branch": "main",
+        "serviceId": "efe9f84c-7d05-4698-be00-452c22b47ec7",
+        "environmentId": "f451f63b-55ed-46f5-abe3-53a439ac1fec",
+        "checkSuites": false,
+        "validCheckSuites": 0
+      }
+    ],
+    "variableNames": [
+      "DATABASE_URL",
+      "EMAIL_FROM",
+      "EMAIL_FROM_NAME",
+      "NODE_ENV",
+      "RAILPACK_INSTALL_CMD",
+      "RAILPACK_INSTALL_COMMAND",
+      "RAILPACK_START_CMD",
+      "RAILWAY_ENVIRONMENT",
+      "RAILWAY_ENVIRONMENT_ID",
+      "RAILWAY_ENVIRONMENT_NAME",
+      "RAILWAY_PRIVATE_DOMAIN",
+      "RAILWAY_PROJECT_ID",
+      "RAILWAY_PROJECT_NAME",
+      "RAILWAY_PUBLIC_DOMAIN",
+      "RAILWAY_SERVICE_ID",
+      "RAILWAY_SERVICE_NAME",
+      "RAILWAY_SERVICE_THERESIANS_MONITORING_SYSTEM_URL",
+      "RAILWAY_STATIC_URL",
+      "RESEND_API_KEY"
+    ]
+  },
+  {
+    "time": "2026-05-24T17:07:48.884Z",
+    "step": "service-instance-deploy-target-commit",
+    "ok": true,
+    "mode": "project-token",
+    "result": true
+  },
+  {
+    "time": "2026-05-24T17:07:49.140Z",
+    "step": "deployment-poll",
+    "attempt": 0,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "INITIALIZING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "INITIALIZING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:07:59.495Z",
+    "step": "deployment-poll",
+    "attempt": 1,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:08:09.954Z",
+    "step": "deployment-poll",
+    "attempt": 2,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:08:20.355Z",
+    "step": "deployment-poll",
+    "attempt": 3,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:08:30.703Z",
+    "step": "deployment-poll",
+    "attempt": 4,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:08:41.442Z",
+    "step": "deployment-poll",
+    "attempt": 5,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:08:52.254Z",
+    "step": "deployment-poll",
+    "attempt": 6,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:09:02.609Z",
+    "step": "deployment-poll",
+    "attempt": 7,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:09:13.760Z",
+    "step": "deployment-poll",
+    "attempt": 8,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:09:24.114Z",
+    "step": "deployment-poll",
+    "attempt": 9,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:09:34.474Z",
+    "step": "deployment-poll",
+    "attempt": 10,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:09:44.814Z",
+    "step": "deployment-poll",
+    "attempt": 11,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:09:55.189Z",
+    "step": "deployment-poll",
+    "attempt": 12,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:10:06.162Z",
+    "step": "deployment-poll",
+    "attempt": 13,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": false,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": null
+    }
+  },
+  {
+    "time": "2026-05-24T17:10:16.525Z",
+    "step": "deployment-poll",
+    "attempt": 14,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": true,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": "/capstone"
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "BUILDING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": true,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": "/capstone"
+    }
+  },
+  {
+    "time": "2026-05-24T17:10:27.371Z",
+    "step": "deployment-poll",
+    "attempt": 15,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "DEPLOYING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": true,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": "/capstone"
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "DEPLOYING",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": true,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": "/capstone"
+    }
+  },
+  {
+    "time": "2026-05-24T17:10:39.767Z",
+    "step": "deployment-poll",
+    "attempt": 16,
+    "mode": "project-token",
+    "target": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "SUCCESS",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": true,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": "/capstone"
+    },
+    "latest": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "SUCCESS",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": true,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": "/capstone"
+    }
+  },
+  {
+    "time": "2026-05-24T17:10:39.770Z",
+    "step": "target-deployment-final",
+    "deployment": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "SUCCESS",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": true,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": "/capstone"
+    }
+  },
+  {
+    "time": "2026-05-24T17:10:39.772Z",
+    "step": "target-build-logs",
+    "deploymentId": "a1e32d80-f644-47c7-acc6-193efb979739",
+    "status": null,
+    "stdout": "",
+    "stderr": "",
+    "error": "spawnSync C:\\Program Files\\nodejs\\npx.cmd EINVAL",
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:10:39.775Z",
+    "step": "target-runtime-logs",
+    "deploymentId": "a1e32d80-f644-47c7-acc6-193efb979739",
+    "status": null,
+    "stdout": "",
+    "stderr": "",
+    "error": "spawnSync C:\\Program Files\\nodejs\\npx.cmd EINVAL",
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:10:41.601Z",
+    "step": "live-bundle-after-deploy",
+    "pageStatus": 200,
+    "scripts": [
+      "static/js/main.98de7cf7.js"
+    ],
+    "bundle": {
+      "script": "static/js/main.98de7cf7.js",
+      "status": 200,
+      "bytes": 358673,
+      "hasBasicAddition": false,
+      "hasNormalAverage": false,
+      "hasLocalhost": false
+    }
+  }
+]

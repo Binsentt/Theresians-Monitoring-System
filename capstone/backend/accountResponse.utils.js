@@ -10,8 +10,7 @@ const serializeUser = (user) => {
 
 const buildAccountHealthCheckResponse = (rows = []) => ({
   status: 'Connected',
-  accounts: rows.map(serializeUser),
-  total: rows.length,
+  total: Number.isFinite(Number(rows[0]?.total)) ? Number(rows[0].total) : rows.length,
 });
 
 module.exports = {

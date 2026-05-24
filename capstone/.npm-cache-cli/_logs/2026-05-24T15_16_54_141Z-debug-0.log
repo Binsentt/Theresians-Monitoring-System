@@ -1,0 +1,18 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.6.2
+2 info using node@v24.13.0
+3 silly config load:file:C:\Program Files\nodejs\node_modules\npm\npmrc
+4 silly config load:file:C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npmrc
+5 silly config load:file:C:\Users\vince\.npmrc
+6 silly config load:file:C:\Users\vince\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm test --watchAll=false --runTestsByPath src/components/LessonQuestionManager.test.js src/components/lessonQuestionManager.utils.test.js src/components/AnnouncementPage.test.js src/components/ParentChildProgress.test.js src/components/ManageUsers.test.js src/components/LoginScreen.test.js src/components/manageUsers.utils.test.js src/components/session.utils.test.js
+8 verbose argv "test" "--" "--watchAll=false" "--runTestsByPath" "src/components/LessonQuestionManager.test.js" "src/components/lessonQuestionManager.utils.test.js" "src/components/AnnouncementPage.test.js" "src/components/ParentChildProgress.test.js" "src/components/ManageUsers.test.js" "src/components/LoginScreen.test.js" "src/components/manageUsers.utils.test.js" "src/components/session.utils.test.js"
+9 verbose logfile logs-max:10 dir:C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npm-cache-cli\_logs\2026-05-24T15_16_54_141Z-
+10 verbose logfile C:\Users\vince\Documents\Theresian's Quest- Web\capstone\.npm-cache-cli\_logs\2026-05-24T15_16_54_141Z-debug-0.log
+11 silly logfile done cleaning log files
+12 verbose cwd C:\Users\vince\Documents\Theresian's Quest- Web\capstone
+13 verbose os Windows_NT 10.0.26200
+14 verbose node v24.13.0
+15 verbose npm  v11.6.2
+16 verbose exit 1
+17 verbose code 1

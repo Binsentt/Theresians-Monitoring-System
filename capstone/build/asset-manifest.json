@@ -1,15 +1,15 @@
 {
   "files": {
-    "main.css": "/static/css/main.283d37b3.css",
-    "main.js": "/static/js/main.98de7cf7.js",
+    "main.css": "/static/css/main.6d9a38a4.css",
+    "main.js": "/static/js/main.ffeaa1f7.js",
     "static/media/BG.jpg": "/static/media/BG.276e1dc191fe0fb8bb09.jpg",
     "static/media/STS_Logo.png": "/static/media/STS_Logo.26406f6b9a3dc8048e84.png",
     "index.html": "/index.html",
-    "main.283d37b3.css.map": "/static/css/main.283d37b3.css.map",
-    "main.98de7cf7.js.map": "/static/js/main.98de7cf7.js.map"
+    "main.6d9a38a4.css.map": "/static/css/main.6d9a38a4.css.map",
+    "main.ffeaa1f7.js.map": "/static/js/main.ffeaa1f7.js.map"
   },
   "entrypoints": [
-    "static/css/main.283d37b3.css",
-    "static/js/main.98de7cf7.js"
+    "static/css/main.6d9a38a4.css",
+    "static/js/main.ffeaa1f7.js"
   ]
 }

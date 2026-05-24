@@ -15,18 +15,18 @@ export const DIFFICULTY_LEVELS = [
 
 export const GRADE_TOPIC_MAP = {
   'Grade 1': {
-    Easy: ['Basic Addition, Subtraction, Shapes, and Place Value'],
-    Normal: ['Addition, Multiplication, and Word Problems'],
+    Easy: ['Basic Addition', 'Subtraction', 'Shapes', 'Place Value'],
+    Normal: ['Addition', 'Multiplication', 'Word Problems'],
     Difficult: ['Problem Solving (Addition and Subtraction)'],
   },
   'Grade 2': {
-    Easy: ['Shapes, Ordinal Numbers, and Basic Addition/Subtraction'],
-    Normal: ['Multiplication, Division, and Word Problems'],
-    Difficult: ['Problem Solving (Multiplication, Division, Fractions)'],
+    Easy: ['Shapes', 'Ordinal Numbers', 'Basic Addition/Subtraction'],
+    Normal: ['Multiplication', 'Division', 'Word Problems'],
+    Difficult: ['Problem Solving', 'Multiplication', 'Division', 'Fractions'],
   },
   'Grade 3': {
-    Easy: ['Addition of Money and Whole Numbers'],
-    Normal: ['Multiplication, Division, and Fractions'],
+    Easy: ['Addition of Money', 'Whole Numbers'],
+    Normal: ['Multiplication', 'Division', 'Fractions'],
     Difficult: ['Multi-step Problem Solving'],
   },
   'Grade 4': {
@@ -35,13 +35,13 @@ export const GRADE_TOPIC_MAP = {
     Difficult: ['Reading, Writing, and Comparing Whole Numbers'],
   },
   'Grade 5': {
-    Easy: ['Number Theory and Basic Arithmetic'],
-    Normal: ['Number Theory and Basic Arithmetic (Intermediate)'],
-    Difficult: ['Time Conversion, Number Theory, Word Problems, and Order of Operations'],
+    Easy: ['Number Theory', 'Basic Arithmetic'],
+    Normal: ['Number Theory', 'Basic Arithmetic'],
+    Difficult: ['Time Conversion', 'Number Theory', 'Word Problems', 'Order of Operations'],
   },
   'Grade 6': {
-    Easy: ['Number Sense and Operations (Basic)'],
-    Normal: ['Number Sense and Operations (Intermediate)'],
-    Difficult: ['Rational Numbers and Geometric Measurements'],
+    Easy: ['Number Sense and Operations'],
+    Normal: ['Number Sense and Operations'],
+    Difficult: ['Rational Numbers', 'Geometric Measurements'],
   },
 };

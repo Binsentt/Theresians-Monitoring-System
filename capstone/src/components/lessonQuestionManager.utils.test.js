@@ -17,13 +17,34 @@ describe('lesson question manager helpers', () => {
   test('returns configured difficulty values and grade difficulty topics', () => {
     expect(DIFFICULTY_LEVELS).toEqual(['Easy', 'Normal', 'Difficult']);
     expect(getMathTopicsForGradeDifficulty('Grade 1', 'Easy')).toEqual([
-      'Basic Addition, Subtraction, Shapes, and Place Value',
+      'Basic Addition',
+      'Subtraction',
+      'Shapes',
+      'Place Value',
+    ]);
+    expect(getMathTopicsForGradeDifficulty('Grade 2', 'Difficult')).toEqual([
+      'Problem Solving',
+      'Multiplication',
+      'Division',
+      'Fractions',
     ]);
     expect(getMathTopicsForGradeDifficulty('Grade 3', 'Normal')).toEqual([
-      'Multiplication, Division, and Fractions',
+      'Multiplication',
+      'Division',
+      'Fractions',
+    ]);
+    expect(getMathTopicsForGradeDifficulty('Grade 5', 'Difficult')).toEqual([
+      'Time Conversion',
+      'Number Theory',
+      'Word Problems',
+      'Order of Operations',
     ]);
     expect(getMathTopicsForGradeDifficulty('Grade 6', 'Difficult')).toEqual([
-      'Rational Numbers and Geometric Measurements',
+      'Rational Numbers',
+      'Geometric Measurements',
+    ]);
+    expect(getMathTopicsForGradeDifficulty('Grade 6', 'Average')).toEqual([
+      'Number Sense and Operations',
     ]);
   });
 
@@ -39,13 +60,13 @@ describe('lesson question manager helpers', () => {
   test('resets topics when grade or difficulty changes', () => {
     expect(normalizeMathTopicForGradeDifficulty('Grade 1', '', 'Addition')).toBe('');
     expect(normalizeMathTopicForGradeDifficulty('Grade 1', 'Easy', 'Addition')).toBe(
-      'Basic Addition, Subtraction, Shapes, and Place Value'
+      'Basic Addition'
     );
     expect(normalizeMathTopicForGradeDifficulty(
       'Grade 1',
       'Normal',
-      'Addition, Multiplication, and Word Problems'
-    )).toBe('Addition, Multiplication, and Word Problems');
+      'Addition'
+    )).toBe('Addition');
   });
 
   test('filters learning files by search, folder, grade, difficulty, topic, and file type', () => {
@@ -56,7 +77,7 @@ describe('lesson question manager helpers', () => {
         folder_name: 'Grade 1 Folder',
         grade_level: 'Grade 1',
         difficulty: 'Easy',
-        math_topic: 'Basic Addition, Subtraction, Shapes, and Place Value',
+        math_topic: 'Basic Addition',
         file_type: 'lesson',
       },
       {

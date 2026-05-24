@@ -21,20 +21,33 @@ test('stores the approved lesson difficulties exactly', () => {
 
 test('maps math topics by grade and difficulty', () => {
   assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 1', 'Easy'), [
-    'Basic Addition, Subtraction, Shapes, and Place Value',
+    'Basic Addition',
+    'Subtraction',
+    'Shapes',
+    'Place Value',
   ]);
   assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 2', 'Difficult'), [
-    'Problem Solving (Multiplication, Division, Fractions)',
+    'Problem Solving',
+    'Multiplication',
+    'Division',
+    'Fractions',
   ]);
   assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 3', 'Normal'), [
-    'Multiplication, Division, and Fractions',
+    'Multiplication',
+    'Division',
+    'Fractions',
   ]);
   assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 6', 'Difficult'), [
-    'Rational Numbers and Geometric Measurements',
+    'Rational Numbers',
+    'Geometric Measurements',
+  ]);
+  assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 6', 'Average'), [
+    'Number Sense and Operations',
   ]);
   assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 6', 'Hard'), []);
   assert.deepEqual(GRADE_TOPIC_MAP['Grade 5'].Normal, [
-    'Number Theory and Basic Arithmetic (Intermediate)',
+    'Number Theory',
+    'Basic Arithmetic',
   ]);
 });
 
@@ -53,7 +66,7 @@ test('validates topic combinations against grade and difficulty', () => {
     isValidMathTopicForGradeDifficulty(
       'Grade 1',
       'Normal',
-      'Addition, Multiplication, and Word Problems'
+      'Addition'
     ),
     true
   );
@@ -61,7 +74,7 @@ test('validates topic combinations against grade and difficulty', () => {
     isValidMathTopicForGradeDifficulty(
       'Grade 1',
       'Easy',
-      'Addition, Multiplication, and Word Problems'
+      'Addition'
     ),
     false
   );
@@ -69,7 +82,7 @@ test('validates topic combinations against grade and difficulty', () => {
     validateLearningMetadata({
       grade_level: 'Grade 2',
       difficulty: 'Normal',
-      math_topic: 'Multiplication, Division, and Word Problems',
+      math_topic: 'Multiplication',
     }),
     ''
   );
@@ -77,7 +90,7 @@ test('validates topic combinations against grade and difficulty', () => {
     validateLearningMetadata({
       grade_level: 'Grade 2',
       difficulty: 'Medium',
-      math_topic: 'Multiplication, Division, and Word Problems',
+      math_topic: 'Multiplication',
     }),
     'Difficulty must be Easy, Normal, or Difficult.'
   );

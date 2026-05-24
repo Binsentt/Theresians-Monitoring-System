@@ -1,0 +1,545 @@
+[
+  {
+    "time": "2026-05-24T17:36:13.705Z",
+    "step": "start",
+    "tokenPresent": true,
+    "repoRoot": "C:\\Users\\vince\\Documents\\Theresian's Quest- Web",
+    "targetCommit": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+    "railwayExe": "C:\\Users\\vince\\Documents\\Theresian's Quest- Web\\.npm-cache-cli\\_npx\\79fa66f96c8fdacf\\node_modules\\@railway\\cli\\bin\\railway.exe"
+  },
+  {
+    "time": "2026-05-24T17:36:15.520Z",
+    "step": "railway-status",
+    "status": 0,
+    "stdout": "{\n  \"buckets\": {\n    \"edges\": []\n  },\n  \"deletedAt\": null,\n  \"environments\": {\n    \"edges\": [\n      {\n        \"node\": {\n          \"canAccess\": true,\n          \"deletedAt\": null,\n          \"id\": \"f451f63b-55ed-46f5-abe3-53a439ac1fec\",\n          \"name\": \"production\",\n          \"serviceInstances\": {\n            \"edges\": [\n              {\n                \"node\": {\n                  \"activeDeployments\": [\n                    {\n                      \"createdAt\": \"2026-05-24T17:34:52.716Z\",\n                      \"deploymentStopped\": false,\n                      \"id\": \"145d00fa-ce51-4a7b-8239-73583727e1ef\",\n                      \"instances\": [\n                        {\n                          \"id\": \"e37f92ea-9483-4f74-950e-f795c7bb0f0d\",\n                          \"status\": \"RUNNING\"\n                        }\n                      ],\n                      \"meta\": {\n                        \"branch\": \"main\",\n                        \"buildOnly\": false,\n                        \"commitAuthor\": \"Binsentt\",\n                        \"commitHash\": \"781d0e49dedd30e516825a58395905668d26a370\",\n                        \"commitMessage\": \"fix: publish current production frontend build\",\n                        \"configFile\": \"/capstone/railway.toml\",\n                        \"fileServiceManifest\": {\n                          \"build\": {\n                            \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n                            \"builder\": \"NIXPACKS\"\n                          },\n                          \"deploy\": {\n                            \"startCommand\": \"npm --prefix backend start\"\n                          }\n                        },\n                        \"imageDigest\": \"sha256:<redacted-long-value>\",\n                        \"logsV2\": true,\n                        \"nixpacksProviders\": [],\n                        \"plan\": \"hobby\",\n                        \"propertyFileMapping\": {\n                          \"build.buildCommand\": \"$.build.buildCommand\",\n                          \"build.builder\": \"$.build.builder\",\n                          \"build.nixpacks\": \"$.build.nixpacks\",\n                          \"deploy.startCommand\": \"$.deploy.startCommand\"\n                        },\n                        \"reason\": \"deploy\",\n                        \"repo\": \"Binsentt/Theresians-Monitoring-System\",\n                        \"rootDirectory\": \"/capstone\",\n                        \"runtime\": \"V2\",\n                        \"serviceManifest\": {\n                          \"build\": {\n                            \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n                            \"buildEnvironment\": \"V3\",\n                            \"builder\": \"NIXPACKS\",\n                            \"dockerfilePath\": null,\n                            \"nixpacksPlan\": null,\n                            \"watchPatterns\": []\n                          },\n                          \"deploy\": {\n                            \"cronSchedule\": null,\n                            \"drainingSeconds\": 0,\n                            \"healthcheckPath\": null,\n                            \"healthcheckTimeout\": null,\n                            \"ipv6EgressEnabled\": false,\n                            \"limitOverride\": null,\n                            \"multiRegionConfig\": {\n                              \"us-west2\": {\n                                \"numReplicas\": 1\n                              }\n                            },\n                            \"numReplicas\": 1,\n                            \"overlapSeconds\": 0,\n                            \"preDeployCommand\": null,\n                            \"region\": null,\n                            \"registryCredentials\": null,\n                            \"requiredMountPath\": null,\n                            \"restartPolicyMaxRetries\": 10,\n                            \"restartPolicyType\": \"ON_FAILURE\",\n                            \"runtime\": \"V2\",\n                            \"sleepApplication\": false,\n                            \"startCommand\": \"npm --prefix backend start\",\n                            \"useLegacyStacker\": false\n                          }\n                        },\n                        \"volumeMounts\": []\n                      },\n                      \"status\": \"SUCCESS\"\n                    }\n                  ],\n                  \"cronSchedule\": null,\n                  \"domains\": {\n                    \"customDomains\": [\n                      {\n                        \"domain\": \"theresiansquest.com\",\n                        \"id\": \"fbe32cfa-1ab9-40d7-883b-21a83b285cad\",\n                        \"targetPort\": 8080\n                      }\n                    ],\n                    \"serviceDomains\": [\n                      {\n                        \"domain\": \"theresians-monitoring-system-production.up.railway.app\",\n                        \"id\": \"bd483218-692b-4564-a4b1-48732b9f075b\",\n                        \"targetPort\": 8080\n                      }\n                    ]\n                  },\n                  \"environmentId\": \"f451f63b-55ed-46f5-abe3-53a439ac1fec\",\n                  \"id\": \"0ed7d803-8705-4239-8988-81d18b7aec98\",\n                  \"latestDeployment\": {\n                    \"canRedeploy\": true,\n                    \"createdAt\": \"2026-05-24T17:34:52.716Z\",\n                    \"deploymentStopped\": false,\n                    \"id\": \"145d00fa-ce51-4a7b-8239-73583727e1ef\",\n                    \"instances\": [\n                      {\n                        \"id\": \"e37f92ea-9483-4f74-950e-f795c7bb0f0d\",\n                        \"status\": \"RUNNING\"\n                      }\n                    ],\n                    \"meta\": {\n                      \"branch\": \"main\",\n                      \"buildOnly\": false,\n                      \"commitAuthor\": \"Binsentt\",\n                      \"commitHash\": \"781d0e49dedd30e516825a58395905668d26a370\",\n                      \"commitMessage\": \"fix: publish current production frontend build\",\n                      \"configFile\": \"/capstone/railway.toml\",\n                      \"fileServiceManifest\": {\n                        \"build\": {\n                          \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n                          \"builder\": \"NIXPACKS\"\n                        },\n                        \"deploy\": {\n                          \"startCommand\": \"npm --prefix backend start\"\n                        }\n                      },\n                      \"imageDigest\": \"sha256:<redacted-long-value>\",\n                      \"logsV2\": true,\n                      \"nixpacksProviders\": [],\n                      \"plan\": \"hobby\",\n                      \"propertyFileMapping\": {\n                        \"build.buildCommand\": \"$.build.buildCommand\",\n                        \"build.builder\": \"$.build.builder\",\n                        \"build.nixpacks\": \"$.build.nixpacks\",\n                        \"deploy.startCommand\": \"$.deploy.startCommand\"\n                      },\n                      \"reason\": \"deploy\",\n                      \"repo\": \"Binsentt/Theresians-Monitoring-System\",\n                      \"rootDirectory\": \"/capstone\",\n                      \"runtime\": \"V2\",\n                      \"serviceManifest\": {\n                        \"build\": {\n                          \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n                          \"buildEnvironment\": \"V3\",\n                          \"builder\": \"NIXPACKS\",\n                          \"dockerfilePath\": null,\n                          \"nixpacksPlan\": null,\n                          \"watchPatterns\": []\n                        },\n                        \"deploy\": {\n                          \"cronSchedule\": null,\n                          \"drainingSeconds\": 0,\n                          \"healthcheckPath\": null,\n                          \"healthcheckTimeout\": null,\n                          \"ipv6EgressEnabled\": false,\n                          \"limitOverride\": null,\n                          \"multiRegionConfig\": {\n                            \"us-west2\": {\n                              \"numReplicas\": 1\n                            }\n                          },\n                          \"numReplicas\": 1,\n                          \"overlapSeconds\": 0,\n                          \"preDeployCommand\": null,\n                          \"region\": null,\n                          \"registryCredentials\": null,\n                          \"requiredMountPath\": null,\n                          \"restartPolicyMaxRetries\": 10,\n                          \"restartPolicyType\": \"ON_FAILURE\",\n                          \"runtime\": \"V2\",\n                          \"sleepApplication\": false,\n                          \"startCommand\": \"npm --prefix backend start\",\n                          \"useLegacyStacker\": false\n                        }\n                      },\n                      \"volumeMounts\": []\n                    },\n                    \"status\": \"SUCCESS\"\n                  },\n                  \"nextCronRunAt\": null,\n                  \"numReplicas\": null,\n                  \"serviceId\": \"efe9f84c-7d05-4698-be00-452c22b47ec7\",\n                  \"serviceName\": \"Theresians-Monitoring-System\",\n                  \"source\": {\n                    \"image\": null,\n                    \"repo\": \"Binsentt/Theresians-Monitoring-System\"\n                  },\n                  \"startCommand\": \"npm --prefix backend start\"\n                }\n              },\n              {\n                \"node\": {\n                  \"activeDeployments\": [\n                    {\n                      \"createdAt\": \"2026-05-23T03:57:27.217Z\",\n                      \"deploymentStopped\": false,\n                      \"id\": \"09e377be-cc7d-4f58-8dc1-8dbdd76f57c6\",\n                      \"instances\": [\n                        {\n                          \"id\": \"42c24186-cb4f-4bde-bb08-47d5e94fb805\",\n                          \"status\": \"RUNNING\"\n                        }\n                      ],\n                      \"meta\": {\n                        \"ignoreWatchPatterns\": true,\n                        \"image\": \"ghcr.io/railwayapp-templates/postgres-ssl:18\",\n                        \"imageDigest\": \"sha256:<redacted-long-value>\",\n                        \"logsV2\": true,\n                        \"patchId\": \"243bbd79-d050-4104-89f1-ec108eeb6581\",\n                        \"reason\": \"redeploy\",\n                        \"runtime\": \"V2\",\n                        \"serviceManifest\": {\n                          \"build\": {\n                            \"buildCommand\": null,\n                            \"buildEnvironment\": \"V3\",\n                            \"builder\": \"RAILPACK\",\n                            \"dockerfilePath\": null,\n                            \"nixpacksConfigPath\": null,\n                            \"nixpacksPlan\": null,\n                            \"watchPatterns\": []\n                          },\n                          \"deploy\": {\n                            \"cronSchedule\": null,\n                            \"drainingSeconds\": null,\n                            \"healthcheckPath\": null,\n                            \"healthcheckTimeout\": null,\n                            \"ipv6EgressEnabled\": false,\n                            \"limitOverride\": null,\n                            \"multiRegionConfig\": {\n                              \"us-west2\": {\n                                \"numReplicas\": 1\n                              }\n                            },\n                            \"numReplicas\": 1,\n                            \"overlapSeconds\": null,\n                            \"preDeployCommand\": null,\n                            \"region\": null,\n                            \"registryCredentials\": null,\n                            \"requiredMountPath\": \"/var/lib/postgresql/data\",\n                            \"restartPolicyMaxRetries\": 10,\n                            \"restartPolicyType\": \"ON_FAILURE\",\n                            \"runtime\": \"V2\",\n                            \"sleepApplication\": false,\n                            \"sta",
+    "stderr": "",
+    "error": null,
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:36:16.784Z",
+    "step": "railway-service-status",
+    "status": 0,
+    "stdout": "{\n  \"id\": \"efe9f84c-7d05-4698-be00-452c22b47ec7\",\n  \"name\": \"Theresians-Monitoring-System\",\n  \"deploymentId\": \"145d00fa-ce51-4a7b-8239-73583727e1ef\",\n  \"status\": \"SUCCESS\",\n  \"stopped\": false\n}\n",
+    "stderr": "",
+    "error": null,
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:36:18.457Z",
+    "step": "railway-deployment-list",
+    "status": 0,
+    "stdout": "[\n  {\n    \"id\": \"145d00fa-ce51-4a7b-8239-73583727e1ef\",\n    \"status\": \"SUCCESS\",\n    \"createdAt\": \"2026-05-24T17:34:52.716Z\",\n    \"meta\": {\n      \"branch\": \"main\",\n      \"buildOnly\": false,\n      \"commitAuthor\": \"Binsentt\",\n      \"commitHash\": \"781d0e49dedd30e516825a58395905668d26a370\",\n      \"commitMessage\": \"fix: publish current production frontend build\",\n      \"configFile\": \"/capstone/railway.toml\",\n      \"fileServiceManifest\": {\n        \"build\": {\n          \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n          \"builder\": \"NIXPACKS\"\n        },\n        \"deploy\": {\n          \"startCommand\": \"npm --prefix backend start\"\n        }\n      },\n      \"imageDigest\": \"sha256:<redacted-long-value>\",\n      \"logsV2\": true,\n      \"nixpacksProviders\": [],\n      \"plan\": \"hobby\",\n      \"propertyFileMapping\": {\n        \"build.buildCommand\": \"$.build.buildCommand\",\n        \"build.builder\": \"$.build.builder\",\n        \"build.nixpacks\": \"$.build.nixpacks\",\n        \"deploy.startCommand\": \"$.deploy.startCommand\"\n      },\n      \"reason\": \"deploy\",\n      \"repo\": \"Binsentt/Theresians-Monitoring-System\",\n      \"rootDirectory\": \"/capstone\",\n      \"runtime\": \"V2\",\n      \"serviceManifest\": {\n        \"build\": {\n          \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n          \"buildEnvironment\": \"V3\",\n          \"builder\": \"NIXPACKS\",\n          \"dockerfilePath\": null,\n          \"nixpacksPlan\": null,\n          \"watchPatterns\": []\n        },\n        \"deploy\": {\n          \"cronSchedule\": null,\n          \"drainingSeconds\": 0,\n          \"healthcheckPath\": null,\n          \"healthcheckTimeout\": null,\n          \"ipv6EgressEnabled\": false,\n          \"limitOverride\": null,\n          \"multiRegionConfig\": {\n            \"us-west2\": {\n              \"numReplicas\": 1\n            }\n          },\n          \"numReplicas\": 1,\n          \"overlapSeconds\": 0,\n          \"preDeployCommand\": null,\n          \"region\": null,\n          \"registryCredentials\": null,\n          \"requiredMountPath\": null,\n          \"restartPolicyMaxRetries\": 10,\n          \"restartPolicyType\": \"ON_FAILURE\",\n          \"runtime\": \"V2\",\n          \"sleepApplication\": false,\n          \"startCommand\": \"npm --prefix backend start\",\n          \"useLegacyStacker\": false\n        }\n      },\n      \"volumeMounts\": []\n    }\n  },\n  {\n    \"id\": \"a1e32d80-f644-47c7-acc6-193efb979739\",\n    \"status\": \"REMOVED\",\n    \"createdAt\": \"2026-05-24T17:07:48.734Z\",\n    \"meta\": {\n      \"branch\": \"main\",\n      \"buildOnly\": false,\n      \"commitAuthor\": \"Binsentt\",\n      \"commitHash\": \"7c57831dcfb1a33be330eaa9061bca5ca87e263c\",\n      \"commitMessage\": \"fix: stabilize production lesson and announcement flows\\n\\n- split grade/difficulty topic mappings into selectable topics\\n- accept Average/Normal difficulty aliases consistently\\n- treat legacy null archive flags as active for announcements and parent progress\\n- add regression coverage for announcement authors and lesson topic rules\",\n      \"configFile\": \"/capstone/railway.toml\",\n      \"fileServiceManifest\": {\n        \"build\": {\n          \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n          \"builder\": \"NIXPACKS\"\n        },\n        \"deploy\": {\n          \"startCommand\": \"npm --prefix backend start\"\n        }\n      },\n      \"ignoreWatchPatterns\": true,\n      \"imageDigest\": \"sha256:<redacted-long-value>\",\n      \"logsV2\": true,\n      \"nixpacksProviders\": [],\n      \"plan\": \"hobby\",\n      \"propertyFileMapping\": {\n        \"build.buildCommand\": \"$.build.buildCommand\",\n        \"build.builder\": \"$.build.builder\",\n        \"build.nixpacks\": \"$.build.nixpacks\",\n        \"deploy.startCommand\": \"$.deploy.startCommand\"\n      },\n      \"reason\": \"deploy\",\n      \"repo\": \"Binsentt/Theresians-Monitoring-System\",\n      \"rootDirectory\": \"/capstone\",\n      \"runtime\": \"V2\",\n      \"serviceManifest\": {\n        \"build\": {\n          \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n          \"buildEnvironment\": \"V3\",\n          \"builder\": \"NIXPACKS\",\n          \"dockerfilePath\": null,\n          \"nixpacksPlan\": null,\n          \"watchPatterns\": []\n        },\n        \"deploy\": {\n          \"cronSchedule\": null,\n          \"drainingSeconds\": 0,\n          \"healthcheckPath\": null,\n          \"healthcheckTimeout\": null,\n          \"ipv6EgressEnabled\": false,\n          \"limitOverride\": null,\n          \"multiRegionConfig\": {\n            \"us-west2\": {\n              \"numReplicas\": 1\n            }\n          },\n          \"numReplicas\": 1,\n          \"overlapSeconds\": 0,\n          \"preDeployCommand\": null,\n          \"region\": null,\n          \"registryCredentials\": null,\n          \"requiredMountPath\": null,\n          \"restartPolicyMaxRetries\": 10,\n          \"restartPolicyType\": \"ON_FAILURE\",\n          \"runtime\": \"V2\",\n          \"sleepApplication\": false,\n          \"startCommand\": \"npm --prefix backend start\",\n          \"useLegacyStacker\": false\n        }\n      },\n      \"skipBuildCache\": true,\n      \"volumeMounts\": []\n    }\n  },\n  {\n    \"id\": \"3ba48c62-aba4-44dc-b726-b8b844625634\",\n    \"status\": \"REMOVED\",\n    \"createdAt\": \"2026-05-24T17:01:26.732Z\",\n    \"meta\": {\n      \"branch\": \"main\",\n      \"buildOnly\": false,\n      \"commitAuthor\": \"Binsentt\",\n      \"commitHash\": \"7c57831dcfb1a33be330eaa9061bca5ca87e263c\",\n      \"commitMessage\": \"fix: stabilize production lesson and announcement flows\\n\\n- split grade/difficulty topic mappings into selectable topics\\n- accept Average/Normal difficulty aliases consistently\\n- treat legacy null archive flags as active for announcements and parent progress\\n- add regression coverage for announcement authors and lesson topic rules\",\n      \"configFile\": \"/capstone/railway.toml\",\n      \"fileServiceManifest\": {\n        \"build\": {\n          \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n          \"builder\": \"NIXPACKS\"\n        },\n        \"deploy\": {\n          \"startCommand\": \"npm --prefix backend start\"\n        }\n      },\n      \"ignoreWatchPatterns\": true,\n      \"imageDigest\": \"sha256:<redacted-long-value>\",\n      \"logsV2\": true,\n      \"nixpacksProviders\": [],\n      \"plan\": \"hobby\",\n      \"propertyFileMapping\": {\n        \"build.buildCommand\": \"$.build.buildCommand\",\n        \"build.builder\": \"$.build.builder\",\n        \"build.nixpacks\": \"$.build.nixpacks\",\n        \"deploy.startCommand\": \"$.deploy.startCommand\"\n      },\n      \"reason\": \"deploy\",\n      \"repo\": \"Binsentt/Theresians-Monitoring-System\",\n      \"rootDirectory\": \"/capstone\",\n      \"runtime\": \"V2\",\n      \"serviceManifest\": {\n        \"build\": {\n          \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n          \"buildEnvironment\": \"V3\",\n          \"builder\": \"NIXPACKS\",\n          \"dockerfilePath\": null,\n          \"nixpacksPlan\": null,\n          \"watchPatterns\": []\n        },\n        \"deploy\": {\n          \"cronSchedule\": null,\n          \"drainingSeconds\": 0,\n          \"healthcheckPath\": null,\n          \"healthcheckTimeout\": null,\n          \"ipv6EgressEnabled\": false,\n          \"limitOverride\": null,\n          \"multiRegionConfig\": {\n            \"us-west2\": {\n              \"numReplicas\": 1\n            }\n          },\n          \"numReplicas\": 1,\n          \"overlapSeconds\": 0,\n          \"preDeployCommand\": null,\n          \"region\": null,\n          \"registryCredentials\": null,\n          \"requiredMountPath\": null,\n          \"restartPolicyMaxRetries\": 10,\n          \"restartPolicyType\": \"ON_FAILURE\",\n          \"runtime\": \"V2\",\n          \"sleepApplication\": false,\n          \"startCommand\": \"npm --prefix backend start\",\n          \"useLegacyStacker\": false\n        }\n      },\n      \"skipBuildCache\": true,\n      \"volumeMounts\": []\n    }\n  },\n  {\n    \"id\": \"22d3ceea-bbb1-475d-9c3f-064c3ff898dc\",\n    \"status\": \"REMOVED\",\n    \"createdAt\": \"2026-05-24T17:00:28.403Z\",\n    \"meta\": {\n      \"branch\": \"main\",\n      \"buildOnly\": false,\n      \"commitAuthor\": \"Binsentt\",\n      \"commitHash\": \"7c57831dcfb1a33be330eaa9061bca5ca87e263c\",\n      \"commitMessage\": \"fix: stabilize production lesson and announcement flows\\n\\n- split grade/difficulty topic mappings into selectable topics\\n- accept Average/Normal difficulty aliases consistently\\n- treat legacy null archive flags as active for announcements and parent progress\\n- add regression coverage for announcement authors and lesson topic rules\",\n      \"configFile\": \"/capstone/railway.toml\",\n      \"fileServiceManifest\": {\n        \"build\": {\n          \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n          \"builder\": \"NIXPACKS\"\n        },\n        \"deploy\": {\n          \"startCommand\": \"npm --prefix backend start\"\n        }\n      },\n      \"ignoreWatchPatterns\": true,\n      \"imageDigest\": \"sha256:<redacted-long-value>\",\n      \"logsV2\": true,\n      \"nixpacksProviders\": [],\n      \"plan\": \"hobby\",\n      \"propertyFileMapping\": {\n        \"build.buildCommand\": \"$.build.buildCommand\",\n        \"build.builder\": \"$.build.builder\",\n        \"build.nixpacks\": \"$.build.nixpacks\",\n        \"deploy.startCommand\": \"$.deploy.startCommand\"\n      },\n      \"reason\": \"deploy\",\n      \"repo\": \"Binsentt/Theresians-Monitoring-System\",\n      \"rootDirectory\": \"/capstone\",\n      \"runtime\": \"V2\",\n      \"serviceManifest\": {\n        \"build\": {\n          \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n          \"buildEnvironment\": \"V3\",\n          \"builder\": \"NIXPACKS\",\n          \"dockerfilePath\": null,\n          \"nixpacksPlan\": null,\n          \"watchPatterns\": []\n        },\n        \"deploy\": {\n          \"cronSchedule\": null,\n          \"drainingSeconds\": 0,\n          \"healthcheckPath\": null,\n          \"healthcheckTimeout\": null,\n          \"ipv6EgressEnabled\": false,\n          \"limitOverride\": null,\n          \"multiRegionConfig\": {\n            \"us-west2\": {\n              \"numReplicas\": 1\n            }\n          },\n          \"numReplicas\": 1,\n          \"overlapSeconds\": 0,\n          \"preDeployCommand\": null,\n          \"region\": null,\n          \"registryCredentials\": null,\n          \"requiredMountPath\": null,\n          \"restartPolicyMaxRetries\": 10,\n          \"restartPolicyType\": \"ON_FAILURE\",\n          \"runtime\": \"V2\",\n          \"sleepApplication\": false,\n          \"startCommand\": \"npm --prefix backend start\",\n          \"useLegacyStacker\": false\n        }\n      },\n      \"skipBuildCache\": true,\n      \"volumeMounts\": []\n    }\n  },\n  {\n    \"id\": \"35f4cbab-47cf-437c-8678-e37ff88404f2\",\n    \"status\": \"REMOVED\",\n    \"createdAt\": \"2026-05-24T15:24:32.799Z\",\n    \"meta\": {\n      \"branch\": \"main\",\n      \"buildOnly\": false,\n      \"commitAuthor\": \"Binsentt\",\n      \"commitHash\": \"7c57831dcfb1a33be330eaa9061bca5ca87e263c\",\n      \"commitMessage\": \"fix: stabilize production lesson and announcement flows\\n\\n- split grade/difficulty topic mappings into selectable topics\\n- accept Average/Normal difficulty aliases consistently\\n- treat legacy null archive flags as active for announcements and parent progress\\n- add regression coverage for announcement authors and lesson topic rules\",\n      \"configFile\": \"/capstone/railway.toml\",\n      \"fileServiceManifest\": {\n        \"build\": {\n          \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n          \"builder\": \"NIXPACKS\"\n        },\n        \"deploy\": {\n          \"startCommand\": \"npm --prefix backend start\"\n        }\n      },\n      \"imageDigest\": \"sha256:<redacted-long-value>\",\n      \"logsV2\": true,\n      \"nixpacksProviders\": [],\n      \"plan\": \"hobby\",\n      \"propertyFileMapping\": {\n        \"build.buildCommand\": \"$.build.buildCommand\",\n        \"build.builder\": \"$.build.builder\",\n        \"build.nixpacks\": \"$.build.nixpacks\",\n        \"deploy.startCommand\": \"$.deploy.startCommand\"\n      },\n      \"reason\": \"deploy\",\n      \"repo\": \"Binsentt/Theresians-Monitoring-System\",\n      \"rootDirectory\": \"/capstone\",\n      \"runtime\": \"V2\",\n      \"serviceManifest\": {\n        \"build\": {\n          \"buildCommand\": \"npm run build && npm --prefix backend ci --omit=dev\",\n          \"buildEnvironment\": \"V3\",\n       ",
+    "stderr": "",
+    "error": null,
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:36:19.649Z",
+    "step": "project-config",
+    "mode": "project-token",
+    "project": {
+      "id": "dd2c27df-22e4-4ee0-82dc-a1c510b07d0c",
+      "name": "overflowing-insight"
+    },
+    "services": [
+      {
+        "id": "14626d99-748f-455c-ab2c-e5a66c00329a",
+        "name": "Postgres",
+        "instances": [
+          {
+            "id": "2c1dada4-5e08-4eaa-9c17-e4d0f1dd0af1",
+            "environmentId": "f451f63b-55ed-46f5-abe3-53a439ac1fec",
+            "rootDirectory": null,
+            "buildCommand": null,
+            "startCommand": null,
+            "railwayConfigFile": null,
+            "source": {
+              "image": "ghcr.io/railwayapp-templates/postgres-ssl:18",
+              "repo": null
+            }
+          }
+        ]
+      },
+      {
+        "id": "efe9f84c-7d05-4698-be00-452c22b47ec7",
+        "name": "Theresians-Monitoring-System",
+        "instances": [
+          {
+            "id": "0ed7d803-8705-4239-8988-81d18b7aec98",
+            "environmentId": "f451f63b-55ed-46f5-abe3-53a439ac1fec",
+            "rootDirectory": "/capstone",
+            "buildCommand": "npm run build && npm --prefix backend ci --omit=dev",
+            "startCommand": "npm --prefix backend start",
+            "railwayConfigFile": "/capstone/railway.toml",
+            "source": {
+              "image": null,
+              "repo": "Binsentt/Theresians-Monitoring-System"
+            }
+          }
+        ]
+      }
+    ],
+    "triggers": [
+      {
+        "id": "abca3527-0fe1-4bfe-a3fa-d40533767bb6",
+        "provider": "github",
+        "repository": "Binsentt/Theresians-Monitoring-System",
+        "branch": "main",
+        "serviceId": "efe9f84c-7d05-4698-be00-452c22b47ec7",
+        "environmentId": "f451f63b-55ed-46f5-abe3-53a439ac1fec",
+        "checkSuites": false,
+        "validCheckSuites": 0
+      }
+    ],
+    "variableNames": [
+      "DATABASE_URL",
+      "EMAIL_FROM",
+      "EMAIL_FROM_NAME",
+      "NODE_ENV",
+      "RAILPACK_INSTALL_CMD",
+      "RAILPACK_INSTALL_COMMAND",
+      "RAILPACK_START_CMD",
+      "RAILWAY_ENVIRONMENT",
+      "RAILWAY_ENVIRONMENT_ID",
+      "RAILWAY_ENVIRONMENT_NAME",
+      "RAILWAY_PRIVATE_DOMAIN",
+      "RAILWAY_PROJECT_ID",
+      "RAILWAY_PROJECT_NAME",
+      "RAILWAY_PUBLIC_DOMAIN",
+      "RAILWAY_SERVICE_ID",
+      "RAILWAY_SERVICE_NAME",
+      "RAILWAY_SERVICE_THERESIANS_MONITORING_SYSTEM_URL",
+      "RAILWAY_STATIC_URL",
+      "RESEND_API_KEY"
+    ]
+  },
+  {
+    "time": "2026-05-24T17:36:19.911Z",
+    "step": "graphql-deployments",
+    "mode": "project-token",
+    "deployments": [
+      {
+        "id": "145d00fa-ce51-4a7b-8239-73583727e1ef",
+        "status": "SUCCESS",
+        "createdAt": "2026-05-24T17:34:52.716Z",
+        "canRedeploy": true,
+        "commitHash": "781d0e49dedd30e516825a58395905668d26a370",
+        "commitMessage": "fix: publish current production frontend build",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T17:07:48.734Z",
+        "canRedeploy": true,
+        "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+        "commitMessage": "fix: stabilize production lesson and announcement flows",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "3ba48c62-aba4-44dc-b726-b8b844625634",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T17:01:26.732Z",
+        "canRedeploy": true,
+        "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+        "commitMessage": "fix: stabilize production lesson and announcement flows",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "22d3ceea-bbb1-475d-9c3f-064c3ff898dc",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T17:00:28.403Z",
+        "canRedeploy": true,
+        "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+        "commitMessage": "fix: stabilize production lesson and announcement flows",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "35f4cbab-47cf-437c-8678-e37ff88404f2",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T15:24:32.799Z",
+        "canRedeploy": true,
+        "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+        "commitMessage": "fix: stabilize production lesson and announcement flows",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "0fdd1c1d-3bc5-4e9f-ad24-3afeb14e901c",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T12:04:21.585Z",
+        "canRedeploy": true,
+        "commitHash": null,
+        "commitMessage": "",
+        "branch": null,
+        "repo": null,
+        "root": "/capstone"
+      },
+      {
+        "id": "5fa90159-dcca-472b-9155-a4e6eff6a7ae",
+        "status": "FAILED",
+        "createdAt": "2026-05-24T12:03:48.146Z",
+        "canRedeploy": true,
+        "commitHash": "b0fda0fa4867b0cd412693702b5fdd5401c05796",
+        "commitMessage": "Fix announcements & lesson-question code and tests",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "04f73191-aa38-44c8-9102-317473cd5503",
+        "status": "FAILED",
+        "createdAt": "2026-05-24T12:03:36.044Z",
+        "canRedeploy": true,
+        "commitHash": "77a28a4810a62e215e6fa2d0ccdbc2a729272830",
+        "commitMessage": "fix: force redeploy UTF-8 fixed ParentDashboard",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "a34dc280-72c2-4dfb-b960-f189d554104a",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T12:03:30.161Z",
+        "canRedeploy": true,
+        "commitHash": "69034294bb8b720655140f917b772e135eb904a9",
+        "commitMessage": "fix: sync capstone package-lock with package.json for Railway build",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "6ca8f865-3ed6-4c2f-918c-3dcda5e3b1f5",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T12:01:44.087Z",
+        "canRedeploy": true,
+        "commitHash": "716e5f650294d5545835b16293077337c2faa7c1",
+        "commitMessage": "fix: persist Railway production stabilization",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "d90b04be-27d4-402a-8717-daeac9672d09",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T12:01:35.505Z",
+        "canRedeploy": true,
+        "commitHash": "69034294bb8b720655140f917b772e135eb904a9",
+        "commitMessage": "fix: sync capstone package-lock with package.json for Railway build",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "d83af5e3-b5ae-4376-9073-5867d8b58373",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T12:01:24.867Z",
+        "canRedeploy": true,
+        "commitHash": null,
+        "commitMessage": "",
+        "branch": null,
+        "repo": null,
+        "root": "/capstone"
+      },
+      {
+        "id": "b3bb1f62-4f6a-4089-b140-e8c267805c89",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T11:59:10.954Z",
+        "canRedeploy": true,
+        "commitHash": null,
+        "commitMessage": "",
+        "branch": null,
+        "repo": null,
+        "root": "/capstone"
+      },
+      {
+        "id": "8f599f43-2277-47f6-b5af-17b206a61f60",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T11:59:04.160Z",
+        "canRedeploy": true,
+        "commitHash": "69034294bb8b720655140f917b772e135eb904a9",
+        "commitMessage": "fix: sync capstone package-lock with package.json for Railway build",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "358456d6-b9df-42fe-99d1-b5795acd1871",
+        "status": "FAILED",
+        "createdAt": "2026-05-24T11:58:44.290Z",
+        "canRedeploy": true,
+        "commitHash": "64e969501f6ef5adea15253b3538113d97dd9579",
+        "commitMessage": "chore: bust Railway build cache",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "6197d0f7-1ce4-4075-8015-97b561fae34a",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T11:18:39.981Z",
+        "canRedeploy": true,
+        "commitHash": "716e5f650294d5545835b16293077337c2faa7c1",
+        "commitMessage": "fix: persist Railway production stabilization",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "23b91254-d633-4d25-aa52-d9d4cb63b4f6",
+        "status": "FAILED",
+        "createdAt": "2026-05-24T11:18:34.071Z",
+        "canRedeploy": true,
+        "commitHash": "64e969501f6ef5adea15253b3538113d97dd9579",
+        "commitMessage": "chore: bust Railway build cache",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "84a81c78-99b8-4c2f-a5aa-cecbe417f03e",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T11:18:29.602Z",
+        "canRedeploy": true,
+        "commitHash": "69034294bb8b720655140f917b772e135eb904a9",
+        "commitMessage": "fix: sync capstone package-lock with package.json for Railway build",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "86844530-79f3-47b9-94e2-4d231e714133",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T11:17:57.085Z",
+        "canRedeploy": true,
+        "commitHash": null,
+        "commitMessage": "",
+        "branch": null,
+        "repo": null,
+        "root": "/capstone"
+      },
+      {
+        "id": "9c86aaea-b226-42dd-852a-9ee36583dea3",
+        "status": "FAILED",
+        "createdAt": "2026-05-24T11:16:03.448Z",
+        "canRedeploy": true,
+        "commitHash": "c2c543f2bd507ce5b225f54b015f739cb50eed94",
+        "commitMessage": "chore: trigger Railway redeploy with Nixpacks",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "d33991c5-8d5c-4b66-8a26-9d95aeb6f1c2",
+        "status": "FAILED",
+        "createdAt": "2026-05-24T11:15:54.293Z",
+        "canRedeploy": true,
+        "commitHash": "c2c543f2bd507ce5b225f54b015f739cb50eed94",
+        "commitMessage": "chore: trigger Railway redeploy with Nixpacks",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "09a8a0f9-ca8e-45bf-bade-ee20f39c1e80",
+        "status": "FAILED",
+        "createdAt": "2026-05-24T11:15:50.410Z",
+        "canRedeploy": true,
+        "commitHash": "c2c543f2bd507ce5b225f54b015f739cb50eed94",
+        "commitMessage": "chore: trigger Railway redeploy with Nixpacks",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "0979df3e-33c2-4334-941d-9530ec6f59b1",
+        "status": "FAILED",
+        "createdAt": "2026-05-24T11:15:45.524Z",
+        "canRedeploy": true,
+        "commitHash": "c2c543f2bd507ce5b225f54b015f739cb50eed94",
+        "commitMessage": "chore: trigger Railway redeploy with Nixpacks",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "75af4edf-a520-463c-92b4-2f91837e88f2",
+        "status": "FAILED",
+        "createdAt": "2026-05-24T11:14:32.999Z",
+        "canRedeploy": true,
+        "commitHash": "c2c543f2bd507ce5b225f54b015f739cb50eed94",
+        "commitMessage": "chore: trigger Railway redeploy with Nixpacks",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "3ad15633-1dea-490c-874c-c2d29b11578a",
+        "status": "FAILED",
+        "createdAt": "2026-05-24T11:14:29.887Z",
+        "canRedeploy": true,
+        "commitHash": "c2c543f2bd507ce5b225f54b015f739cb50eed94",
+        "commitMessage": "chore: trigger Railway redeploy with Nixpacks",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "a971ede3-b9d7-4e81-b0a1-2fabcc668abd",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T11:14:13.368Z",
+        "canRedeploy": true,
+        "commitHash": null,
+        "commitMessage": "",
+        "branch": null,
+        "repo": null,
+        "root": "/capstone"
+      },
+      {
+        "id": "1b829b0b-db0a-46e3-83eb-33eabed67223",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T11:14:09.024Z",
+        "canRedeploy": true,
+        "commitHash": null,
+        "commitMessage": "",
+        "branch": null,
+        "repo": null,
+        "root": "/capstone"
+      },
+      {
+        "id": "e7f8930c-3ef8-4a20-adb9-376b693fc38b",
+        "status": "FAILED",
+        "createdAt": "2026-05-24T11:14:04.728Z",
+        "canRedeploy": true,
+        "commitHash": "77a28a4810a62e215e6fa2d0ccdbc2a729272830",
+        "commitMessage": "fix: force redeploy UTF-8 fixed ParentDashboard",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      },
+      {
+        "id": "e6d0b0d4-40fc-47e0-a38f-fd2a913e80ca",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T11:14:01.787Z",
+        "canRedeploy": true,
+        "commitHash": null,
+        "commitMessage": "",
+        "branch": null,
+        "repo": null,
+        "root": "/capstone"
+      },
+      {
+        "id": "1f48e73a-27f4-4b04-a156-613204893bd6",
+        "status": "REMOVED",
+        "createdAt": "2026-05-24T11:13:58.275Z",
+        "canRedeploy": true,
+        "commitHash": "69034294bb8b720655140f917b772e135eb904a9",
+        "commitMessage": "fix: sync capstone package-lock with package.json for Railway build",
+        "branch": "main",
+        "repo": "Binsentt/Theresians-Monitoring-System",
+        "root": "/capstone"
+      }
+    ]
+  },
+  {
+    "time": "2026-05-24T17:36:19.912Z",
+    "step": "target-deployment",
+    "deployment": {
+      "id": "a1e32d80-f644-47c7-acc6-193efb979739",
+      "status": "REMOVED",
+      "createdAt": "2026-05-24T17:07:48.734Z",
+      "canRedeploy": true,
+      "commitHash": "7c57831dcfb1a33be330eaa9061bca5ca87e263c",
+      "commitMessage": "fix: stabilize production lesson and announcement flows",
+      "branch": "main",
+      "repo": "Binsentt/Theresians-Monitoring-System",
+      "root": "/capstone"
+    }
+  },
+  {
+    "time": "2026-05-24T17:36:22.464Z",
+    "step": "target-build-logs",
+    "deploymentId": "a1e32d80-f644-47c7-acc6-193efb979739",
+    "status": 0,
+    "stdout": "{\"message\":\"scheduling build on Metal builder \\\"production-builderv3-us-west1-g0mp\\\"\",\"timestamp\":\"2026-05-24T17:07:51.471771893Z\",\"level\":\"info\"}\n{\"duration_ms\":392,\"size\":161679360,\"source\":\"railway.progress\",\"timestamp\":\"2026-05-24T17:07:56.939434271Z\",\"level\":\"info\",\"status\":\"complete\",\"message\":\"unpacking archive\"}\n{\"message\":\"using build driver nixpacks-v1.41.0\",\"timestamp\":\"2026-05-24T17:07:57.009745170Z\",\"level\":\"info\"}\n{\"level\":\"info\",\"message\":\"\",\"timestamp\":\"2026-05-24T17:07:57.343662584Z\"}\n{\"message\":\"╔════════════════════════ Nixpacks v1.41.0 ════════════════════════╗\",\"timestamp\":\"2026-05-24T17:07:57.343666968Z\",\"level\":\"info\"}\n{\"level\":\"info\",\"message\":\"║ setup      │ nodejs_20, npm-9_x                                  ║\",\"timestamp\":\"2026-05-24T17:07:57.343668569Z\"}\n{\"level\":\"info\",\"timestamp\":\"2026-05-24T17:07:57.343670192Z\",\"message\":\"║──────────────────────────────────────────────────────────────────║\"}\n{\"level\":\"info\",\"timestamp\":\"2026-05-24T17:07:57.343671137Z\",\"message\":\"║ install    │ npm ci                                              ║\"}\n{\"message\":\"║──────────────────────────────────────────────────────────────────║\",\"timestamp\":\"2026-05-24T17:07:57.343675621Z\",\"level\":\"info\"}\n{\"message\":\"║ build      │ npm run build && npm --prefix backend ci --omit=dev ║\",\"timestamp\":\"2026-05-24T17:07:57.343676479Z\",\"level\":\"info\"}\n{\"timestamp\":\"2026-05-24T17:07:57.343677666Z\",\"message\":\"║──────────────────────────────────────────────────────────────────║\",\"level\":\"info\"}\n{\"message\":\"║ start      │ npm --prefix backend start                          ║\",\"timestamp\":\"2026-05-24T17:07:57.343678440Z\",\"level\":\"info\"}\n{\"timestamp\":\"2026-05-24T17:07:57.343679748Z\",\"message\":\"╚══════════════════════════════════════════════════════════════════╝\",\"level\":\"info\"}\n{\"message\":\"\",\"timestamp\":\"2026-05-24T17:07:57.343680330Z\",\"level\":\"info\"}\n{\"message\":\"\",\"level\":\"info\",\"timestamp\":\"2026-05-24T17:07:57.343680800Z\"}\n{\"level\":\"info\",\"timestamp\":\"2026-05-24T17:07:57.343681780Z\",\"message\":\"Saved output to:\"}\n{\"timestamp\":\"2026-05-24T17:07:57.343682957Z\",\"message\":\"  snapshot-target-unpack/capstone\",\"level\":\"info\"}\n{\"message\":\"[internal] load build definition from Dockerfile\",\"timestamp\":\"2026-05-24T17:07:57.410358443Z\",\"source\":\"buildkit\",\"type\":\"vertex\",\"digest\":\"sha256:<redacted-long-value>\",\"level\":\"info\"}\n{\"source\":\"buildkit\",\"completed\":\"2026-05-24T17:07:57.409712953Z\",\"level\":\"info\",\"type\":\"vertex\",\"started\":\"2026-05-24T17:07:57.409681662Z\",\"message\":\"[internal] load build definition from Dockerfile\",\"timestamp\":\"2026-05-24T17:07:57.410359535Z\",\"digest\":\"sha256:<redacted-long-value>\"}\n{\"message\":\"[internal] load build definition from Dockerfile\",\"type\":\"vertex\",\"timestamp\":\"2026-05-24T17:07:57.410839769Z\",\"level\":\"info\",\"source\":\"buildkit\",\"digest\":\"sha256:<redacted-long-value>\",\"started\":\"2026-05-24T17:07:57.410725238Z\"}\n{\"started\":\"2026-05-24T17:07:57.410725238Z\",\"message\":\"[internal] load build definition from Dockerfile\",\"timestamp\":\"2026-05-24T17:07:57.435556641Z\",\"source\":\"buildkit\",\"type\":\"vertex\",\"digest\":\"sha256:<redacted-long-value>\",\"completed\":\"2026-05-24T17:07:57.435389967Z\",\"level\":\"info\"}\n{\"type\":\"vertex\",\"started\":\"2026-05-24T17:07:57.446388257Z\",\"timestamp\":\"2026-05-24T17:07:57.446586388Z\",\"source\":\"buildkit\",\"level\":\"info\",\"message\":\"[internal] load metadata for ghcr.io/railwayapp/nixpacks:ubuntu-1745885067\",\"digest\":\"sha256:<redacted-long-value>\"}\n{\"started\":\"2026-05-24T17:07:57.446388257Z\",\"type\":\"vertex\",\"level\":\"info\",\"digest\":\"sha256:<redacted-long-value>\",\"source\":\"buildkit\",\"completed\":\"2026-05-24T17:07:57.618179744Z\",\"message\":\"[internal] load metadata for ghcr.io/railwayapp/nixpacks:ubuntu-1745885067\",\"timestamp\":\"2026-05-24T17:07:57.618377162Z\"}\n{\"level\":\"info\",\"message\":\"[internal] load .dockerignore\",\"timestamp\":\"2026-05-24T17:07:57.618851680Z\",\"source\":\"buildkit\",\"type\":\"vertex\",\"digest\":\"sha256:<redacted-long-value>\"}\n{\"started\":\"2026-05-24T17:07:57.618808346Z\",\"timestamp\":\"2026-05-24T17:07:57.618948733Z\",\"completed\":\"2026-05-24T17:07:57.618837326Z\",\"source\":\"buildkit\",\"message\":\"[internal] load .dockerignore\",\"digest\":\"sha256:<redacted-long-value>\",\"level\":\"info\",\"type\":\"vertex\"}\n{\"message\":\"[internal] load .dockerignore\",\"started\":\"2026-05-24T17:07:57.619502386Z\",\"digest\":\"sha256:<redacted-long-value>\",\"timestamp\":\"2026-05-24T17:07:57.619664546Z\",\"level\":\"info\",\"type\":\"vertex\",\"source\":\"buildkit\"}\n{\"timestamp\":\"2026-05-24T17:07:57.647407305Z\",\"digest\":\"sha256:<redacted-long-value>\",\"source\":\"buildkit\",\"completed\":\"2026-05-24T17:07:57.647247999Z\",\"level\":\"info\",\"type\":\"vertex\",\"started\":\"2026-05-24T17:07:57.619502386Z\",\"message\":\"[internal] load .dockerignore\"}\n{\"timestamp\":\"2026-05-24T17:07:57.657762920Z\",\"level\":\"warn\",\"type\":\"warn\",\"message\":\"SecretsUsedInArgOrEnv: Do not use ARG or ENV instructions for sensitive data (ARG \\\"RESEND_API_KEY\\\") (line 11)(https://docs.docker.com/go/dockerfile/rule/secrets-used-in-arg-or-env/)\\n details: Sensitive data should not be used in the ARG or ENV commands\\n\",\"sourceInfo\":{\"data\":\"<redacted-long-value>+<redacted-long-value>==\",\"definition\":{\"Source\":{\"locations\":{\"sha256:<redacted-long-value>\":{}}},\"def\":[\"<redacted-long-value>==\",\"<redacted-long-value>\"],\"metadata\":{\"sha256:<redacted-long-value>\":{\"caps\":{\"constraints\":true,\"meta.description\":true,\"platform\":true}},\"sha256:<redacted-long-value>\":{\"caps\":{\"source.local\":true,\"source.local.followpaths\":true,\"source.local.sessionid\":true,\"source.local.sharedkeyhint\":true},\"description\":{\"llb.customname\":\"[internal] load build definition from Dockerfile\"}}}},\"filename\":\"Dockerfile\",\"language\":\"Dockerfile\"},\"vertex\":\"sha256:<redacted-long-value>\",\"range\":[{\"end\":{\"line\":11},\"start\":{\"line\":11}}],\"source\":\"buildkit\"}\n{\"timestamp\":\"2026-05-24T17:07:57.658170227Z\",\"level\":\"warn\",\"sourceInfo\":{\"data\":\"<redacted-long-value>+<redacted-long-value>==\",\"definition\":{\"Source\":{\"locations\":{\"sha256:<redacted-long-value>\":{}}},\"def\":[\"<redacted-long-value>==\",\"<redacted-long-value>\"],\"metadata\":{\"sha256:<redacted-long-value>\":{\"caps\":{\"constraints\":true,\"meta.description\":true,\"platform\":true}},\"sha256:<redacted-long-value>\":{\"caps\":{\"source.local\":true,\"source.local.followpaths\":true,\"source.local.sessionid\":true,\"source.local.sharedkeyhint\":true},\"description\":{\"llb.customname\":\"[internal] load build definition from Dockerfile\"}}}},\"filename\":\"Dockerfile\",\"language\":\"Dockerfile\"},\"source\":\"buildkit\",\"type\":\"warn\",\"range\":[{\"end\":{\"line\":12},\"start\":{\"line\":12}}],\"message\":\"SecretsUsedInArgOrEnv: Do not use ARG or ENV instructions for sensitive data (ENV \\\"RESEND_API_KEY\\\") (line 12)(https://docs.docker.com/go/dockerfile/rule/secrets-used-in-arg-or-env/)\\n details: Sensitive data should not be used in the ARG or ENV commands\\n\",\"vertex\":\"sha256:<redacted-long-value>\"}\n{\"level\":\"warn\",\"message\":\"UndefinedVar: Usage of undefined variable '$NIXPACKS_PATH' (line 18)(https://docs.docker.com/go/dockerfile/rule/undefined-var/)\\n details: Variables should be defined before their use\\n\",\"sourceInfo\":{\"data\":\"<redacted-long-value>+<redacted-long-value>==\",\"definition\":{\"Source\":{\"locations\":{\"sha256:<redacted-long-value>\":{}}},\"def\":[\"<redacted-long-value>==\",\"<redacted-long-value>\"],\"metadata\":{\"sha256:<redacted-long-value>\":{\"caps\":{\"constraints\":true,\"meta.description\":true,\"platform\":true}},\"sha256:<redacted-long-value>\":{\"caps\":{\"source.local\":true,\"source.local.followpaths\":true,\"source.local.sessionid\":true,\"source.local.sharedkeyhint\":true},\"description\":{\"llb.customname\":\"[internal] load build definition from Dockerfile\"}}}},\"filename\":\"Dockerfile\",\"language\":\"Dockerfile\"},\"timestamp\":\"2026-05-24T17:07:57.658170856Z\",\"range\":[{\"end\":{\"line\":18},\"start\":{\"line\":18}}],\"source\":\"buildkit\",\"vertex\":\"sha256:<redacted-long-value>\",\"type\":\"warn\"}\n{\"timestamp\":\"2026-05-24T17:07:57.660885555Z\",\"source\":\"buildkit\",\"inputs\":[\"sha256:<redacted-long-value>\",\"sha256:<redacted-long-value>\"],\"level\":\"info\",\"message\":\"[stage-0 10/10] COPY . /app\",\"digest\":\"sha256:<redacted-long-value>\",\"type\":\"vertex\"}\n{\"message\":\"[stage-0  9/10] RUN printf '\\\\nPATH=/app/node_modules/.bin:$PATH' >> /root/.profile\",\"source\":\"buildkit\",\"timestamp\":\"2026-05-24T17:07:57.660886311Z\",\"type\":\"vertex\",\"inputs\":[\"sha256:<redacted-long-value>\"],\"level\":\"info\",\"digest\":\"sha256:<redacted-long-value>\"}\n{\"source\":\"buildkit\",\"type\":\"vertex\",\"inputs\":[\"sha256:<redacted-long-value>\"],\"message\":\"[stage-0  8/10] RUN --mount=type=cache,id=s/<redacted-long-value>/cache,target=/app/node_modules/.cache npm run build && npm --prefix backend ci --omit=dev\",\"level\":\"info\",\"digest\":\"sha256:<redacted-long-value>\",\"timestamp\":\"2026-05-24T17:07:57.660886666Z\"}\n{\"message\":\"[stage-0  7/10] COPY . /app/.\",\"level\":\"info\",\"digest\":\"sha256:<redacted-long-value>\",\"source\":\"buildkit\",\"inputs\":[\"sha256:<redacted-long-value>\",\"sha256:<redacted-long-value>\"],\"timestamp\":\"2026-05-24T17:07:57.660887072Z\",\"type\":\"vertex\"}\n{\"timestamp\":\"2026-05-24T17:07:57.660887436Z\",\"type\":\"vertex\",\"inputs\":[\"sha256:<redacted-long-value>\"],\"digest\":\"sha256:<redacted-long-value>\",\"source\":\"buildkit\",\"level\":\"info\",\"message\":\"[stage-0  6/10] RUN --mount=type=cache,id=s/efe9f84c-7d05-4698-be00-452c22b47ec7-/root/npm,target=/root/.npm npm ci\"}\n{\"message\":\"[stage-0  5/10] COPY . /app/.\",\"inputs\":[\"sha256:<redacted-long-value>\",\"sha256:<redacted-long-value>\"],\"timestamp\":\"2026-05-24T17:07:57.660887773Z\",\"source\":\"buildkit\",\"level\":\"info\",\"digest\":\"sha256:<redacted-long-value>\",\"type\":\"vertex\"}\n{\"source\":\"buildkit\",\"inputs\":[\"sha256:<redacted-long-value>\"],\"level\":\"info\",\"digest\":\"sha256:<redacted-long-value>\",\"message\":\"[stage-0  4/10] RUN nix-env -if .nixpacks/<redacted-long-value>.nix && nix-collect-garbage -d\",\"timestamp\":\"2026-05-24T17:07:57.660888161Z\",\"type\":\"vertex\"}\n{\"source\":\"buildkit\",\"level\":\"info\",\"inputs\":[\"sha256:<redacted-long-value>\",\"sha256:<redacted-long-value>\"],\"timestamp\":\"2026-05-24T17:07:57.660888549Z\",\"message\":\"[stage-0  3/10] COPY .nixpacks/<redacted-long-value>.nix .nixpacks/<redacted-long-value>.nix\",\"digest\":\"sha256:<redacted-long-value>\",\"type\":\"vertex\"}\n{\"message\":\"[internal] load build context\",\"type\":\"vertex\",\"source\":\"buildkit\",\"level\":\"info\",\"digest\":\"sha256:<redacted-long-value>\",\"timestamp\":\"2026-05-24T17:07:57.660888890Z\"}\n{\"digest\":\"sha256:<redacted-long-value>\",\"level\":\"info\",\"timestamp\":\"2026-05-24T17:07:57.660889323Z\",\"source\":\"buildkit\",\"type\":\"vertex\",\"inputs\":[\"sha256:<redacted-long-value>\"],\"message\":\"[stage-0  2/15] WORKDIR /app/\"}\n{\"source\":\"buildkit\",\"completed\":\"2026-05-24T17:05:32.18948388Z\",\"started\":\"2026-05-24T17:05:32.179245338Z\",\"type\":\"vertex\",\"digest\":\"sha256:<redacted-long-value>\",\"message\":\"[stage-0  1/15] FROM ghcr.io/railwayapp/nixpacks:ubuntu-1745885067@sha256:<redacted-long-value>\",\"timestamp\":\"2026-05-24T17:07:57.660889580Z\",\"level\":\"info\"}\n{\"message\":\"[stage-0  1/15] FROM ghcr.io/railwayapp/nixpacks:ubuntu-1745885067@sha256:<redacted-long-value>\",\"timestamp\":\"2026-05-24T17:07:57.660889836Z\",\"type\":\"vertex\",\"level\":\"info\",\"started\":\"2026-05-24T17:05:32.179245338Z\",\"completed\":\"2026-05-24T17:05:32.18948388Z\",\"source\":\"buildkit\",\"digest\":\"sha256:<redacted-long-value>\"}\n{\"completed\":\"2026-05-24T17:07:57.660816325Z\",\"source\":\"buildkit\",\"digest\":\"sha256:<redacted-long-value>\",\"started\":\"2026-05-24T17:07:57.660792221Z\",\"type\":\"vertex\",\"timestamp\":\"2026-05-24T17:07:57.660893261Z\",\"message\":\"[internal] load build context\",\"level\":\"info\"}\n{\"started\":\"2026-05-24T17:07:57.662565937Z\",\"source\":\"buildkit\",\"timestamp\":\"2026-05-24T17:07:57.662735327Z\",\"type\":\"vertex\",\"message\":\"[internal] load build context\",\"level\":\"info\",\"digest\":\"sha256:<redacted-long-value>\"}\n{\"source\":\"buildkit\",\"timestamp\":\"2026-05-24T17:07:58.262624347Z\",\"completed\":\"2026-05-24T17:07:58.262466035Z\",\"started\":\"2026-05-24T17:07:57.662565937Z\",\"message\":\"[internal] load build context\",\"level\":\"info\",\"type\":\"vertex\",\"digest\":\"sha256:<redacted-long-value>\"}\n{\"completed\":\"2026-05-24T17:07:58.287691234Z\",\"source\":\"buildkit\",\"inputs\":[\"sha256:<redac",
+    "stderr": "",
+    "error": null,
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:36:25.087Z",
+    "step": "target-runtime-logs",
+    "deploymentId": "a1e32d80-f644-47c7-acc6-193efb979739",
+    "status": 0,
+    "stdout": "{\"timestamp\":\"2026-05-24T17:10:25.983101178Z\",\"level\":\"info\",\"message\":\"Starting Container\"}\n{\"level\":\"info\",\"message\":\"  appUrl: 'https://theresiansquest.com/login'\",\"timestamp\":\"2026-05-24T17:10:26.767140183Z\"}\n{\"level\":\"info\",\"timestamp\":\"2026-05-24T17:10:26.767151929Z\",\"message\":\"}\"}\n{\"message\":\"✅ Server running at http://localhost:8080\",\"timestamp\":\"2026-05-24T17:10:26.767158156Z\",\"level\":\"info\"}\n{\"timestamp\":\"2026-05-24T17:10:26.767172715Z\",\"level\":\"info\",\"message\":\"\"}\n{\"message\":\"> theresian-backend@1.0.0 start\",\"timestamp\":\"2026-05-24T17:10:26.767179244Z\",\"level\":\"info\"}\n{\"level\":\"info\",\"timestamp\":\"2026-05-24T17:10:26.767185144Z\",\"message\":\"> node server.js\"}\n{\"message\":\"\",\"level\":\"info\",\"timestamp\":\"2026-05-24T17:10:26.767192019Z\"}\n{\"message\":\"Resend email delivery configured {\",\"level\":\"info\",\"timestamp\":\"2026-05-24T17:10:26.767197909Z\"}\n{\"message\":\"  primaryProvider: 'resend',\",\"timestamp\":\"2026-05-24T17:10:26.767203890Z\",\"level\":\"info\"}\n{\"timestamp\":\"2026-05-24T17:10:26.767208350Z\",\"level\":\"error\",\"message\":\"npm warn config production Use `--omit=dev` instead.\"}\n{\"timestamp\":\"2026-05-24T17:10:26.767215065Z\",\"level\":\"info\",\"message\":\"  resendEnabled: true,\"}\n{\"timestamp\":\"2026-05-24T17:10:26.767222510Z\",\"level\":\"info\",\"message\":\"  hasResendApiKey: <redacted>\n{\"level\":\"info\",\"message\":\"  smtpHost: null,\",\"timestamp\":\"2026-05-24T17:10:26.767229219Z\"}\n{\"timestamp\":\"2026-05-24T17:10:26.767235760Z\",\"message\":\"  smtpPort: null,\",\"level\":\"info\"}\n{\"level\":\"info\",\"message\":\"  smtpSecure: null,\",\"timestamp\":\"2026-05-24T17:10:26.767245463Z\"}\n{\"level\":\"info\",\"timestamp\":\"2026-05-24T17:10:26.767252943Z\",\"message\":\"  smtpService: null,\"}\n{\"message\":\"  hasEmailUser: false,\",\"level\":\"info\",\"timestamp\":\"2026-05-24T17:10:26.767261715Z\"}\n{\"timestamp\":\"2026-05-24T17:10:26.767268872Z\",\"level\":\"info\",\"message\":\"  hasEmailPass: false,\"}\n{\"level\":\"info\",\"message\":\"  hasEmailFrom: true,\",\"timestamp\":\"2026-05-24T17:10:26.767274528Z\"}\n{\"level\":\"info\",\"message\":\"Stopping Container\",\"timestamp\":\"2026-05-24T17:36:12.487185817Z\"}\n{\"timestamp\":\"2026-05-24T17:36:14.256134473Z\",\"level\":\"error\",\"message\":\"npm error path /app/backend\"}\n{\"message\":\"npm error command failed\",\"timestamp\":\"2026-05-24T17:36:14.256154377Z\",\"level\":\"error\"}\n{\"message\":\"npm error signal SIGTERM\",\"timestamp\":\"2026-05-24T17:36:14.256160781Z\",\"level\":\"error\"}\n{\"message\":\"npm error command sh -c node server.js\",\"timestamp\":\"2026-05-24T17:36:14.256166720Z\",\"level\":\"error\"}\n{\"message\":\"npm error A complete log of this run can be found in: /root/.npm/_logs/2026-05-24T17_10_25_874Z-debug-0.log\",\"timestamp\":\"2026-05-24T17:36:14.256172823Z\",\"level\":\"error\"}\n",
+    "stderr": "",
+    "error": null,
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:36:27.239Z",
+    "step": "http-error-logs",
+    "status": 0,
+    "stdout": "",
+    "stderr": "",
+    "error": null,
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:36:30.028Z",
+    "step": "runtime-files-app-build-js",
+    "status": 1,
+    "stdout": "",
+    "stderr": "Failed to list /app/build/static/js after reconnect\n\nCaused by:\n    No SSH private keys were found in ~/.ssh. Generate one with `ssh-keygen -t ed25519`, then register it with `railway ssh keys add`.\n",
+    "error": null,
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:36:32.054Z",
+    "step": "runtime-files-app-capstone-build-js",
+    "status": 1,
+    "stdout": "",
+    "stderr": "No SSH private keys were found in ~/.ssh. Generate one with `ssh-keygen -t ed25519`, then register it with `railway ssh keys add`.\n",
+    "error": null,
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:36:33.856Z",
+    "step": "runtime-files-app-root",
+    "status": 1,
+    "stdout": "",
+    "stderr": "No SSH private keys were found in ~/.ssh. Generate one with `ssh-keygen -t ed25519`, then register it with `railway ssh keys add`.\n",
+    "error": null,
+    "signal": null
+  },
+  {
+    "time": "2026-05-24T17:36:37.176Z",
+    "step": "live-bundle-now",
+    "pageStatus": 200,
+    "pageLastModified": "Sun, 24 May 2026 17:34:47 GMT",
+    "pageCacheControl": "public, max-age=0",
+    "pageServer": "railway-edge",
+    "scripts": [
+      "/static/js/main.ffeaa1f7.js"
+    ],
+    "manifestStatus": 200,
+    "manifestMainJs": "/static/js/main.ffeaa1f7.js",
+    "manifestMainCss": "/static/css/main.6d9a38a4.css",
+    "bundlePath": "/static/js/main.ffeaa1f7.js",
+    "bundleStatus": 200,
+    "bundleBytes": 753204,
+    "hasBasicAddition": true,
+    "hasNormalAverage": true,
+    "hasLocalhost": false
+  }
+]
