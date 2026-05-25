@@ -72,4 +72,39 @@ describe('LoginScreen OTP device controls', () => {
       deviceId: 'browser-device-123',
     });
   });
+
+  test('routes successful login to the role dashboard even when mustChangePassword is true', async () => {
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => ({
+        success: true,
+        mustChangePassword: true,
+        user: {
+          id: 25,
+          name: 'Parent User',
+          email: 'parent@example.com',
+          role: 'parent',
+          mustChangePassword: true,
+        },
+      }),
+    }));
+
+    await act(async () => {
+      root.render(<LoginScreen />);
+    });
+
+    const inputs = container.querySelectorAll('input');
+    await act(async () => {
+      setInputValue(inputs[0], 'parent@example.com');
+      setInputValue(inputs[1], 'GeneratedPassword123!');
+    });
+
+    const loginButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'LOGIN');
+    await act(async () => {
+      loginButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('/parent-dashboard');
+    expect(mockNavigate).not.toHaveBeenCalledWith('/change-password', { replace: true });
+  });
 });

@@ -80,7 +80,7 @@ const buildCredentialsEmail = ({ email, password, name }) => {
   const safePassword = escapeHtml(password);
 
   return {
-    subject: 'Welcome to Saint Therese School Portal — Your Account is Ready',
+    subject: 'Welcome to Saint Therese School Portal \u2014 Your Account is Ready',
     html: `<!doctype html>
 <html>
   <body style="margin: 0; padding: 0; background: #f1f5f9; font-family: Arial, Helvetica, sans-serif; color: #0f172a;">
@@ -112,7 +112,7 @@ const buildCredentialsEmail = ({ email, password, name }) => {
                     <td style="padding: 0; color: #0f172a; font-size: 18px; font-weight: 800; word-break: break-word;">${safePassword}</td>
                   </tr>
                 </table>
-                <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.7;">Please log in at your earliest convenience and change your password immediately after your first login for security purposes.</p>
+                <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.7;">Please login using the generated password first, then change your password in Settings after logging in.</p>
                 <p style="margin: 0 0 22px; font-size: 15px; line-height: 1.7;">If you have any questions or need assistance, please contact the school administrator.</p>
                 <p style="margin: 0; font-size: 15px; line-height: 1.7;">God bless,<br/>Saint Therese School<br/>Monitoring and Learning Portal</p>
               </td>

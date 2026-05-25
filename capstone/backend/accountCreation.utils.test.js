@@ -28,12 +28,13 @@ test('credential email builder uses the approved Saint Therese welcome letter', 
     appUrl: 'http://localhost:3000/login',
   });
 
-  assert.equal(parentEmail.subject, 'Welcome to Saint Therese School Portal — Your Account is Ready');
+  assert.equal(parentEmail.subject, 'Welcome to Saint Therese School Portal \u2014 Your Account is Ready');
   assert.match(parentEmail.html, /Dear Parent User,/);
   assert.match(parentEmail.html, /Welcome to the Saint Therese School Monitoring System!/);
   assert.match(parentEmail.html, /Your account has been created by the school administrator/);
   assert.match(parentEmail.html, /Email:/);
   assert.match(parentEmail.html, /Temporary Password:/);
+  assert.match(parentEmail.html, /Please login using the generated password first, then change your password in Settings after logging in\./);
   assert.match(parentEmail.html, /Monitoring and Learning Portal/);
   assert.doesNotMatch(parentEmail.html, /Account Type:/);
   assert.doesNotMatch(parentEmail.html, /Role:\s*Parent/i);

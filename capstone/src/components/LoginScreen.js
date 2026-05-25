@@ -63,11 +63,6 @@ export default function LoginScreen() {
     const role = normalizeRole(sessionUser.role);
     alert(`Welcome back, ${sessionUser.name}!`);
 
-    if (sessionUser.mustChangePassword) {
-      navigate('/change-password', { replace: true });
-      return;
-    }
-
     navigate(getDefaultDashboardRoute(role));
   };
 
