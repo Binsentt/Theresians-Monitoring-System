@@ -196,7 +196,7 @@ test('teacher account creation emails the entered address with the account role'
   assert.equal(response.body.emailSent, true);
 });
 
-test('login OTP for teacher and parent accounts is sent to the stored email', async (t) => {
+test('login OTP for admin teacher and parent accounts is sent to the stored email', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -208,10 +208,10 @@ test('login OTP for teacher and parent accounts is sent to the stored email', as
   setQueryHandler(async (sql, params) => {
     if (sql.includes('select * from public.accounts where lower(trim(email))')) {
       const email = params[0];
-      const role = email.includes('teacher') ? 'teacher' : 'parent';
+      const role = email.includes('teacher') ? 'teacher' : email.includes('parent') ? 'parent' : 'admin';
       return resultRows([{
-        id: role === 'teacher' ? 501 : 502,
-        name: role === 'teacher' ? 'Teacher User' : 'Parent User',
+        id: role === 'teacher' ? 501 : role === 'parent' ? 502 : 503,
+        name: role === 'teacher' ? 'Teacher User' : role === 'parent' ? 'Parent User' : 'Admin User',
         email,
         password: 'correct-password',
         role,
@@ -240,15 +240,26 @@ test('login OTP for teacher and parent accounts is sent to the stored email', as
       password: 'correct-password',
     }),
   });
+  const adminResponse = await requestJson(baseUrl, '/api/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: 'admin.user@example.com',
+      password: 'correct-password',
+    }),
+  });
 
   assert.equal(teacherResponse.status, 200);
   assert.equal(parentResponse.status, 200);
+  assert.equal(adminResponse.status, 200);
   assert.equal(teacherResponse.body.emailSent, true);
   assert.equal(parentResponse.body.emailSent, true);
+  assert.equal(adminResponse.body.emailSent, true);
   assert.equal(sentMessages[0].to, 'teacher.user@example.com');
   assert.equal(sentMessages[1].to, 'parent.user@example.com');
+  assert.equal(sentMessages[2].to, 'admin.user@example.com');
   assert.equal(teacherResponse.body.otp, undefined);
   assert.equal(parentResponse.body.otp, undefined);
+  assert.equal(adminResponse.body.otp, undefined);
 });
 
 test('teacher account creation rejects non-digit employee IDs', async (t) => {

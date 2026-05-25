@@ -142,10 +142,74 @@ test('does not fall back to SMTP in Railway production when Resend fails', async
   const serializedEntries = JSON.stringify(entries);
   assert.equal(result.sent, false);
   assert.equal(result.provider, 'resend');
-  assert.equal(result.reason, 'status_403');
+  assert.equal(result.reason, 'sender_domain_not_verified');
   assert.equal(smtpCalled, false);
   assert.match(serializedEntries, /Resend email delivery failed/);
   assert.doesNotMatch(serializedEntries, /re_secret_api_key|gmail-app-password|123456|sender domain/);
+});
+
+test('Resend testing recipient restrictions are logged as a safe reason', async () => {
+  const { entries, logger } = createLogger();
+  const { MockResend } = createMockResendClient({
+    onSend: async () => ({
+      data: null,
+      error: {
+        name: 'validation_error',
+        message: 'You can only send testing emails to your own email address re_secret_api_key',
+        statusCode: 403,
+      },
+    }),
+  });
+
+  const result = await sendEmailWithProviders({
+    env: {
+      RAILWAY_ENVIRONMENT: 'production',
+      RESEND_API_KEY: 're_secret_api_key',
+      EMAIL_FROM: 'noreply@theresiansquest.com',
+    },
+    logger,
+    message: baseMessage,
+    ResendClient: MockResend,
+    timeoutMs: 50,
+  });
+
+  const serializedEntries = JSON.stringify(entries);
+  assert.equal(result.sent, false);
+  assert.equal(result.reason, 'resend_testing_recipient_restricted');
+  assert.match(serializedEntries, /resend_testing_recipient_restricted/);
+  assert.doesNotMatch(serializedEntries, /re_secret_api_key|123456|testing emails/);
+});
+
+test('invalid Resend sender errors are logged as a safe reason', async () => {
+  const { entries, logger } = createLogger();
+  const { MockResend } = createMockResendClient({
+    onSend: async () => ({
+      data: null,
+      error: {
+        name: 'validation_error',
+        message: 'Invalid from address',
+        statusCode: 422,
+      },
+    }),
+  });
+
+  const result = await sendEmailWithProviders({
+    env: {
+      RAILWAY_ENVIRONMENT: 'production',
+      RESEND_API_KEY: 're_secret_api_key',
+      EMAIL_FROM: 'bad sender value',
+    },
+    logger,
+    message: baseMessage,
+    ResendClient: MockResend,
+    timeoutMs: 50,
+  });
+
+  const serializedEntries = JSON.stringify(entries);
+  assert.equal(result.sent, false);
+  assert.equal(result.reason, 'invalid_sender');
+  assert.match(serializedEntries, /invalid_sender/);
+  assert.doesNotMatch(serializedEntries, /re_secret_api_key|123456|Invalid from/);
 });
 
 test('Resend timeout returns false quickly without exposing the OTP', async () => {

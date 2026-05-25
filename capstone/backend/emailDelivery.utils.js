@@ -60,9 +60,32 @@ const extractStatusCode = (error) => (
   || null
 );
 
+const classifySafeProviderMessage = (error) => {
+  const message = String(error?.message || error?.error || error?.response?.data?.message || '').toLowerCase();
+  if (!message) return null;
+
+  if (message.includes('testing') && message.includes('own email')) {
+    return 'resend_testing_recipient_restricted';
+  }
+  if (message.includes('domain') && (message.includes('not verified') || message.includes('verify'))) {
+    return 'sender_domain_not_verified';
+  }
+  if (message.includes('from') && (message.includes('invalid') || message.includes('sender'))) {
+    return 'invalid_sender';
+  }
+  if (message.includes('recipient') && (message.includes('invalid') || message.includes('not allowed'))) {
+    return 'invalid_recipient';
+  }
+
+  return null;
+};
+
 const classifySendError = (error) => {
   if (!error) return 'send_failed';
   if (error.name === 'AbortError') return 'timeout';
+
+  const safeProviderReason = classifySafeProviderMessage(error);
+  if (safeProviderReason) return safeProviderReason;
 
   const statusCode = extractStatusCode(error);
   if (statusCode) return `status_${statusCode}`;
