@@ -10,9 +10,11 @@ import {
   formatRoleLabel,
   isParentRole,
   isTeacherRole,
+  normalizeEmployeeIdInput,
   normalizeRole,
   paginateItems,
   splitAddressFields,
+  validateEmployeeId,
   validateOptionalAdultBirthday,
 } from './manageUsers.utils';
 import { apiUrl } from '../api';
@@ -105,6 +107,9 @@ export default function ManageUsers() {
     if (field === 'mobile_number') {
       cleanedValue = value.replace(/[^0-9]/g, '').slice(0, 11);
     }
+    if (field === 'employee_id') {
+      cleanedValue = normalizeEmployeeIdInput(value);
+    }
     return cleanedValue;
   };
 
@@ -117,6 +122,7 @@ export default function ManageUsers() {
     else if (field === 'email') error = validateEmail(finalValue);
     else if (field === 'mobile_number') error = validatePhone(finalValue);
     else if (field === 'birthday') error = validateBirthday(finalValue);
+    else if (field === 'employee_id') error = validateEmployeeId(finalValue, { required: isTeacherRole(selectedRole) });
     else if (field === 'gender') {
       if ((selectedRole || '').toLowerCase() !== 'admin' && finalValue === '') error = 'Gender is required';
     }
@@ -133,6 +139,7 @@ export default function ManageUsers() {
     else if (field === 'email') error = validateEmail(finalValue);
     else if (field === 'mobile_number') error = validatePhone(finalValue);
     else if (field === 'birthday') error = validateBirthday(finalValue);
+    else if (field === 'employee_id') error = validateEmployeeId(finalValue, { required: isTeacherRole(editingUser?.role || editForm.role) });
     else if (field === 'gender') {
       const roleToCheck = normalizeRole(editingUser?.role || editForm.role);
       if (roleToCheck !== 'admin' && finalValue === '') error = 'Gender is required';
@@ -187,17 +194,19 @@ export default function ManageUsers() {
     e.preventDefault();
     const selectedRoleValue = normalizeRole(selectedRole);
     const roleIsTeacher = isTeacherRole(selectedRoleValue);
-    if (!newUser.firstName || !newUser.lastName || !newUser.email || !newUser.gender) {
+    if (!newUser.firstName || !newUser.lastName || !newUser.email) {
       setValidationModal({
         title: 'Missing Required Fields',
-        message: 'Please fill in all required fields (First Name, Last Name, Email, Gender)'
+        message: 'Please fill in all required fields (First Name, Last Name, Email)'
       });
       return;
     }
-    if (roleIsTeacher && !newUser.employee_id) {
+    const employeeIdError = validateEmployeeId(newUser.employee_id, { required: roleIsTeacher });
+    if (employeeIdError) {
+      setAddErrors((prev) => ({ ...prev, employee_id: employeeIdError }));
       setValidationModal({
-        title: 'Missing Employee ID',
-        message: 'Teachers must have an employee ID.'
+        title: roleIsTeacher && !newUser.employee_id ? 'Missing Employee ID' : 'Invalid Employee ID',
+        message: employeeIdError
       });
       return;
     }
@@ -345,9 +354,11 @@ export default function ManageUsers() {
       return;
     }
     if (isTeacherRole(selectedRole) && !editForm.employee_id) {
+      const employeeIdError = validateEmployeeId(editForm.employee_id, { required: true });
+      setEditErrors((prev) => ({ ...prev, employee_id: employeeIdError }));
       setValidationModal({
         title: 'Missing Employee ID',
-        message: 'Teachers must have an employee ID.'
+        message: employeeIdError
       });
       return;
     }
@@ -726,11 +737,14 @@ export default function ManageUsers() {
                       <label>Employee ID: *</label>
                       <input
                         type="text"
-                        placeholder="EMP-1234"
+                        placeholder="1234567890"
                         value={newUser.employee_id}
-                        onChange={(e) => setNewUser({ ...newUser, employee_id: e.target.value })}
+                        onChange={(e) => handleAddFormChange('employee_id', e.target.value)}
                         className="sts-input"
+                        inputMode="numeric"
+                        maxLength={10}
                       />
+                      {addErrors.employee_id && <p className="error-text">{addErrors.employee_id}</p>}
                     </div>
                   )}
 
@@ -946,9 +960,12 @@ export default function ManageUsers() {
                         <input
                           type="text"
                           value={editForm.employee_id}
-                          onChange={(e) => setEditForm({ ...editForm, employee_id: e.target.value })}
+                          onChange={(e) => handleEditFormChange('employee_id', e.target.value)}
                           className="sts-input"
+                          inputMode="numeric"
+                          maxLength={10}
                         />
+                        {editErrors.employee_id && <p className="error-text">{editErrors.employee_id}</p>}
                       </div>
                     )}
 

@@ -60,7 +60,17 @@ const canManageAnnouncement = (announcement = {}, actor = {}) => {
     announcementRole === actorRole;
 };
 
+const buildAnnouncementSchemaRepairStatements = () => [
+  'ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS title VARCHAR(150)',
+  'ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS message TEXT',
+  'ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL',
+  'ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS created_by_role VARCHAR(50)',
+  'ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS target_role VARCHAR(50)',
+  'ALTER TABLE public.announcements ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP',
+];
+
 module.exports = {
+  buildAnnouncementSchemaRepairStatements,
   normalizeAnnouncementRole,
   normalizeAnnouncementTarget,
   normalizeAnnouncementPayload,

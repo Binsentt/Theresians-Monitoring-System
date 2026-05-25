@@ -14,7 +14,7 @@ import {
 import { canAccessRole, normalizeRole } from './manageUsers.utils';
 import { apiUrl } from '../api';
 
-const API_BASE = apiUrl('');
+const API_BASE = apiUrl('').replace(/\/$/, '');
 
 const readJsonResponse = async (response) => {
   try {
@@ -247,7 +247,8 @@ export default function AnnouncementPage({ mode = 'parent' }) {
       setEditingAnnouncement(null);
       setStatus(isEditing ? 'Announcement updated.' : 'Announcement posted successfully.');
     } catch (err) {
-      setStatus('Connection error while saving announcement.');
+      const fallbackStatus = editingAnnouncement?.id ? 'Failed to update announcement.' : 'Failed to post announcement.';
+      setStatus(err.message === 'Malformed announcement response.' ? fallbackStatus : 'Connection error while saving announcement.');
     } finally {
       setSaving(false);
     }

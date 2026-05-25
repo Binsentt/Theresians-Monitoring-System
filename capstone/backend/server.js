@@ -21,6 +21,7 @@ const {
   resolveAccuracyRate,
 } = require('./parentIdGame.utils');
 const {
+  buildAnnouncementSchemaRepairStatements,
   normalizeAnnouncementPayload,
   normalizeAnnouncementTarget,
   normalizeAnnouncementRole,
@@ -203,6 +204,9 @@ const ensureSchema = async () => {
       target_role VARCHAR(50) NOT NULL,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );`);
+    for (const statement of buildAnnouncementSchemaRepairStatements()) {
+      await pool.query(statement);
+    }
     await pool.query('CREATE INDEX IF NOT EXISTS idx_announcements_target_created ON public.announcements(target_role, created_at DESC)');
 
     await pool.query(`CREATE TABLE IF NOT EXISTS public.folders (
@@ -363,6 +367,32 @@ const normalizeAccountRole = (role) => {
 
 const accountHasTeacherAccess = (role) => ['teacher', 'parent_teacher'].includes(normalizeAccountRole(role));
 const accountHasParentAccess = (role) => ['parent', 'parent_teacher'].includes(normalizeAccountRole(role));
+const normalizeOptionalText = (value) => {
+  const normalized = String(value ?? '').trim();
+  return normalized || null;
+};
+
+const resolveOptionalBirthday = (birthday) => {
+  const normalizedBirthday = normalizeOptionalText(birthday);
+  if (normalizedBirthday && calculateAge(normalizedBirthday) < 18) {
+    return { error: 'Users must be at least 18 years old' };
+  }
+  return { birthday: normalizedBirthday };
+};
+
+const resolveEmployeeIdForRole = (role, employeeId) => {
+  const normalizedEmployeeId = normalizeOptionalText(employeeId);
+  if (accountHasTeacherAccess(role) && !normalizedEmployeeId) {
+    return { error: 'Employee ID is required for teachers and Parent/Teacher users' };
+  }
+  if (normalizedEmployeeId && !/^\d+$/.test(normalizedEmployeeId)) {
+    return { error: 'Employee ID must contain digits only.' };
+  }
+  if (normalizedEmployeeId && normalizedEmployeeId.length > 10) {
+    return { error: 'Employee ID must be 10 digits or fewer.' };
+  }
+  return { employeeId: normalizedEmployeeId };
+};
 
 const getDefaultSection = (gradeLevel, studentId) => {
   const letters = ['A', 'B', 'C'];
@@ -1643,19 +1673,20 @@ app.post('/api/accounts', async (req, res) => {
   const { name, email, role, mobile_number, address, birthday, gender, employee_id } = req.body;
   try {
     const finalName = (name || '').trim();
-    const normalizedEmail = (email || '').toLowerCase().trim() || generateDefaultEmail(finalName);
+    const normalizedEmail = (email || '').toLowerCase().trim();
     if (!finalName || !normalizedEmail) {
       return res.status(400).json({ error: 'Name and email are required' });
     }
 
     const finalRole = normalizeAccountRole(role || 'Parent');
-    const age = calculateAge(birthday);
-    if (age < 18) {
-      return res.status(400).json({ error: 'Users must be at least 18 years old' });
+    const birthdayResult = resolveOptionalBirthday(birthday);
+    if (birthdayResult.error) {
+      return res.status(400).json({ error: birthdayResult.error });
     }
 
-    if (accountHasTeacherAccess(finalRole) && !employee_id) {
-      return res.status(400).json({ error: 'Employee ID is required for teachers and Parent/Teacher users' });
+    const employeeIdResult = resolveEmployeeIdForRole(finalRole, employee_id);
+    if (employeeIdResult.error) {
+      return res.status(400).json({ error: employeeIdResult.error });
     }
 
     const { password: generatedPassword, mustChangePassword } = resolveGeneratedAccountPassword(null, generateRandomPassword);
@@ -1666,7 +1697,20 @@ app.post('/api/accounts', async (req, res) => {
       `INSERT INTO public.accounts (name, email, password, role, mobile_number, address, birthday, gender, employee_id, status, is_archived, must_change_password, parent_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11, $12)
        RETURNING *`,
-      [finalName, normalizedEmail, hashedPassword, finalRole, mobile_number, address, birthday, gender, employee_id, 'Offline', mustChangePassword, parentCode]
+      [
+        finalName,
+        normalizedEmail,
+        hashedPassword,
+        finalRole,
+        normalizeOptionalText(mobile_number),
+        normalizeOptionalText(address),
+        birthdayResult.birthday,
+        normalizeOptionalText(gender),
+        employeeIdResult.employeeId,
+        'Offline',
+        mustChangePassword,
+        parentCode,
+      ]
     );
 
     const created = serializeUser(result.rows[0]);
@@ -1733,21 +1777,21 @@ app.put('/api/accounts/:id', async (req, res) => {
 
     const old = currentData.rows[0];
     const finalEmail = email && email.trim() !== '' ? email.toLowerCase().trim() : old.email;
-    const finalBirthday = birthday && birthday.trim() !== '' ? birthday : old.birthday;
     const oldRole = normalizeAccountRole(old.role);
     const finalRole = oldRole;
-    const finalEmployeeId = employee_id !== undefined ? employee_id : old.employee_id;
+    const birthdayResult = resolveOptionalBirthday(birthday !== undefined ? birthday : old.birthday);
+    if (birthdayResult.error) {
+      return res.status(400).json({ error: birthdayResult.error });
+    }
+    const finalBirthday = birthdayResult.birthday;
+    const employeeIdResult = resolveEmployeeIdForRole(finalRole, employee_id !== undefined ? employee_id : old.employee_id);
+    if (employeeIdResult.error) {
+      return res.status(400).json({ error: employeeIdResult.error });
+    }
+    const finalEmployeeId = employeeIdResult.employeeId;
     const finalStatus = status || old.status || 'Active';
     const finalArchived = typeof is_archived === 'boolean' ? is_archived : old.is_archived;
     const finalParentCode = accountHasParentAccess(finalRole) ? (old.parent_id || await generateUniqueParentCode()) : null;
-
-    if (calculateAge(finalBirthday) < 18) {
-      return res.status(400).json({ error: 'Users must be at least 18 years old' });
-    }
-
-    if (accountHasTeacherAccess(finalRole) && !finalEmployeeId) {
-      return res.status(400).json({ error: 'Employee ID is required for teachers and Parent/Teacher users' });
-    }
 
     let hashedPassword = old.password;
     if (password && password.trim() !== '') {

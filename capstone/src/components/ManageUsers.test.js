@@ -50,6 +50,15 @@ const accountsPayload = [
   }
 ];
 
+const setFieldValue = (field, value) => {
+  const prototype = field.tagName === 'TEXTAREA'
+    ? window.HTMLTextAreaElement.prototype
+    : window.HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(prototype, 'value').set.call(field, value);
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+  field.dispatchEvent(new Event('change', { bubbles: true }));
+};
+
 describe('ManageUsers edit flow', () => {
   let container;
   let root;
@@ -133,6 +142,88 @@ describe('ManageUsers edit flow', () => {
 
     expect(container.textContent).toContain('A strong temporary password will be generated and emailed automatically.');
     expect(container.querySelector('input[type="password"]')).toBeNull();
+  });
+
+  test('Add User form does not require birthday or gender for admin-created parent accounts', async () => {
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).includes('/api/accounts') && options.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            user: { id: 88, name: 'Paula Parent', email: 'paula@gmail.com', role: 'parent', parent_id: '482915' },
+            emailSent: true,
+          }),
+        });
+      }
+      if (String(url).includes('/api/accounts')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => accountsPayload,
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    const addButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add'
+    );
+
+    await act(async () => {
+      addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const form = container.querySelector('form');
+    const inputs = form.querySelectorAll('input');
+    await act(async () => {
+      setFieldValue(inputs[0], 'Paula');
+      setFieldValue(inputs[2], 'Parent');
+      setFieldValue(inputs[3], 'paula@gmail.com');
+    });
+
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/accounts',
+      expect.objectContaining({ method: 'POST' })
+    );
+    expect(container.textContent).not.toContain('Please fill in all required fields (First Name, Last Name, Email, Gender)');
+  });
+
+  test('Teacher Employee ID input strips non-digits and stops at 10 digits', async () => {
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    const addButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Add'
+    );
+
+    await act(async () => {
+      addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const roleSelect = container.querySelector('.role-selector select');
+    await act(async () => {
+      roleSelect.value = 'Teacher';
+      roleSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const employeeInput = Array.from(container.querySelectorAll('input')).find(
+      (input) => input.placeholder === '1234567890'
+    );
+
+    await act(async () => {
+      setFieldValue(employeeInput, 'EMP-123456789012');
+    });
+
+    expect(employeeInput.value).toBe('1234567890');
+    expect(employeeInput.maxLength).toBe(10);
   });
 
   test('Add User form exposes split address fields for new accounts', async () => {

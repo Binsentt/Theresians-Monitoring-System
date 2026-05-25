@@ -70,6 +70,19 @@ describe('AnnouncementPage load states', () => {
     expect(container.textContent).not.toContain('Failed to load announcements.');
   });
 
+  test('uses same-origin announcement API paths when no API base URL is configured', async () => {
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    }));
+
+    await act(async () => {
+      root.render(<AnnouncementPage mode="admin" />);
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/announcements?target_role=teacher&created_by=1&created_by_role=admin&limit=20');
+  });
+
   test('shows a failure banner when the announcement API fails', async () => {
     global.fetch = jest.fn(() => Promise.resolve({
       ok: false,
@@ -270,5 +283,39 @@ describe('AnnouncementPage load states', () => {
     expect(messageInput.value).toBe('');
     expect(container.textContent).toContain('Announcement posted successfully.');
     expect(container.textContent).toContain('School reminder');
+  });
+
+  test('shows a post failure instead of a connection error when a successful save response is malformed', async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => {
+          throw new Error('Unexpected end of JSON input');
+        },
+      });
+
+    await act(async () => {
+      root.render(<AnnouncementPage mode="admin" />);
+    });
+
+    const titleInput = container.querySelector('input');
+    const messageInput = container.querySelector('textarea');
+
+    await act(async () => {
+      setFieldValue(titleInput, 'School reminder');
+      setFieldValue(messageInput, 'Please review the lesson files.');
+    });
+
+    await act(async () => {
+      container.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain('Failed to post announcement.');
+    expect(container.textContent).not.toContain('Connection error while saving announcement.');
   });
 });

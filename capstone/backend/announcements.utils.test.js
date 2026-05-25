@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  buildAnnouncementSchemaRepairStatements,
   normalizeAnnouncementRole,
   normalizeAnnouncementTarget,
   normalizeAnnouncementPayload,
@@ -86,4 +87,15 @@ test('allows announcement management only for the original author and role', () 
   assert.equal(canManageAnnouncement({ created_by: 3, created_by_role: 'admin' }, { actorId: 3, actorRole: 'admin' }), true);
   assert.equal(canManageAnnouncement({ created_by: 3, created_by_role: 'teacher' }, { actorId: 3, actorRole: 'admin' }), false);
   assert.equal(canManageAnnouncement({ created_by: 4, created_by_role: 'admin' }, { actorId: 3, actorRole: 'admin' }), false);
+});
+
+test('announcement schema repair includes all columns used by production routes', () => {
+  const statements = buildAnnouncementSchemaRepairStatements().map((sql) => sql.toLowerCase());
+
+  assert.ok(statements.some((sql) => sql.includes('add column if not exists title')));
+  assert.ok(statements.some((sql) => sql.includes('add column if not exists message')));
+  assert.ok(statements.some((sql) => sql.includes('add column if not exists created_by')));
+  assert.ok(statements.some((sql) => sql.includes('add column if not exists created_by_role')));
+  assert.ok(statements.some((sql) => sql.includes('add column if not exists target_role')));
+  assert.ok(statements.some((sql) => sql.includes('add column if not exists created_at')));
 });

@@ -10,7 +10,9 @@ import {
   normalizeRole,
   paginateItems,
   splitAddressFields,
+  normalizeEmployeeIdInput,
   validateOptionalAdultBirthday,
+  validateEmployeeId,
 } from './manageUsers.utils';
 
 describe('manageUsers role helpers', () => {
@@ -128,5 +130,17 @@ describe('manageUsers role helpers', () => {
     expect(validateOptionalAdultBirthday('')).toBe('');
     expect(validateOptionalAdultBirthday('2010-05-21', new Date('2026-05-21T00:00:00Z'))).toBe('Must be at least 18 years old');
     expect(validateOptionalAdultBirthday('1998-05-21', new Date('2026-05-21T00:00:00Z'))).toBe('');
+  });
+
+  test('employee ID input keeps only the first 10 digits', () => {
+    expect(normalizeEmployeeIdInput('EMP-123456789012')).toBe('1234567890');
+    expect(normalizeEmployeeIdInput('abc')).toBe('');
+  });
+
+  test('employee ID validation requires digits and a maximum of 10 digits', () => {
+    expect(validateEmployeeId('', { required: true })).toBe('Employee ID is required for teachers.');
+    expect(validateEmployeeId('EMP-123')).toBe('Employee ID must contain digits only.');
+    expect(validateEmployeeId('12345678901')).toBe('Employee ID must be 10 digits or fewer.');
+    expect(validateEmployeeId('1234567890')).toBe('');
   });
 });
