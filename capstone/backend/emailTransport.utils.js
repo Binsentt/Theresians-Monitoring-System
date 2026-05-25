@@ -54,10 +54,24 @@ const buildEmailTransportConfig = (env = {}) => {
   return { enabled: true, options, reason: null };
 };
 
+const extractAddressFromFormattedSender = (value) => {
+  const match = String(value || '').trim().match(/<\s*([^<>\s]+@[^<>\s]+)\s*>$/);
+  return match ? match[1] : null;
+};
+
+const isFormattedSenderAddress = (value) => (
+  /^[^<>\r\n]+<\s*[^<>\s]+@[^<>\s]+\s*>$/.test(String(value || '').trim())
+);
+
 const buildEmailFromAddress = (env = {}) => {
-  const from = getMailFrom(env);
+  const from = String(getMailFrom(env) || '').trim();
+  if (isFormattedSenderAddress(from)) {
+    return from;
+  }
+
+  const senderAddress = extractAddressFromFormattedSender(from) || from;
   const name = firstPresent(env.EMAIL_FROM_NAME, env.MAIL_FROM_NAME) || 'Saint Therese School';
-  return `"${String(name).replace(/"/g, '\\"')}" <${from}>`;
+  return `"${String(name).replace(/"/g, '\\"')}" <${senderAddress}>`;
 };
 
 const buildResendEmailConfig = (env = {}) => {

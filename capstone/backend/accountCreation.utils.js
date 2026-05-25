@@ -22,7 +22,7 @@ const escapeHtml = (value) => String(value ?? '')
 
 const shouldIncludeRoleInCredentialsEmail = (role) => {
   const normalized = normalizeAccountRole(role);
-  return Boolean(normalized && !['parent', 'teacher', 'parent_teacher'].includes(normalized));
+  return Boolean(normalized);
 };
 
 const resolveGeneratedAccountPassword = (_providedPassword, generatePassword) => ({
@@ -74,8 +74,9 @@ const buildAccountCreationResponse = ({ createdUser, generatedPassword, emailSen
   };
 };
 
-const buildCredentialsEmail = ({ email, password, name }) => {
+const buildCredentialsEmail = ({ email, password, role, name }) => {
   const safeName = escapeHtml(name || 'User');
+  const safeRole = escapeHtml(formatRoleLabel(role) || 'Account');
   const safeEmail = escapeHtml(email);
   const safePassword = escapeHtml(password);
 
@@ -99,6 +100,12 @@ const buildCredentialsEmail = ({ email, password, name }) => {
                 <p style="margin: 0 0 18px; font-size: 15px; line-height: 1.7;">Welcome to the Saint Therese School Monitoring System!</p>
                 <p style="margin: 0 0 18px; font-size: 15px; line-height: 1.7;">Your account has been created by the school administrator. Below are your login credentials:</p>
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background: #f8fafc; border: 1px solid #dbe3ef; border-radius: 12px; padding: 18px; margin: 0 0 22px;">
+                  <tr>
+                    <td style="padding: 0 0 8px; color: #64748b; font-size: 13px; font-weight: 700; text-transform: uppercase;">Account Role:</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 0 0 18px; color: #0f172a; font-size: 16px; font-weight: 700; word-break: break-word;">${safeRole}</td>
+                  </tr>
                   <tr>
                     <td style="padding: 0 0 8px; color: #64748b; font-size: 13px; font-weight: 700; text-transform: uppercase;">Email:</td>
                   </tr>

@@ -5,11 +5,14 @@ const Module = require('node:module');
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
 let sentMessages = [];
+let passwordMatches = false;
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const mockPool = {
   query: async (sql, params = []) => {
-    return (await queryHandler(compactSql(sql), params, sql)) || emptyResult;
+    const rawSql = sql && typeof sql === 'object' && sql.text ? sql.text : sql;
+    const rawParams = sql && typeof sql === 'object' && Array.isArray(sql.values) ? sql.values : params;
+    return (await queryHandler(compactSql(rawSql), rawParams, rawSql)) || emptyResult;
   },
 };
 
@@ -29,7 +32,7 @@ const multerStub = () => ({
 });
 const serverDependencyStubs = {
   bcrypt: {
-    compare: async () => false,
+    compare: async () => passwordMatches,
     hash: async (value) => `hashed:${value}`,
   },
   cors: () => createMiddleware(),
@@ -71,6 +74,12 @@ const setQueryHandler = (handler) => {
 
 const resultRows = (rows) => ({ rows });
 
+const resetTestState = () => {
+  sentMessages = [];
+  passwordMatches = false;
+  setQueryHandler(async () => emptyResult);
+};
+
 const listen = () => new Promise((resolve) => {
   const server = app.listen(0, () => resolve(server));
 });
@@ -97,8 +106,7 @@ test('admin account creation accepts optional profile fields and emails entered 
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
-    sentMessages = [];
-    setQueryHandler(async () => emptyResult);
+    resetTestState();
     await close(server);
   });
 
@@ -140,7 +148,107 @@ test('admin account creation accepts optional profile fields and emails entered 
   assert.equal(insertParams[7], null);
   assert.equal(sentMessages.length, 1);
   assert.equal(sentMessages[0].to, 'paula.parent@gmail.com');
+  assert.match(sentMessages[0].html, /Account Role:/);
+  assert.match(sentMessages[0].html, /Parent/);
   assert.equal(response.body.emailSent, true);
+});
+
+test('teacher account creation emails the entered address with the account role', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  let insertParams = null;
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('insert into public.accounts')) {
+      insertParams = params;
+      return resultRows([{
+        id: 92,
+        name: params[0],
+        email: params[1],
+        password: params[2],
+        role: params[3],
+        employee_id: params[8],
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'Tessa Teacher',
+      email: '  Tessa.Teacher@Example.COM  ',
+      role: 'teacher',
+      employee_id: '1234567890',
+    }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal(insertParams[1], 'tessa.teacher@example.com');
+  assert.equal(sentMessages.length, 1);
+  assert.equal(sentMessages[0].to, 'tessa.teacher@example.com');
+  assert.match(sentMessages[0].html, /Account Role:/);
+  assert.match(sentMessages[0].html, /Teacher/);
+  assert.equal(response.body.emailSent, true);
+});
+
+test('login OTP for teacher and parent accounts is sent to the stored email', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  passwordMatches = true;
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('select * from public.accounts where lower(trim(email))')) {
+      const email = params[0];
+      const role = email.includes('teacher') ? 'teacher' : 'parent';
+      return resultRows([{
+        id: role === 'teacher' ? 501 : 502,
+        name: role === 'teacher' ? 'Teacher User' : 'Parent User',
+        email,
+        password: 'correct-password',
+        role,
+        status: 'Offline',
+        is_archived: false,
+        must_change_password: false,
+      }]);
+    }
+    if (sql.startsWith('update public.accounts set otp_code')) {
+      return emptyResult;
+    }
+    return emptyResult;
+  });
+
+  const teacherResponse = await requestJson(baseUrl, '/api/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: ' Teacher.User@Example.COM ',
+      password: 'correct-password',
+    }),
+  });
+  const parentResponse = await requestJson(baseUrl, '/api/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: 'parent.user@example.com',
+      password: 'correct-password',
+    }),
+  });
+
+  assert.equal(teacherResponse.status, 200);
+  assert.equal(parentResponse.status, 200);
+  assert.equal(teacherResponse.body.emailSent, true);
+  assert.equal(parentResponse.body.emailSent, true);
+  assert.equal(sentMessages[0].to, 'teacher.user@example.com');
+  assert.equal(sentMessages[1].to, 'parent.user@example.com');
+  assert.equal(teacherResponse.body.otp, undefined);
+  assert.equal(parentResponse.body.otp, undefined);
 });
 
 test('teacher account creation rejects non-digit employee IDs', async (t) => {

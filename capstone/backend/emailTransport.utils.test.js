@@ -100,6 +100,16 @@ test('builds sender address without exposing credentials', () => {
   );
 });
 
+test('keeps an already formatted sender address valid for Resend', () => {
+  assert.equal(
+    buildEmailFromAddress({
+      EMAIL_FROM: 'Saint Therese School <noreply@theresiansquest.com>',
+      EMAIL_FROM_NAME: 'Saint Therese School',
+    }),
+    'Saint Therese School <noreply@theresiansquest.com>'
+  );
+});
+
 test('diagnostics report only safe mail configuration state', () => {
   const diagnostics = buildMailDiagnostics({
     RESEND_API_KEY: 're_secret_api_key',
