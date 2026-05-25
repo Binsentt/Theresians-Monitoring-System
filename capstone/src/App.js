@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 
 import AdminDashboard from './components/AdminDashboard';
 import AdminStudentProgress from './components/AdminStudentProgress';
@@ -20,7 +20,6 @@ import LoginScreen from './components/LoginScreen';
 import LessonQuestionManager from './components/LessonQuestionManager';
 import SettingsScreen from './components/SettingsScreen';
 import AnnouncementPage from './components/AnnouncementPage';
-import ChangePasswordScreen from './components/ChangePasswordScreen';
 
 import './styles/Login.css';
 import './styles/homePageStyles.css';
@@ -36,7 +35,7 @@ function App() {
       <Routes>
         <Route path="/" element={<HomePageScreen />} />
         <Route path="/login" element={<LoginScreen />} />
-        <Route path="/change-password" element={<ChangePasswordScreen />} />
+        <Route path="/change-password" element={<Navigate to="/login" replace />} />
 
         {/* Admin Routes */}
         <Route path="/admin-dashboard" element={<AdminDashboard />} />
