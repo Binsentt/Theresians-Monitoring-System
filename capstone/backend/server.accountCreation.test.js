@@ -6,6 +6,7 @@ const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
 let sentMessages = [];
 let passwordMatches = false;
+let emailSendResult = { sent: true, provider: 'test' };
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const mockPool = {
@@ -43,10 +44,22 @@ const serverDependencyStubs = {
   multer: multerStub,
   'pdf-parse': async () => ({ text: '' }),
   './emailDelivery.utils': {
+    buildSafeEmailLogDetails: ({ emailType, role, message, result = {} }) => ({
+      emailType,
+      role,
+      recipientDomain: String(message?.to || '').split('@')[1] || null,
+      provider: result.provider || 'test',
+      statusCode: result.statusCode || null,
+      reason: result.reason || null,
+      sanitizedResendErrorMessage: result.sanitizedResendErrorMessage || null,
+      hasEmailFrom: true,
+      hasSmtpFrom: false,
+      hasAppUrl: true,
+    }),
     getEmailSendTimeoutMs: () => 5,
     sendEmailWithProviders: async ({ message }) => {
       sentMessages.push(message);
-      return { sent: true, provider: 'test' };
+      return emailSendResult;
     },
   },
 };
@@ -77,6 +90,7 @@ const resultRows = (rows) => ({ rows });
 const resetTestState = () => {
   sentMessages = [];
   passwordMatches = false;
+  emailSendResult = { sent: true, provider: 'test' };
   setQueryHandler(async () => emptyResult);
 };
 
@@ -196,6 +210,64 @@ test('teacher account creation emails the entered address with the account role'
   assert.equal(response.body.emailSent, true);
 });
 
+test('credential email failure logs safe production diagnostics', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const originalInfo = console.info;
+  const originalWarn = console.warn;
+  const logEntries = [];
+  console.info = (...args) => logEntries.push(['info', ...args]);
+  console.warn = (...args) => logEntries.push(['warn', ...args]);
+  t.after(async () => {
+    console.info = originalInfo;
+    console.warn = originalWarn;
+    resetTestState();
+    await close(server);
+  });
+
+  emailSendResult = {
+    sent: false,
+    provider: 'resend',
+    reason: 'sender_domain_not_verified',
+    statusCode: 403,
+    sanitizedResendErrorMessage: 'Sender domain is not verified by Resend.',
+  };
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('insert into public.accounts')) {
+      return resultRows([{
+        id: 93,
+        name: params[0],
+        email: params[1],
+        password: params[2],
+        role: params[3],
+        employee_id: params[8],
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'Failed Mail Teacher',
+      email: 'failed.teacher@example.com',
+      role: 'teacher',
+      employee_id: '1234567890',
+    }),
+  });
+
+  const serializedLogs = JSON.stringify(logEntries);
+  assert.equal(response.status, 201);
+  assert.equal(response.body.emailSent, false);
+  assert.match(serializedLogs, /Email send started/);
+  assert.match(serializedLogs, /Email send failed/);
+  assert.match(serializedLogs, /credential/);
+  assert.match(serializedLogs, /teacher/);
+  assert.match(serializedLogs, /example.com/);
+  assert.match(serializedLogs, /sender_domain_not_verified/);
+  assert.doesNotMatch(serializedLogs, /failed\.teacher@example\.com|Temporary Password|otp_code|\b\d{6}\b/);
+});
+
 test('login OTP for admin teacher and parent accounts is sent to the stored email', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -260,6 +332,58 @@ test('login OTP for admin teacher and parent accounts is sent to the stored emai
   assert.equal(teacherResponse.body.otp, undefined);
   assert.equal(parentResponse.body.otp, undefined);
   assert.equal(adminResponse.body.otp, undefined);
+});
+
+test('teacher login OTP success logs safe production diagnostics', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const originalInfo = console.info;
+  const logEntries = [];
+  console.info = (...args) => logEntries.push(['info', ...args]);
+  t.after(async () => {
+    console.info = originalInfo;
+    resetTestState();
+    await close(server);
+  });
+
+  passwordMatches = true;
+  emailSendResult = { sent: true, provider: 'resend', messageIdPresent: true };
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('select * from public.accounts where lower(trim(email))')) {
+      return resultRows([{
+        id: 601,
+        name: 'Teacher User',
+        email: params[0],
+        password: 'correct-password',
+        role: 'teacher',
+        status: 'Offline',
+        is_archived: false,
+        must_change_password: false,
+      }]);
+    }
+    if (sql.startsWith('update public.accounts set otp_code')) {
+      return emptyResult;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: 'teacher.otp@example.com',
+      password: 'correct-password',
+    }),
+  });
+
+  const serializedLogs = JSON.stringify(logEntries);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.emailSent, true);
+  assert.match(serializedLogs, /Email send started/);
+  assert.match(serializedLogs, /Email send succeeded/);
+  assert.match(serializedLogs, /otp/);
+  assert.match(serializedLogs, /teacher/);
+  assert.match(serializedLogs, /example.com/);
+  assert.doesNotMatch(serializedLogs, /teacher\.otp@example\.com|\b\d{6}\b|otp_code/);
 });
 
 test('teacher account creation rejects non-digit employee IDs', async (t) => {

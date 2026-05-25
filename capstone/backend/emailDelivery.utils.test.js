@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  buildSafeEmailLogDetails,
   isProductionEmailRuntime,
   sendEmailWithProviders,
   shouldUseSmtpFallback,
@@ -210,6 +211,69 @@ test('invalid Resend sender errors are logged as a safe reason', async () => {
   assert.equal(result.reason, 'invalid_sender');
   assert.match(serializedEntries, /invalid_sender/);
   assert.doesNotMatch(serializedEntries, /re_secret_api_key|123456|Invalid from/);
+});
+
+test('safe email event details include only redacted production diagnostics', () => {
+  const details = buildSafeEmailLogDetails({
+    env: {
+      RESEND_API_KEY: 're_secret_api_key',
+      EMAIL_FROM: 'Saint Therese School <noreply@theresiansquest.com>',
+      SMTP_FROM: 'fallback@theresiansquest.com',
+      APP_URL: 'https://theresiansquest.com/login',
+    },
+    emailType: 'credential',
+    role: 'Teacher',
+    message: {
+      to: 'teacher.user@example.com',
+      subject: 'Your Saint Therese School Portal Account',
+      html: '<p>Temporary Password: Generated!2345</p>',
+    },
+    result: {
+      sent: false,
+      provider: 'resend',
+      statusCode: 403,
+      reason: 'sender_domain_not_verified',
+      sanitizedResendErrorMessage: 'Domain [email] is not verified',
+    },
+  });
+
+  assert.deepEqual(details, {
+    emailType: 'credential',
+    role: 'teacher',
+    recipientDomain: 'example.com',
+    provider: 'resend',
+    statusCode: 403,
+    reason: 'sender_domain_not_verified',
+    sanitizedResendErrorMessage: 'Domain [email] is not verified',
+    hasEmailFrom: true,
+    hasSmtpFrom: true,
+    hasAppUrl: true,
+  });
+  assert.doesNotMatch(JSON.stringify(details), /teacher\.user@|Generated!2345|re_secret_api_key/);
+});
+
+test('safe email event details maps missing Resend configuration to precise reasons', () => {
+  assert.equal(
+    buildSafeEmailLogDetails({
+      env: { EMAIL_FROM: 'noreply@theresiansquest.com' },
+      emailType: 'otp',
+      role: 'parent',
+      message: { to: 'parent.user@example.com' },
+      result: { sent: false, provider: 'resend', reason: 'not_configured' },
+    }).reason,
+    'missing_resend_api_key'
+  );
+
+  assert.equal(
+    buildSafeEmailLogDetails({
+      env: { RESEND_API_KEY: 're_secret_api_key' },
+      emailType: 'otp',
+      role: 'teacher',
+      message: { to: 'teacher.user@example.com' },
+      result: { sent: false, provider: 'resend', reason: 'not_configured' },
+    }).reason,
+    'missing_email_from'
+  );
 });
 
 test('Resend timeout returns false quickly without exposing the OTP', async () => {

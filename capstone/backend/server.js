@@ -60,6 +60,7 @@ const {
   resolveAppUrl,
 } = require('./emailTransport.utils');
 const {
+  buildSafeEmailLogDetails,
   getEmailSendTimeoutMs,
   sendEmailWithProviders,
 } = require('./emailDelivery.utils');
@@ -79,13 +80,37 @@ const upload = multer({ dest: uploadsDir, limits: { fileSize: 30 * 1024 * 1024 }
 
 const resendEmailConfig = buildResendEmailConfig(process.env);
 
+const logEmailSendEvent = (level, event, { message, options = {}, result = {} }) => {
+  const log = typeof console[level] === 'function' ? console[level] : console.log;
+  log(event, buildSafeEmailLogDetails({
+    env: process.env,
+    emailType: options.emailType,
+    role: options.role,
+    message,
+    result,
+  }));
+};
+
 const sendSystemEmail = async (message, options = {}) => {
+  if (options.emailType) {
+    logEmailSendEvent('info', 'Email send started', { message, options });
+  }
+
   const result = await sendEmailWithProviders({
     env: process.env,
     message,
     timeoutMs: options.timeoutMs || getEmailSendTimeoutMs(process.env),
     logger: console,
   });
+
+  if (options.emailType) {
+    logEmailSendEvent(result.sent ? 'info' : 'warn', result.sent ? 'Email send succeeded' : 'Email send failed', {
+      message,
+      options,
+      result,
+    });
+  }
+
   return result.sent;
 };
 
@@ -312,6 +337,8 @@ const generateCredentialsEmail = async (email, password, role, name) => {
     subject: message.subject,
     html: message.html,
   }, {
+    emailType: 'credential',
+    role,
     timeoutMs: getCredentialEmailTimeoutMs(),
   });
 };
@@ -334,7 +361,7 @@ const verifyRememberToken = (token) => {
   }
 };
 
-const sendOtpEmail = async (email, otp, subject = 'Login Verification Code') => {
+const sendOtpEmail = async (email, otp, subject = 'Login Verification Code', role = 'unknown') => {
   return sendSystemEmail({
     to: email,
     subject,
@@ -344,6 +371,9 @@ const sendOtpEmail = async (email, otp, subject = 'Login Verification Code') => 
               <p style="font-size: 32px; font-weight: 700; letter-spacing: 6px; margin: 12px 0;">${otp}</p>
               <p style="color: #444;">This code expires in 3 minutes.</p>
             </div>`,
+  }, {
+    emailType: 'otp',
+    role,
   });
 };
 
@@ -1580,7 +1610,7 @@ app.post('/api/login', async (req, res) => {
     const expiresAt = new Date(Date.now() + 3 * 60 * 1000);
     await pool.query('UPDATE public.accounts SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, expiresAt, user.id]);
     const emailSent = await resolveOtpEmailDelivery(
-      () => sendOtpEmail(user.email, otp),
+      () => sendOtpEmail(user.email, otp, 'Login Verification Code', user.role),
       getOtpEmailTimeoutMs()
     );
 
@@ -1611,7 +1641,7 @@ app.post('/api/login/resend-otp', async (req, res) => {
     const expiresAt = new Date(Date.now() + 3 * 60 * 1000);
     await pool.query('UPDATE public.accounts SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, expiresAt, user.id]);
     const emailSent = await resolveOtpEmailDelivery(
-      () => sendOtpEmail(user.email, otp, 'Your new verification code'),
+      () => sendOtpEmail(user.email, otp, 'Your new verification code', user.role),
       getOtpEmailTimeoutMs()
     );
 

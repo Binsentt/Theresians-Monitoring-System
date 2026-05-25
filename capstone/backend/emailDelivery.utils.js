@@ -52,6 +52,31 @@ const sanitizeReason = (value, fallback = 'send_failed') => {
   return reason || fallback;
 };
 
+const sanitizeProviderMessage = (value) => {
+  const lower = String(value || '').toLowerCase();
+  if (lower.includes('testing') && lower.includes('own email')) {
+    return 'Resend account is restricted to verified test recipients.';
+  }
+  if (lower.includes('domain') && (lower.includes('not verified') || lower.includes('verify'))) {
+    return 'Sender domain is not verified by Resend.';
+  }
+  if (lower.includes('from') && (lower.includes('invalid') || lower.includes('sender'))) {
+    return 'Sender address is invalid.';
+  }
+  if (lower.includes('recipient') && (lower.includes('invalid') || lower.includes('not allowed'))) {
+    return 'Recipient address is invalid or not allowed.';
+  }
+
+  const message = String(value || '')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
+    .replace(/re_[A-Za-z0-9_/-]+/g, '[resend_api_key]')
+    .replace(/\b\d{6}\b/g, '[six_digit_code]')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return message ? message.slice(0, 180) : null;
+};
+
 const extractStatusCode = (error) => (
   error?.statusCode
   || error?.status_code
@@ -60,8 +85,12 @@ const extractStatusCode = (error) => (
   || null
 );
 
+const extractProviderMessage = (error) => (
+  error?.message || error?.error || error?.response?.data?.message || null
+);
+
 const classifySafeProviderMessage = (error) => {
-  const message = String(error?.message || error?.error || error?.response?.data?.message || '').toLowerCase();
+  const message = String(extractProviderMessage(error) || '').toLowerCase();
   if (!message) return null;
 
   if (message.includes('testing') && message.includes('own email')) {
@@ -78,6 +107,62 @@ const classifySafeProviderMessage = (error) => {
   }
 
   return null;
+};
+
+const extractRecipientDomain = (email) => {
+  const value = String(email || '').trim().toLowerCase();
+  const atIndex = value.lastIndexOf('@');
+  if (atIndex < 0 || atIndex === value.length - 1) return null;
+  const domain = value.slice(atIndex + 1).replace(/[^a-z0-9.-]/g, '');
+  return domain || null;
+};
+
+const hasAny = (...values) => values.some((value) => String(value || '').trim() !== '');
+
+const normalizeEmailRole = (role) => {
+  const normalized = sanitizeReason(role, 'unknown');
+  return normalized === 'parent_teacher' ? 'parent_teacher' : normalized;
+};
+
+const resolveSafeEmailFailureReason = ({ env = {}, result = {} }) => {
+  if (result.sent) return null;
+  if (result.sent !== false) return null;
+  if (!hasAny(env.RESEND_API_KEY)) return 'missing_resend_api_key';
+  if (!hasAny(env.EMAIL_FROM, env.MAIL_FROM, env.SMTP_FROM)) return 'missing_email_from';
+
+  const knownReasons = new Set([
+    'sender_domain_not_verified',
+    'resend_testing_recipient_restricted',
+    'invalid_sender',
+    'invalid_recipient',
+    'timeout',
+    'sdk_unavailable',
+  ]);
+  if (knownReasons.has(result.reason)) return result.reason;
+  if (String(result.provider || '').toLowerCase() === 'resend') return 'unknown_resend_error';
+  return sanitizeReason(result.reason, 'unknown_resend_error');
+};
+
+const buildSafeEmailLogDetails = ({
+  env = {},
+  emailType = 'unknown',
+  role = 'unknown',
+  message = {},
+  result = {},
+}) => {
+  const diagnostics = buildMailDiagnostics(env);
+  return {
+    emailType: sanitizeReason(emailType, 'unknown'),
+    role: normalizeEmailRole(role),
+    recipientDomain: extractRecipientDomain(message.to),
+    provider: result.provider || diagnostics.primaryProvider || 'none',
+    statusCode: result.statusCode || null,
+    reason: resolveSafeEmailFailureReason({ env, result }),
+    sanitizedResendErrorMessage: result.sanitizedResendErrorMessage || null,
+    hasEmailFrom: Boolean(hasAny(env.EMAIL_FROM, env.MAIL_FROM)),
+    hasSmtpFrom: Boolean(hasAny(env.SMTP_FROM)),
+    hasAppUrl: Boolean(hasAny(env.APP_URL, env.FRONTEND_URL, env.PUBLIC_URL)),
+  };
 };
 
 const classifySendError = (error) => {
@@ -162,6 +247,7 @@ const sendViaResend = async ({ config, message, ResendClient, timeoutMs }) => {
         provider: 'resend',
         reason: classifySendError(error),
         statusCode: extractStatusCode(error),
+        sanitizedResendErrorMessage: sanitizeProviderMessage(extractProviderMessage(error)),
       };
     }
 
@@ -176,6 +262,7 @@ const sendViaResend = async ({ config, message, ResendClient, timeoutMs }) => {
       provider: 'resend',
       reason: classifySendError(error),
       statusCode: extractStatusCode(error),
+      sanitizedResendErrorMessage: sanitizeProviderMessage(extractProviderMessage(error)),
     };
   }
 };
@@ -229,6 +316,7 @@ const sendEmailWithProviders = async ({
     provider: 'resend',
     reason: resendResult.reason,
     statusCode: resendResult.statusCode || null,
+    sanitizedResendErrorMessage: resendResult.sanitizedResendErrorMessage || null,
     diagnostics,
   });
 
@@ -237,10 +325,12 @@ const sendEmailWithProviders = async ({
     provider: 'resend',
     reason: resendResult.reason,
     statusCode: resendResult.statusCode || null,
+    sanitizedResendErrorMessage: resendResult.sanitizedResendErrorMessage || null,
   };
 };
 
 module.exports = {
+  buildSafeEmailLogDetails,
   DEFAULT_EMAIL_SEND_TIMEOUT_MS,
   RESEND_EMAILS_URL,
   getEmailSendTimeoutMs,
