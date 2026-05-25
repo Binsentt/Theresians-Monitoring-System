@@ -14,8 +14,8 @@ const getMailUser = (env = {}) => firstPresent(env.EMAIL_USER, env.SMTP_USER, en
 const getMailPass = (env = {}) => firstPresent(env.EMAIL_PASS, env.SMTP_PASS, env.SMTP_PASSWORD, env.MAIL_PASS);
 const getMailHost = (env = {}) => firstPresent(env.SMTP_HOST, env.MAIL_HOST);
 const getMailService = (env = {}) => firstPresent(env.SMTP_SERVICE, env.EMAIL_SERVICE, env.MAIL_SERVICE);
-const getMailFrom = (env = {}) => firstPresent(env.EMAIL_FROM, env.MAIL_FROM, getMailUser(env));
-const getExplicitMailFrom = (env = {}) => firstPresent(env.EMAIL_FROM, env.MAIL_FROM);
+const getMailFrom = (env = {}) => firstPresent(env.EMAIL_FROM, env.MAIL_FROM, env.SMTP_FROM, getMailUser(env));
+const getExplicitMailFrom = (env = {}) => firstPresent(env.EMAIL_FROM, env.MAIL_FROM, env.SMTP_FROM);
 const getResendApiKey = (env = {}) => firstPresent(env.RESEND_API_KEY);
 
 const resolveAppUrl = (env = {}) => (
@@ -83,7 +83,7 @@ const buildResendEmailConfig = (env = {}) => {
       enabled: false,
       apiKey: null,
       from: null,
-      reason: 'RESEND_API_KEY and EMAIL_FROM are required for Resend email delivery.',
+      reason: 'RESEND_API_KEY and EMAIL_FROM or SMTP_FROM are required for Resend email delivery.',
     };
   }
 
@@ -109,7 +109,7 @@ const buildMailDiagnostics = (env = {}) => {
     smtpService: getMailService(env) || null,
     hasEmailUser: Boolean(getMailUser(env)),
     hasEmailPass: Boolean(getMailPass(env)),
-    hasEmailFrom: Boolean(firstPresent(env.EMAIL_FROM, env.MAIL_FROM)),
+    hasEmailFrom: Boolean(firstPresent(env.EMAIL_FROM, env.MAIL_FROM, env.SMTP_FROM)),
     appUrl: resolveAppUrl(env),
   };
 };

@@ -79,11 +79,11 @@ const upload = multer({ dest: uploadsDir, limits: { fileSize: 30 * 1024 * 1024 }
 
 const resendEmailConfig = buildResendEmailConfig(process.env);
 
-const sendSystemEmail = async (message) => {
+const sendSystemEmail = async (message, options = {}) => {
   const result = await sendEmailWithProviders({
     env: process.env,
     message,
-    timeoutMs: getEmailSendTimeoutMs(process.env),
+    timeoutMs: options.timeoutMs || getEmailSendTimeoutMs(process.env),
     logger: console,
   });
   return result.sent;
@@ -311,12 +311,14 @@ const generateCredentialsEmail = async (email, password, role, name) => {
     to: email,
     subject: message.subject,
     html: message.html,
+  }, {
+    timeoutMs: getCredentialEmailTimeoutMs(),
   });
 };
 
 const getCredentialEmailTimeoutMs = () => {
   const value = Number(process.env.CREDENTIAL_EMAIL_TIMEOUT_MS);
-  return Number.isFinite(value) && value > 0 ? value : 12000;
+  return Number.isFinite(value) && value > 0 ? value : 30000;
 };
 
 const getOtpEmailTimeoutMs = () => {

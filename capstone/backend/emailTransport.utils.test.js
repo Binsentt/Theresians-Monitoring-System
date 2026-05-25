@@ -57,7 +57,7 @@ test('enables Resend only when API key and sender address are configured', () =>
     enabled: false,
     apiKey: null,
     from: null,
-    reason: 'RESEND_API_KEY and EMAIL_FROM are required for Resend email delivery.',
+    reason: 'RESEND_API_KEY and EMAIL_FROM or SMTP_FROM are required for Resend email delivery.',
   });
 
   assert.deepEqual(buildResendEmailConfig({
@@ -66,7 +66,7 @@ test('enables Resend only when API key and sender address are configured', () =>
     enabled: false,
     apiKey: null,
     from: null,
-    reason: 'RESEND_API_KEY and EMAIL_FROM are required for Resend email delivery.',
+    reason: 'RESEND_API_KEY and EMAIL_FROM or SMTP_FROM are required for Resend email delivery.',
   });
 
   const config = buildResendEmailConfig({
@@ -78,6 +78,17 @@ test('enables Resend only when API key and sender address are configured', () =>
   assert.equal(config.enabled, true);
   assert.equal(config.apiKey, 're_secret_api_key');
   assert.equal(config.from, '"Saint Therese School" <noreply@theresiansquest.com>');
+  assert.equal(config.reason, null);
+});
+
+test('Resend accepts SMTP_FROM as a Railway sender fallback', () => {
+  const config = buildResendEmailConfig({
+    RESEND_API_KEY: 're_secret_api_key',
+    SMTP_FROM: 'Saint Therese School <noreply@theresiansquest.com>',
+  });
+
+  assert.equal(config.enabled, true);
+  assert.equal(config.from, 'Saint Therese School <noreply@theresiansquest.com>');
   assert.equal(config.reason, null);
 });
 
@@ -119,6 +130,7 @@ test('diagnostics report only safe mail configuration state', () => {
     EMAIL_USER: 'mailer@example.com',
     EMAIL_PASS: 'secret-app-password',
     EMAIL_FROM: 'noreply@example.com',
+    SMTP_FROM: 'fallback@example.com',
     APP_URL: 'https://theresiansquest.com/login',
   });
 
@@ -136,4 +148,15 @@ test('diagnostics report only safe mail configuration state', () => {
     appUrl: 'https://theresiansquest.com/login',
   });
   assert.doesNotMatch(JSON.stringify(diagnostics), /secret-app-password|re_secret_api_key/);
+});
+
+test('diagnostics treats SMTP_FROM as an email sender', () => {
+  const diagnostics = buildMailDiagnostics({
+    RESEND_API_KEY: 're_secret_api_key',
+    SMTP_FROM: 'Saint Therese School <noreply@theresiansquest.com>',
+  });
+
+  assert.equal(diagnostics.primaryProvider, 'resend');
+  assert.equal(diagnostics.resendEnabled, true);
+  assert.equal(diagnostics.hasEmailFrom, true);
 });

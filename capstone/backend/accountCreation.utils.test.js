@@ -16,7 +16,7 @@ test('account creation always uses a generated temporary password', () => {
   assert.equal(result.mustChangePassword, true);
 });
 
-test('credential email builder uses the approved Saint Therese welcome letter', () => {
+test('credential email builder uses the approved Saint Therese account letter', () => {
   assert.equal(shouldIncludeRoleInCredentialsEmail('parent'), true);
   assert.equal(shouldIncludeRoleInCredentialsEmail('Teacher'), true);
 
@@ -28,16 +28,19 @@ test('credential email builder uses the approved Saint Therese welcome letter', 
     appUrl: 'http://localhost:3000/login',
   });
 
-  assert.equal(parentEmail.subject, 'Welcome to Saint Therese School Portal \u2014 Your Account is Ready');
+  assert.equal(parentEmail.subject, 'Your Saint Therese School Portal Account');
   assert.match(parentEmail.html, /Dear Parent User,/);
-  assert.match(parentEmail.html, /Welcome to the Saint Therese School Monitoring System!/);
-  assert.match(parentEmail.html, /Your account has been created by the school administrator/);
+  assert.match(parentEmail.html, /Greetings from Saint Therese School\./);
+  assert.match(parentEmail.html, /Your account for the Theresian Monitoring System has been created successfully\./);
   assert.match(parentEmail.html, /Account Role:/);
   assert.match(parentEmail.html, /Parent/);
   assert.match(parentEmail.html, /Email:/);
   assert.match(parentEmail.html, /Temporary Password:/);
-  assert.match(parentEmail.html, /Please login using the generated password first, then change your password in Settings after logging in\./);
-  assert.match(parentEmail.html, /Monitoring and Learning Portal/);
+  assert.match(parentEmail.html, /Please login using the temporary password above\./);
+  assert.match(parentEmail.html, /Settings\/Profile page and change your password for security\./);
+  assert.match(parentEmail.html, /Login here:.*http:\/\/localhost:3000\/login/);
+  assert.match(parentEmail.html, /Please keep your account credentials private and do not share them with others\./);
+  assert.match(parentEmail.html, /Thank you,<br\/>Saint Therese School/);
 });
 
 test('credential email builder includes account role for generated-password recipients', () => {

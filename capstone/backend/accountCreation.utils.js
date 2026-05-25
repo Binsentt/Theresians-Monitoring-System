@@ -74,14 +74,15 @@ const buildAccountCreationResponse = ({ createdUser, generatedPassword, emailSen
   };
 };
 
-const buildCredentialsEmail = ({ email, password, role, name }) => {
+const buildCredentialsEmail = ({ email, password, role, name, appUrl = 'https://theresiansquest.com/login' }) => {
   const safeName = escapeHtml(name || 'User');
   const safeRole = escapeHtml(formatRoleLabel(role) || 'Account');
   const safeEmail = escapeHtml(email);
   const safePassword = escapeHtml(password);
+  const safeAppUrl = escapeHtml(appUrl);
 
   return {
-    subject: 'Welcome to Saint Therese School Portal \u2014 Your Account is Ready',
+    subject: 'Your Saint Therese School Portal Account',
     html: `<!doctype html>
 <html>
   <body style="margin: 0; padding: 0; background: #f1f5f9; font-family: Arial, Helvetica, sans-serif; color: #0f172a;">
@@ -97,8 +98,8 @@ const buildCredentialsEmail = ({ email, password, role, name }) => {
             <tr>
               <td style="padding: 28px;">
                 <p style="margin: 0 0 16px; font-size: 16px; line-height: 1.6;">Dear ${safeName},</p>
-                <p style="margin: 0 0 18px; font-size: 15px; line-height: 1.7;">Welcome to the Saint Therese School Monitoring System!</p>
-                <p style="margin: 0 0 18px; font-size: 15px; line-height: 1.7;">Your account has been created by the school administrator. Below are your login credentials:</p>
+                <p style="margin: 0 0 18px; font-size: 15px; line-height: 1.7;">Greetings from Saint Therese School.</p>
+                <p style="margin: 0 0 18px; font-size: 15px; line-height: 1.7;">Your account for the Theresian Monitoring System has been created successfully.</p>
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background: #f8fafc; border: 1px solid #dbe3ef; border-radius: 12px; padding: 18px; margin: 0 0 22px;">
                   <tr>
                     <td style="padding: 0 0 8px; color: #64748b; font-size: 13px; font-weight: 700; text-transform: uppercase;">Account Role:</td>
@@ -119,9 +120,10 @@ const buildCredentialsEmail = ({ email, password, role, name }) => {
                     <td style="padding: 0; color: #0f172a; font-size: 18px; font-weight: 800; word-break: break-word;">${safePassword}</td>
                   </tr>
                 </table>
-                <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.7;">Please login using the generated password first, then change your password in Settings after logging in.</p>
-                <p style="margin: 0 0 22px; font-size: 15px; line-height: 1.7;">If you have any questions or need assistance, please contact the school administrator.</p>
-                <p style="margin: 0; font-size: 15px; line-height: 1.7;">God bless,<br/>Saint Therese School<br/>Monitoring and Learning Portal</p>
+                <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.7;">Please login using the temporary password above. After logging in, kindly go to your Settings/Profile page and change your password for security.</p>
+                <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.7;">Login here: <a href="${safeAppUrl}" style="color: #0b5ed7;">${safeAppUrl}</a></p>
+                <p style="margin: 0 0 22px; font-size: 15px; line-height: 1.7;">Please keep your account credentials private and do not share them with others.</p>
+                <p style="margin: 0; font-size: 15px; line-height: 1.7;">Thank you,<br/>Saint Therese School</p>
               </td>
             </tr>
           </table>
