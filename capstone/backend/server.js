@@ -2939,6 +2939,8 @@ app.post('/api/game/progress', async (req, res) => {
 app.post('/api/game/result', async (req, res) => {
   const {
     parent_id,
+    student_id,
+    resolved_student_id,
     student_name,
     grade_level,
     difficulty,
@@ -2949,6 +2951,7 @@ app.post('/api/game/result', async (req, res) => {
   } = req.body || {};
 
   const parentCode = normalizeParentCode(parent_id);
+  const submittedStudentId = resolveScopeId(student_id ?? resolved_student_id);
   const studentName = normalizeGameStudentName(student_name);
   const scoreValue = toNullableNumber(score);
   const totalItemsValue = toNullableNumber(total_items);
@@ -2957,8 +2960,11 @@ app.post('/api/game/result', async (req, res) => {
   if (!parentCode) {
     return res.status(400).json({ error: 'Parent ID must be exactly 6 digits.' });
   }
-  if (!studentName) {
-    return res.status(400).json({ error: 'Student/Player Name is required.' });
+  if (Number.isNaN(submittedStudentId)) {
+    return res.status(400).json({ error: 'Student ID must be a valid number.' });
+  }
+  if (!studentName && !submittedStudentId) {
+    return res.status(400).json({ error: 'Student/Player Name or Student ID is required.' });
   }
   if (scoreValue === null || totalItemsValue === null || totalItemsValue <= 0 || percentage === null) {
     return res.status(400).json({ error: 'score and total_items must be valid quiz totals.' });
@@ -2981,18 +2987,41 @@ app.post('/api/game/result', async (req, res) => {
 
     const parent = parentResult.rows[0];
     // Keep result ingestion non-destructive: unresolved names stay reviewable instead of auto-creating a child here.
-    const studentResult = await pool.query(
-      `SELECT s.id
-       FROM public.accounts s
-       JOIN public.teacher_student_relationships r ON r.student_id = s.id
-       WHERE r.teacher_id = $1
-         AND LOWER(r.relationship_type) = 'parent'
-         AND LOWER(TRIM(s.name)) = LOWER($2)
-       ORDER BY s.id
-       LIMIT 1`,
-      [parent.id, studentName]
-    );
-    const resolvedStudentId = studentResult.rows[0]?.id || null;
+    let resolvedStudentId = null;
+    let resultStudentName = studentName;
+    if (submittedStudentId) {
+      const studentResult = await pool.query(
+        `SELECT s.id, s.name
+         FROM public.accounts s
+         JOIN public.teacher_student_relationships r ON r.student_id = s.id
+         WHERE r.teacher_id = $1
+           AND r.student_id = $2
+           AND LOWER(r.relationship_type) = 'parent'
+           AND COALESCE(s.is_archived, false) = false
+         LIMIT 1`,
+        [parent.id, submittedStudentId]
+      );
+      if (studentResult.rows.length === 0) {
+        return res.status(403).json({ error: 'Student is not linked to this parent.' });
+      }
+      resolvedStudentId = studentResult.rows[0].id;
+      resultStudentName = resultStudentName || studentResult.rows[0].name || `Student ${resolvedStudentId}`;
+    } else {
+      const studentResult = await pool.query(
+        `SELECT s.id, s.name
+         FROM public.accounts s
+         JOIN public.teacher_student_relationships r ON r.student_id = s.id
+         WHERE r.teacher_id = $1
+           AND LOWER(r.relationship_type) = 'parent'
+           AND LOWER(TRIM(s.name)) = LOWER($2)
+           AND COALESCE(s.is_archived, false) = false
+         ORDER BY s.id
+         LIMIT 1`,
+        [parent.id, studentName]
+      );
+      resolvedStudentId = studentResult.rows[0]?.id || null;
+      resultStudentName = studentResult.rows[0]?.name || studentName;
+    }
 
     await pool.query(
       `INSERT INTO public.game_results (
@@ -3003,7 +3032,7 @@ app.post('/api/game/result', async (req, res) => {
        )`,
       [
         parentCode,
-        studentName,
+        resultStudentName,
         resolvedStudentId,
         grade_level || null,
         difficulty || null,
@@ -3016,7 +3045,7 @@ app.post('/api/game/result', async (req, res) => {
       ]
     );
 
-    res.status(201).json({ success: true, resolved: Boolean(resolvedStudentId) });
+    res.status(201).json({ success: true, resolved: Boolean(resolvedStudentId), student_id: resolvedStudentId });
   } catch (err) {
     console.error('Save game result failed:', err.message);
     res.status(500).json({ error: 'Failed to save game result', details: err.message });
@@ -3509,6 +3538,7 @@ app.get('/api/parent/children', async (req, res) => {
 
     const childrenResult = await pool.query(
       `SELECT s.id,
+              s.id AS student_id,
               s.name,
               s.name AS student_name,
               s.email,

@@ -137,7 +137,7 @@ test('parent game results routes and access middleware', async (t) => {
     });
 
     assert.equal(response.status, 201);
-    assert.deepEqual(response.body, { success: true, resolved: true });
+    assert.deepEqual(response.body, { success: true, resolved: true, student_id: 44 });
     assert.equal(insertedValues[2], 44);
     assert.equal(insertedValues[8], 80);
     assert.equal(insertedValues[10], false);
@@ -173,9 +173,83 @@ test('parent game results routes and access middleware', async (t) => {
     });
 
     assert.equal(response.status, 201);
-    assert.deepEqual(response.body, { success: true, resolved: false });
+    assert.deepEqual(response.body, { success: true, resolved: false, student_id: null });
     assert.equal(insertedValues[2], null);
     assert.equal(insertedValues[10], true);
+  });
+
+  await t.test('stores a game result with a submitted linked student_id from Godot', async () => {
+    let insertedValues = null;
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (
+        sql.includes('from public.accounts s')
+        && sql.includes('teacher_student_relationships r')
+        && sql.includes('r.student_id = $2')
+      ) {
+        assert.deepEqual(params, [19, 44]);
+        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+      }
+      if (sql.startsWith('insert into public.game_results')) {
+        insertedValues = params;
+        return emptyResult;
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: 44,
+        grade_level: 'Grade 3',
+        difficulty: 'Normal',
+        math_topic: 'Fractions',
+        score: 8,
+        total_items: 10,
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.deepEqual(response.body, { success: true, resolved: true, student_id: 44 });
+    assert.equal(insertedValues[1], 'Ava Santos');
+    assert.equal(insertedValues[2], 44);
+    assert.equal(insertedValues[10], false);
+  });
+
+  await t.test('rejects a submitted student_id that is not linked to the parent', async () => {
+    let insertedGameResult = false;
+    setQueryHandler(async (sql) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (sql.includes('from public.accounts s') && sql.includes('r.student_id = $2')) {
+        return emptyResult;
+      }
+      if (sql.startsWith('insert into public.game_results')) {
+        insertedGameResult = true;
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: 99,
+        grade_level: 'Grade 3',
+        difficulty: 'Normal',
+        math_topic: 'Fractions',
+        score: 8,
+        total_items: 10,
+      }),
+    });
+
+    assert.equal(response.status, 403);
+    assert.equal(response.body.error, 'Student is not linked to this parent.');
+    assert.equal(insertedGameResult, false);
   });
 
   await t.test('returns paginated child quizzes for a linked parent', async () => {
@@ -313,6 +387,26 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(response.body.analyticsReadiness.dataScope.studentId, 44);
     assert.deepEqual(new Set(queriedStudentIds), new Set([44]));
     assert.equal(response.body.analyticsReadiness.topicMastery[0].topic, 'Fractions');
+  });
+
+  await t.test('teacher progress list stays scoped to the teacher while returning separate students', async () => {
+    setQueryHandler(async (sql, params) => {
+      if (sql.startsWith('select p.*') && sql.includes('from public.student_game_progress p')) {
+        assert.equal(params[0], 16);
+        assert.match(sql, /tsr\.teacher_id = \$1/);
+        return resultRows([
+          { student_id: 44, student_name: 'Ava Santos', score: 90, accuracy_rate: 90, progress_percentage: 80 },
+          { student_id: 45, student_name: 'Noah Santos', score: 70, accuracy_rate: 70, progress_percentage: 60 },
+        ]);
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/students/progress?teacher_id=16');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.map((row) => row.student_id), [44, 45]);
+    assert.notEqual(response.body[0].student_id, response.body[1].student_id);
   });
 
   await t.test('rejects topic coverage when the parent link is missing', async () => {

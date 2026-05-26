@@ -324,10 +324,15 @@ export default function ParentChildProgress() {
                       <div>
                         <h2>{focusStudent.student_name || 'Unknown Child'}</h2>
                         <p>{[focusStudent.grade_level || focusStudent.grade || 'Grade N/A', focusStudent.section].filter(Boolean).join(' - ')}</p>
+                        <small>Student ID: {focusStudentId}</small>
                       </div>
                     </div>
 
                     <div className="child-progress-stats">
+                      <div className="child-progress-stat">
+                        <span>Student ID</span>
+                        <strong>{focusStudentId}</strong>
+                      </div>
                       <div className="child-progress-stat">
                         <span>Child</span>
                         <strong>{focusStudent.student_name || 'Unknown'}</strong>
@@ -360,7 +365,7 @@ export default function ParentChildProgress() {
                         <p>Recent gameplay updates for the selected child.</p>
                       </div>
                       {selectedLogs.length === 0 ? (
-                        <div className="fallback-note">No activity logs recorded for this child yet.</div>
+                        <div className="fallback-note">No game progress data available yet. Progress will appear here once the student starts playing the game.</div>
                       ) : (
                         <div className="child-activity-list">
                           {selectedLogs.slice(0, 5).map((log) => (
@@ -385,7 +390,7 @@ export default function ParentChildProgress() {
                         ) : childDetailsError ? (
                           <div className="fallback-note">{childDetailsError}</div>
                         ) : quizSessions.length === 0 ? (
-                          <div className="fallback-note">No quiz sessions recorded for this child yet.</div>
+                          <div className="fallback-note">No game progress data available yet. Progress will appear here once the student starts playing the game.</div>
                         ) : (
                           <div className="child-quiz-list">
                             {quizSessions.map((session) => (
@@ -405,7 +410,7 @@ export default function ParentChildProgress() {
                           <p>Recent quiz percentages by topic and difficulty.</p>
                         </div>
                         {scoreTimeline.length === 0 ? (
-                          <div className="fallback-note">Score history will appear after quiz sessions are recorded.</div>
+                          <div className="fallback-note">No game progress data available yet. Progress will appear here once the student starts playing the game.</div>
                         ) : (
                           <div className="child-score-chart">
                             <ResponsiveContainer width="100%" height={260}>
@@ -427,7 +432,7 @@ export default function ParentChildProgress() {
                           <p>Topics attempted and best recorded quiz scores.</p>
                         </div>
                         {topicCoverage.length === 0 ? (
-                          <div className="fallback-note">Topic coverage will appear after quiz sessions are recorded.</div>
+                          <div className="fallback-note">No game progress data available yet. Progress will appear here once the student starts playing the game.</div>
                         ) : (
                           <div className="child-topic-list">
                             {topicCoverage.map((topic) => (

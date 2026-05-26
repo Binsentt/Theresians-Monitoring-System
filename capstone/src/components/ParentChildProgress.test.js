@@ -116,7 +116,10 @@ describe('ParentChildProgress child selection and game warnings', () => {
     });
 
     expect(container.textContent).toContain('Ava Santos');
+    expect(container.textContent).toContain('Student ID');
+    expect(container.textContent).toContain('44');
     expect(container.textContent).toContain('Quiz Sessions');
+    expect(container.textContent).toContain('No game progress data available yet.');
     expect(container.textContent).not.toContain('My Children');
     expect(mockNavigate).not.toHaveBeenCalledWith('/login');
   });
@@ -176,5 +179,36 @@ describe('ParentChildProgress child selection and game warnings', () => {
 
     expect(container.textContent).toContain('Practice fractions for Ava.');
     expect(container.textContent).not.toContain('Practice shapes for Noah.');
+  });
+
+  test('loads only the chosen child after the parent selects from multiple children', async () => {
+    const fetchedUrls = [];
+    global.fetch = jest.fn((url) => {
+      fetchedUrls.push(url);
+      return successPayloadForUrl(url, {
+        children: [
+          { id: 44, student_name: 'Ava Santos', grade_level: 'Grade 3', section: 'Section A' },
+          { id: 45, student_name: 'Noah Santos', grade_level: 'Grade 1', section: 'Section B' },
+        ],
+        unlinked_count: 0,
+      });
+    });
+
+    await act(async () => {
+      root.render(<ParentChildProgress />);
+    });
+
+    const noahButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent.includes('Noah Santos'));
+
+    await act(async () => {
+      noahButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Noah Santos');
+    expect(container.textContent).toContain('Student ID');
+    expect(container.textContent).toContain('45');
+    expect(fetchedUrls.some((url) => url.startsWith('/api/parent/children/45/quizzes?'))).toBe(true);
+    expect(fetchedUrls.some((url) => url.startsWith('/api/parent/children/44/quizzes?'))).toBe(false);
   });
 });

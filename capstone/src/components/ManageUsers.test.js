@@ -127,6 +127,25 @@ describe('ManageUsers edit flow', () => {
     expect(container.textContent).toContain('482915');
   });
 
+  test('Edit Parent form exposes linked children management', async () => {
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    const editButtons = Array.from(container.querySelectorAll('button')).filter(
+      (button) => button.textContent === 'Edit'
+    );
+
+    await act(async () => {
+      editButtons[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Linked Children');
+    expect(container.textContent).toContain('Student Email');
+    expect(container.textContent).toContain('Parent ID');
+    expect(global.fetch).toHaveBeenCalledWith('/api/teacher-student-relationships?teacherId=8');
+  });
+
   test('Add User form uses system-generated credentials without manual password input', async () => {
     await act(async () => {
       root.render(<ManageUsers />);

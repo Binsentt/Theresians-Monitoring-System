@@ -278,7 +278,7 @@ export default function ManageUsers() {
       employee_id: u.employee_id || '',
       role: formatRoleLabel(u.role || 'Parent')
     });
-    if (isTeacherRole(u.role)) {
+    if (isTeacherRole(u.role) || isParentRole(u.role)) {
       loadTeacherRelationships(u.id);
     } else {
       setTeacherRelations([]);
@@ -310,7 +310,11 @@ export default function ManageUsers() {
       const response = await fetch(apiUrl('/api/teacher-student-relationships'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teacherId: editingUser.id, studentEmail: relationEmail, relationship_type: 'Parent' }),
+        body: JSON.stringify({
+          teacherId: editingUser.id,
+          studentEmail: relationEmail,
+          relationship_type: isParentRole(editingUser.role) ? 'Parent' : 'Teacher',
+        }),
       });
       const data = await response.json();
       if (response.ok) {
@@ -1044,11 +1048,11 @@ export default function ManageUsers() {
                       {editErrors.gender && <p className="error-text">{editErrors.gender}</p>}
                     </div>
 
-                    {isTeacherRole(editingUser.role) && (
+                    {(isTeacherRole(editingUser.role) || isParentRole(editingUser.role)) && (
                       <div className="form-container-card edit-user-teacher-panel">
-                        <h3>Assigned Students</h3>
+                        <h3>{isParentRole(editingUser.role) ? 'Linked Children' : 'Assigned Students'}</h3>
                         <p className="edit-user-helper-text">
-                          Link students to this teacher from a dedicated, roomier section so the role-specific settings stay readable.
+                          Link students to this {isParentRole(editingUser.role) ? 'parent' : 'teacher'} from a dedicated, roomier section so role-specific settings stay readable.
                         </p>
                         <div className="form-group edit-user-teacher-input">
                           <label>Student Email</label>
@@ -1066,12 +1070,12 @@ export default function ManageUsers() {
                             className="sts-add-btn"
                             onClick={handleAddTeacherRelation}
                           >
-                            Add Student
+                            {isParentRole(editingUser.role) ? 'Add Child' : 'Add Student'}
                           </button>
                         </div>
                         {relationMessage && <p className="info-text">{relationMessage}</p>}
                         {teacherRelations.length === 0 ? (
-                          <p className="empty-table-msg">No assigned students yet.</p>
+                          <p className="empty-table-msg">{isParentRole(editingUser.role) ? 'No linked children yet.' : 'No assigned students yet.'}</p>
                         ) : (
                           <div className="table-container">
                             <table className="sts-data-table">
