@@ -188,6 +188,22 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS lesson_progress DECIMAL(5, 2) DEFAULT 0.00');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_student_game_progress_student_id ON public.student_game_progress(student_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_student_game_progress_score ON public.student_game_progress(score DESC)');
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.game_results (
+      id SERIAL PRIMARY KEY,
+      parent_id CHARACTER VARYING(6) NOT NULL,
+      student_name CHARACTER VARYING(100) NOT NULL,
+      resolved_student_id INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL,
+      grade_level CHARACTER VARYING(20),
+      difficulty CHARACTER VARYING(20),
+      math_topic CHARACTER VARYING(255),
+      score INTEGER NOT NULL,
+      total_items INTEGER NOT NULL,
+      percentage DECIMAL(5, 2) NOT NULL,
+      played_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      is_unlinked BOOLEAN NOT NULL DEFAULT true
+    );`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_parent_id ON public.game_results(parent_id)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_resolved_student_id ON public.game_results(resolved_student_id)');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.teacher_student_relationships (
       id SERIAL PRIMARY KEY,
       teacher_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,

@@ -244,6 +244,34 @@ test('parent game results routes and access middleware', async (t) => {
     assert.deepEqual(response.body, [{ math_topic: 'Fractions', times_played: 3, best_score: 9 }]);
   });
 
+  await t.test('parent children endpoint returns a clean empty-progress shape when no game results exist yet', async () => {
+    setQueryHandler(async (sql) => {
+      if (sql.includes('from public.teacher_student_relationships tsr') && sql.includes('left join public.game_results gr on gr.resolved_student_id = s.id')) {
+        return resultRows([{
+          id: 44,
+          name: 'Ava Santos',
+          student_name: 'Ava Santos',
+          email: 'ava@example.com',
+          grade_level: null,
+          section: 'Section A',
+          total_quizzes: 0,
+          last_quiz_date: null,
+        }]);
+      }
+      if (sql.includes('count(gr.id)::integer as unlinked_count')) {
+        return resultRows([{ unlinked_count: 0 }]);
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/parent/children?parent_id=19');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.unlinked_count, 0);
+    assert.equal(response.body.children[0].student_name, 'Ava Santos');
+    assert.equal(response.body.children[0].total_quizzes, 0);
+  });
+
   await t.test('student analytics detail only uses the requested linked child data', async () => {
     const queriedStudentIds = [];
     setQueryHandler(async (sql, params) => {
