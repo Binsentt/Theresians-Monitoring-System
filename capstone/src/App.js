@@ -20,6 +20,7 @@ import LoginScreen from './components/LoginScreen';
 import LessonQuestionManager from './components/LessonQuestionManager';
 import SettingsScreen from './components/SettingsScreen';
 import AnnouncementPage from './components/AnnouncementPage';
+import SessionMonitor from './components/SessionMonitor';
 
 import './styles/Login.css';
 import './styles/homePageStyles.css';
@@ -32,6 +33,7 @@ import './styles/settings.css';
 function App() {
   return (
     <Router>
+      <SessionMonitor />
       <Routes>
         <Route path="/" element={<HomePageScreen />} />
         <Route path="/login" element={<LoginScreen />} />

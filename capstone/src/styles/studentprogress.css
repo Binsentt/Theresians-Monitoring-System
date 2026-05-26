@@ -85,6 +85,37 @@
   gap: 14px;
 }
 
+.child-profile-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.child-profile-avatar {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #ffffff;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.child-profile-heading h2,
+.child-profile-heading p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.child-profile-heading p {
+  color: var(--text-muted, #64748b);
+  margin-top: 4px;
+}
+
 .child-progress-stat {
   padding: 16px 18px;
   border-radius: 16px;
@@ -694,5 +725,27 @@
   .parent-unlinked-warning {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .analytics-card,
+  .student-progress-filters-card,
+  .analytics-insights-panel,
+  .child-activity-panel,
+  .child-selector-card,
+  .child-progress-stat {
+    min-width: 0;
+  }
+
+  .child-profile-heading {
+    align-items: flex-start;
+  }
+
+  .pagination-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pagination-row button {
+    width: 100%;
   }
 }

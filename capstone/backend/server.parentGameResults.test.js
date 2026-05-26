@@ -244,6 +244,49 @@ test('parent game results routes and access middleware', async (t) => {
     assert.deepEqual(response.body, [{ math_topic: 'Fractions', times_played: 3, best_score: 9 }]);
   });
 
+  await t.test('student analytics detail only uses the requested linked child data', async () => {
+    const queriedStudentIds = [];
+    setQueryHandler(async (sql, params) => {
+      if (sql.startsWith('select p.*') && sql.includes('where p.student_id = $1')) {
+        queriedStudentIds.push(params[0]);
+        return resultRows([{
+          student_id: params[0],
+          student_name: 'Ava Santos',
+          grade_level: 'Grade 3',
+          section: 'Section A',
+          current_quest: 'Quest 4',
+          score: 7,
+          correct_answers: 7,
+          total_questions: 10,
+          accuracy_rate: 70,
+          progress_percentage: 60,
+        }]);
+      }
+      if (sql.includes('from public.game_results') && sql.includes('where resolved_student_id = $1')) {
+        queriedStudentIds.push(params[0]);
+        return resultRows([
+          { math_topic: 'Fractions', difficulty: 'Normal', percentage: 60, score: 6, total_items: 10, played_at: '2026-05-20T00:00:00Z' },
+          { math_topic: 'Fractions', difficulty: 'Normal', percentage: 70, score: 7, total_items: 10, played_at: '2026-05-21T00:00:00Z' },
+        ]);
+      }
+      if (sql.includes('from public.activity_logs') && sql.includes('where student_id = $1')) {
+        queriedStudentIds.push(params[0]);
+        return resultRows([
+          { student_id: params[0], activity_description: 'Gameplay Session', quest_progress: 60, activity_timestamp: '2026-05-21T00:00:00Z' },
+        ]);
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/student-progress/44?parent_id=19');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.progress.student_id, 44);
+    assert.equal(response.body.analyticsReadiness.dataScope.studentId, 44);
+    assert.deepEqual(new Set(queriedStudentIds), new Set([44]));
+    assert.equal(response.body.analyticsReadiness.topicMastery[0].topic, 'Fractions');
+  });
+
   await t.test('rejects topic coverage when the parent link is missing', async () => {
     setQueryHandler(async (sql) => {
       if (sql.includes('from public.teacher_student_relationships') && sql.startsWith('select 1')) {

@@ -12,11 +12,13 @@ test('serializeUser removes password and OTP fields from account responses', () 
     otp_expires_at: new Date().toISOString(),
     is_archived: false,
     must_change_password: true,
+    session_version: 3,
   });
 
   assert.equal(user.password, undefined);
   assert.equal(user.otp_code, undefined);
   assert.equal(user.otp_expires_at, undefined);
+  assert.equal(user.session_version, undefined);
   assert.equal(user.mustChangePassword, true);
   assert.equal(user.isArchived, false);
 });

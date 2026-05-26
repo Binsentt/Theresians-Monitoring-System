@@ -14,7 +14,7 @@
   min-height: 100vh;
   background: var(--bg-primary, #f5f7fb);
   margin-left: 280px;
-  overflow: hidden;
+  overflow-x: hidden;
 }
 
 /* Main Content Area */
@@ -46,8 +46,21 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--spacing-md, 16px);
+  flex-wrap: wrap;
   min-height: 70px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.header-info {
+  min-width: 0;
+}
+
+.header-info h1,
+.header-info p,
+.top-bar h1,
+.top-bar p {
+  overflow-wrap: anywhere;
 }
 
 .top-bar h1 {
@@ -88,6 +101,7 @@
   display: flex;
   gap: var(--spacing-sm, 12px);
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .section-content {
@@ -140,6 +154,17 @@
   .section-actions a {
     width: 100%;
     text-align: center;
+  }
+
+  .top-bar > * {
+    max-width: 100%;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    max-width: 100%;
   }
 
   .section-content {

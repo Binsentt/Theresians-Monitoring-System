@@ -1,6 +1,6 @@
 const serializeUser = (user) => {
   if (!user) return null;
-  const { password, otp_code, otp_expires_at, is_archived, must_change_password, ...rest } = user;
+  const { password, otp_code, otp_expires_at, is_archived, must_change_password, session_version, ...rest } = user;
   return {
     ...rest,
     mustChangePassword: !!must_change_password,

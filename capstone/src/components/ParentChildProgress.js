@@ -17,10 +17,11 @@ export default function ParentChildProgress() {
   const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [portalRole, setPortalRole] = useState('parent');
   const [overview, setOverview] = useState(null);
-  const [recommendations, setRecommendations] = useState([]);
   const [parentAccountId, setParentAccountId] = useState(null);
   const [quizSessions, setQuizSessions] = useState([]);
   const [topicCoverage, setTopicCoverage] = useState([]);
+  const [selectedChildAnalysis, setSelectedChildAnalysis] = useState(null);
+  const [selectedAnalyticsReadiness, setSelectedAnalyticsReadiness] = useState(null);
   const [childDetailsLoading, setChildDetailsLoading] = useState(false);
   const [childDetailsError, setChildDetailsError] = useState('');
   const [unlinkedCount, setUnlinkedCount] = useState(0);
@@ -41,11 +42,10 @@ export default function ParentChildProgress() {
         const parentId = loggedInUser?.id;
         setParentAccountId(parentId);
         setPortalRole(normalizeRole(loggedInUser?.role) === 'parent_teacher' ? 'parent_teacher' : 'parent');
-        const [childrenResult, studentsResult, overviewResult, recommendationsResult, activityResult] = await Promise.allSettled([
+        const [childrenResult, studentsResult, overviewResult, activityResult] = await Promise.allSettled([
           fetch(buildScopedApiUrl('/api/parent/children', 'parent', parentId)),
           fetch(buildScopedApiUrl('/api/students/progress', 'parent', parentId)),
           fetch(buildScopedApiUrl('/api/analytics/overview', 'parent', parentId)),
-          fetch(buildScopedApiUrl('/api/analytics/recommendations', 'parent', parentId)),
           fetch(buildScopedApiUrl('/api/activity-logs?limit=100', 'parent', parentId)),
         ]);
 
@@ -94,13 +94,6 @@ export default function ParentChildProgress() {
           setOverview(null);
         }
 
-        if (recommendationsResult.status === 'fulfilled' && recommendationsResult.value.ok) {
-          const recommendationsData = await recommendationsResult.value.json();
-          setRecommendations(Array.isArray(recommendationsData.recommendations) ? recommendationsData.recommendations : []);
-        } else {
-          setRecommendations([]);
-        }
-
         if (activityResult.status === 'fulfilled' && activityResult.value.ok) {
           const activityData = await activityResult.value.json();
           setActivityLogs(normalizeActivityLogPayload(activityData).records);
@@ -130,6 +123,8 @@ export default function ParentChildProgress() {
     if (!focusStudentId || !parentAccountId) {
       setQuizSessions([]);
       setTopicCoverage([]);
+      setSelectedChildAnalysis(null);
+      setSelectedAnalyticsReadiness(null);
       setChildDetailsLoading(false);
       setChildDetailsError('');
       return undefined;
@@ -140,25 +135,34 @@ export default function ParentChildProgress() {
       setChildDetailsLoading(true);
       setChildDetailsError('');
       try {
-        const [quizzesResult, topicsResult] = await Promise.all([
+        const [quizzesResult, topicsResult, analyticsResult] = await Promise.all([
           fetch(buildScopedApiUrl(`/api/parent/children/${focusStudentId}/quizzes?limit=20`, 'parent', parentAccountId)),
           fetch(buildScopedApiUrl(`/api/parent/children/${focusStudentId}/topics`, 'parent', parentAccountId)),
+          fetch(buildScopedApiUrl(`/api/student-progress/${focusStudentId}`, 'parent', parentAccountId)),
         ]);
 
         if (!quizzesResult.ok || !topicsResult.ok) {
           throw new Error('Could not load child quiz details');
         }
 
-        const [quizzesPayload, topicsPayload] = await Promise.all([quizzesResult.json(), topicsResult.json()]);
+        const [quizzesPayload, topicsPayload, analyticsPayload] = await Promise.all([
+          quizzesResult.json(),
+          topicsResult.json(),
+          analyticsResult.ok ? analyticsResult.json() : Promise.resolve(null),
+        ]);
         if (!active) return;
 
         setQuizSessions(Array.isArray(quizzesPayload.data) ? quizzesPayload.data : []);
         setTopicCoverage(Array.isArray(topicsPayload) ? topicsPayload : []);
+        setSelectedChildAnalysis(analyticsPayload?.analysis || null);
+        setSelectedAnalyticsReadiness(analyticsPayload?.analyticsReadiness || null);
       } catch (err) {
         console.error('Child game result load error:', err);
         if (!active) return;
         setQuizSessions([]);
         setTopicCoverage([]);
+        setSelectedChildAnalysis(null);
+        setSelectedAnalyticsReadiness(null);
         setChildDetailsError('Quiz session details are currently unavailable.');
       } finally {
         if (active) setChildDetailsLoading(false);
@@ -194,6 +198,20 @@ export default function ParentChildProgress() {
       quiz: index + 1,
     }));
   }, [quizSessions]);
+
+  const selectedRecommendations = useMemo(() => {
+    return Array.isArray(selectedChildAnalysis?.recommendations) ? selectedChildAnalysis.recommendations : [];
+  }, [selectedChildAnalysis]);
+
+  const focusStudentInitials = useMemo(() => {
+    const name = focusStudent?.student_name || focusStudent?.name || '';
+    return name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('') || 'ST';
+  }, [focusStudent]);
 
   const renderChildSelector = () => (
     <div className="child-progress-selector" aria-label="Select child">
@@ -300,6 +318,14 @@ export default function ParentChildProgress() {
                 ) : focusStudent ? (
                   <div className="child-progress-detail">
                     {students.length > 1 && renderChildSelector()}
+
+                    <div className="child-profile-heading">
+                      <div className="child-profile-avatar" aria-hidden="true">{focusStudentInitials}</div>
+                      <div>
+                        <h2>{focusStudent.student_name || 'Unknown Child'}</h2>
+                        <p>{[focusStudent.grade_level || focusStudent.grade || 'Grade N/A', focusStudent.section].filter(Boolean).join(' - ')}</p>
+                      </div>
+                    </div>
 
                     <div className="child-progress-stats">
                       <div className="child-progress-stat">
@@ -415,6 +441,23 @@ export default function ParentChildProgress() {
                         )}
                       </div>
 
+                      <div className="child-activity-panel child-ai-readiness-panel">
+                        <div className="insights-header">
+                          <h2>Analytics Readiness</h2>
+                          <p>Child-specific learning signals prepared for future recommendation APIs.</p>
+                        </div>
+                        <div className="child-topic-list">
+                          <div className="child-topic-item">
+                            <strong>Quiz sessions</strong>
+                            <span>{selectedAnalyticsReadiness?.engagement?.quizSessionCount ?? quizSessions.length} available</span>
+                          </div>
+                          <div className="child-topic-item">
+                            <strong>Weak topic candidates</strong>
+                            <span>{selectedAnalyticsReadiness?.weakTopicCandidates?.length ?? 0} detected</span>
+                          </div>
+                        </div>
+                      </div>
+
                       <div className="child-activity-panel child-achievements-panel">
                         <div className="insights-header">
                           <h2>Achievements — Coming Soon</h2>
@@ -433,16 +476,16 @@ export default function ParentChildProgress() {
                   <h2>Recommendations</h2>
                   <p>Math-focused guidance based on current performance, progress, and learning insights.</p>
                 </div>
-                {loading ? (
+                {loading || childDetailsLoading ? (
                   <div className="fallback-note">Loading recommendations...</div>
-                ) : recommendations.length > 0 ? (
+                ) : selectedRecommendations.length > 0 ? (
                   <ul className="recommendation-list">
-                    {recommendations.map((item, index) => (
+                    {selectedRecommendations.map((item, index) => (
                       <li key={index}>{item}</li>
                     ))}
                   </ul>
                 ) : (
-                  <div className="fallback-note">No recommendations available yet.</div>
+                  <div className="fallback-note">No child-specific recommendations available yet.</div>
                 )}
               </div>
             </ContentSection>

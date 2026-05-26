@@ -1162,6 +1162,24 @@
         gap: 10px;
     }
 
+    .modal-content,
+    .edit-user-modal,
+    .form-container-card,
+    .table-container {
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    .sts-form input,
+    .sts-form select,
+    .sts-form textarea,
+    .edit-user-form input,
+    .edit-user-form select,
+    .edit-user-form textarea {
+        width: 100%;
+        min-width: 0;
+    }
+
     .edit-user-teacher-actions {
         align-items: stretch;
     }

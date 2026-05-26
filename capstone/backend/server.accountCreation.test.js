@@ -7,6 +7,8 @@ let queryHandler = async () => emptyResult;
 let sentMessages = [];
 let passwordMatches = false;
 let emailSendResult = { sent: true, provider: 'test' };
+let verifiedTokenPayload = {};
+let signedTokenPayloads = [];
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const mockPool = {
@@ -38,8 +40,11 @@ const serverDependencyStubs = {
   },
   cors: () => createMiddleware(),
   jsonwebtoken: {
-    sign: () => 'token',
-    verify: () => ({}),
+    sign: (payload) => {
+      signedTokenPayloads.push(payload);
+      return 'token';
+    },
+    verify: () => verifiedTokenPayload,
   },
   multer: multerStub,
   'pdf-parse': async () => ({ text: '' }),
@@ -91,6 +96,8 @@ const resetTestState = () => {
   sentMessages = [];
   passwordMatches = false;
   emailSendResult = { sent: true, provider: 'test' };
+  verifiedTokenPayload = {};
+  signedTokenPayloads = [];
   setQueryHandler(async () => emptyResult);
 };
 
@@ -428,4 +435,132 @@ test('teacher account creation rejects employee IDs longer than 10 digits', asyn
 
   assert.equal(response.status, 400);
   assert.match(response.body.error, /10 digits or fewer/i);
+});
+
+test('archiving an account invalidates sessions and OTP skip records', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const statements = [];
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    statements.push({ sql, params });
+    if (sql.startsWith('select id, role from public.accounts where id = $1')) {
+      return resultRows([{ id: Number(params[0]), role: 'teacher' }]);
+    }
+    if (sql.startsWith('update public.accounts set is_archived = true')) {
+      return resultRows([{ id: Number(params[0]), role: 'teacher', is_archived: true, session_version: 4 }]);
+    }
+    if (sql.startsWith('delete from public.login_otp_device_skips')) {
+      return emptyResult;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts/42', { method: 'DELETE' });
+
+  assert.equal(response.status, 200);
+  assert.match(response.body.message, /archived/i);
+  assert.ok(statements.some((entry) => entry.sql.includes('session_version = coalesce(session_version, 0) + 1')));
+  assert.ok(statements.some((entry) => entry.sql.includes('otp_code = null') && entry.sql.includes('otp_expires_at = null')));
+  assert.ok(statements.some((entry) => entry.sql.startsWith('delete from public.login_otp_device_skips')));
+});
+
+test('session validation rejects archived accounts and stale token versions', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 77, email: 'teacher@example.com', sessionVersion: 1 };
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{
+        id: 77,
+        name: 'Archived Teacher',
+        email: 'teacher@example.com',
+        role: 'teacher',
+        is_archived: true,
+        session_version: 1,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const archivedResponse = await requestJson(baseUrl, '/api/session/validate', {
+    headers: { Authorization: 'Bearer stale-token' },
+  });
+  assert.equal(archivedResponse.status, 401);
+  assert.match(archivedResponse.body.error, /expired/i);
+
+  verifiedTokenPayload = { userId: 77, email: 'teacher@example.com', sessionVersion: 1 };
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{
+        id: 77,
+        name: 'Teacher User',
+        email: 'teacher@example.com',
+        role: 'teacher',
+        is_archived: false,
+        session_version: 2,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const staleVersionResponse = await requestJson(baseUrl, '/api/session/validate', {
+    headers: { Authorization: 'Bearer stale-token' },
+  });
+  assert.equal(staleVersionResponse.status, 401);
+  assert.match(staleVersionResponse.body.error, /expired/i);
+});
+
+test('remember tokens include the account session version', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  passwordMatches = true;
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('select * from public.accounts where lower(trim(email))')) {
+      return resultRows([{
+        id: 88,
+        name: 'Teacher User',
+        email: params[0],
+        password: 'correct-password',
+        role: 'teacher',
+        status: 'Offline',
+        is_archived: false,
+        session_version: 5,
+        must_change_password: false,
+      }]);
+    }
+    if (sql.includes('from public.login_otp_device_skips')) {
+      return resultRows([{ id: 1 }]);
+    }
+    if (sql.startsWith('update public.accounts set otp_code = null')) {
+      return emptyResult;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: 'teacher.user@example.com',
+      password: 'correct-password',
+      deviceId: 'trusted-device',
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(signedTokenPayloads[0].sessionVersion, 5);
 });

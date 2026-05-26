@@ -46,6 +46,30 @@ const successPayloadForUrl = (url, childrenPayload) => {
   if (url.startsWith('/api/analytics/overview?')) return jsonResponse({});
   if (url.startsWith('/api/analytics/recommendations?')) return jsonResponse({ recommendations: [] });
   if (url.startsWith('/api/activity-logs?')) return jsonResponse({ data: [] });
+  if (url.startsWith('/api/student-progress/44?')) return jsonResponse({
+    progress: {
+      student_id: 44,
+      student_name: 'Ava Santos',
+    },
+    analysis: {
+      recommendations: ['Practice fractions for Ava.'],
+    },
+    analyticsReadiness: {
+      aiIntegration: { ready: true },
+    },
+  });
+  if (url.startsWith('/api/student-progress/45?')) return jsonResponse({
+    progress: {
+      student_id: 45,
+      student_name: 'Noah Santos',
+    },
+    analysis: {
+      recommendations: ['Practice shapes for Noah.'],
+    },
+    analyticsReadiness: {
+      aiIntegration: { ready: true },
+    },
+  });
   if (url.includes('/quizzes?')) return jsonResponse({ data: [], pagination: { page: 1, limit: 20, total: 0, pages: 1 } });
   if (url.includes('/topics?')) return jsonResponse([]);
   throw new Error(`Unexpected URL: ${url}`);
@@ -133,5 +157,24 @@ describe('ParentChildProgress child selection and game warnings', () => {
 
     expect(container.textContent).toContain('Some game sessions could not be matched to a child profile.');
     expect(container.textContent).toContain('Please contact the school admin.');
+  });
+
+  test('shows recommendations for only the selected child', async () => {
+    global.fetch = jest.fn((url) => successPayloadForUrl(url, {
+      children: [ {
+        id: 44,
+        student_name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        section: 'Section A',
+      } ],
+      unlinked_count: 0,
+    }));
+
+    await act(async () => {
+      root.render(<ParentChildProgress />);
+    });
+
+    expect(container.textContent).toContain('Practice fractions for Ava.');
+    expect(container.textContent).not.toContain('Practice shapes for Noah.');
   });
 });

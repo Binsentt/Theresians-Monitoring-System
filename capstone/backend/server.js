@@ -152,7 +152,9 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS parent_id VARCHAR(6)');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS session_version INTEGER DEFAULT 0');
     await pool.query('UPDATE public.accounts SET is_archived = false WHERE is_archived IS NULL');
+    await pool.query('UPDATE public.accounts SET session_version = 0 WHERE session_version IS NULL');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.login_otp_device_skips (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
@@ -306,7 +308,11 @@ const generateRandomPassword = () => {
 };
 
 const createRememberToken = (user) => {
-  return jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign({
+    userId: user.id,
+    email: user.email,
+    sessionVersion: Number(user.session_version || 0),
+  }, JWT_SECRET, { expiresIn: '30d' });
 };
 
 const SALT_ROUNDS = 10;
@@ -358,6 +364,50 @@ const verifyRememberToken = (token) => {
     return jwt.verify(token, JWT_SECRET);
   } catch (err) {
     return null;
+  }
+};
+
+const extractBearerToken = (req) => {
+  const header = req.headers?.authorization || req.headers?.Authorization || '';
+  const match = String(header).match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : null;
+};
+
+const resolveAuthenticatedAccountFromToken = async (token) => {
+  const payload = verifyRememberToken(token);
+  if (!payload?.userId) {
+    return { ok: false, reason: 'invalid_token' };
+  }
+
+  const result = await pool.query('SELECT * FROM public.accounts WHERE id = $1', [payload.userId]);
+  const account = result.rows[0];
+  if (!account || account.is_archived) {
+    return { ok: false, reason: 'account_inactive' };
+  }
+
+  const tokenVersion = Number(payload.sessionVersion || 0);
+  const accountVersion = Number(account.session_version || 0);
+  if (tokenVersion !== accountVersion) {
+    return { ok: false, reason: 'session_version_mismatch' };
+  }
+
+  return { ok: true, account, payload };
+};
+
+const attachAuthenticatedAccount = async (req, res, next) => {
+  const token = extractBearerToken(req);
+  if (!token) return next();
+
+  try {
+    const authResult = await resolveAuthenticatedAccountFromToken(token);
+    if (!authResult.ok) {
+      return res.status(401).json({ error: 'Session expired. Please log in again.' });
+    }
+    req.authenticatedUser = authResult.account;
+    next();
+  } catch (err) {
+    console.error('Session token validation failed:', err.message);
+    res.status(401).json({ error: 'Session expired. Please log in again.' });
   }
 };
 
@@ -468,6 +518,9 @@ const appendTeacherScopeFilter = ({ teacherId, params, studentColumn }) => {
     AND ${studentColumn} IN (
       SELECT tsr.student_id
       FROM public.teacher_student_relationships tsr
+      JOIN public.accounts scope_owner
+        ON scope_owner.id = tsr.teacher_id
+       AND COALESCE(scope_owner.is_archived, false) = false
       WHERE tsr.teacher_id = $${params.length}
     )
   `;
@@ -480,6 +533,9 @@ const appendParentScopeFilter = ({ parentId, params, studentColumn, relationship
     AND ${studentColumn} IN (
       SELECT tsr.student_id
       FROM public.teacher_student_relationships tsr
+      JOIN public.accounts scope_owner
+        ON scope_owner.id = tsr.teacher_id
+       AND COALESCE(scope_owner.is_archived, false) = false
       WHERE tsr.teacher_id = $${params.length}
         AND LOWER(tsr.relationship_type) = '${relationshipType}'
     )
@@ -500,10 +556,16 @@ const verifyParentChildAccess = async (req, res, next) => {
   try {
     const relationResult = await pool.query(
       `SELECT 1
-       FROM public.teacher_student_relationships
-       WHERE teacher_id = $1
-         AND student_id = $2
-         AND LOWER(relationship_type) = 'parent'
+       FROM public.teacher_student_relationships tsr
+       JOIN public.accounts parent
+         ON parent.id = tsr.teacher_id
+        AND COALESCE(parent.is_archived, false) = false
+       JOIN public.accounts child
+         ON child.id = tsr.student_id
+        AND COALESCE(child.is_archived, false) = false
+       WHERE tsr.teacher_id = $1
+         AND tsr.student_id = $2
+         AND LOWER(tsr.relationship_type) = 'parent'
        LIMIT 1`,
       [parentId, studentId]
     );
@@ -1563,7 +1625,86 @@ const generateStudentAnalysis = (record) => {
   };
 };
 
+const buildStudentAnalyticsReadiness = ({ progress, quizSessions = [], activityLogs = [] }) => {
+  const normalizedQuizzes = quizSessions.map((quiz) => ({
+    topic: quiz.math_topic || 'Unspecified topic',
+    difficulty: quiz.difficulty || 'Unknown',
+    percentage: Number(quiz.percentage || 0),
+    score: Number(quiz.score || 0),
+    totalItems: Number(quiz.total_items || 0),
+    playedAt: quiz.played_at || null,
+  }));
 
+  const topicGroups = normalizedQuizzes.reduce((groups, quiz) => {
+    const current = groups[quiz.topic] || { topic: quiz.topic, attempts: 0, bestPercentage: 0, averagePercentage: 0, totalPercentage: 0 };
+    const next = {
+      ...current,
+      attempts: current.attempts + 1,
+      bestPercentage: Math.max(current.bestPercentage, quiz.percentage),
+      totalPercentage: current.totalPercentage + quiz.percentage,
+    };
+    next.averagePercentage = Number((next.totalPercentage / next.attempts).toFixed(2));
+    return { ...groups, [quiz.topic]: next };
+  }, {});
+
+  const topicMastery = Object.values(topicGroups)
+    .map(({ totalPercentage, ...topic }) => topic)
+    .sort((left, right) => left.averagePercentage - right.averagePercentage);
+
+  const weakTopicCandidates = topicMastery
+    .filter((topic) => topic.averagePercentage < 75)
+    .slice(0, 5);
+
+  const progressTrend = normalizedQuizzes.slice(-10).map((quiz, index) => ({
+    sequence: index + 1,
+    topic: quiz.topic,
+    difficulty: quiz.difficulty,
+    percentage: quiz.percentage,
+    playedAt: quiz.playedAt,
+  }));
+
+  const lastActivityAt = activityLogs
+    .map((log) => log.activity_timestamp || log.last_played)
+    .filter(Boolean)
+    .sort()
+    .at(-1) || null;
+
+  return {
+    dataScope: {
+      studentId: Number(progress.student_id || progress.id),
+      studentName: progress.student_name || progress.name || 'Unknown',
+    },
+    performanceSignals: {
+      currentScore: Number(progress.score || 0),
+      accuracyRate: Number(progress.accuracy_rate || progress.performance_percentage || 0),
+      progressPercentage: Number(progress.progress_percentage || 0),
+      totalQuestions: Number(progress.total_questions || 0),
+      correctAnswers: Number(progress.correct_answers || 0),
+    },
+    topicMastery,
+    weakTopicCandidates,
+    progressTrend,
+    engagement: {
+      activityCount: activityLogs.length,
+      lastActivityAt,
+      quizSessionCount: normalizedQuizzes.length,
+    },
+    aiIntegration: {
+      ready: normalizedQuizzes.length > 0 || activityLogs.length > 0,
+      // Future AI services should consume this child-scoped payload only; never mix sibling rows.
+      contract: 'child_scoped_learning_signals_v1',
+      supportedUseCases: [
+        'weak_topic_detection',
+        'progress_trend_analysis',
+        'study_recommendation_generation',
+        'mastery_tracking',
+        'engagement_monitoring',
+      ],
+    },
+  };
+};
+
+app.use('/api', attachAuthenticatedAccount);
 
 app.get('/api/test', async (req, res) => {
   try {
@@ -1572,6 +1713,17 @@ app.get('/api/test', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+app.get('/api/session/validate', async (req, res) => {
+  if (!req.authenticatedUser) {
+    return res.status(401).json({ error: 'Session expired. Please log in again.' });
+  }
+
+  res.json({
+    valid: true,
+    user: serializeUser(req.authenticatedUser),
+  });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -2868,11 +3020,23 @@ app.delete('/api/accounts/:id', async (req, res) => {
     }
 
     if (permanent) {
+      await pool.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [id]);
       await pool.query('DELETE FROM public.accounts WHERE id = $1', [id]);
       return res.json({ success: true, message: 'Account permanently deleted' });
     }
 
-    await pool.query('UPDATE public.accounts SET is_archived = true WHERE id = $1', [id]);
+    await pool.query(
+      `UPDATE public.accounts
+       SET is_archived = true,
+           status = 'Offline',
+           otp_code = NULL,
+           otp_expires_at = NULL,
+           session_version = COALESCE(session_version, 0) + 1
+       WHERE id = $1
+       RETURNING *`,
+      [id]
+    );
+    await pool.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [id]);
     res.json({ success: true, message: 'Account archived' });
   } catch (err) {
     console.error('Delete/archive failed:', err.message);
@@ -3018,6 +3182,7 @@ app.get('/api/user/:id', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM accounts WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    if (result.rows[0].is_archived) return res.status(401).json({ error: 'Session expired. Please log in again.' });
     
     const userData = serializeUser(result.rows[0]);
     res.json(userData);
@@ -3119,7 +3284,10 @@ app.get('/api/activity-logs', async (req, res) => {
       query += `
         AND al.student_id IN (
           SELECT tsr.student_id 
-          FROM public.teacher_student_relationships tsr 
+          FROM public.teacher_student_relationships tsr
+          JOIN public.accounts scope_owner
+            ON scope_owner.id = tsr.teacher_id
+           AND COALESCE(scope_owner.is_archived, false) = false
           WHERE tsr.teacher_id = $${paramIndex}
         )
       `;
@@ -3132,6 +3300,9 @@ app.get('/api/activity-logs', async (req, res) => {
         AND al.student_id IN (
           SELECT tsr.student_id
           FROM public.teacher_student_relationships tsr
+          JOIN public.accounts scope_owner
+            ON scope_owner.id = tsr.teacher_id
+           AND COALESCE(scope_owner.is_archived, false) = false
           WHERE tsr.teacher_id = $${paramIndex}
             AND LOWER(tsr.relationship_type) = 'parent'
         )
@@ -3193,7 +3364,10 @@ app.get('/api/activity-logs', async (req, res) => {
       countQuery += `
         AND al.student_id IN (
           SELECT tsr.student_id 
-          FROM public.teacher_student_relationships tsr 
+          FROM public.teacher_student_relationships tsr
+          JOIN public.accounts scope_owner
+            ON scope_owner.id = tsr.teacher_id
+           AND COALESCE(scope_owner.is_archived, false) = false
           WHERE tsr.teacher_id = $${countParamIndex}
         )
       `;
@@ -3206,6 +3380,9 @@ app.get('/api/activity-logs', async (req, res) => {
         AND al.student_id IN (
           SELECT tsr.student_id
           FROM public.teacher_student_relationships tsr
+          JOIN public.accounts scope_owner
+            ON scope_owner.id = tsr.teacher_id
+           AND COALESCE(scope_owner.is_archived, false) = false
           WHERE tsr.teacher_id = $${countParamIndex}
             AND LOWER(tsr.relationship_type) = 'parent'
         )
@@ -3324,6 +3501,9 @@ app.get('/api/parent/children', async (req, res) => {
               COUNT(gr.id)::INTEGER AS total_quizzes,
               MAX(gr.played_at) AS last_quiz_date
        FROM public.teacher_student_relationships tsr
+       JOIN public.accounts parent
+         ON parent.id = tsr.teacher_id
+        AND COALESCE(parent.is_archived, false) = false
        JOIN public.accounts s ON s.id = tsr.student_id
        LEFT JOIN LATERAL (
          SELECT progress.grade_level, progress.section
@@ -3348,7 +3528,8 @@ app.get('/api/parent/children', async (req, res) => {
        LEFT JOIN public.game_results gr
          ON gr.parent_id = parent.parent_id
         AND gr.is_unlinked = true
-       WHERE parent.id = $1`,
+       WHERE parent.id = $1
+         AND COALESCE(parent.is_archived, false) = false`,
       [parentId]
     );
 
@@ -3632,7 +3813,30 @@ app.get('/api/student-progress/:studentId', async (req, res) => {
 
     const progress = normalizeStudentProgressRow(result.rows[0]);
     const analysis = generateStudentAnalysis(progress);
-    res.json({ progress, analysis });
+    const [quizResult, activityResult] = await Promise.all([
+      pool.query(
+        `SELECT math_topic, difficulty, percentage, score, total_items, played_at
+         FROM public.game_results
+         WHERE resolved_student_id = $1
+         ORDER BY played_at ASC NULLS LAST, id ASC
+         LIMIT 100`,
+        [studentId]
+      ),
+      pool.query(
+        `SELECT student_id, activity_description, quest_progress, lesson_progress, activity_timestamp, last_played
+         FROM public.activity_logs
+         WHERE student_id = $1
+         ORDER BY activity_timestamp DESC NULLS LAST, id DESC
+         LIMIT 100`,
+        [studentId]
+      ),
+    ]);
+    const analyticsReadiness = buildStudentAnalyticsReadiness({
+      progress,
+      quizSessions: quizResult.rows,
+      activityLogs: activityResult.rows,
+    });
+    res.json({ progress, analysis, analyticsReadiness });
   } catch (err) {
     console.error('Fetch student progress failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch student progress' });

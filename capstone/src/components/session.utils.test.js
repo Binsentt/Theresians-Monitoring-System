@@ -1,14 +1,20 @@
 import {
   buildAuthHeaders,
+  clearStoredSession,
   getOrCreateLoginDeviceId,
   getStoredUserSession,
   LOGIN_DEVICE_STORAGE_KEY,
+  REMEMBER_TOKEN_STORAGE_KEY,
   resolveAuthorizedSession,
   SESSION_STORAGE_KEY,
+  TOKEN_STORAGE_KEY,
 } from './session.utils';
 
 const createStorage = (entries = {}) => ({
   getItem: jest.fn((key) => (Object.prototype.hasOwnProperty.call(entries, key) ? entries[key] : null)),
+  removeItem: jest.fn((key) => {
+    delete entries[key];
+  }),
 });
 
 describe('session utilities', () => {
@@ -101,5 +107,22 @@ describe('session utilities', () => {
     expect(storage.setItem).toHaveBeenCalledWith(LOGIN_DEVICE_STORAGE_KEY, 'device-uuid-123');
     expect(getOrCreateLoginDeviceId(storage, cryptoApi)).toBe('device-uuid-123');
     expect(cryptoApi.randomUUID).toHaveBeenCalledTimes(1);
+  });
+
+  test('clears stored user and token data when a server session is invalidated', () => {
+    const entries = {
+      [SESSION_STORAGE_KEY]: JSON.stringify({ id: 17, role: 'teacher' }),
+      [TOKEN_STORAGE_KEY]: 'primary-token',
+      [REMEMBER_TOKEN_STORAGE_KEY]: 'remember-token',
+      [LOGIN_DEVICE_STORAGE_KEY]: 'device-uuid-123',
+    };
+    const storage = createStorage(entries);
+
+    clearStoredSession(storage);
+
+    expect(storage.removeItem).toHaveBeenCalledWith(SESSION_STORAGE_KEY);
+    expect(storage.removeItem).toHaveBeenCalledWith(TOKEN_STORAGE_KEY);
+    expect(storage.removeItem).toHaveBeenCalledWith(REMEMBER_TOKEN_STORAGE_KEY);
+    expect(entries[LOGIN_DEVICE_STORAGE_KEY]).toBe('device-uuid-123');
   });
 });

@@ -60,3 +60,9 @@ export const buildAuthHeaders = (storage = window.localStorage) => {
 
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
+
+export const clearStoredSession = (storage = window.localStorage) => {
+  storage?.removeItem?.(SESSION_STORAGE_KEY);
+  storage?.removeItem?.(TOKEN_STORAGE_KEY);
+  storage?.removeItem?.(REMEMBER_TOKEN_STORAGE_KEY);
+};
