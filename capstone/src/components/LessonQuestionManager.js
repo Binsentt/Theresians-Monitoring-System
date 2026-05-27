@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Download, FileText, Folder, HardDrive, MoreVertical, Pencil, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
+import { Download, FileText, Folder, HardDrive, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
@@ -14,15 +14,16 @@ import {
   formatLearningPreviewText,
   formatLearningFileSize,
   getLargestLearningFiles,
-  getFolderContents,
   getLearningFilePreviewKind,
   getMathTopicsForGradeDifficulty,
+  getQuestionFolderPath,
   GRADE_LEVELS,
   inferLearningFileUploadType,
   isValidDifficulty,
   isValidGradeLevel,
   isValidMathTopicForGradeDifficulty,
   normalizeMathTopicForGradeDifficulty,
+  QUESTION_FOLDER_STRUCTURE,
 } from './lessonQuestionManager.utils';
 import { apiUrl } from '../api';
 import '../styles/lessonQuestionManager.css';
@@ -31,7 +32,6 @@ const initialFormState = {
   grade_level: '',
   difficulty: '',
   math_topic: '',
-  folder_id: '',
   file_type: 'fixed_questions',
   expected_question_count: '',
   file: null,
@@ -66,10 +66,6 @@ function formatDifficultyLabel(gradeLevel, difficulty) {
   return difficulty;
 }
 
-function normalizeDifficultyForEdit(value) {
-  return isValidDifficulty(value) ? value : '';
-}
-
 function buildNextTopicValue(gradeLevel, difficulty, currentTopic) {
   return normalizeMathTopicForGradeDifficulty(gradeLevel, difficulty, currentTopic);
 }
@@ -81,21 +77,12 @@ export default function LessonQuestionManager() {
   const [uploading, setUploading] = useState(false);
   const [notification, setNotification] = useState(null);
   const [files, setFiles] = useState([]);
-  const [folders, setFolders] = useState([]);
   const [trashFiles, setTrashFiles] = useState([]);
-  const [trashFolders, setTrashFolders] = useState([]);
   const [form, setForm] = useState(initialFormState);
   const [editingFile, setEditingFile] = useState(null);
-  const [newFolderName, setNewFolderName] = useState('');
-  const [folderSearch, setFolderSearch] = useState('');
-  const [openedFolder, setOpenedFolder] = useState(null);
-  const [showFolderForm, setShowFolderForm] = useState(false);
   const [showUploadForm, setShowUploadForm] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [managerView, setManagerView] = useState('files');
-  const [openFileMenu, setOpenFileMenu] = useState(null);
-  const [openFolderMenu, setOpenFolderMenu] = useState(null);
-  const [openTrashMenu, setOpenTrashMenu] = useState(null);
   const [previewFile, setPreviewFile] = useState(null);
   const [previewContent, setPreviewContent] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -109,20 +96,14 @@ export default function LessonQuestionManager() {
   const loadFilesAndFolders = async () => {
     try {
       setLoading(true);
-      const [filesRes, foldersRes, trashFilesRes, trashFoldersRes] = await Promise.all([
+      const [filesRes, trashFilesRes] = await Promise.all([
         fetch(apiUrl('/api/learning-files')),
-        fetch(apiUrl('/api/folders')),
         fetch(apiUrl('/api/learning-files/trash')),
-        fetch(apiUrl('/api/folders/trash')),
       ]);
       if (!filesRes.ok) throw new Error('Failed to load files');
-      if (!foldersRes.ok) throw new Error('Failed to load folders');
       if (!trashFilesRes.ok) throw new Error('Failed to load trashed files');
-      if (!trashFoldersRes.ok) throw new Error('Failed to load trashed folders');
       setFiles(await filesRes.json());
-      setFolders(await foldersRes.json());
       setTrashFiles(await trashFilesRes.json());
-      setTrashFolders(await trashFoldersRes.json());
     } catch (error) {
       console.error(error);
       showNotification('Unable to load lesson manager data.', 'error');
@@ -143,16 +124,6 @@ export default function LessonQuestionManager() {
   }, [navigate]);
 
   const filteredFiles = useMemo(() => filterLearningFiles(files, filters), [files, filters]);
-  const activeFolder = useMemo(() => {
-    if (!openedFolder) return null;
-    return folders.find((folder) => String(folder.id) === String(openedFolder.id)) || openedFolder;
-  }, [folders, openedFolder]);
-  const folderContents = useMemo(() => getFolderContents(files, activeFolder), [activeFolder, files]);
-  const filteredFolders = useMemo(() => {
-    const search = folderSearch.trim().toLowerCase();
-    if (!search) return folders;
-    return folders.filter((folder) => String(folder.name || '').toLowerCase().includes(search));
-  }, [folders, folderSearch]);
   const uploadTopicOptions = useMemo(
     () => getMathTopicsForGradeDifficulty(form.grade_level, form.difficulty),
     [form.difficulty, form.grade_level]
@@ -167,24 +138,17 @@ export default function LessonQuestionManager() {
   );
   const inferredFileType = inferLearningFileUploadType(form.file?.name);
   const uploadType = form.file_type;
-  const displayedFiles = activeFolder ? folderContents : filteredFiles;
-  const tableEmptyMessage = activeFolder
-    ? `Folder "${activeFolder.name}" is empty.`
-    : 'No math content found. Upload a question file to begin.';
+  const displayedFiles = filteredFiles;
+  const tableEmptyMessage = 'No math content found. Upload a question file to begin.';
   const storageSummary = useMemo(() => calculateLearningStorage(files), [files]);
   const largestFiles = useMemo(() => getLargestLearningFiles(files), [files]);
   const trashRows = useMemo(() => [
-    ...trashFolders.map((folder) => ({
-      ...folder,
-      trashType: 'Folder',
-      trashName: folder.name,
-    })),
     ...trashFiles.map((file) => ({
       ...file,
       trashType: 'File',
       trashName: file.title,
     })),
-  ].sort((left, right) => new Date(right.deleted_at || 0) - new Date(left.deleted_at || 0)), [trashFiles, trashFolders]);
+  ].sort((left, right) => new Date(right.deleted_at || 0) - new Date(left.deleted_at || 0)), [trashFiles]);
 
   const handleFormChange = (field, value) => {
     setForm((prev) => {
@@ -224,8 +188,8 @@ export default function LessonQuestionManager() {
 
   const handleUpload = async (event) => {
     event.preventDefault();
-    if (!form.grade_level || !form.difficulty || !form.math_topic.trim() || !form.folder_id || !form.file) {
-      showNotification('Grade level, difficulty, topic, folder, and file are required.', 'error');
+    if (!form.grade_level || !form.difficulty || !form.math_topic.trim() || !form.file) {
+      showNotification('Grade level, difficulty, topic, and file are required.', 'error');
       return;
     }
     if (!uploadType || inferredFileType !== uploadType) {
@@ -261,7 +225,6 @@ export default function LessonQuestionManager() {
     payload.append('difficulty', form.difficulty);
     payload.append('math_topic', form.math_topic.trim());
     payload.append('file_type', uploadType);
-    payload.append('folder_id', String(form.folder_id));
     payload.append('uploaded_by', user.id);
     if (uploadType === 'fixed_questions' && requestedCount) {
       payload.append('expected_question_count', requestedCount);
@@ -276,13 +239,12 @@ export default function LessonQuestionManager() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Upload failed.');
-      const selectedFolder = folders.find((folder) => String(folder.id) === String(form.folder_id));
       const uploadedFile = {
         ...data.learningFile,
-        folder_id: data.learningFile?.folder_id || form.folder_id,
-        folder_name: selectedFolder?.name || activeFolder?.name || 'Unassigned',
+        folder_name: getQuestionFolderPath(data.learningFile?.grade_level || form.grade_level, data.learningFile?.difficulty || form.difficulty),
         uploaded_by_name: user?.name || user?.email || 'Unknown',
         difficulty: data.learningFile?.difficulty || form.difficulty,
+        published: Boolean(data.learningFile?.published),
       };
       setFiles((current) => [uploadedFile, ...current.filter((file) => file.id !== uploadedFile.id)]);
       showNotification('File uploaded successfully');
@@ -297,17 +259,16 @@ export default function LessonQuestionManager() {
   };
 
   const moveFileToTrash = async (file) => {
-    if (!window.confirm(`Move "${file.title}" to Trash?`)) return;
+    if (!window.confirm(`Delete "${file.title}" from staged uploads?`)) return;
     try {
       const response = await fetch(apiUrl(`/api/learning-files/${file.id}`), { method: 'DELETE' });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Move to Trash failed');
-      setOpenFileMenu(null);
-      showNotification('File moved to Trash.');
-      loadFilesAndFolders();
+      if (!response.ok) throw new Error(data.error || 'Delete failed');
+      setFiles((current) => current.filter((item) => item.id !== file.id));
+      showNotification('File deleted.');
     } catch (error) {
       console.error(error);
-      showNotification(error.message || 'Move to Trash failed.', 'error');
+      showNotification(error.message || 'Delete failed.', 'error');
     }
   };
 
@@ -317,14 +278,12 @@ export default function LessonQuestionManager() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Restore failed');
       const restoredFile = data.learningFile || file;
-      const restoredFolder = folders.find((folder) => String(folder.id) === String(restoredFile.folder_id || file.folder_id));
       setTrashFiles((current) => current.filter((item) => item.id !== file.id));
       setFiles((current) => [{
         ...restoredFile,
         deleted_at: null,
-        folder_name: restoredFile.folder_name || restoredFolder?.name || 'Unassigned',
+        folder_name: restoredFile.folder_name || getQuestionFolderPath(restoredFile.grade_level, restoredFile.difficulty),
       }, ...current.filter((item) => item.id !== file.id)]);
-      setOpenTrashMenu(null);
       showNotification('File restored successfully');
     } catch (error) {
       console.error(error);
@@ -360,7 +319,6 @@ export default function LessonQuestionManager() {
     document.body.appendChild(link);
     link.click();
     link.remove();
-    setOpenFileMenu(null);
   };
 
   const closePreview = () => {
@@ -371,7 +329,6 @@ export default function LessonQuestionManager() {
 
   const previewLearningFile = async (file) => {
     const previewKind = getLearningFilePreviewKind(file);
-    setOpenFileMenu(null);
     setPreviewContent('');
     setPreviewFile({ ...file, previewKind, publicUrl: getPublicUrl(file.file_url) });
 
@@ -388,21 +345,6 @@ export default function LessonQuestionManager() {
     } finally {
       setPreviewLoading(false);
     }
-  };
-
-  const beginEditFile = (file) => {
-    const gradeLevel = isValidGradeLevel(file.grade_level) ? file.grade_level : '';
-    const difficulty = normalizeDifficultyForEdit(file.difficulty);
-    setOpenFileMenu(null);
-    setEditingFile({
-      ...file,
-      grade_level: gradeLevel,
-      difficulty,
-      math_topic: difficulty
-        ? buildNextTopicValue(gradeLevel, difficulty, file.math_topic)
-        : String(file.math_topic || '').trim(),
-      folder_id: file.folder_id || '',
-    });
   };
 
   const saveFileDetails = async () => {
@@ -428,7 +370,6 @@ export default function LessonQuestionManager() {
           difficulty: editingFile.difficulty,
           math_topic: editingFile.math_topic,
           file_type: editingFile.file_type,
-          folder_id: editingFile.folder_id || null,
         }),
       });
       const data = await response.json();
@@ -442,124 +383,19 @@ export default function LessonQuestionManager() {
     }
   };
 
-  const handleCreateFolder = async (event) => {
-    event.preventDefault();
-    if (!newFolderName.trim()) {
-      showNotification('Folder name is required.', 'error');
-      return;
-    }
-    try {
-      const response = await fetch(apiUrl('/api/folders/create'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newFolderName.trim() }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Folder create failed');
-      showNotification('Folder created.');
-      setNewFolderName('');
-      setShowFolderForm(false);
-      loadFilesAndFolders();
-    } catch (error) {
-      console.error(error);
-      showNotification(error.message || 'Folder create failed.', 'error');
-    }
-  };
-
-  const handleRenameFolder = async (folder) => {
-    const updatedName = window.prompt('Rename folder', folder.name);
-    if (!updatedName || !updatedName.trim() || updatedName.trim() === folder.name) return;
-    try {
-      const response = await fetch(apiUrl(`/api/folders/${folder.id}`), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: updatedName.trim() }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Rename failed');
-      setOpenFolderMenu(null);
-      showNotification('Folder renamed.');
-      loadFilesAndFolders();
-    } catch (error) {
-      console.error(error);
-      showNotification(error.message || 'Rename failed.', 'error');
-    }
-  };
-
-  const moveFolderToTrash = async (folder) => {
-    if (!window.confirm(`Move "${folder.name}" and its contents to Trash?`)) return;
-    try {
-      const response = await fetch(apiUrl(`/api/folders/${folder.id}`), { method: 'DELETE' });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Move to Trash failed');
-      if (activeFolder?.id === folder.id) setOpenedFolder(null);
-      setOpenFolderMenu(null);
-      showNotification('Folder moved to Trash.');
-      loadFilesAndFolders();
-    } catch (error) {
-      console.error(error);
-      showNotification(error.message || 'Move to Trash failed.', 'error');
-    }
-  };
-
-  const restoreFolder = async (folder) => {
-    try {
-      const response = await fetch(apiUrl(`/api/folders/${folder.id}/restore`), { method: 'POST' });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Restore failed');
-      const restoredFolder = data.folder || folder;
-      setTrashFolders((current) => current.filter((item) => item.id !== folder.id));
-      setFolders((current) => [{
-        ...restoredFolder,
-        deleted_at: null,
-      }, ...current.filter((item) => item.id !== folder.id)]);
-      setOpenTrashMenu(null);
-      showNotification('File restored successfully');
-      loadFilesAndFolders();
-    } catch (error) {
-      console.error(error);
-      showNotification('Failed to restore file. Please try again.', 'error');
-    }
-  };
-
-  const permanentDeleteFolder = async (folder) => {
-    if (!window.confirm(`Permanently delete "${folder.name}" and its trashed contents?`)) return;
-    try {
-      const response = await fetch(apiUrl(`/api/folders/${folder.id}/permanent`), { method: 'DELETE' });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Permanent delete failed');
-      showNotification('Folder permanently deleted.');
-      loadFilesAndFolders();
-    } catch (error) {
-      console.error(error);
-      showNotification(error.message || 'Permanent delete failed.', 'error');
-    }
-  };
-
   const handleEmptyTrash = async () => {
     if (trashRows.length === 0) return;
-    if (!window.confirm('Permanently delete every file and folder in Trash?')) return;
+    if (!window.confirm('Permanently delete every file in Trash?')) return;
 
     try {
-      const trashedFolderIds = new Set(trashFolders.map((folder) => String(folder.id)));
-      const standaloneFiles = trashFiles.filter((file) => !trashedFolderIds.has(String(file.folder_id || '')));
-
       await Promise.all(
-        standaloneFiles.map(async (file) => {
+        trashFiles.map(async (file) => {
           const response = await fetch(apiUrl(`/api/learning-files/${file.id}/permanent`), { method: 'DELETE' });
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || 'Permanent file delete failed');
         })
       );
-      await Promise.all(
-        trashFolders.map(async (folder) => {
-          const response = await fetch(apiUrl(`/api/folders/${folder.id}/permanent`), { method: 'DELETE' });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || 'Permanent folder delete failed');
-        })
-      );
       showNotification('Trash emptied.');
-      setOpenTrashMenu(null);
       loadFilesAndFolders();
     } catch (error) {
       console.error(error);
@@ -567,38 +403,34 @@ export default function LessonQuestionManager() {
     }
   };
 
-  const openCreateFolderModal = () => {
-    setShowNewMenu(false);
-    setShowFolderForm(true);
-  };
-
   const openUploadModal = () => {
     setShowNewMenu(false);
-    setForm((current) => ({
-      ...current,
-      folder_id: activeFolder?.id ? String(activeFolder.id) : current.folder_id,
-    }));
     setShowUploadForm(true);
   };
 
   const switchManagerView = (nextView) => {
     setManagerView(nextView);
     setShowNewMenu(false);
-    setOpenFileMenu(null);
-    setOpenFolderMenu(null);
-    setOpenTrashMenu(null);
   };
 
-  const handleOpenFolder = (folder) => {
-    setOpenedFolder(folder);
-    setEditingFile(null);
-    setFilters(initialFilterState);
-  };
+  const pushFileToGame = async (file) => {
+    try {
+      const response = await fetch(apiUrl(`/api/questions/publish/${file.id}`), { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Push to Game failed');
 
-  const handleFolderKeyDown = (event, folder) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      handleOpenFolder(folder);
+      setFiles((current) => current.map((item) => {
+        const sameDestination = item.grade_level === file.grade_level
+          && item.difficulty === file.difficulty
+          && item.math_topic === file.math_topic;
+        if (item.id === file.id) return { ...item, published: true };
+        if (sameDestination) return { ...item, published: false };
+        return item;
+      }));
+      showNotification(data.message || 'Content pushed to game.');
+    } catch (error) {
+      console.error(error);
+      showNotification(error.message || 'Push to Game failed.', 'error');
     }
   };
 
@@ -616,11 +448,22 @@ export default function LessonQuestionManager() {
             <span className="file-meta">
               {row.grade_level || 'Unknown grade'} | {row.difficulty || 'Unknown difficulty'} | {row.math_topic || 'Unknown topic'}
             </span>
+            <span className="file-meta">
+              {getQuestionFolderPath(row.grade_level, row.difficulty)}
+            </span>
           </div>
         </div>
       ),
     },
-    { key: 'uploaded_by_name', header: 'Uploaded by', render: (value) => value || 'Unknown' },
+    {
+      key: 'published',
+      header: 'Status',
+      render: (value) => (
+        <span className={`manager-status-pill ${value ? 'active' : 'staged'}`}>
+          {value ? 'Active in Game' : 'Staged'}
+        </span>
+      ),
+    },
     { key: 'uploaded_at', header: 'Date modified', render: (value) => formatUploadDate(value) },
     { key: 'file_size', header: 'File size', render: (value) => formatLearningFileSize(value) },
     {
@@ -629,23 +472,9 @@ export default function LessonQuestionManager() {
       className: 'drive-actions-cell',
       render: (_, row) => (
         <div className="drive-row-actions">
-          <button
-            type="button"
-            className="icon-button"
-            title={`Actions for ${row.title}`}
-            aria-label={`Actions for ${row.title}`}
-            onClick={() => setOpenFileMenu((current) => (current === row.id ? null : row.id))}
-          >
-            <MoreVertical size={18} />
-          </button>
-          {openFileMenu === row.id && (
-            <div className="drive-row-menu">
-              <button type="button" onClick={() => previewLearningFile(row)}><FileText size={16} />Preview</button>
-              <button type="button" onClick={() => beginEditFile(row)}><Pencil size={16} />Rename</button>
-              <button type="button" onClick={() => downloadFile(row)}><Download size={16} />Download</button>
-              <button type="button" onClick={() => moveFileToTrash(row)}><Trash2 size={16} />Move to Bin</button>
-            </div>
-          )}
+          <button type="button" className="drive-action-button" onClick={() => previewLearningFile(row)}><FileText size={16} />Preview</button>
+          <button type="button" className="drive-action-button" onClick={() => moveFileToTrash(row)}><Trash2 size={16} />Delete</button>
+          <button type="button" className="drive-action-button primary" onClick={() => pushFileToGame(row)}><Upload size={16} />Push to Game</button>
         </div>
       ),
     },
@@ -657,7 +486,7 @@ export default function LessonQuestionManager() {
       header: 'Name',
       render: (value, row) => (
         <div className="drive-file-name">
-          {row.trashType === 'Folder' ? <Folder size={18} aria-hidden="true" /> : <FileText size={18} aria-hidden="true" />}
+          <FileText size={18} aria-hidden="true" />
           <span className="file-name-title">{value}</span>
         </div>
       ),
@@ -670,25 +499,12 @@ export default function LessonQuestionManager() {
       className: 'drive-actions-cell',
       render: (_, row) => (
         <div className="drive-row-actions">
-          <button
-            type="button"
-            className="icon-button"
-            title={`Trash actions for ${row.trashName}`}
-            aria-label={`Trash actions for ${row.trashName}`}
-            onClick={() => setOpenTrashMenu((current) => (current === `${row.trashType}-${row.id}` ? null : `${row.trashType}-${row.id}`))}
-          >
-            <MoreVertical size={18} />
+          <button type="button" className="drive-action-button" onClick={() => restoreFile(row)}>
+            <RotateCcw size={16} />Restore
           </button>
-          {openTrashMenu === `${row.trashType}-${row.id}` && (
-            <div className="drive-row-menu">
-              <button type="button" onClick={() => (row.trashType === 'Folder' ? restoreFolder(row) : restoreFile(row))}>
-                <RotateCcw size={16} />Restore
-              </button>
-              <button type="button" onClick={() => (row.trashType === 'Folder' ? permanentDeleteFolder(row) : permanentDeleteFile(row))}>
-                <Trash2 size={16} />Permanently Delete
-              </button>
-            </div>
-          )}
+          <button type="button" className="drive-action-button" onClick={() => permanentDeleteFile(row)}>
+            <Trash2 size={16} />Permanently Delete
+          </button>
         </div>
       ),
     },
@@ -740,7 +556,6 @@ export default function LessonQuestionManager() {
                   </button>
                   {showNewMenu && (
                     <div className="drive-new-menu">
-                      <button type="button" onClick={openCreateFolderModal}><Folder size={18} />New Folder</button>
                       <button type="button" onClick={openUploadModal}><Upload size={18} />Upload File</button>
                     </div>
                   )}
@@ -773,80 +588,47 @@ export default function LessonQuestionManager() {
                     <section className="drive-panel">
                       <div className="drive-panel-header">
                         <div>
-                          <h2>{activeFolder ? activeFolder.name : 'My Files'}</h2>
+                          <h2>Questions</h2>
                           <div className="folder-breadcrumb">
-                            {activeFolder ? (
-                              <>
-                                <button type="button" className="folder-breadcrumb-button" onClick={() => setOpenedFolder(null)}>
-                                  All folders
-                                </button>
-                                <span className="folder-breadcrumb-separator">/</span>
-                                <span>{activeFolder.name}</span>
-                              </>
-                            ) : (
-                              <span>Folders</span>
-                            )}
+                            <span>Fixed game question folder structure</span>
                           </div>
                         </div>
-                        {!activeFolder && (
-                          <input
-                            type="text"
-                            className="input-field folder-search-field"
-                            value={folderSearch}
-                            onChange={(event) => setFolderSearch(event.target.value)}
-                            placeholder="Search folders"
-                          />
-                        )}
                       </div>
-                      {!activeFolder && (
-                        <div className="drive-folder-grid">
-                          {filteredFolders.length === 0 ? (
-                            <p className="empty-text">No folders yet. Create one to organize files.</p>
-                          ) : filteredFolders.map((folder) => (
-                            <div
-                              key={folder.id}
-                              className="drive-folder-card"
-                              role="button"
-                              tabIndex={0}
-                              onClick={() => handleOpenFolder(folder)}
-                              onKeyDown={(event) => handleFolderKeyDown(event, folder)}
-                            >
-                              <div className="drive-folder-card-main">
-                                <Folder size={28} aria-hidden="true" />
-                                <strong>{folder.name}</strong>
-                              </div>
-                              <div className="drive-card-menu" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
-                                <button
-                                  type="button"
-                                  className="icon-button"
-                                  title={`Actions for ${folder.name}`}
-                                  aria-label={`Actions for ${folder.name}`}
-                                  onClick={() => setOpenFolderMenu((current) => (current === folder.id ? null : folder.id))}
-                                >
-                                  <MoreVertical size={18} />
-                                </button>
-                                {openFolderMenu === folder.id && (
-                                  <div className="drive-row-menu">
-                                    <button type="button" onClick={() => handleRenameFolder(folder)}><Pencil size={16} />Rename</button>
-                                    <button type="button" onClick={() => moveFolderToTrash(folder)}><Trash2 size={16} />Move to Bin</button>
-                                  </div>
-                                )}
-                              </div>
+                      <div className="drive-folder-grid fixed-question-grid">
+                        {QUESTION_FOLDER_STRUCTURE.map((gradeFolder) => (
+                          <div key={gradeFolder.grade} className="drive-folder-card fixed-question-folder">
+                            <div className="drive-folder-card-main">
+                              <Folder size={28} aria-hidden="true" />
+                              <strong>{gradeFolder.folderName}</strong>
                             </div>
-                          ))}
-                        </div>
-                      )}
+                            <div className="fixed-difficulty-list">
+                              {gradeFolder.difficulties.map((difficulty) => (
+                                <button
+                                  key={`${gradeFolder.grade}-${difficulty}`}
+                                  type="button"
+                                  className="drive-action-button"
+                                  onClick={() => {
+                                    handleFilterChange('grade_level', gradeFolder.grade);
+                                    handleFilterChange('difficulty', difficulty);
+                                  }}
+                                >
+                                  {difficulty}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </section>
 
                     <section className="drive-panel">
                       <div className="drive-panel-header">
                         <div>
-                          <h2>{activeFolder ? 'Files in Folder' : 'Files'}</h2>
-                          <p className="empty-text">Uploaded Mathematics lesson and question files.</p>
+                          <h2>Uploaded Files</h2>
+                          <p className="empty-text">Uploaded files stay staged until Push to Game is clicked.</p>
                         </div>
                       </div>
-                      {!activeFolder && (
-                        <div className="manager-modal-fields">
+                      <div className="manager-modal-fields">
                           <div className="form-group">
                             <label className="form-label">Search Files</label>
                             <input
@@ -901,8 +683,7 @@ export default function LessonQuestionManager() {
                               <option value="fixed_questions">Fixed Question File</option>
                             </select>
                           </div>
-                        </div>
-                      )}
+                      </div>
                       <DataTable columns={tableColumns} data={displayedFiles} emptyMessage={tableEmptyMessage} className="drive-table" />
                     </section>
                   </>
@@ -953,32 +734,6 @@ export default function LessonQuestionManager() {
               </div>
             </div>
 
-            {showFolderForm && (
-              <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setShowFolderForm(false)}>
-                <form className="manager-modal drive-create-folder-modal" onSubmit={handleCreateFolder} role="dialog" aria-modal="true" aria-labelledby="create-folder-title" onMouseDown={(event) => event.stopPropagation()}>
-                  <div className="manager-modal-header">
-                    <h2 id="create-folder-title">New Folder</h2>
-                    <button type="button" className="icon-button" aria-label="Cancel folder creation" onClick={() => setShowFolderForm(false)}>x</button>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label required" htmlFor="new-folder-name">Folder name</label>
-                    <input
-                      id="new-folder-name"
-                      type="text"
-                      className="input-field"
-                      value={newFolderName}
-                      onChange={(event) => setNewFolderName(event.target.value)}
-                      placeholder="Grade 2 Multiplication"
-                    />
-                  </div>
-                  <div className="upload-actions">
-                    <button type="submit" className="btn btn-primary">Create</button>
-                    <button type="button" className="btn btn-secondary" onClick={() => setShowFolderForm(false)}>Cancel</button>
-                  </div>
-                </form>
-              </div>
-            )}
-
             {showUploadForm && (
               <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setShowUploadForm(false)}>
                 <form className="manager-modal drive-upload-modal" onSubmit={handleUpload} role="dialog" aria-modal="true" aria-labelledby="upload-file-title" onMouseDown={(event) => event.stopPropagation()}>
@@ -1006,7 +761,7 @@ export default function LessonQuestionManager() {
                       </select>
                     </div>
                     <div className="form-group">
-                      <label className="form-label required">Topic Name</label>
+                      <label className="form-label required">Topic Identifier</label>
                       <select
                         className="select-field"
                         value={form.math_topic}
@@ -1021,18 +776,17 @@ export default function LessonQuestionManager() {
                       </select>
                     </div>
                     <div className="form-group">
-                      <label className="form-label required">Select Folder</label>
-                      <select className="select-field" value={form.folder_id} onChange={(event) => handleFormChange('folder_id', event.target.value)}>
-                        <option value="">Choose a folder</option>
-                        {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-                      </select>
-                    </div>
-                    <div className="form-group">
                       <label className="form-label required">File Type</label>
                       <select className="select-field" value={form.file_type} onChange={(event) => handleFormChange('file_type', event.target.value)}>
                         <option value="lesson">Lesson File</option>
                         <option value="fixed_questions">Fixed Question File</option>
                       </select>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Destination</label>
+                      <div className="fixed-destination-display">
+                        {getQuestionFolderPath(form.grade_level, form.difficulty)}
+                      </div>
                     </div>
                     {form.file_type === 'fixed_questions' && (
                       <div className="form-group">
@@ -1162,7 +916,7 @@ export default function LessonQuestionManager() {
                       </select>
                     </div>
                     <div className="form-group">
-                      <label className="form-label required">Topic Name</label>
+                      <label className="form-label required">Topic Identifier</label>
                       <select
                         className="select-field"
                         value={editingFile.grade_level && editingFile.difficulty ? editingFile.math_topic : ''}
@@ -1174,13 +928,6 @@ export default function LessonQuestionManager() {
                         ) : (
                           editTopicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)
                         )}
-                      </select>
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Folder</label>
-                      <select className="select-field" value={editingFile.folder_id || ''} onChange={(event) => setEditingFile((prev) => ({ ...prev, folder_id: event.target.value || null }))}>
-                        <option value="">Unassigned</option>
-                        {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
                       </select>
                     </div>
                   </div>

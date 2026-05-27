@@ -27,7 +27,6 @@ export function AnnouncementCard({
   actionDisabled = false,
 }) {
   const roleLabel = getRoleLabel(announcement.created_by_role, fallbackAuthor);
-  const postedBy = announcement.posted_by || roleLabel;
   const roleClass = roleLabel.toLowerCase().replace(/[^a-z0-9-]/g, '');
   const canManage = Boolean(onEdit || onDelete);
 
@@ -48,10 +47,6 @@ export function AnnouncementCard({
         </div>
         <h3 className="announcement-card-title">{announcement.title}</h3>
         <p className="announcement-card-message">{announcement.message}</p>
-        <div className="announcement-card-footer">
-          <span>Posted by</span>
-          <strong>{postedBy}</strong>
-        </div>
         {canManage && (
           <div className="announcement-card-actions" aria-label="Announcement actions">
             {onEdit && (

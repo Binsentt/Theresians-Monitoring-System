@@ -355,12 +355,76 @@
 }
 
 .drive-actions-cell {
-  width: 72px;
+  width: 300px;
 }
 
 .drive-row-actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: flex-end;
+}
+
+.drive-action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 8px;
+  background: var(--panel-bg, #ffffff);
+  color: var(--text-primary, #0b2447);
+  padding: 7px 10px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.drive-action-button.primary {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: var(--accent-color, #2563eb);
+  color: #ffffff;
+}
+
+.manager-status-pill {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.manager-status-pill.staged {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.manager-status-pill.active {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.fixed-question-grid .drive-folder-card {
+  cursor: default;
+}
+
+.fixed-difficulty-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.fixed-destination-display {
+  min-height: 42px;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 8px;
+  background: var(--input-bg, #f8fafc);
+  color: var(--text-primary, #0b2447);
+  padding: 11px 12px;
+  font-weight: 700;
 }
 
 .storage-summary {

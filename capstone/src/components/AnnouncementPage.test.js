@@ -283,6 +283,8 @@ describe('AnnouncementPage load states', () => {
     expect(messageInput.value).toBe('');
     expect(container.textContent).toContain('Announcement posted successfully.');
     expect(container.textContent).toContain('School reminder');
+    expect(container.textContent).not.toContain('Posted by');
+    expect(container.textContent).not.toContain('Admin User');
   });
 
   test('shows a post failure instead of a connection error when a successful save response is malformed', async () => {

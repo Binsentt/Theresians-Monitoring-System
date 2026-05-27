@@ -41,7 +41,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 8, role: 'teacher', name: 'Teacher User' }));
     fixtures = {
       files: [],
-      folders: [{ id: 17, name: 'Addition Folder' }],
+      folders: [],
       trashFiles: [{ id: 31, title: 'Deleted Quiz', file_name: 'deleted.csv', deleted_at: '2026-05-20T00:00:00.000Z' }],
       trashFolders: [],
     };
@@ -61,13 +61,23 @@ describe('LessonQuestionManager upload and trash controls', () => {
           id: 77,
           title: 'addition-quiz',
           file_name: 'addition-quiz.json',
-          folder_id: 17,
           grade_level: 'Grade 1',
           difficulty: 'Normal',
           math_topic: 'Addition, Multiplication, and Word Problems',
           file_type: 'fixed_questions',
+          published: false,
         }];
         return okJson({ success: true, learningFile: fixtures.files[0] });
+      }
+      if (value.includes('/api/questions/publish/77') && options.method === 'POST') {
+        fixtures.files = fixtures.files.map((file) => (
+          file.id === 77 ? { ...file, published: true } : file
+        ));
+        return okJson({ success: true, message: 'Content pushed to game.', learningFile: fixtures.files[0] });
+      }
+      if (value.includes('/api/learning-files/77') && options.method === 'DELETE') {
+        fixtures.files = fixtures.files.filter((file) => file.id !== 77);
+        return okJson({ success: true });
       }
       return okJson([]);
     });
@@ -101,7 +111,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('Grade 6');
     expect(container.textContent).not.toContain('Grade 1-2');
     expect(container.textContent).toContain('Difficulty');
-    expect(container.textContent).toContain('Topic Name');
+    expect(container.textContent).toContain('Topic Identifier');
     expect(topicSelect.disabled).toBe(true);
     expect(topicSelect.textContent).toContain('Select grade and difficulty first');
 
@@ -115,7 +125,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(topicSelect.textContent).toContain('Division');
     expect(topicSelect.textContent).toContain('Fractions');
     expect(container.textContent).toContain('Normal / Average');
-    expect(container.textContent).toContain('Select Folder');
+    expect(container.textContent).not.toContain('Select Folder');
+    expect(container.textContent).not.toContain('New Folder');
     expect(container.textContent).toContain('Lesson File');
     expect(container.textContent).toContain('Fixed Question File');
   });
@@ -129,10 +140,6 @@ describe('LessonQuestionManager upload and trash controls', () => {
       clickByText(container, 'Trash Bin');
     });
 
-    const actionButton = container.querySelector('button[aria-label="Trash actions for Deleted Quiz"]');
-    await act(async () => {
-      actionButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
     await act(async () => {
       clickByText(container, 'Restore');
     });
@@ -162,7 +169,6 @@ describe('LessonQuestionManager upload and trash controls', () => {
     await act(async () => {
       setSelectValue(selects[0], 'Grade 1');
       setSelectValue(selects[1], 'Normal');
-      setSelectValue(selects[3], '17');
       Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
       fileInput.dispatchEvent(new Event('change', { bubbles: true }));
     });
@@ -174,6 +180,86 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('File uploaded successfully');
     expect(container.textContent).toContain('addition-quiz');
     expect(container.textContent).toContain('Normal');
+    expect(container.textContent).toContain('Staged');
     expect(container.querySelector('.drive-upload-modal')).toBeNull();
+    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/questions/publish/77'), expect.anything());
+  });
+
+  test('upload table hides Uploaded By and exposes Preview, Delete, and Push to Game actions', async () => {
+    fixtures.files = [{
+      id: 77,
+      title: 'addition-quiz',
+      file_name: 'addition-quiz.json',
+      file_url: '/uploads/addition-quiz.json',
+      grade_level: 'Grade 1',
+      difficulty: 'Normal',
+      math_topic: 'Addition',
+      file_type: 'fixed_questions',
+      published: false,
+      uploaded_by_name: 'Teacher User',
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+
+    expect(container.textContent).not.toContain('Uploaded by');
+    expect(container.textContent).not.toContain('Teacher User');
+    expect(container.textContent).toContain('Preview');
+    expect(container.textContent).toContain('Delete');
+    expect(container.textContent).toContain('Push to Game');
+  });
+
+  test('Push to Game activates the staged file only after the button is clicked', async () => {
+    fixtures.files = [{
+      id: 77,
+      title: 'addition-quiz',
+      file_name: 'addition-quiz.json',
+      file_url: '/uploads/addition-quiz.json',
+      grade_level: 'Grade 1',
+      difficulty: 'Normal',
+      math_topic: 'Addition',
+      file_type: 'fixed_questions',
+      published: false,
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+
+    expect(container.textContent).toContain('Staged');
+    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/questions/publish/77'), expect.anything());
+
+    await act(async () => {
+      clickByText(container, 'Push to Game');
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/questions/publish/77', { method: 'POST' });
+    expect(container.textContent).toContain('Active in Game');
+  });
+
+  test('Delete removes a staged upload from the table', async () => {
+    window.confirm = jest.fn(() => true);
+    fixtures.files = [{
+      id: 77,
+      title: 'addition-quiz',
+      file_name: 'addition-quiz.json',
+      file_url: '/uploads/addition-quiz.json',
+      grade_level: 'Grade 1',
+      difficulty: 'Normal',
+      math_topic: 'Addition',
+      file_type: 'fixed_questions',
+      published: false,
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+
+    await act(async () => {
+      clickByText(container, 'Delete');
+    });
+
+    expect(container.textContent).not.toContain('addition-quiz');
   });
 });

@@ -1,5 +1,8 @@
 import {
   buildActivityLogQueryParams,
+  formatActivityLogDuration,
+  getActivityLogActivity,
+  getActivityLogGrade,
   normalizeActivityLogPayload,
   shouldShowActivityLogFilters,
 } from './activityLog.utils';
@@ -55,6 +58,7 @@ describe('normalizeActivityLogPayload', () => {
     const params = buildActivityLogQueryParams({
       role: 'parent',
       userId: 15,
+      selectedStudentId: 22,
       debouncedSearch: 'alpha',
       selectedGrade: 'Grade 4',
       selectedSection: 'Section A',
@@ -65,6 +69,7 @@ describe('normalizeActivityLogPayload', () => {
     expect(params.get('grade_level')).toBeNull();
     expect(params.get('section')).toBeNull();
     expect(params.get('teacher_id')).toBeNull();
+    expect(params.get('student_id')).toBe('22');
     expect(params.get('offset')).toBe('10');
   });
 
@@ -81,5 +86,15 @@ describe('normalizeActivityLogPayload', () => {
     expect(params.get('search')).toBe('beta');
     expect(params.get('grade_level')).toBe('Grade 5');
     expect(params.get('section')).toBe('Section B');
+  });
+
+  test('formats activity log rows for the simplified Godot activity table', () => {
+    expect(getActivityLogGrade({ grade: 'Grade 2' })).toBe('Grade 2');
+    expect(getActivityLogGrade({ grade_level: 'Grade 3' })).toBe('Grade 3');
+    expect(getActivityLogActivity({ current_quest: 'Fractions Gate', activity_description: 'Gameplay Session' })).toBe('Fractions Gate');
+    expect(getActivityLogActivity({ activity_description: 'Gameplay Session' })).toBe('No active quest');
+    expect(formatActivityLogDuration({ duration_seconds: 125 })).toBe('2m 5s');
+    expect(formatActivityLogDuration({ total_play_time: 3600 })).toBe('1h 0m');
+    expect(formatActivityLogDuration({ duration: '7m 30s' })).toBe('7m 30s');
   });
 });

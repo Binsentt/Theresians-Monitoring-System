@@ -10,6 +10,19 @@ export {
   GRADE_TOPIC_MAP,
 };
 
+export const QUESTION_FOLDER_STRUCTURE = GRADE_LEVELS.map((grade) => ({
+  grade,
+  folderName: grade.replace(/\s+/g, ''),
+  difficulties: DIFFICULTY_LEVELS,
+}));
+
+export const getQuestionFolderPath = (gradeLevel, difficulty) => {
+  const grade = normalizeLearningMetadataValue(gradeLevel).replace(/\s+/g, '');
+  const level = normalizeDifficultyValue(difficulty);
+  if (!grade || !DIFFICULTY_LEVELS.includes(level)) return 'Questions/';
+  return `Questions/${grade}/${level}/`;
+};
+
 export const MATH_TOPICS = Array.from(new Set(
   Object.values(GRADE_TOPIC_MAP).flatMap((difficultyMap) => Object.values(difficultyMap).flat())
 ));

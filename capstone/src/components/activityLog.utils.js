@@ -15,6 +15,7 @@ export function buildActivityLogQueryParams({
   currentPage = 1,
   role = 'admin',
   userId = null,
+  selectedStudentId = '',
   debouncedSearch = '',
   selectedGrade = '',
   selectedSection = '',
@@ -25,6 +26,10 @@ export function buildActivityLogQueryParams({
 
   if (normalizeRole(role) === 'teacher' && userId) {
     params.append('teacher_id', String(userId));
+  }
+
+  if (selectedStudentId) {
+    params.append('student_id', String(selectedStudentId));
   }
 
   if (shouldShowActivityLogFilters(role)) {
@@ -76,4 +81,53 @@ export function normalizeActivityLogPayload(payload) {
       current_page: Number(pagination.current_page ?? 1) || 1,
     }
   };
+}
+
+export function getActivityLogGrade(record) {
+  return String(record?.grade || record?.grade_level || '').trim() || '-';
+}
+
+export function getActivityLogActivity(record) {
+  const quest = String(record?.current_quest || '').trim();
+  if (quest) return quest;
+
+  const description = String(record?.activity_description || '').trim();
+  if (description && !/^gameplay session$/i.test(description)) return description;
+
+  return 'No active quest';
+}
+
+const parseDurationSeconds = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+
+  const text = String(value).trim();
+  if (/^\d+$/.test(text)) return Number(text);
+
+  const hours = text.match(/(\d+)\s*h/i);
+  const minutes = text.match(/(\d+)\s*m/i);
+  const seconds = text.match(/(\d+)\s*s/i);
+  const total = (hours ? Number(hours[1]) * 3600 : 0)
+    + (minutes ? Number(minutes[1]) * 60 : 0)
+    + (seconds ? Number(seconds[1]) : 0);
+
+  return total > 0 ? total : null;
+};
+
+export function formatActivityLogDuration(record) {
+  const formatted = String(record?.duration || '').trim();
+  if (formatted && !/^\d+$/.test(formatted)) return formatted;
+
+  const seconds = parseDurationSeconds(
+    record?.duration_seconds ?? record?.total_play_time ?? record?.duration
+  );
+  if (seconds === null) return '-';
+  if (seconds < 60) return `${seconds}s`;
+
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
 }

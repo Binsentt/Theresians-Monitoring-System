@@ -2,6 +2,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import '../styles/activitylog.css';
 import {
   buildActivityLogQueryParams,
+  formatActivityLogDuration,
+  getActivityLogActivity,
+  getActivityLogGrade,
   normalizeActivityLogPayload,
   shouldShowActivityLogFilters,
 } from './activityLog.utils';
@@ -29,9 +32,13 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [parentChildren, setParentChildren] = useState([]);
+  const [childrenLoaded, setChildrenLoaded] = useState(role !== 'parent');
+  const [selectedChildId, setSelectedChildId] = useState('');
   const requiresScopedUser = role === 'teacher' || role === 'parent';
   const scopedUserReady = !requiresScopedUser || Boolean(userId);
   const showFilters = shouldShowActivityLogFilters(role);
+  const isParentView = role === 'parent';
 
   useEffect(() => {
     if (!showFilters) {
@@ -51,8 +58,55 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
   }, [searchTerm, showFilters]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const loadParentChildren = async () => {
+      if (!isParentView || !userId) {
+        setChildrenLoaded(true);
+        return;
+      }
+
+      setChildrenLoaded(false);
+      try {
+        const response = await fetch(buildScopedApiUrl('/api/parent/children', 'parent', userId));
+        if (!response.ok) throw new Error('Failed to load children');
+        const payload = await response.json();
+        const children = Array.isArray(payload?.children) ? payload.children : [];
+        if (cancelled) return;
+        setParentChildren(children);
+        setSelectedChildId((current) => {
+          if (children.some((child) => String(child.student_id || child.id) === String(current))) {
+            return current;
+          }
+          return children[0] ? String(children[0].student_id || children[0].id) : '';
+        });
+      } catch (err) {
+        console.error('Error fetching parent children:', err);
+        if (!cancelled) {
+          setParentChildren([]);
+          setSelectedChildId('');
+        }
+      } finally {
+        if (!cancelled) setChildrenLoaded(true);
+      }
+    };
+
+    loadParentChildren();
+    return () => {
+      cancelled = true;
+    };
+  }, [isParentView, userId]);
+
+  useEffect(() => {
     const fetchActivityLogs = async () => {
-      if (!scopedUserReady) {
+      if (!scopedUserReady || !childrenLoaded) {
+        return;
+      }
+
+      if (isParentView && !selectedChildId) {
+        setActivities([]);
+        setPagination({ total: 0, pages: 1, current_page: 1 });
+        setLoading(false);
         return;
       }
 
@@ -65,6 +119,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
           currentPage,
           role,
           userId,
+          selectedStudentId: isParentView ? selectedChildId : '',
           debouncedSearch,
           selectedGrade,
           selectedSection,
@@ -88,7 +143,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
     };
 
     fetchActivityLogs();
-  }, [currentPage, debouncedSearch, limit, role, scopedUserReady, selectedGrade, selectedSection, userId]);
+  }, [childrenLoaded, currentPage, debouncedSearch, isParentView, limit, role, scopedUserReady, selectedChildId, selectedGrade, selectedSection, userId]);
 
   const handleGradeChange = useCallback((grade) => {
     setSelectedGrade(grade);
@@ -118,7 +173,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
     return <div className="al-loading">Loading activity log...</div>;
   }
 
-  if (!scopedUserReady) {
+  if (!scopedUserReady || !childrenLoaded) {
     return <div className="al-loading">Loading activity log...</div>;
   }
 
@@ -206,6 +261,32 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
         </div>
       )}
 
+      {isParentView && parentChildren.length > 0 && (
+        <div className="al-filters parent-child-filter">
+          <div className="filter-group">
+            <label htmlFor="child-filter">Child</label>
+            <select
+              id="child-filter"
+              value={selectedChildId}
+              onChange={(event) => {
+                setSelectedChildId(event.target.value);
+                setCurrentPage(1);
+              }}
+              className="filter-input"
+            >
+              {parentChildren.map((child) => {
+                const childId = String(child.student_id || child.id);
+                return (
+                  <option key={childId} value={childId}>
+                    {child.student_name || child.name || `Child ${childId}`}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        </div>
+      )}
+
       <div className="al-results-info">
         <span className="results-count">
           Showing {activities.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} - {Math.min((currentPage - 1) * itemsPerPage + activities.length, pagination.total || activities.length)} of {pagination.total || activities.length} records
@@ -222,63 +303,32 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
             <table className="al-table">
               <thead>
                 <tr>
-                  <th>Student</th>
-                  <th>Grade Level</th>
-                  <th>Section</th>
-                  <th>Action</th>
-                  <th>Current Quest</th>
-                  <th>Save Status</th>
-                  <th>Play Time</th>
-                  <th>Last Played</th>
-                  <th>Progress</th>
-                  <th>Difficulty</th>
-                  <th>Timestamp</th>
+                  <th>Student Name</th>
+                  <th>Grade</th>
+                  <th>Time</th>
+                  <th>Activity</th>
+                  <th>Duration</th>
                 </tr>
               </thead>
               <tbody>
                 {activities.map((activity, index) => (
                   <tr key={activity.id ?? `${activity.student_id}-${activity.activity_timestamp}-${index}`} className={index % 2 === 0 ? 'even' : 'odd'}>
                     <td className="name-cell">
-                      <div className="student-detail-stack">
-                        <strong>{activity.student_name || '-'}</strong>
-                        <span className={`status-chip ${(activity.status || '').toLowerCase() === 'online' ? 'online' : 'offline'}`}>
-                          {activity.status || 'Offline'}
-                        </span>
-                      </div>
+                      <strong>{activity.student_name || '-'}</strong>
                     </td>
                     <td className="grade-cell">
-                      <span className="grade-badge">{activity.grade_level || '-'}</span>
-                    </td>
-                    <td className="section-cell">{activity.section || '-'}</td>
-                    <td className="action-cell">
-                      <span className="action-text">{activity.activity_description || 'Gameplay Session'}</span>
-                    </td>
-                    <td className="quest-cell">
-                      <span className="quest-name">{activity.current_quest || 'No Active Quest'}</span>
-                    </td>
-                    <td className="save-status-cell">{getSaveStatusBadge(activity.save_status)}</td>
-                    <td className="playtime-cell">
-                      <span className="playtime">{formatDuration(activity.total_play_time)}</span>
-                    </td>
-                    <td className="last-played-cell">{formatTime(activity.last_played)}</td>
-                    <td className="progress-cell">
-                      <div className="al-progress-bar">
-                        <div className="al-progress-track">
-                          <div className="al-progress-fill" style={{ width: `${activity.quest_progress || 0}%` }} />
-                        </div>
-                        <span className="al-progress-text">{activity.quest_progress || 0}%</span>
-                      </div>
-                    </td>
-                    <td className="difficulty-cell">
-                      <span className={`difficulty-badge difficulty-${String(activity.difficulty_level || 'normal').toLowerCase()}`}>
-                        {activity.difficulty_level || 'Normal'}
-                      </span>
+                      <span className="grade-badge">{getActivityLogGrade(activity)}</span>
                     </td>
                     <td className="timestamp-cell">
                       <div className="timestamp-stack">
-                        <strong>{formatDate(activity.activity_timestamp || activity.created_at)}</strong>
-                        <span>{formatTime(activity.activity_timestamp || activity.created_at)}</span>
+                        <strong>{formatTime(activity.started_at || activity.timestamp || activity.activity_timestamp || activity.last_played || activity.created_at)}</strong>
                       </div>
+                    </td>
+                    <td className="quest-cell">
+                      <span className="quest-name">{getActivityLogActivity(activity)}</span>
+                    </td>
+                    <td className="playtime-cell">
+                      <span className="playtime">{formatActivityLogDuration(activity)}</span>
                     </td>
                   </tr>
                 ))}
@@ -325,21 +375,4 @@ function formatDate(dateString) {
   if (!dateString) return '-';
   const date = new Date(dateString);
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function formatDuration(seconds) {
-  if (!seconds) return '-';
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
-}
-
-function getSaveStatusBadge(status) {
-  const isSaved = String(status || '').toLowerCase() === 'saved' || String(status || '').toLowerCase() === 'completed';
-  return (
-    <span className={`save-badge ${isSaved ? 'saved' : 'pending'}`}>
-      {isSaved ? 'Saved' : 'Pending'}
-    </span>
-  );
 }

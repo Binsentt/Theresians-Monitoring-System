@@ -801,8 +801,58 @@ const saveUploadedLearningFile = async ({ title, grade_level, math_topic, file_t
 };
 
 const publishLearningFile = async (fileId) => {
-  await pool.query('UPDATE public.learning_files SET published = true WHERE id = $1', [fileId]);
-  await pool.query('UPDATE public.questions SET published = true WHERE learning_file_id = $1', [fileId]);
+  const fileResult = await pool.query(
+    'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL',
+    [fileId]
+  );
+  const learningFile = fileResult.rows[0];
+  if (!learningFile) {
+    const error = new Error('Uploaded file not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const destinationParams = [
+    learningFile.grade_level,
+    learningFile.difficulty,
+    learningFile.math_topic,
+    fileId,
+  ];
+
+  await pool.query('BEGIN');
+  try {
+    await pool.query(
+      `UPDATE public.learning_files
+       SET published = false
+       WHERE grade_level = $1
+         AND difficulty = $2
+         AND math_topic = $3
+         AND id <> $4
+         AND subject = 'Mathematics'
+         AND deleted_at IS NULL`,
+      destinationParams
+    );
+    await pool.query(
+      `UPDATE public.questions q
+       SET published = false
+       FROM public.learning_files lf
+       WHERE q.learning_file_id = lf.id
+         AND lf.grade_level = $1
+         AND lf.difficulty = $2
+         AND lf.math_topic = $3
+         AND lf.id <> $4
+         AND lf.subject = 'Mathematics'
+         AND lf.deleted_at IS NULL`,
+      destinationParams
+    );
+    const publishedResult = await pool.query('UPDATE public.learning_files SET published = true WHERE id = $1 RETURNING *', [fileId]);
+    await pool.query('UPDATE public.questions SET published = true WHERE learning_file_id = $1', [fileId]);
+    await pool.query('COMMIT');
+    return publishedResult.rows[0] || learningFile;
+  } catch (error) {
+    await pool.query('ROLLBACK');
+    throw error;
+  }
 };
 
 const unpublishLearningFile = async (fileId) => {
@@ -2125,23 +2175,9 @@ app.get('/api/folders/trash', async (req, res) => {
 });
 
 app.post('/api/folders/create', async (req, res) => {
-  try {
-    const { name } = req.body;
-    if (!name || !String(name).trim()) {
-      return res.status(400).json({ error: 'Folder name is required' });
-    }
-    const result = await pool.query(
-      'INSERT INTO public.folders (name) VALUES ($1) RETURNING *',
-      [String(name).trim()]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    console.error('Create folder failed:', err.message);
-    if (err.code === '23505') {
-      return res.status(409).json({ error: 'A folder with this name already exists.' });
-    }
-    res.status(500).json({ error: 'Failed to create folder' });
-  }
+  res.status(410).json({
+    error: 'Folder creation is disabled. Use the fixed Questions/Grade/Difficulty structure.',
+  });
 });
 
 app.put('/api/folders/:id', async (req, res) => {
@@ -2497,11 +2533,11 @@ app.post('/api/questions/publish/:id', async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
-    await publishLearningFile(fileId);
-    res.json({ success: true, message: 'Content published to game.' });
+    const learningFile = await publishLearningFile(fileId);
+    res.json({ success: true, message: 'Content pushed to game.', learningFile });
   } catch (err) {
     console.error('Publish failed:', err.message);
-    res.status(500).json({ error: 'Failed to publish content' });
+    res.status(err.statusCode || 500).json({ error: err.statusCode === 404 ? err.message : 'Failed to publish content' });
   }
 });
 
@@ -3281,6 +3317,7 @@ app.get('/api/activity-logs', async (req, res) => {
       offset = 0,
       teacher_id = null,
       parent_id = null,
+      student_id = null,
       grade_level = null,
       section = null,
       search = null,
@@ -3294,16 +3331,20 @@ app.get('/api/activity-logs', async (req, res) => {
     const searchTerm = search ? `%${search.toLowerCase()}%` : null;
     const parentId = resolveParentScopeId(parent_id);
     if (Number.isNaN(parentId)) return res.status(400).json({ error: 'Invalid parent ID' });
+    const selectedStudentId = resolveScopeId(student_id);
+    if (Number.isNaN(selectedStudentId)) return res.status(400).json({ error: 'Invalid student ID' });
 
     let query = `
       SELECT 
         al.id,
         al.student_id,
         al.student_name,
+        al.grade_level AS grade,
         al.grade_level,
         al.section,
         al.current_quest,
         al.save_status,
+        al.total_play_time AS duration_seconds,
         al.total_play_time,
         al.last_played,
         al.quest_progress,
@@ -3353,6 +3394,12 @@ app.get('/api/activity-logs', async (req, res) => {
         )
       `;
       params.push(parentId);
+      paramIndex++;
+    }
+
+    if (selectedStudentId) {
+      query += ` AND al.student_id = $${paramIndex}`;
+      params.push(selectedStudentId);
       paramIndex++;
     }
 
@@ -3436,6 +3483,12 @@ app.get('/api/activity-logs', async (req, res) => {
       countParamIndex++;
     }
 
+    if (selectedStudentId) {
+      countQuery += ` AND al.student_id = $${countParamIndex}`;
+      countParams.push(selectedStudentId);
+      countParamIndex++;
+    }
+
     if (grade_level && grade_level !== 'All Grades') {
       countQuery += ` AND al.grade_level = $${countParamIndex}`;
       countParams.push(grade_level);
@@ -3472,14 +3525,34 @@ app.get('/api/activity-logs', async (req, res) => {
   }
 });
 
+const parseActivityDurationSeconds = (value) => {
+  if (value === undefined || value === null || value === '') return 0;
+  if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
+
+  const text = String(value).trim();
+  if (/^\d+$/.test(text)) return Number(text);
+
+  const hours = text.match(/(\d+)\s*h/i);
+  const minutes = text.match(/(\d+)\s*m/i);
+  const seconds = text.match(/(\d+)\s*s/i);
+  return (hours ? Number(hours[1]) * 3600 : 0)
+    + (minutes ? Number(minutes[1]) * 60 : 0)
+    + (seconds ? Number(seconds[1]) : 0);
+};
+
 // --- ENHANCED: Create Activity Log Entry with Gameplay Tracking ---
 app.post('/api/activity-logs', async (req, res) => {
   const {
     student_id,
     student_name,
+    grade,
     grade_level,
     section,
     current_quest,
+    started_at,
+    timestamp,
+    duration_seconds,
+    duration,
     save_status = 'pending',
     total_play_time = 0,
     quest_progress = 0,
@@ -3494,6 +3567,10 @@ app.post('/api/activity-logs', async (req, res) => {
       return res.status(400).json({ error: 'student_id and student_name are required' });
     }
 
+    const gradeValue = String(grade_level || grade || '').trim() || null;
+    const durationValue = parseActivityDurationSeconds(duration_seconds ?? duration ?? total_play_time);
+    const activityTime = started_at || timestamp || req.body.last_played || null;
+
     const result = await pool.query(
       `INSERT INTO public.activity_logs (
         student_id, student_name, grade_level, section, current_quest,
@@ -3501,21 +3578,23 @@ app.post('/api/activity-logs', async (req, res) => {
         difficulty_level, role, status, activity_description,
         login_time, session_date, activity_timestamp, created_at
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, $11, $12, NOW(), CURRENT_DATE, NOW(), NOW()
+        $1, $2, $3, $4, $5, $6, $7, COALESCE($13::timestamptz, NOW()), $8, $9, $10, $11, $12,
+        COALESCE($13::timestamptz, NOW()), CURRENT_DATE, COALESCE($13::timestamptz, NOW()), NOW()
       ) RETURNING *`,
       [
         student_id,
         student_name,
-        grade_level || null,
+        gradeValue,
         section || null,
         current_quest || null,
         save_status,
-        total_play_time,
+        durationValue,
         quest_progress,
         difficulty_level,
         role,
         status,
-        activity_description
+        activity_description,
+        activityTime
       ]
     );
 

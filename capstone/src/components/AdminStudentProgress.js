@@ -129,10 +129,6 @@ export default function AdminStudentProgress() {
                 <span>Average completion</span>
                 <strong>{overview?.averageProgress ?? '--'}%</strong>
               </div>
-              <div className="analytics-card">
-                <span>Grade groups</span>
-                <strong>{grades.length}</strong>
-              </div>
             </ContentSection>
 
             <ContentSection
