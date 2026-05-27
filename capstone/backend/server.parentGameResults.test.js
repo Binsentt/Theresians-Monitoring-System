@@ -10,6 +10,12 @@ const mockPool = {
   query: async (sql, params = []) => {
     return (await queryHandler(compactSql(sql), params, sql)) || emptyResult;
   },
+  connect: async () => ({
+    query: async (sql, params = []) => {
+      return (await queryHandler(compactSql(sql), params, sql)) || emptyResult;
+    },
+    release: () => {},
+  }),
 };
 
 // Keep route tests isolated from local or Railway database state.
@@ -217,6 +223,96 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(insertedValues[1], 'Ava Santos');
     assert.equal(insertedValues[2], 44);
     assert.equal(insertedValues[10], false);
+  });
+
+  await t.test('stores a normalized Godot save payload as progress and activity data', async () => {
+    const inserts = [];
+    setQueryHandler(async (sql, params) => {
+      if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return emptyResult;
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456', name: 'Parent User' }]);
+      }
+      if (sql.includes('from public.accounts s') && sql.includes('teacher_student_relationships r')) {
+        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+      }
+      if (sql.includes('from public.student_game_progress') && sql.includes('where student_id = $1')) {
+        return emptyResult;
+      }
+      if (sql.startsWith('insert into public.student_game_progress')) {
+        inserts.push({ kind: 'progress', params });
+        return resultRows([{ id: 70, student_id: params[0], progress_percentage: params[9] }]);
+      }
+      if (sql.startsWith('insert into public.activity_logs')) {
+        inserts.push({ kind: 'activity', params });
+        return resultRows([{ id: 71, student_id: params[0], total_play_time: params[6] }]);
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/progress', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: '654321',
+        student_name: 'Ava Santos',
+        grade: 'Grade 3',
+        section: 'St. Therese',
+        current_quest: 'Boss Fractions',
+        score: 140,
+        correct_answers: 7,
+        total_questions: 10,
+        accuracy: 70,
+        completion_percentage: 62,
+        duration: 420,
+        timestamp: '2026-05-28T10:15:00.000Z',
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(inserts.find((item) => item.kind === 'progress').params[2], 'Grade 3');
+    assert.equal(inserts.find((item) => item.kind === 'progress').params[8], 70);
+    assert.equal(inserts.find((item) => item.kind === 'progress').params[9], 62);
+    assert.equal(inserts.find((item) => item.kind === 'activity').params[6], 420);
+    assert.equal(inserts.find((item) => item.kind === 'activity').params[10], 'Gameplay progress saved');
+    assert.equal(inserts.find((item) => item.kind === 'activity').params[11], '2026-05-28T10:15:00.000Z');
+  });
+
+  await t.test('stores a normalized Godot result payload using aliases', async () => {
+    let insertedValues = null;
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (sql.includes('from public.accounts s') && sql.includes('teacher_student_relationships r')) {
+        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+      }
+      if (sql.startsWith('insert into public.game_results')) {
+        insertedValues = params;
+        return emptyResult;
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_name: 'Ava Santos',
+        grade: 'Grade 3',
+        difficulty: 'Normal',
+        topic: 'Fractions',
+        score: 1,
+        total_questions: 1,
+        timestamp: '2026-05-28T10:18:00.000Z',
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(insertedValues[3], 'Grade 3');
+    assert.equal(insertedValues[5], 'Fractions');
+    assert.equal(insertedValues[7], 1);
+    assert.equal(insertedValues[8], 100);
+    assert.equal(insertedValues[9], '2026-05-28T10:18:00.000Z');
   });
 
   await t.test('rejects a submitted student_id that is not linked to the parent', async () => {

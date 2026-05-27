@@ -140,3 +140,27 @@ test('question publishing replaces the active Godot bundle for one grade difficu
   assert.deepEqual(publishedLearningFile.params, [77]);
   assert.deepEqual(publishedQuestions.params, [77]);
 });
+
+test('Godot question endpoint accepts grade and topic query aliases', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  const queryCalls = [];
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('from public.learning_files') || sql.includes('from public.questions q')) {
+      queryCalls.push(params);
+      return resultRows([]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201&difficulty=Easy&topic=Basic%20Addition');
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(queryCalls[0], ['Mathematics', 'Grade 1', 'Easy', 'Basic Addition']);
+  assert.deepEqual(queryCalls[1], ['Mathematics', 'Grade 1', 'Easy', 'Basic Addition']);
+});

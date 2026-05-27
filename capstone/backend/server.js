@@ -2555,9 +2555,9 @@ app.post('/api/questions/unpublish/:id', async (req, res) => {
 
 app.get('/api/game/questions', async (req, res) => {
   try {
-    const grade_level = req.query.grade_level || null;
+    const grade_level = req.query.grade_level || req.query.grade || null;
     const difficulty = req.query.difficulty || null;
-    const math_topic = req.query.math_topic || null;
+    const math_topic = req.query.math_topic || req.query.topic || null;
     const learningFiles = await getGameFiles({ grade_level, difficulty, math_topic });
     const gameQuestions = await getGameQuestions({ grade_level, difficulty, math_topic });
     res.json({ learning_files: learningFiles, questions: gameQuestions });
@@ -2761,7 +2761,7 @@ app.post('/api/game/progress', async (req, res) => {
   const {
     parent_id,
     student_name,
-    grade_level,
+    grade,
     section,
     current_quest,
     quest_progress,
@@ -2769,13 +2769,21 @@ app.post('/api/game/progress', async (req, res) => {
     score,
     correct_answers,
     total_questions,
-    total_play_time,
     save_status = 'saved',
     activity_description = 'Gameplay progress saved',
     login_time,
     logout_time,
     difficulty_level = 'Normal',
   } = req.body || {};
+  const grade_level = req.body?.grade_level || grade;
+  const total_play_time = req.body?.total_play_time ?? req.body?.duration_seconds ?? req.body?.duration;
+  const normalizedProgressPayload = {
+    ...req.body,
+    accuracy_rate: req.body?.accuracy_rate ?? req.body?.accuracy,
+    lesson_progress: lesson_progress ?? req.body?.completion_percentage,
+    quest_progress: quest_progress ?? req.body?.completion_percentage,
+  };
+  const activityTimestamp = req.body?.timestamp || req.body?.played_at || req.body?.last_played || null;
 
   const parentCode = normalizeParentCode(parent_id);
   const studentName = normalizeGameStudentName(student_name);
@@ -2854,10 +2862,10 @@ app.post('/api/game/progress', async (req, res) => {
     const scoreValue = Math.round(toNullableNumber(score) ?? 0);
     const correctAnswersValue = Math.round(toNullableNumber(correct_answers) ?? 0);
     const totalQuestionsValue = Math.round(toNullableNumber(total_questions) ?? 0);
-    const questProgressValue = Math.min(100, Math.max(0, toNullableNumber(quest_progress) ?? 0));
-    const progressPercentageValue = resolveProgressPercentage({ lesson_progress, quest_progress });
-    const lessonProgressValue = Math.min(100, Math.max(0, toNullableNumber(lesson_progress) ?? progressPercentageValue));
-    const accuracyRateValue = resolveAccuracyRate(req.body);
+    const questProgressValue = Math.min(100, Math.max(0, toNullableNumber(normalizedProgressPayload.quest_progress) ?? 0));
+    const progressPercentageValue = resolveProgressPercentage(normalizedProgressPayload);
+    const lessonProgressValue = Math.min(100, Math.max(0, toNullableNumber(normalizedProgressPayload.lesson_progress) ?? progressPercentageValue));
+    const accuracyRateValue = resolveAccuracyRate(normalizedProgressPayload);
     const totalPlayTimeValue = Math.round(toNullableNumber(total_play_time) ?? 0);
 
     const existingProgress = await client.query(
@@ -2934,8 +2942,8 @@ app.post('/api/game/progress', async (req, res) => {
         difficulty_level, role, status, activity_description,
         login_time, logout_time, session_date, activity_timestamp, created_at
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, 'Student', 'Online', $11,
-        COALESCE($12, NOW()), $13, CURRENT_DATE, NOW(), NOW()
+        $1, $2, $3, $4, $5, $6, $7, COALESCE($12, NOW()), $8, $9, $10, 'Student', 'Online', $11,
+        COALESCE($12, NOW()), $13, CURRENT_DATE, COALESCE($12, NOW()), NOW()
       )
       RETURNING *`,
       [
@@ -2950,7 +2958,7 @@ app.post('/api/game/progress', async (req, res) => {
         lessonProgressValue,
         difficulty_level,
         activity_description,
-        login_time || null,
+        login_time || activityTimestamp,
         logout_time || null,
       ]
     );
@@ -2978,13 +2986,15 @@ app.post('/api/game/result', async (req, res) => {
     student_id,
     resolved_student_id,
     student_name,
-    grade_level,
+    grade,
     difficulty,
-    math_topic,
+    topic,
     score,
-    total_items,
-    played_at,
   } = req.body || {};
+  const grade_level = req.body?.grade_level || grade;
+  const math_topic = req.body?.math_topic || topic;
+  const total_items = req.body?.total_items ?? req.body?.total_questions;
+  const played_at = req.body?.played_at || req.body?.timestamp;
 
   const parentCode = normalizeParentCode(parent_id);
   const submittedStudentId = resolveScopeId(student_id ?? resolved_student_id);
