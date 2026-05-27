@@ -7,6 +7,7 @@ import { MetricCard, InfoCard } from './layout/Card';
 import { ResponsiveGrid } from './layout/Grid';
 import { buildScopedApiUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
+import { formatPercent, normalizeDisplayList, safeDisplayText, toFiniteNumber } from './studentProgress.utils';
 import { apiUrl } from '../api';
 import '../styles/parentdashboard.css';
 
@@ -17,16 +18,16 @@ function AchieverCard({ name, grade, quest, score, accuracy }) {
         <div className="rank-number">{grade}</div>
       </div>
       <div className="achiever-info">
-        <h4>{name}</h4>
-        <p>Current quest: {quest || 'N/A'}</p>
+        <h4>{safeDisplayText(name, 'Student')}</h4>
+        <p>Current quest: {safeDisplayText(quest, 'N/A')}</p>
       </div>
       <div className="achiever-stats">
         <div className="stat-item">
-          <div className="stat-value">{score ?? '—'}</div>
+          <div className="stat-value">{safeDisplayText(score, 'N/A')}</div>
           <div className="stat-label">Score</div>
         </div>
         <div className="stat-item">
-          <div className="stat-value">{accuracy !== undefined ? `${accuracy.toFixed(0)}%` : '—'}</div>
+          <div className="stat-value">{formatPercent(accuracy, 'N/A')}</div>
           <div className="stat-label">Accuracy</div>
         </div>
       </div>
@@ -59,7 +60,7 @@ export default function ParentDashboard() {
       }
 
       const userData = JSON.parse(loggedInUser);
-      if (normalizeRole(userData.role) !== 'parent') {
+      if (!['parent', 'parent_teacher'].includes(normalizeRole(userData.role))) {
         navigate('/login');
         return;
       }
@@ -104,21 +105,28 @@ export default function ParentDashboard() {
 
       if (overviewResult.status === 'fulfilled' && overviewResult.value.ok) {
         const overviewData = await overviewResult.value.json();
-        setAnalyticsSummary(overviewData);
+        setAnalyticsSummary(overviewData && typeof overviewData === 'object' ? overviewData : null);
       } else {
         setAnalyticsSummary(null);
       }
 
       if (recommendationsResult.status === 'fulfilled' && recommendationsResult.value.ok) {
         const recommendationsData = await recommendationsResult.value.json();
-        setAnalyticsRecommendations(Array.isArray(recommendationsData.recommendations) ? recommendationsData.recommendations : []);
+        setAnalyticsRecommendations(normalizeDisplayList(recommendationsData?.recommendations));
       } else {
         setAnalyticsRecommendations([]);
       }
 
       if (childrenResult.status === 'fulfilled' && childrenResult.value.ok) {
         const childrenData = await childrenResult.value.json();
-        setConnectedChildren(Array.isArray(childrenData) ? childrenData.slice(0, 6) : []);
+        const children = Array.isArray(childrenData)
+          ? childrenData
+          : Array.isArray(childrenData?.children)
+            ? childrenData.children
+            : Array.isArray(childrenData?.data)
+              ? childrenData.data
+              : [];
+        setConnectedChildren(children.slice(0, 6));
       } else {
         setConnectedChildren([]);
       }
@@ -176,12 +184,12 @@ export default function ParentDashboard() {
                 />
                 <MetricCard
                   label="Average Accuracy"
-                  value={analyticsSummary?.averageAccuracy ? `${analyticsSummary.averageAccuracy}%` : '--'}
+                  value={formatPercent(analyticsSummary?.averageAccuracy)}
                   footer="Across current courses"
                 />
                 <MetricCard
                   label="Completion Rate"
-                  value={analyticsSummary?.averageProgress ? `${analyticsSummary.averageProgress}%` : '--'}
+                  value={formatPercent(analyticsSummary?.averageProgress)}
                   footer="Average progress"
                 />
               </ResponsiveGrid>
@@ -191,14 +199,14 @@ export default function ParentDashboard() {
               {dashboardLoading ? (
                 <div className="fallback-note">Loading connected children...</div>
               ) : connectedChildren.length === 0 ? (
-                <div className="fallback-note">No connected children yet.</div>
+                <div className="fallback-note">No game progress data available yet.</div>
               ) : (
                 <ResponsiveGrid minWidth="260px">
                   {connectedChildren.map((child) => (
-                    <InfoCard key={child.id || child.student_id || child.student_name} title={child.student_name || 'Student'}>
-                      <p>Current quest: {child.current_quest || 'N/A'}</p>
-                      <p>Score: {child.score ?? 0}</p>
-                      <p>Progress: {Number(child.progress_percentage || child.performance_percentage || 0).toFixed(0)}%</p>
+                    <InfoCard key={child.id || child.student_id || safeDisplayText(child.student_name, 'student')} title={safeDisplayText(child.student_name || child.name, 'Student')}>
+                      <p>Current quest: {safeDisplayText(child.current_quest, 'N/A')}</p>
+                      <p>Score: {toFiniteNumber(child.score, 0)}</p>
+                      <p>Progress: {formatPercent(child.progress_percentage ?? child.performance_percentage, '0%')}</p>
                       <p>Latest update: {child.last_played ? new Date(child.last_played).toLocaleString() : 'Not available'}</p>
                     </InfoCard>
                   ))}
@@ -217,7 +225,7 @@ export default function ParentDashboard() {
                     <AchieverCard
                       key={achiever.id || achiever.student_id || achiever.student_name}
                       name={achiever.student_name || 'Student'}
-                      grade={achiever.grade_level || achiever.grade || 'Grade N/A'}
+                      grade={safeDisplayText(achiever.grade_level || achiever.grade, 'Grade N/A')}
                       quest={achiever.current_quest || achiever.quest || 'N/A'}
                       score={achiever.score ?? achiever.accuracy_rate ?? '--'}
                       accuracy={achiever.accuracy_rate ?? achiever.performance_percentage ?? 0}

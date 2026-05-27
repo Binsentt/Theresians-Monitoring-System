@@ -14,6 +14,39 @@ const toNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+export const toFiniteNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+export const clampPercent = (value, fallback = 0) => {
+  const numericValue = toFiniteNumber(value, fallback);
+  return Math.min(100, Math.max(0, numericValue));
+};
+
+export const formatPercent = (value, fallback = '--') => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? `${parsed.toFixed(0)}%` : fallback;
+};
+
+export const safeDisplayText = (value, fallback = 'N/A') => {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'string') return value.trim() || fallback;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'object') {
+    const candidate = value.message ?? value.text ?? value.label ?? value.name ?? value.title;
+    return safeDisplayText(candidate, fallback);
+  }
+  return fallback;
+};
+
+export const normalizeDisplayList = (items) => {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => safeDisplayText(item, ''))
+    .filter(Boolean);
+};
+
 export const getDefaultSection = (grade, studentId) => {
   const letters = ['A', 'B', 'C'];
   const index = studentId ? studentId % letters.length : 0;

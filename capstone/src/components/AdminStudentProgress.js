@@ -8,6 +8,7 @@ import {
   filterStudentProgress,
   getDefaultSection,
   getStudentProgressSectionOptions,
+  normalizeDisplayList,
   normalizeStudentProgressPayload,
 } from './studentProgress.utils';
 import '../styles/studentprogress.css';
@@ -55,7 +56,7 @@ export default function AdminStudentProgress() {
 
         if (recommendationsResult.status === 'fulfilled' && recommendationsResult.value.ok) {
           const recommendationsData = await recommendationsResult.value.json();
-          setRecommendations(Array.isArray(recommendationsData.recommendations) ? recommendationsData.recommendations : []);
+          setRecommendations(normalizeDisplayList(recommendationsData?.recommendations));
         } else {
           setRecommendations([]);
         }

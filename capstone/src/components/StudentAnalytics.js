@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { buildStudentProgressDetailUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
+import { clampPercent, normalizeDisplayList, safeDisplayText, toFiniteNumber } from './studentProgress.utils';
 import logoImage from '../assets/images/STS_Logo.png';
 import '../styles/studentprogress.css';
 
@@ -57,11 +58,21 @@ export default function StudentAnalytics() {
     }
   };
 
-  const accuracy = progress?.accuracy_rate ?? 0;
-  const questCompletion = progress?.progress_percentage ?? 0;
-  const difficulty = analysis?.difficultyBreakdown || { easy: 0, medium: 0, hard: 0 };
+  const accuracy = clampPercent(progress?.accuracy_rate, 0);
+  const questCompletion = clampPercent(progress?.progress_percentage, 0);
+  const difficulty = {
+    easy: clampPercent(analysis?.difficultyBreakdown?.easy, 0),
+    medium: clampPercent(analysis?.difficultyBreakdown?.medium, 0),
+    hard: clampPercent(analysis?.difficultyBreakdown?.hard, 0),
+  };
   const completedQuests = Math.min(10, Math.round(questCompletion / 10));
-  const gameScore = progress?.score ?? 0;
+  const gameScore = toFiniteNumber(progress?.score, 0);
+  const strengths = normalizeDisplayList(analysis?.strengths);
+  const weaknesses = normalizeDisplayList(analysis?.weaknesses);
+  const recommendations = normalizeDisplayList(analysis?.recommendations);
+  const correctAnswers = toFiniteNumber(analysis?.totalCorrectAnswers ?? progress?.correct_answers, 0);
+  const totalQuestions = toFiniteNumber(progress?.total_questions, 0);
+  const incorrectAnswers = toFiniteNumber(analysis?.totalIncorrectAnswers, Math.max(totalQuestions - correctAnswers, 0));
 
   return (
     <div className="student-analytics-page">
@@ -74,7 +85,7 @@ export default function StudentAnalytics() {
         </div>
         <div className="student-analytics-title">
           <p className="crumb">Analytics / Student Details</p>
-          <h1>{progress?.student_name || 'Student analytics'}</h1>
+          <h1>{safeDisplayText(progress?.student_name, 'Student analytics')}</h1>
           <p className="subtitle">Detailed performance insights, progress metrics, and AI recommendations for this student.</p>
         </div>
       </div>
@@ -88,23 +99,23 @@ export default function StudentAnalytics() {
           <section className="student-detail-grid">
             <div className="student-card">
               <h3>Student Information</h3>
-              <p><strong>Name:</strong> {progress?.student_name || 'N/A'}</p>
-              <p><strong>Grade:</strong> {progress?.grade_level || 'N/A'}</p>
-              <p><strong>Section:</strong> {progress?.section || 'N/A'}</p>
+              <p><strong>Name:</strong> {safeDisplayText(progress?.student_name, 'N/A')}</p>
+              <p><strong>Grade:</strong> {safeDisplayText(progress?.grade_level, 'N/A')}</p>
+              <p><strong>Section:</strong> {safeDisplayText(progress?.section, 'N/A')}</p>
             </div>
             <div className="student-card">
               <h3>Performance Summary</h3>
               <p><strong>Total Progress:</strong> {questCompletion.toFixed(0)}%</p>
-              <p><strong>Correct Answers:</strong> {analysis?.totalCorrectAnswers ?? progress?.correct_answers ?? 0}</p>
-              <p><strong>Incorrect Answers:</strong> {analysis?.totalIncorrectAnswers ?? Math.max((progress?.total_questions ?? 0) - (progress?.correct_answers ?? 0), 0)}</p>
+              <p><strong>Correct Answers:</strong> {correctAnswers}</p>
+              <p><strong>Incorrect Answers:</strong> {incorrectAnswers}</p>
               <p><strong>Accuracy:</strong> {accuracy.toFixed(0)}%</p>
-              <p><strong>Current Quest:</strong> {analysis?.currentQuest || progress?.current_quest || 'N/A'}</p>
+              <p><strong>Current Quest:</strong> {safeDisplayText(analysis?.currentQuest || progress?.current_quest, 'N/A')}</p>
               <p><strong>Estimated Completed Quests:</strong> {completedQuests}</p>
             </div>
             <div className="student-card">
               <h3>Game Performance</h3>
               <p><strong>Game Score:</strong> {gameScore}</p>
-              <p><strong>Total Questions:</strong> {progress?.total_questions ?? 0}</p>
+              <p><strong>Total Questions:</strong> {totalQuestions}</p>
               <p><strong>Learning Progress:</strong> {questCompletion.toFixed(0)}%</p>
               <p><strong>Performance Insight:</strong> {accuracy >= 80 ? 'Consistently strong results' : 'Needs guided reinforcement'}</p>
             </div>
@@ -146,9 +157,9 @@ export default function StudentAnalytics() {
           <section className="student-ai-panel">
             <div className="student-ai-block">
               <h3>AI Interpretation</h3>
-              {analysis?.strengths?.length > 0 ? (
+              {strengths.length > 0 ? (
                 <ul>
-                  {analysis.strengths.map((item, index) => <li key={`strength-${index}`}>{item}</li>)}
+                  {strengths.map((item, index) => <li key={`strength-${index}`}>{item}</li>)}
                 </ul>
               ) : (
                 <p>No interpretation available for this student yet.</p>
@@ -156,9 +167,9 @@ export default function StudentAnalytics() {
             </div>
             <div className="student-ai-block">
               <h3>Weaknesses</h3>
-              {analysis?.weaknesses?.length > 0 ? (
+              {weaknesses.length > 0 ? (
                 <ul>
-                  {analysis.weaknesses.map((item, index) => <li key={`weak-${index}`}>{item}</li>)}
+                  {weaknesses.map((item, index) => <li key={`weak-${index}`}>{item}</li>)}
                 </ul>
               ) : (
                 <p>No weak areas identified.</p>
@@ -166,9 +177,9 @@ export default function StudentAnalytics() {
             </div>
             <div className="student-ai-block">
               <h3>Recommendations</h3>
-              {analysis?.recommendations?.length > 0 ? (
+              {recommendations.length > 0 ? (
                 <ul>
-                  {analysis.recommendations.map((item, index) => <li key={`reco-${index}`}>{item}</li>)}
+                  {recommendations.map((item, index) => <li key={`reco-${index}`}>{item}</li>)}
                 </ul>
               ) : (
                 <p>Please try again later for recommendations.</p>

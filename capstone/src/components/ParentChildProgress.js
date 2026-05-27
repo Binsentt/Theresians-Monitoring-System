@@ -7,7 +7,14 @@ import logoImage from '../assets/images/STS_Logo.png';
 import { buildScopedApiUrl } from './analyticsEndpoints';
 import { normalizeActivityLogPayload } from './activityLog.utils';
 import { isParentRole, normalizeRole } from './manageUsers.utils';
-import { normalizeStudentProgressPayload } from './studentProgress.utils';
+import {
+  clampPercent,
+  formatPercent,
+  normalizeDisplayList,
+  normalizeStudentProgressPayload,
+  safeDisplayText,
+  toFiniteNumber,
+} from './studentProgress.utils';
 import '../styles/studentprogress.css';
 
 export default function ParentChildProgress() {
@@ -62,7 +69,7 @@ export default function ParentChildProgress() {
           progressRows.map((student) => [String(student.student_id || student.id), student])
         );
         // Keep linked children visible even when no aggregate progress row has been created yet.
-        const linkedChildren = Array.isArray(childrenPayload.children) ? childrenPayload.children : [];
+        const linkedChildren = Array.isArray(childrenPayload?.children) ? childrenPayload.children : [];
         const normalizedStudents = linkedChildren.map((child) => {
           const studentId = child.student_id || child.id;
           const progress = progressByStudentId.get(String(studentId)) || {};
@@ -152,10 +159,10 @@ export default function ParentChildProgress() {
         ]);
         if (!active) return;
 
-        setQuizSessions(Array.isArray(quizzesPayload.data) ? quizzesPayload.data : []);
+        setQuizSessions(Array.isArray(quizzesPayload?.data) ? quizzesPayload.data : []);
         setTopicCoverage(Array.isArray(topicsPayload) ? topicsPayload : []);
-        setSelectedChildAnalysis(analyticsPayload?.analysis || null);
-        setSelectedAnalyticsReadiness(analyticsPayload?.analyticsReadiness || null);
+        setSelectedChildAnalysis(analyticsPayload?.analysis && typeof analyticsPayload.analysis === 'object' ? analyticsPayload.analysis : null);
+        setSelectedAnalyticsReadiness(analyticsPayload?.analyticsReadiness && typeof analyticsPayload.analyticsReadiness === 'object' ? analyticsPayload.analyticsReadiness : null);
       } catch (err) {
         console.error('Child game result load error:', err);
         if (!active) return;
@@ -194,13 +201,13 @@ export default function ParentChildProgress() {
   const scoreTimeline = useMemo(() => {
     return quizSessions.slice().reverse().map((session, index) => ({
       label: `${session.math_topic || 'Topic'} (${session.difficulty || 'Unknown'})`,
-      percentage: Number(session.percentage || 0),
+      percentage: clampPercent(session.percentage, 0),
       quiz: index + 1,
     }));
   }, [quizSessions]);
 
   const selectedRecommendations = useMemo(() => {
-    return Array.isArray(selectedChildAnalysis?.recommendations) ? selectedChildAnalysis.recommendations : [];
+    return normalizeDisplayList(selectedChildAnalysis?.recommendations);
   }, [selectedChildAnalysis]);
 
   const focusStudentInitials = useMemo(() => {
@@ -224,8 +231,8 @@ export default function ParentChildProgress() {
             className={`child-selector-card ${String(studentId) === String(focusStudentId) ? 'active' : ''}`}
             onClick={() => setSelectedStudentId(studentId)}
           >
-            <strong>{student.student_name || 'Unknown'}</strong>
-            <span>{[student.grade_level || student.grade || 'Grade N/A', student.section].filter(Boolean).join(' - ')}</span>
+            <strong>{safeDisplayText(student.student_name, 'Unknown')}</strong>
+            <span>{[safeDisplayText(student.grade_level || student.grade, 'Grade N/A'), safeDisplayText(student.section, '')].filter(Boolean).join(' - ')}</span>
           </button>
         );
       })}
@@ -284,15 +291,15 @@ export default function ParentChildProgress() {
               </div>
               <div className="analytics-card">
                 <span>Average accuracy</span>
-                <strong>{overview?.averageAccuracy ?? '--'}%</strong>
+                <strong>{formatPercent(overview?.averageAccuracy)}</strong>
               </div>
               <div className="analytics-card">
                 <span>Progress</span>
-                <strong>{overview?.averageProgress ?? '--'}%</strong>
+                <strong>{formatPercent(overview?.averageProgress)}</strong>
               </div>
               <div className="analytics-card">
                 <span>Math activities</span>
-                <strong>{focusStudent?.total_questions ?? '--'}</strong>
+                <strong>{toFiniteNumber(focusStudent?.total_questions, 0)}</strong>
               </div>
             </ContentSection>
 
@@ -322,8 +329,8 @@ export default function ParentChildProgress() {
                     <div className="child-profile-heading">
                       <div className="child-profile-avatar" aria-hidden="true">{focusStudentInitials}</div>
                       <div>
-                        <h2>{focusStudent.student_name || 'Unknown Child'}</h2>
-                        <p>{[focusStudent.grade_level || focusStudent.grade || 'Grade N/A', focusStudent.section].filter(Boolean).join(' - ')}</p>
+                        <h2>{safeDisplayText(focusStudent.student_name, 'Unknown Child')}</h2>
+                        <p>{[safeDisplayText(focusStudent.grade_level || focusStudent.grade, 'Grade N/A'), safeDisplayText(focusStudent.section, '')].filter(Boolean).join(' - ')}</p>
                         <small>Student ID: {focusStudentId}</small>
                       </div>
                     </div>
@@ -335,27 +342,27 @@ export default function ParentChildProgress() {
                       </div>
                       <div className="child-progress-stat">
                         <span>Child</span>
-                        <strong>{focusStudent.student_name || 'Unknown'}</strong>
+                        <strong>{safeDisplayText(focusStudent.student_name, 'Unknown')}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Grade / Section</span>
-                        <strong>{[focusStudent.grade_level || focusStudent.grade, focusStudent.section].filter(Boolean).join(' - ') || 'N/A'}</strong>
+                        <strong>{[safeDisplayText(focusStudent.grade_level || focusStudent.grade, ''), safeDisplayText(focusStudent.section, '')].filter(Boolean).join(' - ') || 'N/A'}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Current Quest</span>
-                        <strong>{focusStudent.current_quest || 'N/A'}</strong>
+                        <strong>{safeDisplayText(focusStudent.current_quest, 'N/A')}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Score</span>
-                        <strong>{focusStudent.score ?? 0}</strong>
+                        <strong>{toFiniteNumber(focusStudent.score, 0)}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Accuracy</span>
-                        <strong>{Number(focusStudent.performance_percentage || focusStudent.accuracy_rate || 0).toFixed(0)}%</strong>
+                        <strong>{formatPercent(focusStudent.performance_percentage ?? focusStudent.accuracy_rate, '0%')}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Progress</span>
-                        <strong>{Number(focusStudent.progress_percentage || focusStudent.performance_percentage || 0).toFixed(0)}%</strong>
+                        <strong>{formatPercent(focusStudent.progress_percentage ?? focusStudent.performance_percentage, '0%')}</strong>
                       </div>
                     </div>
 
@@ -370,8 +377,8 @@ export default function ParentChildProgress() {
                         <div className="child-activity-list">
                           {selectedLogs.slice(0, 5).map((log) => (
                             <div key={log.id || `${log.student_id}-${log.activity_timestamp}`} className="child-activity-item">
-                              <strong>{log.activity_description || 'Gameplay Session'}</strong>
-                              <span>{log.current_quest || 'No active quest'} | Score {log.score ?? 0}</span>
+                              <strong>{safeDisplayText(log.activity_description, 'Gameplay Session')}</strong>
+                              <span>{safeDisplayText(log.current_quest, 'No active quest')} | Score {toFiniteNumber(log.score, 0)}</span>
                               <small>{log.activity_timestamp ? new Date(log.activity_timestamp).toLocaleString() : 'Timestamp unavailable'}</small>
                             </div>
                           ))}
@@ -395,9 +402,9 @@ export default function ParentChildProgress() {
                           <div className="child-quiz-list">
                             {quizSessions.map((session) => (
                               <div key={session.id} className="child-quiz-item">
-                                <strong>{session.math_topic || 'Topic unavailable'}</strong>
-                                <span>{session.score ?? 0} / {session.total_items ?? 0} | {Number(session.percentage || 0).toFixed(0)}%</span>
-                                <small>{session.difficulty || 'Difficulty unavailable'} | {session.played_at ? new Date(session.played_at).toLocaleString() : 'Date unavailable'}</small>
+                                <strong>{safeDisplayText(session.math_topic, 'Topic unavailable')}</strong>
+                                <span>{toFiniteNumber(session.score, 0)} / {toFiniteNumber(session.total_items, 0)} | {formatPercent(session.percentage, '0%')}</span>
+                                <small>{safeDisplayText(session.difficulty, 'Difficulty unavailable')} | {session.played_at ? new Date(session.played_at).toLocaleString() : 'Date unavailable'}</small>
                               </div>
                             ))}
                           </div>
@@ -436,10 +443,10 @@ export default function ParentChildProgress() {
                         ) : (
                           <div className="child-topic-list">
                             {topicCoverage.map((topic) => (
-                              <div key={topic.math_topic} className="child-topic-item">
-                                <strong>{topic.math_topic}</strong>
-                                <span>{topic.times_played ?? 0} played</span>
-                                <small>Best score {topic.best_score ?? 0}</small>
+                              <div key={safeDisplayText(topic.math_topic, 'topic')} className="child-topic-item">
+                                <strong>{safeDisplayText(topic.math_topic, 'Topic unavailable')}</strong>
+                                <span>{toFiniteNumber(topic.times_played, 0)} played</span>
+                                <small>Best score {toFiniteNumber(topic.best_score, 0)}</small>
                               </div>
                             ))}
                           </div>
