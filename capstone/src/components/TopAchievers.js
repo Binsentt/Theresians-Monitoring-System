@@ -36,6 +36,16 @@ export default function TopAchievers() {
     return <div className="ta-error">{error}</div>;
   }
 
+  const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
+  const formatPlaytime = (seconds) => {
+    const totalSeconds = Number(seconds || 0);
+    if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return 'N/A';
+    const minutes = Math.floor(totalSeconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return hours > 0 ? `${hours}h ${remainingMinutes}m` : `${Math.max(1, minutes)}m`;
+  };
+
   return (
     <div className="top-achievers-container">
       <div className="ta-header">
@@ -44,7 +54,7 @@ export default function TopAchievers() {
       </div>
 
       {topAchievers.length === 0 ? (
-        <div className="ta-empty">No achievement data available yet.</div>
+        <div className="ta-empty">No leaderboard data available yet.</div>
       ) : (
         <div className="ta-table-wrapper">
           <table className="ta-table">
@@ -52,12 +62,13 @@ export default function TopAchievers() {
               <tr>
                 <th>Rank</th>
                 <th>Student Name</th>
-                <th>Grade/Level</th>
-                <th>Current Quest</th>
-                <th>Score</th>
-                <th>Correct Answers</th>
+                <th>Grade</th>
+                <th>Section</th>
+                <th>Completion</th>
                 <th>Accuracy</th>
-                <th>Progress</th>
+                <th>Correct Answers</th>
+                <th>Quests</th>
+                <th>Playtime</th>
               </tr>
             </thead>
             <tbody>
@@ -72,33 +83,30 @@ export default function TopAchievers() {
                       <span className="rank-num">#{index + 1}</span>
                     )}
                   </td>
-                  <td>{achiever.student_name}</td>
-                  <td>{achiever.grade_level}</td>
-                  <td>
-                    <span className="quest-badge">{achiever.current_quest}</span>
+                  <td>{achiever.student_name || 'Unknown'}</td>
+                  <td>{achiever.grade_level || 'N/A'}</td>
+                  <td>{achiever.section || 'N/A'}</td>
+                  <td className="progress-cell">
+                    <div className="progress-bar">
+                      <div
+                        className="progress-fill"
+                        style={{ width: `${Number(achiever.completion_percentage ?? achiever.progress_percentage ?? 0)}%` }}
+                      />
+                    </div>
+                    <span className="progress-text">{formatPercent(achiever.completion_percentage ?? achiever.progress_percentage)}</span>
                   </td>
-                  <td className="score-cell">
-                    <strong>{achiever.score}</strong>
-                  </td>
-                  <td>{achiever.correct_answers}/{achiever.total_questions}</td>
                   <td className="accuracy-cell">
                     <div className="accuracy-bar">
                       <div 
                         className="accuracy-fill" 
-                        style={{ width: `${achiever.accuracy_rate}%` }}
+                        style={{ width: `${Number(achiever.accuracy ?? achiever.accuracy_rate ?? 0)}%` }}
                       />
                     </div>
-                    <span className="accuracy-text">{achiever.accuracy_rate.toFixed(1)}%</span>
+                    <span className="accuracy-text">{formatPercent(achiever.accuracy ?? achiever.accuracy_rate)}</span>
                   </td>
-                  <td className="progress-cell">
-                    <div className="progress-bar">
-                      <div 
-                        className="progress-fill" 
-                        style={{ width: `${achiever.progress_percentage}%` }}
-                      />
-                    </div>
-                    <span className="progress-text">{achiever.progress_percentage.toFixed(1)}%</span>
-                  </td>
+                  <td>{achiever.total_correct_answers ?? achiever.correct_answers ?? 0}/{achiever.total_questions_answered ?? achiever.total_questions ?? 0}</td>
+                  <td>{achiever.quests_completed ?? achiever.total_quests_completed ?? 0}</td>
+                  <td>{formatPlaytime(achiever.total_play_time ?? achiever.duration_seconds)}</td>
                 </tr>
               ))}
             </tbody>

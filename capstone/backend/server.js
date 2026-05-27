@@ -186,6 +186,8 @@ const ensureSchema = async () => {
     );`);
     await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS section CHARACTER VARYING(50)');
     await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS lesson_progress DECIMAL(5, 2) DEFAULT 0.00');
+    await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS total_quests_completed INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS total_play_time INTEGER DEFAULT 0');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_student_game_progress_student_id ON public.student_game_progress(student_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_student_game_progress_score ON public.student_game_progress(score DESC)');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.game_results (
@@ -517,6 +519,13 @@ const calculateGameResultPercentage = ({ score, totalItems }) => {
   return Math.min(100, Math.max(0, Number(((scoreValue / totalItemsValue) * 100).toFixed(2))));
 };
 
+const normalizeGameGradeLevel = (value) => {
+  const normalized = String(value || '').trim();
+  const numericMatch = normalized.match(/^(?:grade\s*)?([1-6])$/i);
+  if (numericMatch) return `Grade ${numericMatch[1]}`;
+  return normalized || null;
+};
+
 const resolveScopeId = (value) => {
   if (value === undefined || value === null || value === '') return null;
   const parsed = parseInt(value, 10);
@@ -556,6 +565,37 @@ const appendParentScopeFilter = ({ parentId, params, studentColumn, relationship
         AND LOWER(tsr.relationship_type) = '${relationshipType}'
     )
   `;
+};
+
+const normalizeTopAchieverRow = (row, index = 0) => {
+  const completion = Number(row.completion_percentage ?? row.progress_percentage ?? 0);
+  const accuracy = Number(row.accuracy ?? row.accuracy_rate ?? 0);
+  const correctAnswers = Number(row.total_correct_answers ?? row.correct_answers ?? 0);
+  const totalQuestions = Number(row.total_questions_answered ?? row.total_questions ?? 0);
+  const questsCompleted = Number(row.quests_completed ?? row.total_quests_completed ?? 0);
+  const totalPlayTime = Number(row.total_play_time ?? row.duration_seconds ?? 0);
+
+  return {
+    ...row,
+    rank: index + 1,
+    rank_no: index + 1,
+    student_name: row.student_name || row.account_student_name || 'Unknown',
+    grade_level: row.grade_level || row.grade || null,
+    grade: row.grade || row.grade_level || null,
+    section: row.section || null,
+    completion_percentage: Number.isFinite(completion) ? completion : 0,
+    progress_percentage: Number.isFinite(completion) ? completion : 0,
+    accuracy: Number.isFinite(accuracy) ? accuracy : 0,
+    accuracy_rate: Number.isFinite(accuracy) ? accuracy : 0,
+    total_correct_answers: Number.isFinite(correctAnswers) ? correctAnswers : 0,
+    correct_answers: Number.isFinite(correctAnswers) ? correctAnswers : 0,
+    total_questions_answered: Number.isFinite(totalQuestions) ? totalQuestions : 0,
+    total_questions: Number.isFinite(totalQuestions) ? totalQuestions : 0,
+    quests_completed: Number.isFinite(questsCompleted) ? questsCompleted : 0,
+    total_quests_completed: Number.isFinite(questsCompleted) ? questsCompleted : 0,
+    total_play_time: Number.isFinite(totalPlayTime) ? totalPlayTime : 0,
+    duration_seconds: Number.isFinite(totalPlayTime) ? totalPlayTime : 0,
+  };
 };
 
 const verifyParentChildAccess = async (req, res, next) => {
@@ -1075,6 +1115,21 @@ const getGameQuestions = async ({ grade_level, difficulty, math_topic }) => {
     params.push(math_topic);
     clause += ` AND lf.math_topic = $${params.length}`;
   }
+  if (grade_level && difficulty && math_topic) {
+    clause += `
+      AND lf.id = (
+        SELECT active_lf.id
+        FROM public.learning_files active_lf
+        WHERE active_lf.subject = $1
+          AND active_lf.published = true
+          AND active_lf.deleted_at IS NULL
+          AND active_lf.grade_level = $2
+          AND active_lf.difficulty = $3
+          AND active_lf.math_topic = $4
+        ORDER BY active_lf.uploaded_at DESC, active_lf.id DESC
+        LIMIT 1
+      )`;
+  }
   const result = await pool.query(
     `SELECT q.* FROM public.questions q
      JOIN public.learning_files lf ON lf.id = q.learning_file_id
@@ -1146,6 +1201,21 @@ const getGameFiles = async ({ grade_level, difficulty, math_topic }) => {
   if (math_topic) {
     params.push(math_topic);
     clause += ` AND math_topic = $${params.length}`;
+  }
+  if (grade_level && difficulty && math_topic) {
+    clause += `
+      AND id = (
+        SELECT id
+        FROM public.learning_files
+        WHERE subject = $1
+          AND published = true
+          AND deleted_at IS NULL
+          AND grade_level = $2
+          AND difficulty = $3
+          AND math_topic = $4
+        ORDER BY uploaded_at DESC, id DESC
+        LIMIT 1
+      )`;
   }
   const result = await pool.query(`SELECT * FROM public.learning_files ${clause} ORDER BY uploaded_at DESC`, params);
   return result.rows.map((row) => ({
@@ -2555,7 +2625,7 @@ app.post('/api/questions/unpublish/:id', async (req, res) => {
 
 app.get('/api/game/questions', async (req, res) => {
   try {
-    const grade_level = req.query.grade_level || req.query.grade || null;
+    const grade_level = normalizeGameGradeLevel(req.query.grade_level || req.query.grade);
     const difficulty = req.query.difficulty || null;
     const math_topic = req.query.math_topic || req.query.topic || null;
     const learningFiles = await getGameFiles({ grade_level, difficulty, math_topic });
@@ -2815,17 +2885,42 @@ app.post('/api/game/progress', async (req, res) => {
     }
 
     const parent = parentResult.rows[0];
-    let studentResult = await client.query(
-      `SELECT s.*
-       FROM public.accounts s
-       JOIN public.teacher_student_relationships r ON r.student_id = s.id
-       WHERE r.teacher_id = $1
-         AND LOWER(r.relationship_type) = 'parent'
-         AND LOWER(TRIM(s.name)) = LOWER($2)
-       ORDER BY s.id
-       LIMIT 1`,
-      [parent.id, studentName]
-    );
+    const submittedStudentId = resolveScopeId(req.body?.student_id ?? req.body?.resolved_student_id);
+    if (Number.isNaN(submittedStudentId)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Student ID must be a valid number.' });
+    }
+
+    let studentResult;
+    if (submittedStudentId) {
+      studentResult = await client.query(
+        `SELECT s.*
+         FROM public.accounts s
+         JOIN public.teacher_student_relationships r ON r.student_id = s.id
+         WHERE r.teacher_id = $1
+           AND r.student_id = $2
+           AND LOWER(r.relationship_type) = 'parent'
+           AND COALESCE(s.is_archived, false) = false
+         LIMIT 1`,
+        [parent.id, submittedStudentId]
+      );
+      if (studentResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Student is not linked to this parent.' });
+      }
+    } else {
+      studentResult = await client.query(
+        `SELECT s.*
+         FROM public.accounts s
+         JOIN public.teacher_student_relationships r ON r.student_id = s.id
+         WHERE r.teacher_id = $1
+           AND LOWER(r.relationship_type) = 'parent'
+           AND LOWER(TRIM(s.name)) = LOWER($2)
+         ORDER BY s.id
+         LIMIT 1`,
+        [parent.id, studentName]
+      );
+    }
 
     let student = studentResult.rows[0];
     if (!student) {
@@ -2867,6 +2962,7 @@ app.post('/api/game/progress', async (req, res) => {
     const lessonProgressValue = Math.min(100, Math.max(0, toNullableNumber(normalizedProgressPayload.lesson_progress) ?? progressPercentageValue));
     const accuracyRateValue = resolveAccuracyRate(normalizedProgressPayload);
     const totalPlayTimeValue = Math.round(toNullableNumber(total_play_time) ?? 0);
+    const totalQuestsCompletedValue = Math.round(toNullableNumber(req.body?.total_quests_completed ?? req.body?.quests_completed) ?? 0);
 
     const existingProgress = await client.query(
       `SELECT id
@@ -2891,9 +2987,11 @@ app.post('/api/game/progress', async (req, res) => {
              accuracy_rate = $8,
              progress_percentage = $9,
              lesson_progress = $10,
+             total_quests_completed = GREATEST(COALESCE(total_quests_completed, 0), $11),
+             total_play_time = GREATEST(COALESCE(total_play_time, 0), $12),
              last_played = NOW(),
              updated_at = NOW()
-         WHERE id = $11
+         WHERE id = $13
          RETURNING *`,
         [
           studentName,
@@ -2906,6 +3004,8 @@ app.post('/api/game/progress', async (req, res) => {
           accuracyRateValue,
           progressPercentageValue,
           lessonProgressValue,
+          totalQuestsCompletedValue,
+          totalPlayTimeValue,
           existingProgress.rows[0].id,
         ]
       );
@@ -2914,9 +3014,10 @@ app.post('/api/game/progress', async (req, res) => {
         `INSERT INTO public.student_game_progress (
           student_id, student_name, grade_level, section, current_quest,
           score, correct_answers, total_questions, accuracy_rate,
-          progress_percentage, lesson_progress, last_played, created_at, updated_at
+          progress_percentage, lesson_progress, total_quests_completed, total_play_time,
+          last_played, created_at, updated_at
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW()
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW(), NOW()
         )
         RETURNING *`,
         [
@@ -2931,6 +3032,8 @@ app.post('/api/game/progress', async (req, res) => {
           accuracyRateValue,
           progressPercentageValue,
           lessonProgressValue,
+          totalQuestsCompletedValue,
+          totalPlayTimeValue,
         ]
       );
     }
@@ -3284,7 +3387,7 @@ app.get('/api/user/:id', async (req, res) => {
 });
 
 // --- NEW: Get Top Achievers (game progress data) ---
-app.get('/api/top-achievers', async (req, res) => {
+const handleTopAchieversRequest = async (req, res) => {
   try {
     const parentId = resolveParentScopeId(req.query.parent_id);
     const teacherId = resolveTeacherScopeId(req.query.teacher_id);
@@ -3296,10 +3399,49 @@ app.get('/api/top-achievers', async (req, res) => {
 
     const params = [];
     let query = `
-      SELECT p.*, a.name AS student_name, a.email AS student_email
-      FROM public.student_game_progress p
-      LEFT JOIN accounts a ON a.id = p.student_id
-      WHERE 1=1
+      SELECT *
+      FROM (
+        SELECT
+          p.id,
+          p.student_id,
+          COALESCE(NULLIF(TRIM(p.student_name), ''), a.name, 'Unknown') AS student_name,
+          a.email AS student_email,
+          p.grade_level,
+          p.section,
+          p.current_quest,
+          p.score,
+          p.correct_answers,
+          p.correct_answers AS total_correct_answers,
+          p.total_questions,
+          p.total_questions AS total_questions_answered,
+          p.accuracy_rate,
+          p.accuracy_rate AS accuracy,
+          p.progress_percentage,
+          p.progress_percentage AS completion_percentage,
+          COALESCE(p.total_quests_completed, 0) AS quests_completed,
+          COALESCE(p.total_quests_completed, 0) AS total_quests_completed,
+          COALESCE(p.total_play_time, latest_activity.total_play_time, 0) AS total_play_time,
+          p.last_played,
+          ROW_NUMBER() OVER (
+            PARTITION BY p.student_id
+            ORDER BY
+              p.progress_percentage DESC NULLS LAST,
+              p.accuracy_rate DESC NULLS LAST,
+              p.correct_answers DESC NULLS LAST,
+              COALESCE(p.total_quests_completed, 0) DESC,
+              p.updated_at DESC NULLS LAST,
+              p.id DESC
+          ) AS student_rank
+        FROM public.student_game_progress p
+        LEFT JOIN public.accounts a ON a.id = p.student_id
+        LEFT JOIN LATERAL (
+          SELECT al.total_play_time
+          FROM public.activity_logs al
+          WHERE al.student_id = p.student_id
+          ORDER BY al.activity_timestamp DESC NULLS LAST, al.id DESC
+          LIMIT 1
+        ) latest_activity ON true
+        WHERE 1=1
     `;
 
     // Apply scope filtering only if scope IDs are provided
@@ -3310,14 +3452,23 @@ app.get('/api/top-achievers', async (req, res) => {
     }
     // If neither parentId nor teacherId is provided, show all (admin access)
 
-    query += ' ORDER BY p.score DESC, p.accuracy_rate DESC LIMIT 50';
+    query += `
+      ) ranked_progress
+      WHERE student_rank = 1
+      ORDER BY progress_percentage DESC, accuracy_rate DESC, correct_answers DESC, quests_completed DESC
+      LIMIT 50
+    `;
 
     const result = await pool.query(query, params);
-    res.json(result.rows);
+    res.json(result.rows.map((row, index) => normalizeTopAchieverRow(row, index)));
   } catch (err) {
+    console.error('Fetch top achievers failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch top achievers' });
   }
-});
+};
+
+app.get('/api/top-achievers', handleTopAchieversRequest);
+app.get('/api/leaderboard/top-achievers', handleTopAchieversRequest);
 
 // --- ENHANCED: Get Recent Activity Logs with Filtering & Role-Based Access ---
 app.get('/api/activity-logs', async (req, res) => {

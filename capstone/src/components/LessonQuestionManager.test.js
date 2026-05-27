@@ -125,6 +125,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(topicSelect.textContent).toContain('Division');
     expect(topicSelect.textContent).toContain('Fractions');
     expect(container.textContent).toContain('Normal / Average');
+    expect(container.querySelector('.fixed-destination-display').textContent.trim()).toBe('Questions/');
     expect(container.textContent).not.toContain('Select Folder');
     expect(container.textContent).not.toContain('New Folder');
     expect(container.textContent).toContain('Lesson File');

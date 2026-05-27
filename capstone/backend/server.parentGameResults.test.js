@@ -277,6 +277,37 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(inserts.find((item) => item.kind === 'activity').params[11], '2026-05-28T10:15:00.000Z');
   });
 
+  await t.test('rejects progress sync when submitted student_id is not linked to the parent', async () => {
+    let wroteProgress = false;
+    setQueryHandler(async (sql) => {
+      if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return emptyResult;
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456', name: 'Parent User' }]);
+      }
+      if (sql.includes('from public.accounts s') && sql.includes('r.student_id = $2')) {
+        return emptyResult;
+      }
+      if (sql.includes('student_game_progress')) wroteProgress = true;
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/progress', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: 99,
+        student_name: 'Ava Santos',
+        score: 140,
+        correct_answers: 7,
+        total_questions: 10,
+      }),
+    });
+
+    assert.equal(response.status, 403);
+    assert.equal(response.body.error, 'Student is not linked to this parent.');
+    assert.equal(wroteProgress, false);
+  });
+
   await t.test('stores a normalized Godot result payload using aliases', async () => {
     let insertedValues = null;
     setQueryHandler(async (sql, params) => {
@@ -503,6 +534,47 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(response.status, 200);
     assert.deepEqual(response.body.map((row) => row.student_id), [44, 45]);
     assert.notEqual(response.body[0].student_id, response.body[1].student_id);
+  });
+
+  await t.test('leaderboard top achievers uses completion accuracy answers and quests ranking', async () => {
+    let receivedSql = '';
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('from public.student_game_progress')) {
+        receivedSql = sql;
+        assert.equal(params[0], 16);
+        assert.match(sql, /order by progress_percentage desc, accuracy_rate desc, correct_answers desc, quests_completed desc/);
+        assert.match(sql, /tsr\.teacher_id = \$1/);
+        return resultRows([
+          {
+            id: 70,
+            student_id: 44,
+            student_name: 'Ava Santos',
+            grade_level: 'Grade 3',
+            section: 'St. Therese',
+            current_quest: 'Quest 4',
+            score: 120,
+            correct_answers: 12,
+            total_questions: 15,
+            accuracy_rate: '80.00',
+            progress_percentage: '90.00',
+            quests_completed: '4',
+            total_play_time: 600,
+          },
+        ]);
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/leaderboard/top-achievers?teacher_id=16');
+
+    assert.equal(response.status, 200);
+    assert.equal(receivedSql.includes('coalesce(p.total_quests_completed'), true);
+    assert.equal(response.body[0].rank, 1);
+    assert.equal(response.body[0].student_name, 'Ava Santos');
+    assert.equal(response.body[0].completion_percentage, 90);
+    assert.equal(response.body[0].accuracy, 80);
+    assert.equal(response.body[0].quests_completed, 4);
+    assert.equal(response.body[0].total_play_time, 600);
   });
 
   await t.test('rejects topic coverage when the parent link is missing', async () => {

@@ -17,10 +17,7 @@ export const QUESTION_FOLDER_STRUCTURE = GRADE_LEVELS.map((grade) => ({
 }));
 
 export const getQuestionFolderPath = (gradeLevel, difficulty) => {
-  const grade = normalizeLearningMetadataValue(gradeLevel).replace(/\s+/g, '');
-  const level = normalizeDifficultyValue(difficulty);
-  if (!grade || !DIFFICULTY_LEVELS.includes(level)) return 'Questions/';
-  return `Questions/${grade}/${level}/`;
+  return 'Questions/';
 };
 
 export const MATH_TOPICS = Array.from(new Set(

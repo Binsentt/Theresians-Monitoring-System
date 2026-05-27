@@ -9,6 +9,7 @@ import {
   getMathTopicsForGrade,
   getMathTopicsForGradeDifficulty,
   getLearningFilePreviewKind,
+  getQuestionFolderPath,
   inferLearningFileUploadType,
   normalizeMathTopicForGradeDifficulty,
 } from './lessonQuestionManager.utils';
@@ -67,6 +68,12 @@ describe('lesson question manager helpers', () => {
       'Normal',
       'Addition'
     )).toBe('Addition');
+  });
+
+  test('keeps Questions as the only visible destination root', () => {
+    expect(getQuestionFolderPath()).toBe('Questions/');
+    expect(getQuestionFolderPath('Grade 1', 'Easy')).toBe('Questions/');
+    expect(getQuestionFolderPath('Grade 6', 'Difficult')).toBe('Questions/');
   });
 
   test('filters learning files by search, folder, grade, difficulty, topic, and file type', () => {

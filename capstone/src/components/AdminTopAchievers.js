@@ -74,6 +74,15 @@ export default function AdminTopAchievers() {
 
   // Check if any filters are active
   const hasActiveFilters = selectedGrade || selectedSection || searchQuery;
+  const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
+  const formatPlaytime = (seconds) => {
+    const totalSeconds = Number(seconds || 0);
+    if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return 'N/A';
+    const minutes = Math.floor(totalSeconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return hours > 0 ? `${hours}h ${remainingMinutes}m` : `${Math.max(1, minutes)}m`;
+  };
 
   if (loading) {
     return (
@@ -184,7 +193,7 @@ export default function AdminTopAchievers() {
               {error ? (
                 <div className="error-message">{error}</div>
               ) : filteredAchievers.length === 0 ? (
-                <div className="empty-message">No achievement data available for selected filters.</div>
+                <div className="empty-message">No leaderboard data available yet.</div>
               ) : (
                 <div className="top-achievers-container">
                   <table className="ta-table">
@@ -194,11 +203,11 @@ export default function AdminTopAchievers() {
                         <th>Student Name</th>
                         <th>Grade</th>
                         <th>Section</th>
-                        <th>Current Quest</th>
-                        <th>Score</th>
-                        <th>Correct Answers</th>
+                        <th>Completion</th>
                         <th>Accuracy</th>
-                        <th>Progress</th>
+                        <th>Correct Answers</th>
+                        <th>Quests</th>
+                        <th>Playtime</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -213,31 +222,27 @@ export default function AdminTopAchievers() {
                           <td className="name-cell">{achiever.student_name || 'Unknown'}</td>
                           <td>{achiever.grade_level || 'N/A'}</td>
                           <td>{achiever.section || 'N/A'}</td>
-                          <td>
-                            <span className="quest-badge">{achiever.current_quest || 'N/A'}</span>
-                          </td>
-                          <td className="score-cell">
-                            <strong>{achiever.score ?? '—'}</strong>
-                          </td>
-                          <td>{achiever.correct_answers ?? 0}/{achiever.total_questions ?? 0}</td>
-                          <td className="accuracy-cell">
-                            <div className="accuracy-bar">
-                              <div 
-                                className="accuracy-fill" 
-                                style={{ width: `${achiever.accuracy_rate ?? 0}%` }}
-                              />
-                            </div>
-                            <span className="accuracy-text">{((achiever.accuracy_rate ?? 0).toFixed(1))}%</span>
-                          </td>
                           <td className="progress-cell">
                             <div className="progress-bar">
-                              <div 
-                                className="progress-fill" 
-                                style={{ width: `${achiever.progress_percentage ?? 0}%` }}
+                              <div
+                                className="progress-fill"
+                                style={{ width: `${Number(achiever.completion_percentage ?? achiever.progress_percentage ?? 0)}%` }}
                               />
                             </div>
-                            <span className="progress-text">{((achiever.progress_percentage ?? 0).toFixed(1))}%</span>
+                            <span className="progress-text">{formatPercent(achiever.completion_percentage ?? achiever.progress_percentage)}</span>
                           </td>
+                          <td className="accuracy-cell">
+                            <div className="accuracy-bar">
+                              <div
+                                className="accuracy-fill"
+                                style={{ width: `${Number(achiever.accuracy ?? achiever.accuracy_rate ?? 0)}%` }}
+                              />
+                            </div>
+                            <span className="accuracy-text">{formatPercent(achiever.accuracy ?? achiever.accuracy_rate)}</span>
+                          </td>
+                          <td>{achiever.total_correct_answers ?? achiever.correct_answers ?? 0}/{achiever.total_questions_answered ?? achiever.total_questions ?? 0}</td>
+                          <td>{achiever.quests_completed ?? achiever.total_quests_completed ?? 0}</td>
+                          <td>{formatPlaytime(achiever.total_play_time ?? achiever.duration_seconds)}</td>
                         </tr>
                       ))}
                     </tbody>

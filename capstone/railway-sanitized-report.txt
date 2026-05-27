@@ -1,0 +1,379 @@
+﻿
+============================================================
+LOCAL CONTEXT
+============================================================
+Timestamp: 2026-05-25T11:19:35.6779189+08:00
+PWD: C:\Users\vince\Documents\Theresian's Quest- Web\capstone
+Expected commit: 79ce484
+Domain: https://theresiansquest.com
+
+============================================================
+GIT STATUS
+============================================================
+COMMAND: git status -sb
+## main...origin/main
+ M build/asset-manifest.json
+ M build/static/js/main.ffeaa1f7.js
+ M build/static/js/main.ffeaa1f7.js.LICENSE.txt
+?? railway-check.ps1
+?? railway-sanitized-report.txt
+
+============================================================
+LOCAL HEAD
+============================================================
+COMMAND: git rev-parse --short HEAD
+79ce484
+
+============================================================
+ORIGIN MAIN
+============================================================
+COMMAND: git rev-parse --short origin/main
+79ce484
+
+============================================================
+RECENT COMMITS
+============================================================
+COMMAND: git log --oneline -8
+79ce484 fix: remove public change password route
+6723bbb fix: stop forcing change password before login
+a64390f Update gitignore and clean repository
+c51c7f4 Fix lesson management and Railway deployment
+6903429 fix: sync capstone package-lock with package.json for Railway build
+64e9695 chore: bust Railway build cache
+9f320b2 fix: force fresh Railway build no cache
+77a28a4 fix: force redeploy UTF-8 fixed ParentDashboard
+
+============================================================
+RAILWAY VERSION
+============================================================
+COMMAND: railway --version
+railway 4.61.1
+
+
+============================================================
+RAILWAY WHOAMI
+============================================================
+COMMAND: railway whoami
+Logged in as vincenttafalla2@gmail.com =ƒæï
+
+============================================================
+RAILWAY STATUS
+============================================================
+COMMAND: railway status
+
+Workspace:       binsentt's Projects
+
+Project:         overflowing-insight
+Project ID:      dd2c27df-22e4-4ee0-82dc-a1c510b07d0c
+
+Environment:     production
+Environment ID:  f451f63b-55ed-46f5-abe3-53a439ac1fec
+
+Linked service
+
+Theresians-Monitoring-System
+    status:        GùÅ Online -+ Deploy failed (22m)
+    repo:          Binsentt/Theresians-Monitoring-System
+    url:           https://theresiansquest.com
+    region:        US West
+    deployment ID: d9916589-f030-4a2f-a14f-21c62460002a
+    service ID:    efe9f84c-7d05-4698-be00-452c22b47ec7
+
+GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+
+All resources
+
+    Services
+      - Theresians-Monitoring-System: GùÅ Online -+ Deploy failed (22m) -+ https://theresiansquest.com
+    Databases
+      - Postgres: GùÅ Online -+ postgres-volume
+
+
+============================================================
+RAILWAY HELP - DEPLOYMENTS
+============================================================
+COMMAND: railway deployments --help
+Manage deployments
+
+Usage: railway.exe deployment <COMMAND>
+
+Commands:
+  list      List deployments for a service with IDs, statuses and other metadata [aliases: ls]
+  up        Upload and deploy project from the current directory [aliases: deploy]
+  redeploy  Redeploy the latest deployment of a service
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+
+============================================================
+RAILWAY DEPLOYMENTS
+============================================================
+COMMAND: railway deployments
+Manage deployments
+System.Management.Automation.RemoteException
+Usage: railway.exe deployment <COMMAND>
+System.Management.Automation.RemoteException
+Commands:
+  list      List deployments for a service with IDs, statuses and other metadata [aliases: ls]
+  up        Upload and deploy project from the current directory [aliases: deploy]
+  redeploy  Redeploy the latest deployment of a service
+  help      Print this message or the help of the given subcommand(s)
+System.Management.Automation.RemoteException
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+System.Management.Automation.RemoteException
+
+============================================================
+RAILWAY LOGS HELP
+============================================================
+COMMAND: railway logs --help
+View build, deploy, or HTTP logs from a Railway deployment. This will stream logs by default, or fetch historical logs if the --lines, --since, or --until flags are provided.
+
+Usage: railway.exe logs [OPTIONS] [DEPLOYMENT_ID]
+
+Arguments:
+  [DEPLOYMENT_ID]
+          Deployment ID to view logs from. Defaults to most recent successful deployment, or latest deployment if none succeeded
+
+Options:
+  -s, --service <SERVICE>
+          Service to view logs from (defaults to linked service). Can be service name or service ID
+
+  -e, --environment <ENVIRONMENT>
+          Environment to view logs from (defaults to linked environment). Can be environment name or environment ID
+
+  -p, --project <PROJECT_ID>
+          Project ID to use (defaults to linked project)
+
+  -d, --deployment
+          Show deployment logs
+
+  -b, --build
+          Show build logs
+
+      --http
+          Show HTTP request logs
+
+      --json
+          Output logs in JSON format. Each log line becomes a JSON object with timestamp, message, and any other attributes
+
+  -n, --lines <LINES>
+          Number of log lines to fetch (disables streaming)
+          
+          [aliases: --tail]
+
+  -f, --filter <FILTER>
+          Filter logs using Railway's query syntax
+          
+          For deploy/build logs:
+            Text search:   "error message", "user signup"
+            Level filter:  @level:error, @level:warn, @level:info
+          
+          For HTTP logs (--http), all filterable fields:
+            String:  @method, @path, @host, @requestId, @clientUa, @srcIp,
+                     @edgeRegion, @upstreamAddress, @upstreamProto,
+                     @downstreamProto, @responseDetails,
+                     @deploymentId, @deploymentInstanceId
+            Numeric: @httpStatus, @totalDuration, @responseTime,
+                     @upstreamRqDuration, @txBytes, @rxBytes, @upstreamErrors
+          
+          Numeric operators: > >= < <= .. (range, e.g. @httpStatus:200..299)
+          Logical operators: AND, OR, - (negation), parentheses for grouping
+          
+          Examples:
+            @httpStatus:>=400
+            @totalDuration:>1000
+            -@method:OPTIONS
+            @httpStatus:>=400 AND @path:/api
+            (@method:GET OR @method:POST) AND @httpStatus:500
+
+      --method <METHOD>
+          Filter HTTP logs by request method (requires --http)
+          
+          [possible values: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS]
+
+      --status <CODE>
+          Filter HTTP logs by status code (requires --http). Accepts: 200, >=400, 500..599
+
+      --path <PATH>
+          Filter HTTP logs by request path (requires --http)
+
+      --request-id <ID>
+          Filter HTTP logs by request ID (requires --http)
+
+      --latest
+          Always show logs from the latest deployment, even if it failed or is still building
+
+  -S, --since <TIME>
+          Show logs since a specific time (disables streaming). Accepts relative times (e.g., 30s, 5m, 2h, 1d, 1w) or ISO 8601 timestamps (e.g., 2024-01-15T10:30:00Z)
+
+  -U, --until <TIME>
+          Show logs until a specific time (disables streaming). Same formats as --since
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Examples:
+
+  Deployment logs:
+  railway logs                                                       # Stream live logs from latest deployment
+  railway logs --build 7422c95b-c604-46bc-9de4-b7a43e1fd53d          # Stream build logs from a specific deployment
+  railway logs --lines 100                                           # Pull last 100 logs without streaming
+  railway logs --since 1h                                            # View logs from the last hour
+  railway logs --since 30m --until 10m                               # View logs from 30 minutes ago until 10 minutes ago
+  railway logs --since 2024-01-15T10:00:00Z                          # View logs since a specific timestamp
+  railway logs --service backend --environment production            # Stream logs from a specific service/environment
+  railway logs --lines 10 --filter "@level:error"                    # View 10 latest error logs
+  railway logs --lines 10 --filter "@level:warn AND rate limit"      # View 10 latest warning logs related to rate limiting
+  railway logs --json                                                # Get logs in JSON format
+  railway logs --latest                                              # Stream logs from the latest deployment (even if failed/building)
+
+  HTTP logs (typed filters):
+  railway logs --http --method GET --status 200                      # GET requests with 200 status
+  railway logs --http --method POST --path /api/users                # POST requests to /api/users
+  railway logs --http --status ">=400" --lines 50                    # Client/server errors, last 50
+  railway logs --http --status 500..599                              # Server errors only
+  railway logs --http --request-id abc123                            # Find a specific request
+
+  HTTP logs (raw filter for advanced queries):
+  railway logs --http --method GET --filter "@totalDuration:>=1000"  # Slow GET requests (combining typed + raw)
+  railway logs --http --filter "@srcIp:203.0.113.1 @edgeRegion:us-east-1"  # Filter by source IP and region
+  railway logs --http --filter "@httpStatus:>=400 AND @path:/api"   # Errors on API routes
+  railway logs --http --filter "-@method:OPTIONS"                    # Exclude OPTIONS requests
+
+
+============================================================
+RAILWAY LATEST BUILD LOGS
+============================================================
+COMMAND: railway logs --build --lines 300
+scheduling build on Metal builder "production-builderv3-us-west1-g0mp"
+[INFO] unpacking archive
+using build driver nixpacks-v1.41.0
+
+GòöGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉ Nixpacks v1.41.0 GòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòù
+Gòæ setup      Göé nodejs_20, npm-9_x                                  Gòæ
+GòæGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGòæ
+Gòæ install    Göé npm ci                                              Gòæ
+GòæGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGòæ
+Gòæ build      Göé npm run build && npm --prefix backend ci --omit=dev Gòæ
+GòæGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGòæ
+Gòæ start      Göé npm --prefix backend start                          Gòæ
+GòÜGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGòÉGò¥
+
+
+Saved output to:
+  snapshot-target-unpack/capstone
+[INFO] [internal] load build definition from Dockerfile
+[INFO] [internal] load build definition from Dockerfile
+[INFO] [internal] load build definition from Dockerfile
+[INFO] [internal] load build definition from Dockerfile
+[INFO] [internal] load build definition from Dockerfile
+[INFO] [internal] load metadata for ghcr.io/railwayapp/nixpacks:ubuntu-1745885067
+[INFO] [internal] load metadata for ghcr.io/railwayapp/nixpacks:ubuntu-1745885067
+[INFO] [internal] load .dockerignore
+[INFO] [internal] load .dockerignore
+[INFO] [internal] load .dockerignore
+[INFO] [internal] load .dockerignore
+[INFO] [internal] load .dockerignore
+[WARN] SecretsUsedInArgOrEnv: Do not use ARG or ENV instructions for sensitive data (ARG "RESEND_API_KEY") (line 11)(https://docs.docker.com/go/dockerfile/rule/secrets-used-in-arg-or-env/)
+ details: Sensitive data should not be used in the ARG or ENV commands
+
+[WARN] SecretsUsedInArgOrEnv: Do not use ARG or ENV instructions for sensitive data (ENV "RESEND_API_KEY") (line 12)(https://docs.docker.com/go/dockerfile/rule/secrets-used-in-arg-or-env/)
+ details: Sensitive data should not be used in the ARG or ENV commands
+
+[WARN] UndefinedVar: Usage of undefined variable '$NIXPACKS_PATH' (line 18)(https://docs.docker.com/go/dockerfile/rule/undefined-var/)
+ details: Variables should be defined before their use
+
+[INFO] [stage-0 10/10] COPY . /app
+[INFO] [stage-0  9/10] RUN printf '\nPATH=/app/node_modules/.bin:$PATH' >> /root/.profile
+[INFO] [stage-0  8/10] RUN --mount=type=cache,id=s/efe9f84c-7d05-4698-be00-452c22b47ec7-node_modules/cache,target=/app/node_modules/.cache npm run build && npm --prefix backend ci --omit=dev
+[INFO] [stage-0  7/10] COPY . /app/.
+[INFO] [stage-0  6/10] RUN --mount=type=cache,id=s/efe9f84c-7d05-4698-be00-452c22b47ec7-/root/npm,target=/root/.npm npm ci
+[INFO] [stage-0  5/10] COPY . /app/.
+[INFO] [stage-0  4/10] RUN nix-env -if .nixpacks/nixpkgs-ffeebf0acf3ae8b29f8c7049cd911b9636efd7e7.nix && nix-collect-garbage -d
+[INFO] [stage-0  3/10] COPY .nixpacks/nixpkgs-ffeebf0acf3ae8b29f8c7049cd911b9636efd7e7.nix .nixpacks/nixpkgs-ffeebf0acf3ae8b29f8c7049cd911b9636efd7e7.nix
+[INFO] [internal] load build context
+[INFO] [stage-0  2/10] WORKDIR /app/
+[INFO] [stage-0  1/10] FROM ghcr.io/railwayapp/nixpacks:ubuntu-1745885067@sha256:d45c89d80e13d7ad0fd555b5130f22a866d9dd10e861f589932303ef2314c7de
+[INFO] [internal] load build context
+[INFO] [stage-0  1/10] FROM ghcr.io/railwayapp/nixpacks:ubuntu-1745885067@sha256:d45c89d80e13d7ad0fd555b5130f22a866d9dd10e861f589932303ef2314c7de
+[INFO] [internal] load build context
+[INFO] [stage-0  1/10] FROM ghcr.io/railwayapp/nixpacks:ubuntu-1745885067@sha256:d45c89d80e13d7ad0fd555b5130f22a866d9dd10e861f589932303ef2314c7de
+[INFO] [internal] load build context
+[INFO] [stage-0  2/10] WORKDIR /app/
+[INFO] [stage-0  3/10] COPY .nixpacks/nixpkgs-ffeebf0acf3ae8b29f8c7049cd911b9636efd7e7.nix .nixpacks/nixpkgs-ffeebf0acf3ae8b29f8c7049cd911b9636efd7e7.nix
+[INFO] [stage-0  4/10] RUN nix-env -if .nixpacks/nixpkgs-ffeebf0acf3ae8b29f8c7049cd911b9636efd7e7.nix && nix-collect-garbage -d
+[INFO] [stage-0  5/10] COPY . /app/.
+[INFO] [stage-0  5/10] COPY . /app/.
+[INFO] [stage-0  6/10] RUN --mount=type=cache,id=s/efe9f84c-7d05-4698-be00-452c22b47ec7-/root/npm,target=/root/.npm npm ci
+[INFO] npm warn config production Use `--omit=dev` instead.
+
+[INFO] [stage-0 10/10] COPY . /app
+[INFO] exporting to docker image format
+[INFO] exporting to docker image format
+containerimage.descriptor: eyJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQub2NpLmltYWdlLm1hbmlmZXN0LnYxK2pzb24iLCJkaWdlc3QiOiJzaGEyNTY6ZjU3ZTcyNzIzY2I4ZmQyNDUyNDc4MWVhZjVlNzVmODcxMmFmOTg3NmY0YjhlZDE1MGJkNDkyNjgwNDgzZmMwYiIsInNpemUiOjI3NzIsImFubm90YXRpb25zIjp7Im9yZy5vcGVuY29udGFpbmVycy5pbWFnZS5jcmVhdGVkIjoiMjAyNi0wNS0yNVQwMjo1NzoxMFoifSwicGxhdGZvcm0iOnsiYXJjaGl0ZWN0dXJlIjoiYW1kNjQiLCJvcyI6ImxpbnV4In19
+containerimage.config.digest: sha256:9f0b26fdcdfdb1c5ba78ddfb64a35fb3a472706c3dd59ece4328cb4b8b5b3730
+containerimage.digest: sha256:f57e72723cb8fd24524781eaf5e75f8712af9876f4b8ed150bd492680483fc0b
+
+============================================================
+RAILWAY LATEST RUNTIME LOGS
+============================================================
+COMMAND: railway logs --lines 300
+Starting Container
+
+============================================================
+RAILWAY CONFIG FILES
+============================================================
+--- capstone/railway.toml ---
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm run build && npm --prefix backend ci --omit=dev"
+
+[build.nixpacks]
+nodeVersion = "20"
+
+[deploy]
+startCommand = "npm --prefix backend start"
+--- capstone/nixpacks.toml ---
+missing
+--- root railway.toml, if running from capstone parent exists ---
+[build]
+builder = "NIXPACKS"
+buildCommand = "if [ -d capstone ]; then cd capstone; fi && npm run build && npm --prefix backend ci --omit=dev"
+
+[build.nixpacks]
+nodeVersion = "20"
+
+[deploy]
+startCommand = "if [ -d capstone ]; then cd capstone; fi && npm --prefix backend start"
+
+============================================================
+ENV VARIABLE NAMES ONLY
+============================================================
+
+============================================================
+LIVE HTML AND BUNDLE CHECK
+============================================================
+HTML length: 685
+HTML contains expected commit 79ce484: False
+HTML contains Create a New Password=[REDACTED]
+HTML contains ChangePasswordScreen: False
+Script files found:
+/static/js/main.ffeaa1f7.js
+
+--- JS bundle: https://theresiansquest.com/static/js/main.ffeaa1f7.js ---
+Could not fetch JS bundle: Invalid URI: The hostname could not be parsed.
+
+============================================================
+DIRECT ROUTE CHECKS
+============================================================
+/login check failed: Cannot bind parameter 'Uri'. Cannot convert value "https://theresiansquest.com=1779679188" to type "System.Uri". Error: "Invalid URI: The hostname could not be parsed."
+/change-password check failed: Cannot bind parameter 'Uri'. Cannot convert value "https://theresiansquest.com=1779679188" to type "System.Uri". Error: "Invalid URI: The hostname could not be parsed."
+
