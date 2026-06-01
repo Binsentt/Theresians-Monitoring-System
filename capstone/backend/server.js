@@ -465,6 +465,11 @@ const normalizeAccountRole = (role) => {
   return value;
 };
 
+const WEBSITE_MANAGED_ACCOUNT_ROLES = ['admin', 'teacher', 'parent', 'parent_teacher'];
+const isWebsiteManagedAccountRole = (role) => (
+  WEBSITE_MANAGED_ACCOUNT_ROLES.includes(normalizeAccountRole(role))
+);
+
 const accountHasTeacherAccess = (role) => ['teacher', 'parent_teacher'].includes(normalizeAccountRole(role));
 const accountHasParentAccess = (role) => ['parent', 'parent_teacher'].includes(normalizeAccountRole(role));
 const normalizeOptionalText = (value) => {
@@ -1999,6 +2004,10 @@ app.post('/api/accounts', async (req, res) => {
     }
 
     const finalRole = normalizeAccountRole(role || 'Parent');
+    if (!isWebsiteManagedAccountRole(finalRole)) {
+      return res.status(400).json({ error: 'Manage Users can only create website accounts.' });
+    }
+
     const birthdayResult = resolveOptionalBirthday(birthday);
     if (birthdayResult.error) {
       return res.status(400).json({ error: birthdayResult.error });
@@ -2065,15 +2074,20 @@ app.get('/api/accounts', async (req, res) => {
     let queryString;
     let queryParams = [];
 
+    if (roleFilter && !isWebsiteManagedAccountRole(roleFilter)) {
+      return res.json([]);
+    }
+
     if (roleFilter) {
       queryString = archived
-      ? 'SELECT * FROM public.accounts WHERE is_archived = true AND LOWER(role) = $1 ORDER BY id'
-        : 'SELECT * FROM public.accounts WHERE COALESCE(is_archived, false) = false AND LOWER(role) = $1 ORDER BY id';
-      queryParams.push(roleFilter);
+      ? 'SELECT * FROM public.accounts WHERE is_archived = true AND LOWER(role) = $1 AND LOWER(role) = ANY($2::text[]) ORDER BY id'
+        : 'SELECT * FROM public.accounts WHERE COALESCE(is_archived, false) = false AND LOWER(role) = $1 AND LOWER(role) = ANY($2::text[]) ORDER BY id';
+      queryParams.push(roleFilter, WEBSITE_MANAGED_ACCOUNT_ROLES);
     } else {
       queryString = archived
-        ? 'SELECT * FROM public.accounts WHERE is_archived = true ORDER BY id'
-        : 'SELECT * FROM public.accounts WHERE COALESCE(is_archived, false) = false ORDER BY id';
+        ? 'SELECT * FROM public.accounts WHERE is_archived = true AND LOWER(role) = ANY($1::text[]) ORDER BY id'
+        : 'SELECT * FROM public.accounts WHERE COALESCE(is_archived, false) = false AND LOWER(role) = ANY($1::text[]) ORDER BY id';
+      queryParams.push(WEBSITE_MANAGED_ACCOUNT_ROLES);
     }
 
     const result = await pool.query(queryString, queryParams);
@@ -2098,6 +2112,10 @@ app.put('/api/accounts/:id', async (req, res) => {
     const old = currentData.rows[0];
     const finalEmail = email && email.trim() !== '' ? email.toLowerCase().trim() : old.email;
     const oldRole = normalizeAccountRole(old.role);
+    if (!isWebsiteManagedAccountRole(oldRole)) {
+      return res.status(403).json({ error: 'Manage Users can only update website accounts.' });
+    }
+
     const finalRole = oldRole;
     const birthdayResult = resolveOptionalBirthday(birthday !== undefined ? birthday : old.birthday);
     if (birthdayResult.error) {
@@ -3209,7 +3227,11 @@ app.delete('/api/accounts/:id', async (req, res) => {
     if (accountResult.rows.length === 0) {
       return res.status(404).json({ error: 'Account not found' });
     }
-    if (normalizeAccountRole(accountResult.rows[0].role) === 'admin') {
+    const accountRole = normalizeAccountRole(accountResult.rows[0].role);
+    if (!isWebsiteManagedAccountRole(accountRole)) {
+      return res.status(403).json({ error: 'Manage Users can only delete website accounts.' });
+    }
+    if (accountRole === 'admin') {
       return res.status(403).json({ error: 'Admin accounts cannot be archived or deleted from Manage Users.' });
     }
 
@@ -3241,6 +3263,12 @@ app.delete('/api/accounts/:id', async (req, res) => {
 app.post('/api/accounts/:id/restore', async (req, res) => {
   try {
     const { id } = req.params;
+    const accountResult = await pool.query('SELECT id, role FROM public.accounts WHERE id = $1', [id]);
+    if (accountResult.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+    if (!isWebsiteManagedAccountRole(accountResult.rows[0].role)) {
+      return res.status(403).json({ error: 'Manage Users can only restore website accounts.' });
+    }
+
     const result = await pool.query('UPDATE public.accounts SET is_archived = false WHERE id = $1 RETURNING *', [id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
     res.json({ success: true, message: 'Account restored', user: serializeUser(result.rows[0]) });

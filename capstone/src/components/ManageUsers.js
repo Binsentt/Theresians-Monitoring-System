@@ -10,6 +10,7 @@ import {
   formatRoleLabel,
   isParentRole,
   isTeacherRole,
+  isWebsiteManagedRole,
   normalizeEmployeeIdInput,
   normalizeRole,
   paginateItems,
@@ -184,7 +185,7 @@ export default function ManageUsers() {
     try {
       const response = await fetch(apiUrl(`/api/accounts?archived=${showArchived}`));
       const data = await response.json();
-      setUsers(Array.isArray(data) ? data.filter((account) => normalizeRole(account.role) !== 'admin') : []);
+      setUsers(Array.isArray(data) ? data.filter((account) => isWebsiteManagedRole(account.role)) : []);
     } catch (error) {
       console.error('Error loading users:', error);
     }
@@ -569,6 +570,7 @@ export default function ManageUsers() {
                     onChange={(e) => setRoleFilter(e.target.value)}
                   >
                     <option value="All">All Roles</option>
+                    <option value="Admin">Admin</option>
                     <option value="Parent">Parent</option>
                     <option value="Teacher">Teacher</option>
                     <option value="Parent/Teacher">Parent/Teacher</option>

@@ -9,6 +9,8 @@ export const normalizeRole = (role) => {
 export const isAdminRole = (role) => normalizeRole(role) === 'admin';
 export const isTeacherRole = (role) => ['teacher', 'parent_teacher'].includes(normalizeRole(role));
 export const isParentRole = (role) => ['parent', 'parent_teacher'].includes(normalizeRole(role));
+export const WEBSITE_MANAGED_ROLES = ['admin', 'teacher', 'parent', 'parent_teacher'];
+export const isWebsiteManagedRole = (role) => WEBSITE_MANAGED_ROLES.includes(normalizeRole(role));
 export const canAccessRole = (role, requiredRole) => {
   const required = normalizeRole(requiredRole);
   if (required === 'admin') return isAdminRole(role);
@@ -37,6 +39,8 @@ export const filterUsers = (users, searchTerm, roleFilter) => {
   const normalizedRoleFilter = normalizeRole(roleFilter);
 
   return users.filter((user) => {
+    if (!isWebsiteManagedRole(user.role)) return false;
+
     const roleLabel = formatRoleLabel(user.role);
     const matchesSearch =
       !normalizedSearch ||

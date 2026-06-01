@@ -55,13 +55,22 @@ describe('manageUsers role helpers', () => {
     expect(filterUsers(users, '', 'Teacher')).toEqual([users[1]]);
     expect(filterUsers(users, '', 'Parent')).toEqual([users[2]]);
     expect(filterUsers(users, '', 'Admin')).toEqual([users[0]]);
-    expect(filterUsers(users, '', 'Student')).toEqual([users[3]]);
+    expect(filterUsers(users, '', 'Student')).toEqual([]);
     expect(filterUsers(users, '', 'Parent/Teacher')).toEqual([users[4]]);
   });
 
   test('filterUsers keeps search behavior alongside role filtering', () => {
-    expect(filterUsers(users, 'sam', 'Student')).toEqual([users[3]]);
+    expect(filterUsers(users, 'sam', 'All')).toEqual([]);
     expect(filterUsers(users, 'teacher', 'All')).toEqual([users[1], users[4]]);
+  });
+
+  test('filterUsers excludes Godot student accounts from Manage Users even when present in payloads', () => {
+    expect(filterUsers(users, '', 'All').map((user) => user.role)).toEqual([
+      'admin',
+      'Teacher',
+      'PARENT',
+      'parent_teacher',
+    ]);
   });
 
   test('paginateItems slices a filtered list and reports pagination metadata', () => {

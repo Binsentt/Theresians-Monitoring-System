@@ -217,6 +217,117 @@ test('teacher account creation emails the entered address with the account role'
   assert.equal(response.body.emailSent, true);
 });
 
+test('account management list excludes Godot student accounts', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let accountListSql = '';
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select * from public.accounts')) {
+      accountListSql = sql;
+      return resultRows([
+        { id: 1, name: 'Ada Admin', email: 'ada@example.com', role: 'admin', is_archived: false },
+        { id: 2, name: 'Tom Teacher', email: 'tom@example.com', role: 'teacher', is_archived: false },
+        { id: 3, name: 'Paula Parent', email: 'paula@example.com', role: 'parent', is_archived: false },
+        { id: 4, name: 'Pat Dual', email: 'pat@example.com', role: 'parent_teacher', is_archived: false },
+      ]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts');
+
+  assert.equal(response.status, 200);
+  assert.match(accountListSql, /lower\(role\) = any\(\$1::text\[\]\)/);
+  assert.deepEqual(response.body.map((account) => account.role), ['admin', 'teacher', 'parent', 'parent_teacher']);
+  assert.equal(response.body.some((account) => account.role === 'student'), false);
+});
+
+test('account management rejects creating student accounts', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let insertedAccount = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('insert into public.accounts')) insertedAccount = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'Sam Student',
+      email: 'sam.student@gmail.com',
+      role: 'student',
+    }),
+  });
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /website accounts/i);
+  assert.equal(insertedAccount, false);
+});
+
+test('account management rejects updating student game accounts', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let updatedAccount = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 44, name: 'Game Student', email: 'student@example.com', role: 'student' }]);
+    }
+    if (sql.startsWith('update public.accounts')) updatedAccount = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts/44', {
+    method: 'PUT',
+    body: JSON.stringify({ name: 'Updated Student' }),
+  });
+
+  assert.equal(response.status, 403);
+  assert.match(response.body.error, /website accounts/i);
+  assert.equal(updatedAccount, false);
+});
+
+test('account management rejects deleting student game accounts', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let deletedAccount = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select id, role from public.accounts where id = $1')) {
+      return resultRows([{ id: 44, role: 'student' }]);
+    }
+    if (sql.startsWith('delete from public.accounts') || sql.startsWith('update public.accounts set is_archived')) {
+      deletedAccount = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts/44', { method: 'DELETE' });
+
+  assert.equal(response.status, 403);
+  assert.match(response.body.error, /website accounts/i);
+  assert.equal(deletedAccount, false);
+});
+
 test('credential email failure logs safe production diagnostics', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;

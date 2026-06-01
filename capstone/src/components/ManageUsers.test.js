@@ -47,6 +47,18 @@ const accountsPayload = [
     gender: 'Female',
     address: 'Parent Street',
     parent_id: '482915',
+  },
+  {
+    id: 9,
+    name: 'Game Student',
+    email: 'game-student@example.com',
+    role: 'student',
+  },
+  {
+    id: 10,
+    name: 'Admin User',
+    email: 'admin@gmail.com',
+    role: 'admin',
   }
 ];
 
@@ -125,6 +137,27 @@ describe('ManageUsers edit flow', () => {
 
     expect(container.textContent).toContain('PARENT ID');
     expect(container.textContent).toContain('482915');
+  });
+
+  test('Manage Users shows website accounts and hides Godot student accounts from search and table counts', async () => {
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    expect(container.textContent).toContain('Users List (3)');
+    expect(container.textContent).toContain('Maria Santos');
+    expect(container.textContent).toContain('Parent User');
+    expect(container.textContent).toContain('Admin User');
+    expect(container.textContent).not.toContain('Game Student');
+
+    const searchInput = container.querySelector('input[placeholder="Search users..."]');
+    await act(async () => {
+      setFieldValue(searchInput, 'student');
+    });
+
+    expect(container.textContent).toContain('Users List (0)');
+    expect(container.textContent).toContain('No results found for "student"');
+    expect(container.textContent).not.toContain('Game Student');
   });
 
   test('Edit Parent form exposes linked children management', async () => {
