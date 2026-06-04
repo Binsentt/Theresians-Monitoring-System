@@ -13,6 +13,7 @@ import ParentDashboard from './components/ParentDashboard';
 import ParentChildProgress from './components/ParentChildProgress';
 import ParentActivityLog from './components/ParentActivityLog';
 import StudentAnalytics from './components/StudentAnalytics';
+import ScreenTimeMonitoring from './components/ScreenTimeMonitoring';
 import ManageUsers from './components/ManageUsers';
 import HomePageScreen from './components/HomePageScreen';
 import ResetPassword from './components/ResetPassword';
@@ -44,6 +45,7 @@ function App() {
         <Route path="/admin/student-progress" element={<AdminStudentProgress />} />
         <Route path="/admin/student-progress/:studentId" element={<StudentAnalytics />} />
         <Route path="/admin/top-achievers" element={<AdminTopAchievers />} />
+        <Route path="/admin/screen-time" element={<ScreenTimeMonitoring mode="all" />} />
         <Route path="/admin/activity-log" element={<AdminActivityLog />} />
         <Route path="/admin/announcements" element={<AnnouncementPage mode="admin" />} />
 
@@ -52,6 +54,7 @@ function App() {
         <Route path="/teacher/student-progress" element={<TeacherStudentProgress />} />
         <Route path="/teacher/student-progress/:studentId" element={<StudentAnalytics />} />
         <Route path="/teacher/top-achievers" element={<TeacherTopAchievers />} />
+        <Route path="/teacher/screen-time" element={<ScreenTimeMonitoring mode="all" />} />
         <Route path="/teacher/activity-log" element={<TeacherActivityLog />} />
         <Route path="/teacher/announcements" element={<AnnouncementPage mode="teacher" />} />
         <Route path="/lesson-question-manager" element={<LessonQuestionManager />} />
@@ -59,6 +62,7 @@ function App() {
         {/* Parent Routes */}
         <Route path="/parent-dashboard" element={<ParentDashboard />} />
         <Route path="/parent/child-progress" element={<ParentChildProgress />} />
+        <Route path="/parent/screen-time" element={<ScreenTimeMonitoring mode="children" />} />
         <Route path="/parent/activity-log" element={<ParentActivityLog />} />
         <Route path="/parent/announcements" element={<AnnouncementPage mode="parent" />} />
 

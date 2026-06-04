@@ -10,7 +10,17 @@ jest.mock('react-router-dom', () => ({
 }));
 
 describe('AnalyticsSidebar role items', () => {
-  test('Parent/Teacher keeps every teacher module and adds only Child Progress from the parent side', () => {
+  test('adds role-specific screen time navigation entries', () => {
+    expect(getSidebarItemsForRole('admin').map((item) => item.label)).toContain('Screen Time Monitoring');
+    expect(getSidebarItemsForRole('teacher').map((item) => item.label)).toContain('Screen Time Monitoring');
+    expect(getSidebarItemsForRole('parent').map((item) => item.label)).toContain('My Child Screen Time');
+
+    const parentTeacherLabels = getSidebarItemsForRole('parent_teacher').map((item) => item.label);
+    expect(parentTeacherLabels).toContain('Screen Time Monitoring');
+    expect(parentTeacherLabels).toContain('My Child Screen Time');
+  });
+
+  test('Parent/Teacher keeps every teacher module and adds child-only parent views', () => {
     const labels = getSidebarItemsForRole('parent_teacher').map((item) => item.label);
     const routes = getSidebarItemsForRole('Parent/Teacher').map((item) => item.route);
 
@@ -20,13 +30,17 @@ describe('AnalyticsSidebar role items', () => {
       'Lesson & Question Manager',
       'Announcements',
       'Top Achievers',
+      'Screen Time Monitoring',
       'Activity Log',
       'Child Progress',
+      'My Child Screen Time',
       'Settings',
       'Logout',
     ]);
     expect(routes).toContain('/teacher-dashboard');
+    expect(routes).toContain('/teacher/screen-time');
     expect(routes).toContain('/parent/child-progress');
+    expect(routes).toContain('/parent/screen-time');
     expect(routes).not.toContain('/parent-dashboard');
     expect(routes).not.toContain('/parent/announcements');
     expect(routes).not.toContain('/parent/activity-log');
