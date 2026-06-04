@@ -2,6 +2,8 @@
 .settings-container {
   min-height: 100vh;
   padding: 24px;
+  width: 100%;
+  overflow-x: hidden;
   background:
     radial-gradient(circle at top left, rgba(37, 99, 235, 0.08), transparent 28%),
     linear-gradient(180deg, var(--bg-primary, #f3f7fc) 0%, var(--bg-tertiary, #edf3fb) 100%);
@@ -56,6 +58,7 @@
   border: 1px solid rgba(219, 227, 239, 0.9);
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
+  max-width: min(1280px, 100%);
 }
 
 [data-theme="dark"] .settings-header {
@@ -102,6 +105,8 @@
   gap: 24px;
   max-width: 1280px;
   margin: 0 auto;
+  width: 100%;
+  min-width: 0;
 }
 
 /* Sidebar */
@@ -116,6 +121,7 @@
   border: 1px solid rgba(219, 227, 239, 0.9);
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
+  min-width: 0;
 }
 
 [data-theme="dark"] .settings-sidebar {
@@ -168,6 +174,8 @@
   border: 1px solid rgba(219, 227, 239, 0.9);
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
+  min-width: 0;
+  max-width: 100%;
 }
 
 [data-theme="dark"] .settings-section {
@@ -201,6 +209,10 @@
   display: flex;
   gap: 18px;
   align-items: center;
+  min-width: 0;
+}
+
+.profile-left > div:last-child {
   min-width: 0;
 }
 
@@ -242,6 +254,8 @@
   color: var(--text-primary);
   font-weight: 600;
   line-height: 1.5;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .profile-info {
@@ -337,6 +351,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
+  min-width: 0;
 }
 
 .profile-form .form-actions {
@@ -358,6 +373,9 @@
   color: var(--text-primary);
   font-size: 0.95rem;
   transition: all 0.2s ease;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .form-group input:focus,
@@ -494,7 +512,7 @@
 
 .theme-selector {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
   gap: 18px;
 }
 
@@ -603,7 +621,7 @@
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .settings-container {
     padding: 16px;
   }
@@ -615,7 +633,8 @@
   }
 
   .settings-sidebar {
-    display: none;
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .profile-header {

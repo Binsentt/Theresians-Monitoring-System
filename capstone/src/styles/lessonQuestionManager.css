@@ -3,6 +3,8 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .manager-notification {
@@ -35,6 +37,8 @@
   grid-template-columns: minmax(220px, 252px) minmax(0, 1fr);
   gap: 18px;
   min-height: calc(100vh - 182px);
+  max-width: 100%;
+  min-width: 0;
 }
 
 .drive-manager-sidebar,
@@ -52,6 +56,7 @@
   display: grid;
   gap: 18px;
   padding: 18px 14px;
+  min-width: 0;
 }
 
 .drive-manager-sidebar h2,
@@ -196,6 +201,7 @@
   gap: 18px;
   min-width: 0;
   padding: 20px;
+  max-width: 100%;
 }
 
 .drive-panel-header,
@@ -238,11 +244,12 @@
 
 .folder-search-field {
   width: min(320px, 100%);
+  min-width: 0;
 }
 
 .drive-folder-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
   gap: 14px;
 }
 
@@ -254,6 +261,7 @@
   padding: 14px;
   cursor: pointer;
   transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  min-width: 0;
 }
 
 .drive-folder-card:hover,
@@ -300,6 +308,7 @@
 .drive-table .data-table-wrapper {
   overflow-x: auto;
   overflow-y: visible;
+  max-width: 100%;
 }
 
 .drive-table.data-table-container {
@@ -355,7 +364,7 @@
 }
 
 .drive-actions-cell {
-  width: 300px;
+  width: min(300px, 100%);
 }
 
 .drive-row-actions {
@@ -432,6 +441,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
+  min-width: 0;
 }
 
 .storage-file-list {
@@ -454,12 +464,16 @@
   padding: 24px;
   background: rgba(15, 23, 42, 0.52);
   animation: manager-fade-in 0.18s ease;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .manager-modal {
   display: grid;
   gap: 18px;
   width: min(620px, 100%);
+  max-height: min(92dvh, calc(100vh - 32px));
+  overflow-y: auto;
   border: 1px solid var(--border-color, #e5e7eb);
   border-radius: 8px;
   background: var(--panel-bg, #ffffff);
@@ -542,6 +556,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+  min-width: 0;
 }
 
 .upload-progress {
@@ -615,7 +630,7 @@
   to { transform: translateX(290%); }
 }
 
-@media (max-width: 980px) {
+@media (max-width: 991px) {
   .drive-workspace {
     grid-template-columns: 1fr;
   }
@@ -641,6 +656,10 @@
     grid-template-columns: 1fr;
   }
 
+  .manager-topbar {
+    gap: 14px;
+  }
+
   .drive-panel {
     padding: 16px;
   }
@@ -655,5 +674,17 @@
   .storage-file-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 479px) {
+  .manager-modal-backdrop {
+    padding: 12px;
+    place-items: start center;
+  }
+
+  .manager-modal {
+    width: 100%;
+    padding: 18px;
   }
 }

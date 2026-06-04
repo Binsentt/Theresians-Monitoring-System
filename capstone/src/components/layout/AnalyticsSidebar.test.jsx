@@ -9,6 +9,15 @@ jest.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
 }));
 
+const setViewportWidth = (width) => {
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    writable: true,
+    value: width,
+  });
+  window.dispatchEvent(new Event('resize'));
+};
+
 describe('AnalyticsSidebar role items', () => {
   test('adds role-specific screen time navigation entries', () => {
     expect(getSidebarItemsForRole('admin').map((item) => item.label)).toContain('Screen Time Monitoring');
@@ -79,6 +88,39 @@ describe('AnalyticsSidebar role items', () => {
     expect(localStorage.getItem('loggedInUser')).toBeNull();
     expect(localStorage.getItem('token')).toBeNull();
     expect(mockNavigate).toHaveBeenCalledWith('/');
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  test('uses tablet overlay navigation at 991px and desktop navigation at 992px', async () => {
+    global.IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    document.body.appendChild(container);
+
+    setViewportWidth(991);
+    await act(async () => {
+      root.render(<AnalyticsSidebar role="admin" />);
+    });
+
+    const toggleButton = container.querySelector('.analytics-sidebar-hamburger');
+    expect(toggleButton).toBeTruthy();
+
+    await act(async () => {
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.querySelector('.analytics-sidebar-backdrop')).toBeTruthy();
+
+    await act(async () => {
+      setViewportWidth(992);
+      root.render(<AnalyticsSidebar role="admin" />);
+    });
+
+    expect(container.querySelector('.analytics-sidebar-backdrop')).toBeNull();
 
     act(() => {
       root.unmount();

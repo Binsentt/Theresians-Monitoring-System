@@ -39,10 +39,12 @@
   --info-color: #2563eb;
   --accent-color: #2563eb;
   --accent-bg: rgba(37, 99, 235, 0.1);
+  --dashboard-sidebar-width: 288px;
 }
 
 html, body, #root {
   height: 100%;
+  width: 100%;
   margin: 0;
   padding: 0;
   background: var(--bg-primary, #f5f7fb);
@@ -51,6 +53,7 @@ html, body, #root {
   font-size: 16px;
   line-height: 1.5;
   text-rendering: optimizeLegibility;
+  overflow-x: hidden;
 }
 
 body {
@@ -71,7 +74,9 @@ p, label, span, li, button, input, select, textarea {
   color: var(--text-primary, #0b2447);
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -84,6 +89,47 @@ p, label, span, li, button, input, select, textarea {
 img, svg {
   -webkit-user-drag: none;
   user-drag: none;
+}
+
+img,
+video,
+canvas,
+iframe {
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  min-width: 0;
+}
+
+main,
+section,
+article,
+aside,
+header,
+footer,
+div,
+form,
+table {
+  max-width: 100%;
+}
+
+p,
+span,
+strong,
+label,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+td,
+th {
+  overflow-wrap: anywhere;
 }
 
 /* Main containers should not be draggable; allow scrolling inside main panels */
@@ -127,7 +173,9 @@ img, svg {
 .data-table-wrapper,
 .table-wrapper,
 .al-table-wrapper,
-.ta-table-wrapper {
+.ta-table-wrapper,
+.screen-time-table-wrap,
+.users-table-container {
   max-width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;

@@ -117,14 +117,22 @@ const normalizeSidebarRole = (role) => {
 
 export const getSidebarItemsForRole = (role) => sidebarItems[normalizeSidebarRole(role)] || sidebarItems.admin;
 
+const RESPONSIVE_SIDEBAR_MAX_WIDTH = 991;
+
 export default function AnalyticsSidebar({ role = 'admin', activeItem, onSelect, logoSrc, portalLabel = 'Portal' }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [isOpen, setIsOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= 900);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= RESPONSIVE_SIDEBAR_MAX_WIDTH);
 
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth <= 900);
+    const handleResize = () => {
+      const nextIsMobile = window.innerWidth <= RESPONSIVE_SIDEBAR_MAX_WIDTH;
+      setIsMobile(nextIsMobile);
+      if (!nextIsMobile) {
+        setIsOpen(false);
+      }
+    };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);

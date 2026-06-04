@@ -6,6 +6,9 @@
   box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
   padding: 24px;
   border: 1px solid rgba(15, 23, 42, 0.08);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .activity-log-section-shell {
@@ -36,6 +39,7 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 20px;
+  min-width: 0;
 }
 
 .al-summary-card {
@@ -43,6 +47,7 @@
   border-radius: 16px;
   border: 1px solid var(--border-color, rgba(37, 99, 235, 0.08));
   background: linear-gradient(180deg, var(--bg-secondary, #f8fafc), var(--panel-bg, #ffffff));
+  min-width: 0;
 }
 
 .al-summary-card span {
@@ -62,13 +67,14 @@
 
 .al-filters {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(min(100%, 180px), 1fr));
   gap: 14px;
   margin-bottom: 18px;
   padding: 18px;
   background: var(--bg-secondary, rgba(37, 99, 235, 0.03));
   border-radius: 18px;
   border: 1px solid rgba(37, 99, 235, 0.1);
+  min-width: 0;
 }
 
 .al-filters .filter-group {
@@ -94,6 +100,9 @@
   background: var(--panel-bg, #ffffff);
   color: var(--text-primary, #0b2447);
   font-size: 0.95rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .filter-input:focus {
@@ -139,7 +148,9 @@
 
 .al-table-wrapper {
   width: 100%;
+  max-width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   border-radius: 18px;
   border: 1px solid var(--border-color, #e5e7eb);
   background: var(--panel-bg, #ffffff);
@@ -373,20 +384,20 @@
   font-weight: 700;
 }
 
-@media (max-width: 1100px) {
-  .al-summary-bar {
-    grid-template-columns: 1fr;
-  }
-
+@media (max-width: 1199px) {
   .al-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .activity-log-container {
     padding: 18px;
     border-radius: 18px;
+  }
+
+  .al-summary-bar {
+    grid-template-columns: 1fr;
   }
 
   .al-filters {

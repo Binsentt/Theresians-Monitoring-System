@@ -7,11 +7,13 @@
   border-radius: var(--border-radius-lg, 12px);
   padding: var(--spacing-lg, 24px);
   margin-bottom: var(--spacing-lg, 24px);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .filters-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: var(--spacing-md, 16px);
   align-items: end;
   margin-bottom: var(--spacing-md, 16px);
@@ -21,6 +23,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-xs, 8px);
+  min-width: 0;
 }
 
 .filter-group label {
@@ -40,6 +43,8 @@
   color: var(--text-primary, #0b2447);
   background: var(--panel-bg, #ffffff);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .filter-group select:focus,
@@ -59,6 +64,7 @@
   display: flex;
   gap: var(--spacing-sm, 12px);
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .btn-reset {
@@ -89,7 +95,11 @@
   padding: 24px;
   margin: 20px 0;
   overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
   transition: all 0.3s ease;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .ta-header {
@@ -137,13 +147,16 @@
 
 .ta-table-wrapper {
   width: 100%;
+  max-width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   border-radius: 8px;
   border: 1px solid var(--border-color, #e0e0e0);
 }
 
 .ta-table {
   width: 100%;
+  min-width: 860px;
   border-collapse: collapse;
   font-size: 0.95rem;
 }
@@ -179,6 +192,7 @@
 .ta-table td {
   padding: 14px 16px;
   color: var(--text-primary, #333);
+  overflow-wrap: anywhere;
 }
 
 .rank-cell {
@@ -268,7 +282,7 @@
 }
 
 /* Responsive Styles */
-@media (max-width: 1024px) {
+@media (max-width: 1199px) {
   .top-achievers-container {
     padding: 16px;
   }
@@ -287,12 +301,12 @@
   }
 
   .filters-row {
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
     gap: var(--spacing-sm, 12px);
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .top-achievers-container {
     padding: 12px;
     margin: 10px 0;
@@ -308,7 +322,11 @@
   }
 
   .filter-actions {
-    justify-content: center;
+    justify-content: stretch;
+  }
+
+  .filter-actions > * {
+    flex: 1 1 100%;
   }
 
   .ta-table {
@@ -374,5 +392,6 @@
   .btn-reset {
     padding: var(--spacing-xs, 8px) var(--spacing-sm, 12px);
     font-size: 0.8rem;
+    width: 100%;
   }
 }

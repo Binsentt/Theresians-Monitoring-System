@@ -13,9 +13,11 @@
 /* Responsive metric grid */
 .sts-metrics-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: var(--spacing-lg, 24px);
   margin-bottom: var(--spacing-xl, 32px);
+  max-width: 100%;
+  min-width: 0;
 }
 
 .sts-metric-card {
@@ -25,6 +27,7 @@
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
   border: 1px solid var(--border-color, #e5e7eb);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  min-width: 0;
 }
 
 .sts-metric-card:hover {
@@ -62,6 +65,7 @@
   display: flex;
   gap: var(--spacing-md, 16px);
   margin-bottom: var(--spacing-xl, 32px);
+  min-width: 0;
 }
 
 .reminder-title {
@@ -90,7 +94,9 @@
   border-radius: var(--border-radius-lg, 12px);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
   border: 1px solid var(--border-color, #e5e7eb);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
 }
 
 .sts-data-table {
@@ -280,7 +286,7 @@
 
 .progress-controls .sts-search-input,
 .progress-controls select {
-    min-width: 220px;
+    min-width: min(100%, 220px);
 }
 
 .refresh-btn,
@@ -311,6 +317,8 @@
     box-shadow: 0 16px 40px rgba(15, 32, 71, 0.08);
     border: 1px solid rgba(15, 23, 42, 0.08);
     margin-top: 20px;
+    max-width: 100%;
+    overflow-x: auto;
 }
 
 .student-progress-table .table-row {
@@ -423,8 +431,19 @@
 
 .analysis-summary-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
     gap: 16px;
+}
+
+@media (max-width: 767px) {
+    .sts-metrics-grid {
+        grid-template-columns: 1fr;
+        gap: var(--spacing-md, 16px);
+    }
+
+    .sts-reminder-dash {
+        flex-direction: column;
+    }
 }
 
 .summary-card {

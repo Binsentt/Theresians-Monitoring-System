@@ -2,7 +2,7 @@
   position: fixed;
   left: 0;
   top: 0;
-  width: 288px;
+  width: var(--dashboard-sidebar-width, 288px);
   height: 100vh;
   z-index: 1000;
 }
@@ -12,8 +12,8 @@
 }
 
 .analytics-sidebar-panel {
-  width: 288px;
-  min-width: 288px;
+  width: var(--dashboard-sidebar-width, 288px);
+  min-width: var(--dashboard-sidebar-width, 288px);
   min-height: 100vh;
   height: 100%;
   background: var(--navy-900, #0b2447);
@@ -67,6 +67,7 @@
 .analytics-brand-text {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .analytics-brand-title {
@@ -155,6 +156,7 @@
   font-size: 0.95rem;
   font-weight: 600;
   letter-spacing: 0.01em;
+  overflow-wrap: anywhere;
 }
 
 .analytics-sidebar-item.active .analytics-sidebar-item-icon,
@@ -175,13 +177,20 @@
   border-color: rgba(248, 113, 113, 0.22);
 }
 
-@media (max-width: 767px) {
+@media (max-width: 991px) {
+  .analytics-sidebar-root {
+    width: 0;
+    height: 0;
+    pointer-events: none;
+  }
+
   .analytics-sidebar-toggle {
     display: block;
     position: fixed;
     top: 16px;
     left: 16px;
-    z-index: 50;
+    z-index: 1060;
+    pointer-events: auto;
   }
 
   .analytics-sidebar-hamburger {
@@ -211,11 +220,14 @@
     left: 0;
     right: auto;
     height: 100vh;
-    width: min(90vw, 320px);
-    z-index: 60;
+    width: min(88vw, var(--dashboard-sidebar-width, 288px));
+    min-width: 0;
+    max-width: calc(100vw - 24px);
+    z-index: 1055;
     transform: translateX(-110%);
     transition: transform 0.25s ease;
     border-radius: 0 24px 24px 0;
+    pointer-events: auto;
   }
 
   .analytics-sidebar-root.open .analytics-sidebar-panel {
@@ -226,6 +238,24 @@
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.4);
-    z-index: 55;
+    z-index: 1050;
+    pointer-events: auto;
+  }
+}
+
+@media (max-width: 479px) {
+  .analytics-sidebar-toggle {
+    top: 12px;
+    left: 12px;
+  }
+
+  .analytics-sidebar-panel {
+    width: min(90vw, 288px);
+    padding: 22px 14px 18px;
+    border-radius: 0 20px 20px 0;
+  }
+
+  .analytics-sidebar-brand {
+    gap: 10px;
   }
 }
