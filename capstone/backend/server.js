@@ -240,6 +240,28 @@ const ensureSchema = async () => {
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_student_name ON public.activity_logs(student_name)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_grade_section ON public.activity_logs(grade_level, section)');
 
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.playtime_sessions (
+      id SERIAL PRIMARY KEY,
+      student_id INTEGER NOT NULL,
+      parent_id CHARACTER VARYING(20),
+      student_name CHARACTER VARYING(100) NOT NULL,
+      grade_level CHARACTER VARYING(50),
+      section CHARACTER VARYING(50),
+      date_played DATE DEFAULT CURRENT_DATE,
+      start_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      end_time TIMESTAMPTZ,
+      total_playtime_minutes INTEGER DEFAULT 0,
+      status CHARACTER VARYING(50) DEFAULT 'Playing',
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );`);
+    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS parent_id CHARACTER VARYING(20)');
+    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS section CHARACTER VARYING(50)');
+    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS total_playtime_minutes INTEGER DEFAULT 0');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_student_date ON public.playtime_sessions(student_id, date_played)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_parent_id ON public.playtime_sessions(parent_id)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_status ON public.playtime_sessions(status)');
+
     await pool.query(`CREATE TABLE IF NOT EXISTS public.announcements (
       id SERIAL PRIMARY KEY,
       title VARCHAR(150) NOT NULL,
@@ -472,6 +494,33 @@ const isWebsiteManagedAccountRole = (role) => (
 
 const accountHasTeacherAccess = (role) => ['teacher', 'parent_teacher'].includes(normalizeAccountRole(role));
 const accountHasParentAccess = (role) => ['parent', 'parent_teacher'].includes(normalizeAccountRole(role));
+const PLAYTIME_DAILY_LIMIT_MINUTES = 60;
+const PLAYTIME_STATUSES = ['Playing', 'Completed', 'Limit Reached', 'Auto Saved', 'Logged Out'];
+
+const normalizePlaytimeStatus = (status, fallback = 'Playing') => {
+  const value = String(status || '').trim().toLowerCase();
+  return PLAYTIME_STATUSES.find((item) => item.toLowerCase() === value) || fallback;
+};
+
+const resolvePositiveInteger = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const numberValue = Number(value);
+  return Number.isInteger(numberValue) && numberValue > 0 ? numberValue : NaN;
+};
+
+const requireAuthenticatedRoles = (allowedRoles) => (req, res, next) => {
+  if (!req.authenticatedUser) {
+    return res.status(401).json({ error: 'Authentication is required.' });
+  }
+
+  const role = normalizeAccountRole(req.authenticatedUser.role);
+  if (!allowedRoles.includes(role)) {
+    return res.status(403).json({ error: 'This account cannot access this playtime view.' });
+  }
+
+  req.authenticatedRole = role;
+  next();
+};
 const normalizeOptionalText = (value) => {
   const normalized = String(value ?? '').trim();
   return normalized || null;
@@ -3796,6 +3845,315 @@ app.post('/api/activity-logs', async (req, res) => {
     res.status(500).json({ error: 'Failed to create activity log', details: err.message });
   }
 });
+
+const getDailyPlaytimeTotal = async (studentId) => {
+  const result = await pool.query(
+    `SELECT COALESCE(SUM(
+       CASE
+         WHEN status = 'Playing' AND end_time IS NULL THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - start_time)) / 60))::INTEGER
+         ELSE COALESCE(total_playtime_minutes, 0)
+       END
+     ), 0)::INTEGER AS total_playtime_today
+     FROM public.playtime_sessions
+     WHERE student_id = $1
+       AND date_played = CURRENT_DATE`,
+    [studentId]
+  );
+  return Number(result.rows[0]?.total_playtime_today || 0);
+};
+
+const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
+  const filters = [];
+  const addParam = (value) => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+
+  if (scope === 'children') {
+    const parentAccountId = Number(req.authenticatedUser.id);
+    const parentAccountPlaceholder = addParam(parentAccountId);
+    const parentCode = normalizeParentCode(req.authenticatedUser.parent_id);
+
+    if (parentCode) {
+      const parentCodePlaceholder = addParam(parentCode);
+      filters.push(`(
+        ps.student_id IN (
+          SELECT tsr.student_id
+          FROM public.teacher_student_relationships tsr
+          JOIN public.accounts child
+            ON child.id = tsr.student_id
+           AND COALESCE(child.is_archived, false) = false
+          WHERE tsr.teacher_id = ${parentAccountPlaceholder}
+            AND LOWER(tsr.relationship_type) = 'parent'
+        )
+        OR ps.parent_id = ${parentCodePlaceholder}
+      )`);
+    } else {
+      filters.push(`ps.student_id IN (
+        SELECT tsr.student_id
+        FROM public.teacher_student_relationships tsr
+        JOIN public.accounts child
+          ON child.id = tsr.student_id
+         AND COALESCE(child.is_archived, false) = false
+        WHERE tsr.teacher_id = ${parentAccountPlaceholder}
+          AND LOWER(tsr.relationship_type) = 'parent'
+      )`);
+    }
+  }
+
+  const dateValue = String(req.query.date || req.query.date_played || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+    filters.push(`ps.date_played = ${addParam(dateValue)}::date`);
+  }
+
+  if (scope === 'all') {
+    const gradeLevel = String(req.query.grade_level || req.query.grade || '').trim();
+    if (gradeLevel && gradeLevel !== 'All Grades') filters.push(`ps.grade_level = ${addParam(gradeLevel)}`);
+
+    const section = String(req.query.section || '').trim();
+    if (section && section !== 'All Sections') filters.push(`ps.section = ${addParam(section)}`);
+  }
+
+  const studentId = resolvePositiveInteger(req.query.student_id);
+  if (Number.isNaN(studentId)) {
+    return { error: 'Invalid student ID' };
+  }
+  if (studentId) filters.push(`ps.student_id = ${addParam(studentId)}`);
+
+  if (scope === 'all') {
+    const parentCode = String(req.query.parent_id || '').trim();
+    if (parentCode) filters.push(`ps.parent_id = ${addParam(parentCode)}`);
+  }
+
+  const studentName = String(req.query.student_name || req.query.child_name || '').trim().toLowerCase();
+  if (studentName) filters.push(`LOWER(ps.student_name) LIKE ${addParam(`%${studentName}%`)}`);
+
+  const status = String(req.query.status || '').trim();
+  if (status) filters.push(`ps.status = ${addParam(normalizePlaytimeStatus(status, status))}`);
+
+  const search = String(req.query.search || '').trim().toLowerCase();
+  if (search) {
+    const searchPlaceholder = addParam(`%${search}%`);
+    filters.push(`(
+      LOWER(ps.student_name) LIKE ${searchPlaceholder}
+      OR LOWER(COALESCE(ps.parent_id, '')) LIKE ${searchPlaceholder}
+      OR LOWER(COALESCE(ps.grade_level, '')) LIKE ${searchPlaceholder}
+      OR LOWER(COALESCE(ps.section, '')) LIKE ${searchPlaceholder}
+      OR LOWER(COALESCE(ps.status, '')) LIKE ${searchPlaceholder}
+      OR CAST(ps.student_id AS TEXT) LIKE ${searchPlaceholder}
+    )`);
+  }
+
+  return { whereSql: filters.length ? ` AND ${filters.join(' AND ')}` : '' };
+};
+
+const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
+  try {
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 200);
+    const offset = Math.max(parseInt(req.query.offset, 10) || ((page - 1) * limit), 0);
+    const sortMap = {
+      date: 'ps.date_played',
+      date_played: 'ps.date_played',
+      student_name: 'ps.student_name',
+      child_name: 'ps.student_name',
+      total_playtime: 'ps.total_playtime_minutes',
+      total_playtime_minutes: 'ps.total_playtime_minutes',
+      status: 'ps.status',
+    };
+    const sortField = sortMap[String(req.query.sort_by || 'date').trim()] || 'ps.date_played';
+    const sortDirection = String(req.query.sort_order || 'desc').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+    const params = [];
+    const filterResult = applyPlaytimeFilters({ req, params, scope });
+    if (filterResult.error) {
+      return res.status(400).json({ error: filterResult.error });
+    }
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::INTEGER AS total
+       FROM public.playtime_sessions ps
+       WHERE 1=1${filterResult.whereSql}`,
+      params
+    );
+
+    const dataParams = params.slice();
+    dataParams.push(limit, offset);
+    const result = await pool.query(
+      `SELECT ps.id,
+              ps.student_id,
+              ps.parent_id,
+              ps.student_name,
+              ps.student_name AS child_name,
+              ps.grade_level,
+              ps.section,
+              ps.date_played,
+              ps.start_time,
+              ps.end_time,
+              COALESCE(ps.total_playtime_minutes, 0) AS total_playtime_minutes,
+              ps.status,
+              ps.created_at,
+              ps.updated_at
+       FROM public.playtime_sessions ps
+       WHERE 1=1${filterResult.whereSql}
+       ORDER BY ${sortField} ${sortDirection}, ps.id DESC
+       LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
+      dataParams
+    );
+
+    const total = Number(countResult.rows[0]?.total || 0);
+    res.json({
+      data: result.rows,
+      pagination: {
+        page,
+        limit,
+        offset,
+        total,
+        pages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (err) {
+    console.error('Fetch playtime sessions failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch playtime sessions' });
+  }
+};
+
+app.post('/api/playtime/start', async (req, res) => {
+  try {
+    const studentId = resolvePositiveInteger(req.body.student_id);
+    if (!studentId || Number.isNaN(studentId)) {
+      return res.status(400).json({ error: 'A valid student_id is required.' });
+    }
+
+    const studentName = String(req.body.student_name || '').trim();
+    if (!studentName) {
+      return res.status(400).json({ error: 'student_name is required.' });
+    }
+
+    const parentCode = req.body.parent_id ? normalizeParentCode(req.body.parent_id) : null;
+    if (req.body.parent_id && !parentCode) {
+      return res.status(400).json({ error: 'A valid parent_id is required.' });
+    }
+
+    const totalToday = await getDailyPlaytimeTotal(studentId);
+    if (totalToday >= PLAYTIME_DAILY_LIMIT_MINUTES) {
+      return res.status(403).json({
+        error: 'Daily playtime limit reached.',
+        total_playtime_today: totalToday,
+        remaining_minutes: 0,
+        can_play: false,
+        daily_limit_minutes: PLAYTIME_DAILY_LIMIT_MINUTES,
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO public.playtime_sessions (
+        student_id, parent_id, student_name, grade_level, section,
+        date_played, start_time, status, total_playtime_minutes, created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5,
+        COALESCE($6::timestamptz, NOW())::date,
+        COALESCE($6::timestamptz, NOW()),
+        $7, 0, NOW(), NOW()
+      ) RETURNING *`,
+      [
+        studentId,
+        parentCode,
+        studentName,
+        String(req.body.grade_level || req.body.grade || '').trim() || null,
+        String(req.body.section || '').trim() || null,
+        req.body.start_time || req.body.timestamp || null,
+        'Playing',
+      ]
+    );
+
+    res.status(201).json({
+      success: true,
+      session_id: result.rows[0]?.id,
+      session: result.rows[0],
+    });
+  } catch (err) {
+    console.error('Start playtime session failed:', err.message);
+    res.status(500).json({ error: 'Failed to start playtime session' });
+  }
+});
+
+app.post('/api/playtime/end', async (req, res) => {
+  try {
+    const sessionId = resolvePositiveInteger(req.body.session_id);
+    const studentId = resolvePositiveInteger(req.body.student_id);
+    if (Number.isNaN(sessionId) || Number.isNaN(studentId)) {
+      return res.status(400).json({ error: 'Invalid playtime session payload.' });
+    }
+    if (!sessionId && !studentId) {
+      return res.status(400).json({ error: 'session_id or student_id is required.' });
+    }
+
+    const status = normalizePlaytimeStatus(req.body.status, 'Completed');
+    const result = await pool.query(
+      `WITH target AS (
+        SELECT id
+        FROM public.playtime_sessions
+        WHERE (($1::INTEGER IS NOT NULL AND id = $1)
+          OR ($1::INTEGER IS NULL AND student_id = $2 AND status = 'Playing'))
+        ORDER BY start_time DESC NULLS LAST, id DESC
+        LIMIT 1
+      )
+      UPDATE public.playtime_sessions ps
+      SET end_time = COALESCE($3::timestamptz, NOW()),
+          total_playtime_minutes = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (COALESCE($3::timestamptz, NOW()) - ps.start_time)) / 60))::INTEGER,
+          status = $4,
+          updated_at = NOW()
+      FROM target
+      WHERE ps.id = target.id
+      RETURNING ps.*`,
+      [sessionId, studentId, req.body.end_time || null, status]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No active playtime session found.' });
+    }
+
+    res.json({ success: true, session: result.rows[0] });
+  } catch (err) {
+    console.error('End playtime session failed:', err.message);
+    res.status(500).json({ error: 'Failed to end playtime session' });
+  }
+});
+
+app.get('/api/playtime/today/:student_id', async (req, res) => {
+  try {
+    const studentId = resolvePositiveInteger(req.params.student_id);
+    if (!studentId || Number.isNaN(studentId)) {
+      return res.status(400).json({ error: 'A valid student_id is required.' });
+    }
+
+    const totalToday = await getDailyPlaytimeTotal(studentId);
+    const remaining = Math.max(0, PLAYTIME_DAILY_LIMIT_MINUTES - totalToday);
+    res.json({
+      student_id: studentId,
+      total_playtime_today: totalToday,
+      remaining_minutes: remaining,
+      can_play: totalToday < PLAYTIME_DAILY_LIMIT_MINUTES,
+      daily_limit_minutes: PLAYTIME_DAILY_LIMIT_MINUTES,
+    });
+  } catch (err) {
+    console.error('Fetch daily playtime failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch daily playtime' });
+  }
+});
+
+app.get(
+  '/api/playtime',
+  requireAuthenticatedRoles(['admin', 'teacher', 'parent_teacher']),
+  (req, res) => handlePlaytimeListRequest(req, res, { scope: 'all' })
+);
+
+app.get(
+  '/api/playtime/my-children',
+  requireAuthenticatedRoles(['parent', 'parent_teacher']),
+  (req, res) => handlePlaytimeListRequest(req, res, { scope: 'children' })
+);
 
 app.get('/api/parent/children', async (req, res) => {
   try {
