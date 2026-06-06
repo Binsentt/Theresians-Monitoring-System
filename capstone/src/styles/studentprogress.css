@@ -369,6 +369,13 @@
   color: var(--text-primary, #0b2447);
 }
 
+.student-analytics-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
 .student-analytics-header {
   display: flex;
   align-items: center;
@@ -416,6 +423,332 @@
 
 .back-action:hover {
   background: var(--accent-bg, rgba(37, 99, 235, 0.1));
+}
+
+.student-profile-card,
+.student-dashboard-card,
+.student-metric-card {
+  border: 1px solid var(--border-color, #dbe3ef);
+  background: var(--panel-bg, #ffffff);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+  min-width: 0;
+}
+
+.student-profile-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 22px;
+  border-radius: 14px;
+  padding: 24px;
+  overflow: hidden;
+}
+
+.student-profile-main {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.student-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 76px;
+  height: 76px;
+  flex: 0 0 76px;
+  border-radius: 18px;
+  background: #0b5ed7;
+  color: #ffffff;
+  font-size: 1.35rem;
+  font-weight: 800;
+  box-shadow: 0 14px 24px rgba(37, 99, 235, 0.2);
+}
+
+.student-profile-copy {
+  min-width: 0;
+}
+
+.student-profile-copy h1 {
+  margin: 2px 0 8px;
+  color: var(--text-primary, #0b2447);
+  font-size: 2rem;
+  line-height: 1.15;
+}
+
+.student-profile-copy .subtitle {
+  max-width: 680px;
+  margin: 0;
+  color: var(--text-muted, #64748b);
+  line-height: 1.55;
+}
+
+.student-profile-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: var(--bg-secondary, #f8fafc);
+  border: 1px solid var(--border-color, #e5e7eb);
+  overflow: hidden;
+}
+
+.student-profile-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.student-profile-meta {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.student-profile-meta div,
+.student-performance-meta div {
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 10px;
+  background: var(--bg-secondary, #f8fafc);
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.student-profile-meta span,
+.student-performance-meta span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-muted, #64748b);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.student-profile-meta strong,
+.student-performance-meta strong {
+  display: block;
+  min-width: 0;
+  color: var(--text-primary, #0b2447);
+  font-size: 0.95rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.student-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.student-metric-card {
+  display: grid;
+  gap: 10px;
+  border-radius: 12px;
+  padding: 18px;
+}
+
+.student-metric-card strong {
+  color: var(--text-primary, #0b2447);
+  font-size: 1.65rem;
+  line-height: 1;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.student-metric-card > span:last-child {
+  color: var(--text-muted, #64748b);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.student-metric-icon,
+.student-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+
+.student-metric-icon.blue,
+.student-card-icon.blue {
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.12);
+}
+
+.student-metric-icon.green,
+.student-card-icon.green {
+  color: #15803d;
+  background: rgba(34, 197, 94, 0.13);
+}
+
+.student-metric-icon.orange,
+.student-card-icon.orange {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.16);
+}
+
+.student-metric-icon.red,
+.student-card-icon.red {
+  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.13);
+}
+
+.student-analytics-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.student-dashboard-card {
+  border-radius: 14px;
+  padding: 22px;
+}
+
+.student-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.student-card-heading h2 {
+  margin: 0 0 4px;
+  color: var(--text-primary, #0b2447);
+  font-size: 1.08rem;
+  line-height: 1.25;
+}
+
+.student-card-heading p {
+  margin: 0;
+  color: var(--text-muted, #64748b);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.student-performance-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.student-progress-bars,
+.student-difficulty-bars {
+  display: grid;
+  gap: 16px;
+}
+
+.student-progress-row,
+.student-difficulty-row {
+  display: grid;
+  gap: 8px;
+}
+
+.student-progress-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.student-progress-label span {
+  color: var(--text-primary, #0b2447);
+  font-weight: 800;
+}
+
+.student-progress-label strong {
+  color: var(--text-muted, #64748b);
+  font-size: 0.92rem;
+}
+
+.student-progress-track {
+  height: 12px;
+  border-radius: 999px;
+  background: #e8eef7;
+  overflow: hidden;
+}
+
+.student-progress-fill {
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  transform-origin: left;
+  animation: studentBarGrow 0.75s ease-out both;
+}
+
+.student-progress-fill.blue { background: #2563eb; }
+.student-progress-fill.green,
+.student-progress-fill.easy { background: #22c55e; }
+.student-progress-fill.orange,
+.student-progress-fill.medium { background: #f59e0b; }
+.student-progress-fill.red,
+.student-progress-fill.hard { background: #ef4444; }
+
+.student-insights-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.student-insight-card {
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+}
+
+.student-insight-highlight {
+  display: block;
+  color: var(--text-primary, #0b2447);
+  font-size: 1.35rem;
+  line-height: 1.25;
+}
+
+.student-insight-copy {
+  margin: 12px 0 0;
+  color: var(--text-muted, #64748b);
+  line-height: 1.6;
+}
+
+.student-insight-list ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.student-insight-list li,
+.student-insight-list > p {
+  margin: 0;
+  color: var(--text-primary, #334155);
+  line-height: 1.55;
+}
+
+.student-insight-list li {
+  position: relative;
+  padding-left: 18px;
+}
+
+.student-insight-list li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.68em;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2563eb;
+}
+
+@keyframes studentBarGrow {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
 }
 
 .student-detail-grid {
@@ -716,6 +1049,16 @@
   .table-wrapper {
     overflow-x: auto;
   }
+
+  .student-profile-meta,
+  .student-metrics-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .student-analytics-grid,
+  .student-insights-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 767px) {
@@ -724,6 +1067,24 @@
   .child-progress-stats,
   .child-game-results-grid {
     grid-template-columns: 1fr;
+  }
+
+  .student-profile-card {
+    grid-template-columns: 1fr;
+  }
+
+  .student-profile-logo {
+    display: none;
+  }
+
+  .student-profile-main {
+    align-items: flex-start;
+  }
+
+  .student-profile-meta,
+  .student-metrics-grid,
+  .student-performance-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -755,6 +1116,9 @@
   }
 
   .analytics-card,
+  .student-dashboard-card,
+  .student-metric-card,
+  .student-profile-card,
   .student-progress-filters-card,
   .analytics-insights-panel,
   .child-activity-panel,
@@ -778,6 +1142,32 @@
 }
 
 @media (max-width: 479px) {
+  .student-profile-card,
+  .student-dashboard-card,
+  .student-metric-card {
+    border-radius: 10px;
+    padding: 16px;
+  }
+
+  .student-profile-main {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .student-profile-copy h1 {
+    font-size: 1.5rem;
+  }
+
+  .student-profile-meta,
+  .student-metrics-grid,
+  .student-performance-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .student-metric-card strong {
+    font-size: 1.45rem;
+  }
+
   .mini-bar-row {
     grid-template-columns: 1fr;
     gap: 6px;

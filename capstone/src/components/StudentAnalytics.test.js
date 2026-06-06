@@ -70,4 +70,48 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('Practice fractions.');
     expect(container.textContent).not.toContain('[object Object]');
   });
+
+  test('renders a modern analytics dashboard with profile details and metric cards', async () => {
+    global.fetch = jest.fn(() => jsonResponse({
+      progress: {
+        student_id: 44,
+        student_name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        section: 'Section A',
+        current_quest: 'Oak Leaf Village Quest',
+        difficulty_level: 'Easy',
+        current_scene: 'oak_leaf_village.tscn',
+        accuracy_rate: 82,
+        progress_percentage: 74,
+        correct_answers: 41,
+        total_questions: 50,
+        total_quests_completed: 7,
+        total_play_time: 5400,
+      },
+      analysis: {
+        strengths: ['Strong accuracy across current quests.'],
+        weaknesses: ['Needs review on word problems.'],
+        recommendations: ['Practice fractions.'],
+        difficultyBreakdown: { easy: 40, medium: 25, hard: 35 },
+      },
+    }));
+
+    await act(async () => {
+      root.render(<StudentAnalytics />);
+    });
+
+    expect(container.querySelector('.student-profile-card')).toBeTruthy();
+    expect(container.querySelectorAll('.student-metric-card')).toHaveLength(6);
+    expect(container.textContent).toContain('Student ID');
+    expect(container.textContent).toContain('44');
+    expect(container.textContent).toContain('Current Scene');
+    expect(container.textContent).toContain('oak_leaf_village.tscn');
+    expect(container.textContent).toContain('Total Playtime');
+    expect(container.textContent).toContain('1 hr 30 min');
+    expect(container.textContent).toContain('Game Performance');
+    expect(container.textContent).toContain('Performance Insight');
+    expect(container.textContent).toContain('Easy');
+    expect(container.textContent).toContain('Medium');
+    expect(container.textContent).toContain('Hard');
+  });
 });
