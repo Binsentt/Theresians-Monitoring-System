@@ -11,7 +11,9 @@ ALTER TABLE public.activity_logs
   ADD COLUMN IF NOT EXISTS total_play_time INTEGER DEFAULT 0,
   ADD COLUMN IF NOT EXISTS last_played TIMESTAMP WITH TIME ZONE,
   ADD COLUMN IF NOT EXISTS quest_progress INTEGER DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS difficulty_level VARCHAR(50) DEFAULT 'Normal',
+  ADD COLUMN IF NOT EXISTS difficulty_level VARCHAR(50) DEFAULT 'Unknown',
+  ADD COLUMN IF NOT EXISTS current_scene TEXT,
+  ADD COLUMN IF NOT EXISTS current_map TEXT,
   ADD COLUMN IF NOT EXISTS activity_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
 
 -- Create index on commonly filtered columns
@@ -72,12 +74,12 @@ UPDATE public.activity_logs SET
     ELSE 50
   END,
   difficulty_level = CASE student_id
-    WHEN 1 THEN 'Normal'
+    WHEN 1 THEN 'Unknown'
     WHEN 2 THEN 'Easy'
     WHEN 3 THEN 'Hard'
-    WHEN 4 THEN 'Normal'
+    WHEN 4 THEN 'Unknown'
     WHEN 5 THEN 'Easy'
-    ELSE 'Normal'
+    ELSE 'Unknown'
   END,
   activity_timestamp = NOW()
 WHERE student_id IN (1, 2, 3, 4, 5);
@@ -85,7 +87,7 @@ WHERE student_id IN (1, 2, 3, 4, 5);
 -- Insert additional sample activity records for testing
 INSERT INTO public.activity_logs 
   (student_id, student_name, role, status, grade_level, section, current_quest, save_status, 
-   total_play_time, last_played, quest_progress, difficulty_level, login_time, logout_time, 
+   total_play_time, last_played, quest_progress, difficulty_level, current_scene, current_map, login_time, logout_time,
    session_date, activity_description, activity_timestamp)
 SELECT 
   acc.id,
@@ -109,12 +111,9 @@ SELECT
   (FLOOR(RANDOM() * 5400) + 600)::INT,
   NOW() - INTERVAL '1 hour' * (FLOOR(RANDOM() * 5) + 1),
   (FLOOR(RANDOM() * 100))::INT,
-  CASE FLOOR(RANDOM() * 4)::INT
-    WHEN 0 THEN 'Easy'
-    WHEN 1 THEN 'Normal'
-    WHEN 2 THEN 'Hard'
-    ELSE 'Expert'
-  END,
+  'Unknown',
+  NULL,
+  NULL,
   NOW() - INTERVAL '2 hours',
   NOW() - INTERVAL '1 hour',
   CURRENT_DATE,
@@ -141,6 +140,8 @@ SELECT
   al.last_played,
   al.quest_progress,
   al.difficulty_level,
+  al.current_scene,
+  al.current_map,
   al.login_time,
   al.logout_time,
   al.session_date,

@@ -4,22 +4,13 @@ import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } 
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
 import { apiUrl } from '../api';
+import {
+  filterStudentProgress,
+  getDefaultSection,
+  getStudentProgressSectionOptions,
+  normalizeStudentProgressPayload,
+} from './studentProgress.utils';
 import '../styles/studentprogress.css';
-
-const defaultSectionMap = {
-  'Grade 1': ['Section A', 'Section B', 'Section C'],
-  'Grade 2': ['Section A', 'Section B', 'Section C'],
-  'Grade 3': ['Section A', 'Section B', 'Section C'],
-  'Grade 4': ['Section A', 'Section B', 'Section C'],
-  'Grade 5': ['Section A', 'Section B', 'Section C'],
-  'Grade 6': ['Section A', 'Section B', 'Section C'],
-};
-
-const getDefaultSection = (grade, studentId) => {
-  const letters = ['A', 'B', 'C'];
-  const index = studentId ? studentId % letters.length : 0;
-  return `Section ${letters[index]}`;
-};
 
 export default function StudentProgress() {
   const navigate = useNavigate();
@@ -59,13 +50,7 @@ export default function StudentProgress() {
         const studentsRes = studentsResult.value;
         if (!studentsRes.ok) throw new Error('Could not load students');
         const studentData = await studentsRes.json();
-        const normalized = studentData.map((row) => ({
-          ...row,
-          section: row.section || getDefaultSection(row.grade_level, row.student_id),
-          incorrect_answers: Number(row.incorrect_answers ?? (row.total_questions - row.correct_answers || 0)),
-          performance_percentage: Number(row.performance_percentage || row.accuracy_rate || row.progress_percentage || 0),
-        }));
-        setStudents(normalized);
+        setStudents(normalizeStudentProgressPayload(studentData));
 
         if (overviewResult.status === 'fulfilled' && overviewResult.value.ok) {
           const overviewData = await overviewResult.value.json();
@@ -96,28 +81,14 @@ export default function StudentProgress() {
   }, [students]);
 
   const sectionOptions = useMemo(() => {
-    const available = Array.from(
-      new Set(
-        students
-          .filter((s) => !selectedGrade || s.grade_level === selectedGrade)
-          .map((s) => s.section || getDefaultSection(s.grade_level, s.student_id))
-          .filter(Boolean)
-      )
-    ).sort();
-
-    if (selectedGrade && available.length === 0) {
-      return defaultSectionMap[selectedGrade] || ['Section A', 'Section B', 'Section C'];
-    }
-    return available;
+    return getStudentProgressSectionOptions(students, selectedGrade);
   }, [students, selectedGrade]);
 
   const filteredStudents = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    return students.filter((student) => {
-      const matchesGrade = selectedGrade ? student.grade_level === selectedGrade : true;
-      const matchesSection = selectedSection ? student.section === selectedSection : true;
-      const matchesSearch = query ? student.student_name?.toLowerCase().includes(query) : true;
-      return matchesGrade && matchesSection && matchesSearch;
+    return filterStudentProgress(students, {
+      searchQuery,
+      selectedGrade,
+      selectedSection,
     });
   }, [students, searchQuery, selectedGrade, selectedSection]);
 
@@ -261,9 +232,9 @@ export default function StudentProgress() {
                     <td>{student.incorrect_answers ?? 0}</td>
                     <td>{Number(student.performance_percentage || 0).toFixed(0)}%</td>
                     <td className="difficulty-cell">
-                      <div className="difficulty-chip easy">E {student.difficultyBreakdown?.easy ?? 0}%</div>
-                      <div className="difficulty-chip medium">M {student.difficultyBreakdown?.medium ?? 0}%</div>
-                      <div className="difficulty-chip hard">H {student.difficultyBreakdown?.hard ?? 0}%</div>
+                      <div className={`difficulty-chip ${String(student.difficulty_level || student.difficulty || 'Unknown').toLowerCase()}`}>
+                        {student.difficulty_level || student.difficulty || 'Unknown'}
+                      </div>
                     </td>
                     <td className="table-action-cell">
                       <button

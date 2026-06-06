@@ -126,4 +126,29 @@ describe('ScreenTimeMonitoring', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/login');
     expect(global.fetch).not.toHaveBeenCalled();
   });
+
+  test('sorts students by name and does not render Auto Save as a monitoring status', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
+    localStorage.setItem('rememberToken', 'remember-token');
+    global.fetch = jest.fn(() => jsonResponse({
+      data: [
+        { ...playtimePayload.data[0], id: 6, student_name: 'Noah Santos', child_name: 'Noah Santos', status: 'Auto Saved' },
+        { ...playtimePayload.data[0], id: 7, student_name: 'Ava Santos', child_name: 'Ava Santos', status: 'Playing' },
+      ],
+      pagination: { page: 1, limit: 20, total: 2, pages: 1 },
+    }));
+
+    act(() => {
+      root.render(<ScreenTimeMonitoring mode="all" />);
+    });
+    await waitForContent(container, 'Noah Santos');
+
+    expect(global.fetch.mock.calls[0][0]).toContain('sort_by=student_name');
+    expect(global.fetch.mock.calls[0][0]).toContain('sort_order=asc');
+    const dataRows = Array.from(container.querySelectorAll('tbody tr'));
+    expect(dataRows.map((row) => row.children[1]?.textContent)).toEqual(['Ava Santos', 'Noah Santos']);
+    expect(container.textContent).not.toContain('Auto Saved');
+    expect(container.textContent).not.toContain('Auto Save');
+    expect(container.textContent).toContain('Completed');
+  });
 });

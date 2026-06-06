@@ -64,6 +64,11 @@ const {
   getEmailSendTimeoutMs,
   sendEmailWithProviders,
 } = require('./emailDelivery.utils');
+const {
+  normalizePlaytimeStatus: normalizeMonitoringStatus,
+  resolveDifficultyFromScene,
+  sortRowsByStudentName,
+} = require('./progressScene.utils');
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -188,6 +193,9 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS lesson_progress DECIMAL(5, 2) DEFAULT 0.00');
     await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS total_quests_completed INTEGER DEFAULT 0');
     await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS total_play_time INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS current_scene TEXT');
+    await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS current_map TEXT');
+    await pool.query("ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS difficulty_level CHARACTER VARYING(20) DEFAULT 'Unknown'");
     await pool.query('CREATE INDEX IF NOT EXISTS idx_student_game_progress_student_id ON public.student_game_progress(student_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_student_game_progress_score ON public.student_game_progress(score DESC)');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.game_results (
@@ -225,7 +233,7 @@ const ensureSchema = async () => {
       total_play_time INTEGER DEFAULT 0,
       last_played TIMESTAMPTZ,
       quest_progress INTEGER DEFAULT 0,
-      difficulty_level VARCHAR(50) DEFAULT 'Normal',
+      difficulty_level VARCHAR(50) DEFAULT 'Unknown',
       login_time TIMESTAMPTZ,
       logout_time TIMESTAMPTZ,
       session_date DATE,
@@ -236,6 +244,8 @@ const ensureSchema = async () => {
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );`);
     await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS lesson_progress DECIMAL(5, 2) DEFAULT 0.00');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS current_scene TEXT');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS current_map TEXT');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_timestamp ON public.activity_logs(activity_timestamp DESC)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_student_name ON public.activity_logs(student_name)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_grade_section ON public.activity_logs(grade_level, section)');
@@ -495,11 +505,9 @@ const isWebsiteManagedAccountRole = (role) => (
 const accountHasTeacherAccess = (role) => ['teacher', 'parent_teacher'].includes(normalizeAccountRole(role));
 const accountHasParentAccess = (role) => ['parent', 'parent_teacher'].includes(normalizeAccountRole(role));
 const PLAYTIME_DAILY_LIMIT_MINUTES = 60;
-const PLAYTIME_STATUSES = ['Playing', 'Completed', 'Limit Reached', 'Auto Saved', 'Logged Out'];
 
 const normalizePlaytimeStatus = (status, fallback = 'Playing') => {
-  const value = String(status || '').trim().toLowerCase();
-  return PLAYTIME_STATUSES.find((item) => item.toLowerCase() === value) || fallback;
+  return normalizeMonitoringStatus(status, fallback);
 };
 
 const resolvePositiveInteger = (value) => {
@@ -558,10 +566,13 @@ const getDefaultSection = (gradeLevel, studentId) => {
 
 const normalizeStudentProgressRow = (row) => {
   const incorrectAnswers = Number(row.total_questions || 0) - Number(row.correct_answers || 0);
+  const difficultyLevel = resolveDifficultyFromScene(row);
   return {
     ...row,
     section: row.section || getDefaultSection(row.grade_level, row.student_id),
     incorrect_answers: incorrectAnswers < 0 ? 0 : incorrectAnswers,
+    difficulty: difficultyLevel,
+    difficulty_level: difficultyLevel,
   };
 };
 
@@ -2910,9 +2921,11 @@ app.post('/api/game/progress', async (req, res) => {
     activity_description = 'Gameplay progress saved',
     login_time,
     logout_time,
-    difficulty_level = 'Normal',
   } = req.body || {};
   const grade_level = req.body?.grade_level || grade;
+  const current_scene = req.body?.current_scene || req.body?.currentScene || req.body?.scene || req.body?.scene_name || null;
+  const current_map = req.body?.current_map || req.body?.currentMap || req.body?.map || req.body?.map_name || null;
+  const difficulty_level = resolveDifficultyFromScene({ ...req.body, current_scene, current_map });
   const total_play_time = req.body?.total_play_time ?? req.body?.duration_seconds ?? req.body?.duration;
   const normalizedProgressPayload = {
     ...req.body,
@@ -3056,9 +3069,12 @@ app.post('/api/game/progress', async (req, res) => {
              lesson_progress = $10,
              total_quests_completed = GREATEST(COALESCE(total_quests_completed, 0), $11),
              total_play_time = GREATEST(COALESCE(total_play_time, 0), $12),
+             current_scene = COALESCE($13, current_scene),
+             current_map = COALESCE($14, current_map),
+             difficulty_level = $15,
              last_played = NOW(),
              updated_at = NOW()
-         WHERE id = $13
+         WHERE id = $16
          RETURNING *`,
         [
           studentName,
@@ -3073,6 +3089,9 @@ app.post('/api/game/progress', async (req, res) => {
           lessonProgressValue,
           totalQuestsCompletedValue,
           totalPlayTimeValue,
+          current_scene,
+          current_map,
+          difficulty_level,
           existingProgress.rows[0].id,
         ]
       );
@@ -3082,9 +3101,9 @@ app.post('/api/game/progress', async (req, res) => {
           student_id, student_name, grade_level, section, current_quest,
           score, correct_answers, total_questions, accuracy_rate,
           progress_percentage, lesson_progress, total_quests_completed, total_play_time,
-          last_played, created_at, updated_at
+          current_scene, current_map, difficulty_level, last_played, created_at, updated_at
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW(), NOW()
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW(), NOW()
         )
         RETURNING *`,
         [
@@ -3101,6 +3120,9 @@ app.post('/api/game/progress', async (req, res) => {
           lessonProgressValue,
           totalQuestsCompletedValue,
           totalPlayTimeValue,
+          current_scene,
+          current_map,
+          difficulty_level,
         ]
       );
     }
@@ -3109,10 +3131,10 @@ app.post('/api/game/progress', async (req, res) => {
       `INSERT INTO public.activity_logs (
         student_id, student_name, grade_level, section, current_quest,
         save_status, total_play_time, last_played, quest_progress, lesson_progress,
-        difficulty_level, role, status, activity_description,
+        difficulty_level, role, status, activity_description, current_scene, current_map,
         login_time, logout_time, session_date, activity_timestamp, created_at
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, COALESCE($12, NOW()), $8, $9, $10, 'Student', 'Online', $11,
+        $1, $2, $3, $4, $5, $6, $7, COALESCE($12, NOW()), $8, $9, $10, 'Student', 'Online', $11, $14, $15,
         COALESCE($12, NOW()), $13, CURRENT_DATE, COALESCE($12, NOW()), NOW()
       )
       RETURNING *`,
@@ -3130,6 +3152,8 @@ app.post('/api/game/progress', async (req, res) => {
         activity_description,
         login_time || activityTimestamp,
         logout_time || null,
+        current_scene,
+        current_map,
       ]
     );
 
@@ -3157,7 +3181,6 @@ app.post('/api/game/result', async (req, res) => {
     resolved_student_id,
     student_name,
     grade,
-    difficulty,
     topic,
     score,
   } = req.body || {};
@@ -3165,6 +3188,7 @@ app.post('/api/game/result', async (req, res) => {
   const math_topic = req.body?.math_topic || topic;
   const total_items = req.body?.total_items ?? req.body?.total_questions;
   const played_at = req.body?.played_at || req.body?.timestamp;
+  const difficulty = resolveDifficultyFromScene(req.body || {});
 
   const parentCode = normalizeParentCode(parent_id);
   const submittedStudentId = resolveScopeId(student_id ?? resolved_student_id);
@@ -3251,7 +3275,7 @@ app.post('/api/game/result', async (req, res) => {
         resultStudentName,
         resolvedStudentId,
         grade_level || null,
-        difficulty || null,
+        difficulty,
         math_topic || null,
         Math.round(scoreValue),
         Math.round(totalItemsValue),
@@ -3794,7 +3818,6 @@ app.post('/api/activity-logs', async (req, res) => {
     save_status = 'pending',
     total_play_time = 0,
     quest_progress = 0,
-    difficulty_level = 'Normal',
     role = 'Student',
     status = 'Online',
     activity_description = 'Gameplay Session'
@@ -3808,15 +3831,18 @@ app.post('/api/activity-logs', async (req, res) => {
     const gradeValue = String(grade_level || grade || '').trim() || null;
     const durationValue = parseActivityDurationSeconds(duration_seconds ?? duration ?? total_play_time);
     const activityTime = started_at || timestamp || req.body.last_played || null;
+    const currentScene = req.body.current_scene || req.body.currentScene || req.body.scene || req.body.scene_name || null;
+    const currentMap = req.body.current_map || req.body.currentMap || req.body.map || req.body.map_name || null;
+    const difficultyLevel = resolveDifficultyFromScene({ ...req.body, current_scene: currentScene, current_map: currentMap });
 
     const result = await pool.query(
       `INSERT INTO public.activity_logs (
         student_id, student_name, grade_level, section, current_quest,
         save_status, total_play_time, last_played, quest_progress,
-        difficulty_level, role, status, activity_description,
+        difficulty_level, role, status, activity_description, current_scene, current_map,
         login_time, session_date, activity_timestamp, created_at
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, COALESCE($13::timestamptz, NOW()), $8, $9, $10, $11, $12,
+        $1, $2, $3, $4, $5, $6, $7, COALESCE($13::timestamptz, NOW()), $8, $9, $10, $11, $12, $14, $15,
         COALESCE($13::timestamptz, NOW()), CURRENT_DATE, COALESCE($13::timestamptz, NOW()), NOW()
       ) RETURNING *`,
       [
@@ -3828,11 +3854,13 @@ app.post('/api/activity-logs', async (req, res) => {
         save_status,
         durationValue,
         quest_progress,
-        difficulty_level,
+        difficultyLevel,
         role,
-        status,
+        normalizeMonitoringStatus(status, 'Online'),
         activity_description,
-        activityTime
+        activityTime,
+        currentScene,
+        currentMap
       ]
     );
 
@@ -3961,8 +3989,8 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
       total_playtime_minutes: 'ps.total_playtime_minutes',
       status: 'ps.status',
     };
-    const sortField = sortMap[String(req.query.sort_by || 'date').trim()] || 'ps.date_played';
-    const sortDirection = String(req.query.sort_order || 'desc').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    const sortField = sortMap[String(req.query.sort_by || 'student_name').trim()] || 'ps.student_name';
+    const sortDirection = String(req.query.sort_order || 'asc').toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
 
     const params = [];
     const filterResult = applyPlaytimeFilters({ req, params, scope });
@@ -4003,7 +4031,10 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
 
     const total = Number(countResult.rows[0]?.total || 0);
     res.json({
-      data: result.rows,
+      data: result.rows.map((row) => ({
+        ...row,
+        status: normalizePlaytimeStatus(row.status, 'Offline'),
+      })),
       pagination: {
         page,
         limit,
@@ -4310,14 +4341,14 @@ app.get('/api/students/progress', async (req, res) => {
     `;
     query += appendTeacherScopeFilter({ teacherId, params, studentColumn: 'p.student_id' });
     query += appendParentScopeFilter({ parentId, params, studentColumn: 'p.student_id' });
-    query += ' ORDER BY p.score DESC, p.accuracy_rate DESC';
+    query += " ORDER BY LOWER(COALESCE(NULLIF(a.name, ''), NULLIF(p.student_name, ''), '')), p.student_id ASC";
 
     const result = await pool.query(query, params);
-    const rows = result.rows.map(normalizeStudentProgressRow).map((row) => ({
+    const rows = sortRowsByStudentName(result.rows.map(normalizeStudentProgressRow).map((row) => ({
       ...row,
       performance_percentage: row.accuracy_rate || row.progress_percentage || 0,
       difficultyBreakdown: generateStudentAnalysis(row).difficultyBreakdown,
-    }));
+    })));
     res.json(rows);
   } catch (err) {
     console.error('Fetch students progress failed:', err.message);

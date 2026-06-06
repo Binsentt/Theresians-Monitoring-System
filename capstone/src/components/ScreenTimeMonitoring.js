@@ -6,10 +6,11 @@ import logoImage from '../assets/images/STS_Logo.png';
 import { apiUrl } from '../api';
 import { buildAuthHeaders, getStoredUserSession } from './session.utils';
 import { normalizeRole } from './manageUsers.utils';
+import { sortStudentsByName } from './studentProgress.utils';
 import '../styles/screenTime.css';
 
 const GRADES = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
-const STATUSES = ['Playing', 'Completed', 'Limit Reached', 'Auto Saved', 'Logged Out'];
+const STATUSES = ['Active', 'Playing', 'Online', 'Offline', 'Completed', 'In Progress'];
 const SORT_OPTIONS = [
   { value: 'date', label: 'Date' },
   { value: 'student_name', label: 'Student Name' },
@@ -25,8 +26,37 @@ const initialFilters = {
   student_id: '',
   parent_id: '',
   status: '',
-  sort_by: 'date',
-  sort_order: 'desc',
+  sort_by: 'student_name',
+  sort_order: 'asc',
+};
+
+const statusLabels = {
+  active: 'Active',
+  playing: 'Playing',
+  online: 'Online',
+  offline: 'Offline',
+  completed: 'Completed',
+  inprogress: 'In Progress',
+};
+
+const normalizeMonitoringStatus = (status) => {
+  const key = String(status || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+
+  if (['autosave', 'autosaved', 'limitreached'].includes(key)) return 'Completed';
+  if (key === 'loggedout') return 'Offline';
+  return statusLabels[key] || 'Offline';
+};
+
+const normalizePlaytimeRecords = (items, filters) => {
+  const normalized = (Array.isArray(items) ? items : []).map((record) => ({
+    ...record,
+    status: normalizeMonitoringStatus(record.status),
+  }));
+
+  return filters?.sort_by === 'student_name' ? sortStudentsByName(normalized) : normalized;
 };
 
 const formatDate = (value) => {
@@ -58,8 +88,8 @@ const formatDuration = (minutes) => {
 const buildQueryString = (filters, mode) => {
   const params = new URLSearchParams();
   params.set('limit', '50');
-  params.set('sort_by', filters.sort_by || 'date');
-  params.set('sort_order', filters.sort_order || 'desc');
+  params.set('sort_by', filters.sort_by || 'student_name');
+  params.set('sort_order', filters.sort_order || 'asc');
 
   Object.entries(filters).forEach(([key, value]) => {
     const trimmed = String(value || '').trim();
@@ -120,7 +150,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
         if (!response.ok) throw new Error('Failed to load playtime sessions');
         const payload = await response.json();
         if (cancelled) return;
-        setRecords(Array.isArray(payload.data) ? payload.data : []);
+        setRecords(normalizePlaytimeRecords(payload.data, filters));
         setPagination(payload.pagination || { total: 0, pages: 1, page: 1 });
       } catch (err) {
         console.error('Screen time load failed:', err);

@@ -1,7 +1,0 @@
-/mathletes-part1-filter/
-
-node_modules/
-.npm-cache-cli/
-.cache/
-dist/
-build/

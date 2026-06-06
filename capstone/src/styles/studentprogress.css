@@ -317,6 +317,7 @@
 .difficulty-chip.easy { background: var(--success-color, #16a34a); }
 .difficulty-chip.medium { background: var(--warning-color, #d97706); }
 .difficulty-chip.hard { background: var(--error-color, #dc2626); }
+.difficulty-chip.unknown { background: #64748b; }
 
 /* Pagination */
 .pagination-row {

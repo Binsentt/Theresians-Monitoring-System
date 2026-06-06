@@ -6,6 +6,10 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../database/db');
+const {
+  normalizePlaytimeStatus,
+  resolveDifficultyFromScene,
+} = require('../progressScene.utils');
 
 /**
  * GET /api/activity-logs
@@ -280,7 +284,6 @@ router.post('/activity-logs', async (req, res) => {
       save_status = 'pending',
       total_play_time = 0,
       quest_progress = 0,
-      difficulty_level = 'Normal',
       role = 'Student',
       status = 'Online',
       activity_description = 'Gameplay Session'
@@ -311,9 +314,9 @@ router.post('/activity-logs', async (req, res) => {
       save_status,
       total_play_time,
       quest_progress,
-      difficulty_level,
+      resolveDifficultyFromScene(req.body || {}),
       role,
-      status,
+      normalizePlaytimeStatus(status, 'Online'),
       activity_description
     ]);
 

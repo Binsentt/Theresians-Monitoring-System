@@ -13,6 +13,7 @@ import {
   normalizeDisplayList,
   normalizeStudentProgressPayload,
   safeDisplayText,
+  sortStudentsByName,
   toFiniteNumber,
 } from './studentProgress.utils';
 import '../styles/studentprogress.css';
@@ -70,7 +71,7 @@ export default function ParentChildProgress() {
         );
         // Keep linked children visible even when no aggregate progress row has been created yet.
         const linkedChildren = Array.isArray(childrenPayload?.children) ? childrenPayload.children : [];
-        const normalizedStudents = linkedChildren.map((child) => {
+        const normalizedStudents = sortStudentsByName(linkedChildren.map((child) => {
           const studentId = child.student_id || child.id;
           const progress = progressByStudentId.get(String(studentId)) || {};
           return {
@@ -80,7 +81,7 @@ export default function ParentChildProgress() {
             student_id: studentId || progress.student_id,
             student_name: child.student_name || child.name || progress.student_name,
           };
-        });
+        }));
 
         setStudents(normalizedStudents);
         setUnlinkedCount(Number(childrenPayload.unlinked_count || 0));

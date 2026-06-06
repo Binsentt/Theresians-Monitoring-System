@@ -227,9 +227,9 @@ export default function AdminStudentProgress() {
                           <td>{student.incorrect_answers ?? 0}</td>
                           <td>{Number(student.performance_percentage || 0).toFixed(0)}%</td>
                           <td className="difficulty-cell">
-                            <div className="difficulty-chip easy">E {student.difficultyBreakdown?.easy ?? 0}%</div>
-                            <div className="difficulty-chip medium">M {student.difficultyBreakdown?.medium ?? 0}%</div>
-                            <div className="difficulty-chip hard">H {student.difficultyBreakdown?.hard ?? 0}%</div>
+                            <div className={`difficulty-chip ${String(student.difficulty_level || student.difficulty || 'Unknown').toLowerCase()}`}>
+                              {student.difficulty_level || student.difficulty || 'Unknown'}
+                            </div>
                           </td>
                           <td className="table-action-cell">
                             <button

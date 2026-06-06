@@ -143,6 +143,23 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).not.toContain('Quiz Sessions');
   });
 
+  test('orders multiple child selectors alphabetically by child name', async () => {
+    global.fetch = jest.fn((url) => successPayloadForUrl(url, {
+      children: [
+        { id: 45, student_name: 'Noah Santos', grade_level: 'Grade 1', section: 'Section B' },
+        { id: 44, student_name: 'Ava Santos', grade_level: 'Grade 3', section: 'Section A' },
+      ],
+      unlinked_count: 0,
+    }));
+
+    await act(async () => {
+      root.render(<ParentChildProgress />);
+    });
+
+    const childButtons = Array.from(container.querySelectorAll('.child-selector-card'));
+    expect(childButtons.map((button) => button.querySelector('strong')?.textContent)).toEqual(['Ava Santos', 'Noah Santos']);
+  });
+
   test('shows the unlinked game session warning from the parent children response', async () => {
     global.fetch = jest.fn((url) => successPayloadForUrl(url, {
       children: [{

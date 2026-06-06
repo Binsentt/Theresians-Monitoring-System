@@ -2,6 +2,7 @@ import {
   filterStudentProgress,
   getDefaultSection,
   normalizeStudentProgressPayload,
+  resolveDifficultyFromScene,
 } from './studentProgress.utils';
 
 describe('student progress helpers', () => {
@@ -58,5 +59,24 @@ describe('student progress helpers', () => {
   test('builds a deterministic default section when the backend does not provide one', () => {
     expect(getDefaultSection('Grade 2', 3)).toBe('Section A');
     expect(getDefaultSection('Grade 2', 4)).toBe('Section B');
+  });
+
+  test('maps current Godot scene or map to the displayed difficulty instead of manual values', () => {
+    expect(resolveDifficultyFromScene({ current_scene: 'res://world/oak_leaf_village.tscn', difficulty_level: 'Hard' })).toBe('Easy');
+    expect(resolveDifficultyFromScene({ current_map: 'city_of_knowledge' })).toBe('Medium');
+    expect(resolveDifficultyFromScene({ currentScene: 'pinehill_village.tscn' })).toBe('Hard');
+    expect(resolveDifficultyFromScene({ current_scene: 'unknown_scene.tscn' })).toBe('Unknown');
+    expect(resolveDifficultyFromScene({ difficulty_level: 'Easy' })).toBe('Unknown');
+  });
+
+  test('normalizes student progress rows alphabetically and derives difficulty from scene data', () => {
+    const result = normalizeStudentProgressPayload([
+      { student_id: 2, student_name: 'Noah Santos', current_scene: 'pinehill_village.tscn', difficulty_level: 'Easy' },
+      { student_id: 1, student_name: 'Ava Santos', current_map: 'oak_leaf_village', difficulty_level: 'Hard' },
+      { student_id: 3, student_name: 'Bella Reyes', current_scene: 'city_of_knowledge.tscn' },
+    ]);
+
+    expect(result.map((student) => student.student_name)).toEqual(['Ava Santos', 'Bella Reyes', 'Noah Santos']);
+    expect(result.map((student) => student.difficulty_level)).toEqual(['Easy', 'Medium', 'Hard']);
   });
 });

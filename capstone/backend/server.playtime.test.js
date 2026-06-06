@@ -305,6 +305,52 @@ test('my child playtime is scoped to the authenticated parent linkage and parent
   assert.deepEqual(scopedParams.slice(0, 4), [10, '123456', 44, 'Completed']);
 });
 
+test('playtime list defaults to student name ordering and hides Auto Save statuses', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let listSql = '';
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
+    }
+    if (sql.startsWith('select count(*)::integer as total from public.playtime_sessions ps')) {
+      return resultRows([{ total: 1 }]);
+    }
+    if (sql.startsWith('select ps.id')) {
+      listSql = sql;
+      return resultRows([{
+        id: 6,
+        student_id: 45,
+        parent_id: '123456',
+        student_name: 'Noah Santos',
+        child_name: 'Noah Santos',
+        grade_level: 'Grade 3',
+        section: 'Section B',
+        date_played: '2026-06-02',
+        start_time: '2026-06-02T09:00:00.000Z',
+        end_time: '2026-06-02T09:30:00.000Z',
+        total_playtime_minutes: 30,
+        status: 'Auto Saved',
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime', {
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(listSql, /order by ps\.student_name asc/);
+  assert.equal(response.body.data[0].status, 'Completed');
+});
+
 test('daily playtime limit reports remaining minutes and can_play status', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;

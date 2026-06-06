@@ -9,6 +9,12 @@ const defaultSectionMap = {
 
 const defaultSections = ['Section A', 'Section B', 'Section C'];
 
+const sceneDifficultyMap = {
+  oak_leaf_village: 'Easy',
+  city_of_knowledge: 'Medium',
+  pinehill_village: 'Hard',
+};
+
 const toNumber = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -47,6 +53,52 @@ export const normalizeDisplayList = (items) => {
     .filter(Boolean);
 };
 
+const normalizeSceneKey = (value) => {
+  const pathPart = String(value || '').trim().toLowerCase().replace(/\\/g, '/').split('/').filter(Boolean).pop() || '';
+  return pathPart
+    .replace(/\?.*$/, '')
+    .replace(/\.tscn$/i, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+};
+
+export const resolveDifficultyFromScene = (row = {}) => {
+  const candidates = [
+    row.current_scene,
+    row.currentScene,
+    row.scene,
+    row.scene_name,
+    row.current_map,
+    row.currentMap,
+    row.map,
+    row.map_name,
+  ];
+
+  for (const candidate of candidates) {
+    const key = normalizeSceneKey(candidate);
+    if (sceneDifficultyMap[key]) {
+      return sceneDifficultyMap[key];
+    }
+  }
+
+  return 'Unknown';
+};
+
+const getStudentDisplayName = (student = {}) => safeDisplayText(
+  student.student_name || student.child_name || student.name,
+  ''
+).trim();
+
+export const sortStudentsByName = (students) => {
+  if (!Array.isArray(students)) return [];
+  return students.slice().sort((left, right) => (
+    getStudentDisplayName(left).localeCompare(getStudentDisplayName(right), undefined, {
+      sensitivity: 'base',
+      numeric: true,
+    })
+  ));
+};
+
 export const getDefaultSection = (grade, studentId) => {
   const letters = ['A', 'B', 'C'];
   const index = studentId ? studentId % letters.length : 0;
@@ -57,6 +109,7 @@ export const normalizeStudentProgressRow = (row = {}) => {
   const totalQuestions = toNumber(row.total_questions);
   const correctAnswers = toNumber(row.correct_answers);
   const fallbackIncorrectAnswers = Math.max(totalQuestions - correctAnswers, 0);
+  const difficultyLevel = resolveDifficultyFromScene(row);
 
   return {
     ...row,
@@ -70,6 +123,8 @@ export const normalizeStudentProgressRow = (row = {}) => {
       medium: toNumber(row.difficultyBreakdown?.medium),
       hard: toNumber(row.difficultyBreakdown?.hard),
     },
+    difficulty: difficultyLevel,
+    difficulty_level: difficultyLevel,
   };
 };
 
@@ -80,7 +135,7 @@ export const normalizeStudentProgressPayload = (payload) => {
       ? payload.data
       : [];
 
-  return rows.map((row) => normalizeStudentProgressRow(row));
+  return sortStudentsByName(rows.map((row) => normalizeStudentProgressRow(row)));
 };
 
 export const getStudentProgressSectionOptions = (students, selectedGrade = '') => {

@@ -307,16 +307,18 @@
 }
 
 .controls-wrapper {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(240px, 1fr) minmax(150px, 180px) auto auto;
     gap: 12px;
     align-items: center;
-    flex-wrap: wrap;
+    justify-content: end;
+    width: min(100%, 820px);
     min-width: 0;
 }
 
 .sts-search-input,
 .sts-select {
-    width: min(100%, 250px);
+    width: 100%;
     max-width: 100%;
     min-height: 44px;
     padding: 10px 15px;
@@ -1049,13 +1051,14 @@
     }
 
     .controls-wrapper {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         width: 100%;
     }
 
     .sts-search-input,
     .sts-select,
     .sts-add-btn {
-        flex: 1 1 min(100%, 220px);
+        width: 100%;
     }
 }
 
@@ -1097,11 +1100,12 @@
     }
 
     .controls-wrapper {
-        flex-direction: column;
         gap: 10px;
+        grid-template-columns: 1fr;
     }
 
-    .sts-search-input {
+    .sts-search-input,
+    .sts-select {
         width: 100%;
         max-width: none;
     }

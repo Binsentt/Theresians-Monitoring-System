@@ -102,6 +102,7 @@ export default function StudentAnalytics() {
               <p><strong>Name:</strong> {safeDisplayText(progress?.student_name, 'N/A')}</p>
               <p><strong>Grade:</strong> {safeDisplayText(progress?.grade_level, 'N/A')}</p>
               <p><strong>Section:</strong> {safeDisplayText(progress?.section, 'N/A')}</p>
+              <p><strong>Difficulty:</strong> {safeDisplayText(progress?.difficulty_level || progress?.difficulty, 'Unknown')}</p>
             </div>
             <div className="student-card">
               <h3>Performance Summary</h3>

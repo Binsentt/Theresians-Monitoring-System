@@ -9,6 +9,7 @@ import {
   shouldShowActivityLogFilters,
 } from './activityLog.utils';
 import { buildScopedApiUrl } from './analyticsEndpoints';
+import { sortStudentsByName } from './studentProgress.utils';
 
 const GRADE_SECTIONS = {
   'Grade 1': ['Section A', 'Section B'],
@@ -71,7 +72,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
         const response = await fetch(buildScopedApiUrl('/api/parent/children', 'parent', userId));
         if (!response.ok) throw new Error('Failed to load children');
         const payload = await response.json();
-        const children = Array.isArray(payload?.children) ? payload.children : [];
+        const children = sortStudentsByName(Array.isArray(payload?.children) ? payload.children : []);
         if (cancelled) return;
         setParentChildren(children);
         setSelectedChildId((current) => {
