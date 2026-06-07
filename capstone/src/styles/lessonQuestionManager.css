@@ -242,6 +242,19 @@
   transform: none;
 }
 
+.folder-breadcrumb-button:disabled {
+  color: var(--text-muted, #64748b);
+  cursor: default;
+}
+
+.folder-breadcrumb-button:disabled:hover {
+  transform: none;
+}
+
+.breadcrumb-separator {
+  color: var(--text-muted, #64748b);
+}
+
 .folder-search-field {
   width: min(320px, 100%);
   min-width: 0;
@@ -264,6 +277,13 @@
   min-width: 0;
 }
 
+button.drive-folder-card {
+  width: 100%;
+  color: var(--text-primary, #0b2447);
+  font: inherit;
+  text-align: left;
+}
+
 .drive-folder-card:hover,
 .drive-folder-card:focus {
   border-color: rgba(37, 99, 235, 0.42);
@@ -283,6 +303,12 @@
 .drive-folder-card-main strong,
 .file-name-title {
   overflow-wrap: anywhere;
+}
+
+.drive-folder-card-main strong {
+  overflow-wrap: normal;
+  white-space: nowrap;
+  word-break: keep-all;
 }
 
 .drive-folder-card-main svg {
@@ -416,7 +442,7 @@
 }
 
 .fixed-question-grid .drive-folder-card {
-  cursor: default;
+  cursor: pointer;
 }
 
 .fixed-difficulty-list {
@@ -434,6 +460,10 @@
   color: var(--text-primary, #0b2447);
   padding: 11px 12px;
   font-weight: 700;
+}
+
+.folder-file-filters {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .storage-summary {

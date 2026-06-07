@@ -16,7 +16,7 @@ const {
 } = require('./learningContentRules.utils');
 
 test('stores the approved lesson difficulties exactly', () => {
-  assert.deepEqual(ALLOWED_DIFFICULTIES, ['Easy', 'Normal', 'Difficult']);
+  assert.deepEqual(ALLOWED_DIFFICULTIES, ['Easy', 'Medium', 'Hard']);
 });
 
 test('maps math topics by grade and difficulty', () => {
@@ -26,26 +26,29 @@ test('maps math topics by grade and difficulty', () => {
     'Shapes',
     'Place Value',
   ]);
-  assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 2', 'Difficult'), [
+  assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 2', 'Hard'), [
     'Problem Solving',
     'Multiplication',
     'Division',
     'Fractions',
   ]);
-  assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 3', 'Normal'), [
+  assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 3', 'Medium'), [
     'Multiplication',
     'Division',
     'Fractions',
   ]);
-  assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 6', 'Difficult'), [
+  assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 6', 'Hard'), [
     'Rational Numbers',
     'Geometric Measurements',
   ]);
   assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 6', 'Average'), [
     'Number Sense and Operations',
   ]);
-  assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 6', 'Hard'), []);
-  assert.deepEqual(GRADE_TOPIC_MAP['Grade 5'].Normal, [
+  assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 6', 'Difficult'), [
+    'Rational Numbers',
+    'Geometric Measurements',
+  ]);
+  assert.deepEqual(GRADE_TOPIC_MAP['Grade 5'].Medium, [
     'Number Theory',
     'Basic Arithmetic',
   ]);
@@ -61,11 +64,12 @@ test('keeps grade topic helpers constrained to configured topics', () => {
 
 test('validates topic combinations against grade and difficulty', () => {
   assert.equal(isValidDifficulty('Easy'), true);
-  assert.equal(isValidDifficulty('Hard'), false);
+  assert.equal(isValidDifficulty('Hard'), true);
+  assert.equal(isValidDifficulty('Normal'), true);
   assert.equal(
     isValidMathTopicForGradeDifficulty(
       'Grade 1',
-      'Normal',
+      'Medium',
       'Addition'
     ),
     true
@@ -81,7 +85,7 @@ test('validates topic combinations against grade and difficulty', () => {
   assert.equal(
     validateLearningMetadata({
       grade_level: 'Grade 2',
-      difficulty: 'Normal',
+      difficulty: 'Medium',
       math_topic: 'Multiplication',
     }),
     ''
@@ -89,15 +93,15 @@ test('validates topic combinations against grade and difficulty', () => {
   assert.equal(
     validateLearningMetadata({
       grade_level: 'Grade 2',
-      difficulty: 'Medium',
+      difficulty: 'Impossible',
       math_topic: 'Multiplication',
     }),
-    'Difficulty must be Easy, Normal, or Difficult.'
+    'Difficulty must be Easy, Medium, or Hard.'
   );
   assert.equal(
     validateLearningMetadata({
       grade_level: 'Grade 2',
-      difficulty: 'Normal',
+      difficulty: 'Medium',
       math_topic: 'Measurement',
     }),
     'Topic must match the selected grade level and difficulty.'

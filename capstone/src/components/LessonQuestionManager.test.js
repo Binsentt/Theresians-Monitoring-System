@@ -26,6 +26,15 @@ const setSelectValue = (field, value) => {
   field.dispatchEvent(new Event('change', { bubbles: true }));
 };
 
+const openQuestionFolder = async (container, gradeLevel, difficulty) => {
+  await act(async () => {
+    clickByText(container, gradeLevel);
+  });
+  await act(async () => {
+    clickByText(container, difficulty);
+  });
+};
+
 describe('LessonQuestionManager upload and trash controls', () => {
   let container;
   let root;
@@ -62,7 +71,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
           title: 'addition-quiz',
           file_name: 'addition-quiz.json',
           grade_level: 'Grade 1',
-          difficulty: 'Normal',
+          difficulty: 'Medium',
           math_topic: 'Addition, Multiplication, and Word Problems',
           file_type: 'fixed_questions',
           published: false,
@@ -117,15 +126,15 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     await act(async () => {
       setSelectValue(selects[0], 'Grade 3');
-      setSelectValue(selects[1], 'Normal');
+      setSelectValue(selects[1], 'Medium');
     });
 
     expect(topicSelect.disabled).toBe(false);
     expect(topicSelect.textContent).toContain('Multiplication');
     expect(topicSelect.textContent).toContain('Division');
     expect(topicSelect.textContent).toContain('Fractions');
-    expect(container.textContent).toContain('Normal / Average');
-    expect(container.querySelector('.fixed-destination-display').textContent.trim()).toBe('Questions/');
+    expect(container.textContent).toContain('Medium');
+    expect(container.querySelector('.fixed-destination-display').textContent.trim()).toBe('Questions/Grade 3/Medium');
     expect(container.textContent).not.toContain('Select Folder');
     expect(container.textContent).not.toContain('New Folder');
     expect(container.textContent).toContain('Lesson File');
@@ -169,7 +178,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     await act(async () => {
       setSelectValue(selects[0], 'Grade 1');
-      setSelectValue(selects[1], 'Normal');
+      setSelectValue(selects[1], 'Medium');
       Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
       fileInput.dispatchEvent(new Event('change', { bubbles: true }));
     });
@@ -180,7 +189,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     expect(container.textContent).toContain('File uploaded successfully');
     expect(container.textContent).toContain('addition-quiz');
-    expect(container.textContent).toContain('Normal');
+    expect(container.textContent).toContain('Medium');
     expect(container.textContent).toContain('Staged');
     expect(container.querySelector('.drive-upload-modal')).toBeNull();
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/questions/publish/77'), expect.anything());
@@ -193,7 +202,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       file_name: 'addition-quiz.json',
       file_url: '/uploads/addition-quiz.json',
       grade_level: 'Grade 1',
-      difficulty: 'Normal',
+      difficulty: 'Medium',
       math_topic: 'Addition',
       file_type: 'fixed_questions',
       published: false,
@@ -203,6 +212,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
     await act(async () => {
       root.render(<LessonQuestionManager />);
     });
+
+    await openQuestionFolder(container, 'Grade 1', 'Medium');
 
     expect(container.textContent).not.toContain('Uploaded by');
     expect(container.textContent).not.toContain('Teacher User');
@@ -218,7 +229,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       file_name: 'addition-quiz.json',
       file_url: '/uploads/addition-quiz.json',
       grade_level: 'Grade 1',
-      difficulty: 'Normal',
+      difficulty: 'Medium',
       math_topic: 'Addition',
       file_type: 'fixed_questions',
       published: false,
@@ -227,6 +238,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
     await act(async () => {
       root.render(<LessonQuestionManager />);
     });
+
+    await openQuestionFolder(container, 'Grade 1', 'Medium');
 
     expect(container.textContent).toContain('Staged');
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/questions/publish/77'), expect.anything());
@@ -247,7 +260,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       file_name: 'addition-quiz.json',
       file_url: '/uploads/addition-quiz.json',
       grade_level: 'Grade 1',
-      difficulty: 'Normal',
+      difficulty: 'Medium',
       math_topic: 'Addition',
       file_type: 'fixed_questions',
       published: false,
@@ -257,10 +270,73 @@ describe('LessonQuestionManager upload and trash controls', () => {
       root.render(<LessonQuestionManager />);
     });
 
+    await openQuestionFolder(container, 'Grade 1', 'Medium');
+
     await act(async () => {
       clickByText(container, 'Delete');
     });
 
     expect(container.textContent).not.toContain('addition-quiz');
+  });
+
+  test('opens Questions, Grade, and Difficulty folders with breadcrumbs and scoped files', async () => {
+    fixtures.files = [
+      {
+        id: 77,
+        title: 'addition-quiz',
+        file_name: 'addition-quiz.json',
+        file_url: '/uploads/addition-quiz.json',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+        file_type: 'fixed_questions',
+        published: false,
+        uploaded_at: '2026-06-01T00:00:00.000Z',
+      },
+      {
+        id: 78,
+        title: 'medium-quiz',
+        file_name: 'medium-quiz.json',
+        grade_level: 'Grade 1',
+        difficulty: 'Medium',
+        math_topic: 'Addition',
+        file_type: 'fixed_questions',
+        published: true,
+      },
+    ];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+
+    expect(container.textContent).toContain('Questions');
+    expect(container.textContent).toContain('Grade 1');
+    expect(container.textContent).toContain('Grade 6');
+    expect(container.textContent).not.toContain('Grade1');
+
+    await act(async () => {
+      clickByText(container, 'Grade 1');
+    });
+
+    expect(container.textContent).toContain('Questions > Grade 1');
+    expect(container.textContent).toContain('Easy');
+    expect(container.textContent).toContain('Medium');
+    expect(container.textContent).toContain('Hard');
+    expect(container.textContent).not.toContain('addition-quiz');
+
+    await act(async () => {
+      clickByText(container, 'Easy');
+    });
+
+    expect(container.textContent).toContain('Questions > Grade 1 > Easy');
+    expect(container.textContent).toContain('addition-quiz');
+    expect(container.textContent).toContain('Basic Addition');
+    expect(container.textContent).toContain('Fixed Question File');
+    expect(container.textContent).toContain('Staged');
+    expect(container.textContent).not.toContain('medium-quiz');
+    expect(container.textContent).toContain('Rename');
+    expect(container.textContent).toContain('Preview');
+    expect(container.textContent).toContain('Delete');
+    expect(container.textContent).toContain('Push to Game');
   });
 });

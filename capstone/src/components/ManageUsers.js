@@ -188,7 +188,7 @@ export default function ManageUsers() {
           return;
         }
         setUser(loggedInUser);
-        loadUsers();
+        await loadUsers();
       } catch (error) {
         console.error('Error loading data:', error);
         navigate('/login');
@@ -552,6 +552,7 @@ export default function ManageUsers() {
   };
 
   useEffect(() => {
+    if (!user) return;
     loadUsers();
   }, [showArchived]);
 

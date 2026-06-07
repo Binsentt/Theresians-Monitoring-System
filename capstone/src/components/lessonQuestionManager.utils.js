@@ -12,12 +12,17 @@ export {
 
 export const QUESTION_FOLDER_STRUCTURE = GRADE_LEVELS.map((grade) => ({
   grade,
-  folderName: grade.replace(/\s+/g, ''),
+  folderName: grade,
+  godotFolderName: grade.replace(/\s+/g, ''),
   difficulties: DIFFICULTY_LEVELS,
 }));
 
 export const getQuestionFolderPath = (gradeLevel, difficulty) => {
-  return 'Questions/';
+  const grade = normalizeLearningMetadataValue(gradeLevel);
+  const level = normalizeDifficultyValue(difficulty);
+  if (!grade) return 'Questions/';
+  if (!level) return `Questions/${grade}/`;
+  return `Questions/${grade}/${level}`;
 };
 
 export const MATH_TOPICS = Array.from(new Set(
@@ -28,7 +33,9 @@ const normalizeLearningMetadataValue = (value) => String(value || '').trim();
 
 export const normalizeDifficultyValue = (value) => {
   const difficulty = normalizeLearningMetadataValue(value);
-  if (/^(average|normal\s*\/\s*average)$/i.test(difficulty)) return 'Normal';
+  if (/^(normal|average|medium|normal\s*\/\s*average)$/i.test(difficulty)) return 'Medium';
+  if (/^(difficult|hard)$/i.test(difficulty)) return 'Hard';
+  if (/^easy$/i.test(difficulty)) return 'Easy';
   return difficulty;
 };
 
@@ -163,6 +170,12 @@ export const formatLearningPreviewText = (content, file) => {
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 
+export const normalizeLearningFileRecord = (file = {}) => ({
+  ...file,
+  difficulty: normalizeDifficultyValue(file.difficulty),
+  folder_name: getQuestionFolderPath(file.grade_level, file.difficulty),
+});
+
 export const filterLearningFiles = (files, filters) => {
   const search = normalizeText(filters.search);
   const folder = normalizeText(filters.folder);
@@ -171,10 +184,10 @@ export const filterLearningFiles = (files, filters) => {
   const mathTopic = normalizeLearningMetadataValue(filters.math_topic);
   const fileType = normalizeLearningMetadataValue(filters.file_type);
 
-  return files.filter((file) => {
+  return files.map(normalizeLearningFileRecord).filter((file) => {
     const folderMatch = folder ? normalizeText(file.folder_name) === folder : true;
     const gradeMatch = gradeLevel ? file.grade_level === gradeLevel : true;
-    const difficultyMatch = difficulty ? file.difficulty === difficulty : true;
+    const difficultyMatch = difficulty ? normalizeDifficultyValue(file.difficulty) === difficulty : true;
     const topicMatch = mathTopic ? file.math_topic === mathTopic : true;
     const typeMatch = fileType ? file.file_type === fileType : true;
     const searchMatch = search
@@ -191,6 +204,54 @@ export const filterLearningFiles = (files, filters) => {
 
     return folderMatch && gradeMatch && difficultyMatch && topicMatch && typeMatch && searchMatch;
   });
+};
+
+export const getQuestionFolderView = (files, selection = {}) => {
+  const gradeLevel = normalizeLearningMetadataValue(selection.grade_level);
+  const difficulty = normalizeDifficultyValue(selection.difficulty);
+  const path = ['Questions'];
+  if (gradeLevel) path.push(gradeLevel);
+  if (difficulty) path.push(difficulty);
+
+  if (!gradeLevel) {
+    return {
+      path,
+      childFolders: QUESTION_FOLDER_STRUCTURE.map((folder) => ({
+        type: 'grade',
+        label: folder.folderName,
+        grade_level: folder.grade,
+        godotFolderName: folder.godotFolderName,
+      })),
+      files: [],
+    };
+  }
+
+  if (!difficulty) {
+    const gradeFolder = QUESTION_FOLDER_STRUCTURE.find((folder) => folder.grade === gradeLevel);
+    return {
+      path,
+      childFolders: (gradeFolder?.difficulties || DIFFICULTY_LEVELS).map((level) => ({
+        type: 'difficulty',
+        label: level,
+        grade_level: gradeLevel,
+        difficulty: level,
+      })),
+      files: [],
+    };
+  }
+
+  return {
+    path,
+    childFolders: [],
+    files: filterLearningFiles(files, {
+      search: selection.search || '',
+      folder: '',
+      grade_level: gradeLevel,
+      difficulty,
+      math_topic: selection.math_topic || '',
+      file_type: selection.file_type || '',
+    }),
+  };
 };
 
 export const getFolderContents = (files, folder) => {

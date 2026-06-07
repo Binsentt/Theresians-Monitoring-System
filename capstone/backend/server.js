@@ -652,6 +652,50 @@ const normalizeGameGradeLevel = (value) => {
   return normalized || null;
 };
 
+const QUESTION_GRADE_LEVELS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
+const QUESTION_DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
+
+const buildQuestionFolderStructure = () => ({
+  root: { name: 'Questions', path: 'Questions/' },
+  grades: QUESTION_GRADE_LEVELS.map((grade) => ({
+    name: grade,
+    path: `Questions/${grade}/`,
+    godotFolderName: grade.replace(/\s+/g, ''),
+    difficulties: QUESTION_DIFFICULTIES.map((difficulty) => ({
+      name: difficulty,
+      path: `Questions/${grade}/${difficulty}`,
+      godotFolderName: difficulty,
+    })),
+  })),
+});
+
+const buildQuestionFolderPath = (gradeLevel, difficulty) => {
+  const grade = String(gradeLevel || '').trim();
+  const level = normalizeDifficultyValue(difficulty);
+  if (!grade) return 'Questions/';
+  if (!level) return `Questions/${grade}/`;
+  return `Questions/${grade}/${level}`;
+};
+
+const canonicalDifficultySql = (columnName) => (
+  `CASE
+     WHEN LOWER(COALESCE(${columnName}, '')) IN ('normal', 'average', 'medium', 'normal / average') THEN 'Medium'
+     WHEN LOWER(COALESCE(${columnName}, '')) IN ('difficult', 'hard') THEN 'Hard'
+     WHEN LOWER(COALESCE(${columnName}, '')) = 'easy' THEN 'Easy'
+     ELSE COALESCE(${columnName}, '')
+   END`
+);
+
+const normalizeLearningFileRow = (row) => {
+  const difficulty = normalizeDifficultyValue(row?.difficulty);
+  return {
+    ...row,
+    difficulty,
+    folder_name: buildQuestionFolderPath(row?.grade_level, difficulty),
+    status: row?.published ? 'Active in Game' : 'Staged',
+  };
+};
+
 const resolveScopeId = (value) => {
   if (value === undefined || value === null || value === '') return null;
   const parsed = parseInt(value, 10);
@@ -978,12 +1022,15 @@ const publishLearningFile = async (fileId) => {
     throw error;
   }
 
+  const canonicalDifficulty = normalizeDifficultyValue(learningFile.difficulty);
   const destinationParams = [
     learningFile.grade_level,
-    learningFile.difficulty,
+    canonicalDifficulty,
     learningFile.math_topic,
     fileId,
   ];
+  const learningDifficulty = canonicalDifficultySql('difficulty');
+  const linkedLearningDifficulty = canonicalDifficultySql('lf.difficulty');
 
   await pool.query('BEGIN');
   try {
@@ -991,7 +1038,7 @@ const publishLearningFile = async (fileId) => {
       `UPDATE public.learning_files
        SET published = false
        WHERE grade_level = $1
-         AND difficulty = $2
+         AND ${learningDifficulty} = $2
          AND math_topic = $3
          AND id <> $4
          AND subject = 'Mathematics'
@@ -1004,7 +1051,7 @@ const publishLearningFile = async (fileId) => {
        FROM public.learning_files lf
        WHERE q.learning_file_id = lf.id
          AND lf.grade_level = $1
-         AND lf.difficulty = $2
+         AND ${linkedLearningDifficulty} = $2
          AND lf.math_topic = $3
          AND lf.id <> $4
          AND lf.subject = 'Mathematics'
@@ -1014,7 +1061,7 @@ const publishLearningFile = async (fileId) => {
     const publishedResult = await pool.query('UPDATE public.learning_files SET published = true WHERE id = $1 RETURNING *', [fileId]);
     await pool.query('UPDATE public.questions SET published = true WHERE learning_file_id = $1', [fileId]);
     await pool.query('COMMIT');
-    return publishedResult.rows[0] || learningFile;
+    return normalizeLearningFileRow(publishedResult.rows[0] || learningFile);
   } catch (error) {
     await pool.query('ROLLBACK');
     throw error;
@@ -1229,13 +1276,16 @@ const getLearningFiles = async () => {
 const getGameQuestions = async ({ grade_level, difficulty, math_topic }) => {
   const params = ['Mathematics'];
   let clause = 'WHERE lf.subject = $1 AND lf.published = true AND lf.deleted_at IS NULL';
+  const normalizedDifficulty = difficulty ? normalizeDifficultyValue(difficulty) : null;
+  const lfDifficulty = canonicalDifficultySql('lf.difficulty');
+  const activeDifficulty = canonicalDifficultySql('active_lf.difficulty');
   if (grade_level) {
     params.push(grade_level);
     clause += ` AND lf.grade_level = $${params.length}`;
   }
-  if (difficulty) {
-    params.push(difficulty);
-    clause += ` AND lf.difficulty = $${params.length}`;
+  if (normalizedDifficulty) {
+    params.push(normalizedDifficulty);
+    clause += ` AND ${lfDifficulty} = $${params.length}`;
   }
   if (math_topic) {
     params.push(math_topic);
@@ -1250,7 +1300,7 @@ const getGameQuestions = async ({ grade_level, difficulty, math_topic }) => {
           AND active_lf.published = true
           AND active_lf.deleted_at IS NULL
           AND active_lf.grade_level = $2
-          AND active_lf.difficulty = $3
+          AND ${activeDifficulty} = $3
           AND active_lf.math_topic = $4
         ORDER BY active_lf.uploaded_at DESC, active_lf.id DESC
         LIMIT 1
@@ -1271,7 +1321,7 @@ const getGameQuestions = async ({ grade_level, difficulty, math_topic }) => {
     options: row.options,
     correct_answer: row.correct_answer,
     grade_level: row.grade_level,
-    difficulty: row.difficulty,
+    difficulty: normalizeDifficultyValue(row.difficulty),
     math_topic: row.math_topic,
     source: row.source,
   }));
@@ -1316,13 +1366,15 @@ const needQuestionParser = async (fileType, file) => {
 const getGameFiles = async ({ grade_level, difficulty, math_topic }) => {
   const params = ['Mathematics'];
   let clause = 'WHERE subject = $1 AND published = true AND deleted_at IS NULL';
+  const normalizedDifficulty = difficulty ? normalizeDifficultyValue(difficulty) : null;
+  const difficultySql = canonicalDifficultySql('difficulty');
   if (grade_level) {
     params.push(grade_level);
     clause += ` AND grade_level = $${params.length}`;
   }
-  if (difficulty) {
-    params.push(difficulty);
-    clause += ` AND difficulty = $${params.length}`;
+  if (normalizedDifficulty) {
+    params.push(normalizedDifficulty);
+    clause += ` AND ${difficultySql} = $${params.length}`;
   }
   if (math_topic) {
     params.push(math_topic);
@@ -1337,7 +1389,7 @@ const getGameFiles = async ({ grade_level, difficulty, math_topic }) => {
           AND published = true
           AND deleted_at IS NULL
           AND grade_level = $2
-          AND difficulty = $3
+          AND ${difficultySql} = $3
           AND math_topic = $4
         ORDER BY uploaded_at DESC, id DESC
         LIMIT 1
@@ -1349,7 +1401,7 @@ const getGameFiles = async ({ grade_level, difficulty, math_topic }) => {
     title: row.title,
     file_url: row.file_url,
     grade_level: row.grade_level,
-    difficulty: row.difficulty,
+    difficulty: normalizeDifficultyValue(row.difficulty),
     math_topic: row.math_topic,
     file_type: row.file_type,
     published: row.published,
@@ -2624,6 +2676,45 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
   }
 });
 
+app.get('/api/question-folders', async (req, res) => {
+  res.json(buildQuestionFolderStructure());
+});
+
+app.get('/api/learning-files/folder', async (req, res) => {
+  try {
+    const gradeLevel = normalizeGameGradeLevel(req.query.grade_level || req.query.grade);
+    const difficulty = normalizeDifficultyValue(req.query.difficulty);
+    if (!QUESTION_GRADE_LEVELS.includes(gradeLevel) || !QUESTION_DIFFICULTIES.includes(difficulty)) {
+      return res.status(400).json({ error: 'Valid grade_level and difficulty are required.' });
+    }
+
+    const result = await pool.query(
+      `SELECT lf.*,
+              f.name AS folder_name,
+              COALESCE(NULLIF(TRIM(a.name), ''), a.email, 'Unknown') AS uploaded_by_name
+       FROM public.learning_files lf
+       LEFT JOIN public.folders f ON lf.folder_id = f.id
+       LEFT JOIN public.accounts a ON lf.uploaded_by = a.id
+       WHERE lf.deleted_at IS NULL
+         AND (f.id IS NULL OR f.deleted_at IS NULL)
+         AND lf.grade_level = $1
+         AND ${canonicalDifficultySql('lf.difficulty')} = $2
+       ORDER BY lf.uploaded_at DESC`,
+      [gradeLevel, difficulty]
+    );
+
+    res.json({
+      path: buildQuestionFolderPath(gradeLevel, difficulty),
+      grade_level: gradeLevel,
+      difficulty,
+      files: result.rows.map(normalizeLearningFileRow),
+    });
+  } catch (err) {
+    console.error('Fetch learning folder files failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch folder files' });
+  }
+});
+
 app.get('/api/learning-files', async (req, res) => {
   try {
     const result = await pool.query(
@@ -2637,10 +2728,65 @@ app.get('/api/learning-files', async (req, res) => {
          AND (f.id IS NULL OR f.deleted_at IS NULL)
        ORDER BY lf.uploaded_at DESC`
     );
-    res.json(result.rows.map((row) => ({ ...row, folder_name: row.folder_name || 'Unassigned' })));
+    res.json(result.rows.map(normalizeLearningFileRow));
   } catch (err) {
     console.error('Fetch learning files failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch files' });
+  }
+});
+
+app.get('/api/learning-files/:id/preview', async (req, res) => {
+  try {
+    const fileId = parseInt(req.params.id, 10);
+    if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
+    const fileResult = await pool.query(
+      'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL',
+      [fileId]
+    );
+    if (fileResult.rows.length === 0) return res.status(404).json({ error: 'File not found' });
+
+    const file = normalizeLearningFileRow(fileResult.rows[0]);
+    const filePath = file.file_url && !String(file.file_url).startsWith('http')
+      ? path.join(__dirname, String(file.file_url).replace('/uploads/', 'uploads/'))
+      : null;
+    const lowerName = String(file.file_name || '').toLowerCase();
+    const isTextPreview = /\.(json|csv)$/i.test(lowerName);
+    let content = null;
+    if (isTextPreview && filePath && fs.existsSync(filePath)) {
+      content = fs.readFileSync(filePath, 'utf8');
+    }
+
+    res.json({
+      file,
+      preview_kind: lowerName.endsWith('.pdf') ? 'pdf' : isTextPreview ? 'text' : 'download',
+      content,
+    });
+  } catch (err) {
+    console.error('Preview learning file failed:', err.message);
+    res.status(500).json({ error: 'Failed to preview file' });
+  }
+});
+
+app.put('/api/learning-files/:id/rename', async (req, res) => {
+  try {
+    const fileId = parseInt(req.params.id, 10);
+    if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
+    const title = String(req.body.title || '').trim();
+    if (!title) return res.status(400).json({ error: 'File name is required.' });
+
+    const result = await pool.query(
+      `UPDATE public.learning_files
+       SET title = $1
+       WHERE id = $2
+         AND deleted_at IS NULL
+       RETURNING *`,
+      [title, fileId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'File not found' });
+    res.json({ success: true, learningFile: normalizeLearningFileRow(result.rows[0]) });
+  } catch (err) {
+    console.error('Rename learning file failed:', err.message);
+    res.status(500).json({ error: 'Failed to rename file' });
   }
 });
 
@@ -2697,7 +2843,7 @@ app.put('/api/learning-files/:id', async (req, res) => {
       [normalizedGrade, normalizedDifficulty, normalizedTopic, fileId]
     );
 
-    res.json(result.rows[0]);
+    res.json(normalizeLearningFileRow(result.rows[0]));
   } catch (err) {
     console.error('Update learning file failed:', err.message);
     res.status(500).json({ error: 'Failed to update file' });
@@ -2718,7 +2864,7 @@ app.delete('/api/learning-files/:id', async (req, res) => {
     );
     if (fileResult.rows.length === 0) return res.status(404).json({ error: 'File not found' });
     await pool.query('UPDATE public.questions SET published = false WHERE learning_file_id = $1', [fileId]);
-    res.json({ success: true });
+    res.json({ success: true, learningFile: normalizeLearningFileRow(fileResult.rows[0]) });
   } catch (err) {
     console.error('Move learning file to trash failed:', err.message);
     res.status(500).json({ error: 'Failed to move file to trash' });
@@ -2734,7 +2880,7 @@ app.post('/api/learning-files/:id/restore', async (req, res) => {
       [fileId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Trashed file not found' });
-    res.json({ success: true, learningFile: result.rows[0] });
+    res.json({ success: true, learningFile: normalizeLearningFileRow(result.rows[0]) });
   } catch (err) {
     console.error('Restore learning file failed:', err.message);
     res.status(500).json({ error: 'Failed to restore file' });
@@ -2811,7 +2957,7 @@ app.get('/api/learning-files/trash', async (req, res) => {
        WHERE lf.deleted_at IS NOT NULL
        ORDER BY lf.deleted_at DESC, lf.uploaded_at DESC`
     );
-    res.json(result.rows.map((row) => ({ ...row, folder_name: row.folder_name || 'Unassigned' })));
+    res.json(result.rows.map(normalizeLearningFileRow));
   } catch (err) {
     console.error('Fetch trashed learning files failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch trashed files' });

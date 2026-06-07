@@ -1,36 +1,36 @@
 const ALLOWED_GRADE_LEVELS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
-const ALLOWED_DIFFICULTIES = ['Easy', 'Normal', 'Difficult'];
+const ALLOWED_DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
 
 const GRADE_TOPIC_MAP = {
   'Grade 1': {
     Easy: ['Basic Addition', 'Subtraction', 'Shapes', 'Place Value'],
-    Normal: ['Addition', 'Multiplication', 'Word Problems'],
-    Difficult: ['Problem Solving (Addition and Subtraction)'],
+    Medium: ['Addition', 'Multiplication', 'Word Problems'],
+    Hard: ['Problem Solving (Addition and Subtraction)'],
   },
   'Grade 2': {
     Easy: ['Shapes', 'Ordinal Numbers', 'Basic Addition/Subtraction'],
-    Normal: ['Multiplication', 'Division', 'Word Problems'],
-    Difficult: ['Problem Solving', 'Multiplication', 'Division', 'Fractions'],
+    Medium: ['Multiplication', 'Division', 'Word Problems'],
+    Hard: ['Problem Solving', 'Multiplication', 'Division', 'Fractions'],
   },
   'Grade 3': {
     Easy: ['Addition of Money', 'Whole Numbers'],
-    Normal: ['Multiplication', 'Division', 'Fractions'],
-    Difficult: ['Multi-step Problem Solving'],
+    Medium: ['Multiplication', 'Division', 'Fractions'],
+    Hard: ['Multi-step Problem Solving'],
   },
   'Grade 4': {
     Easy: ['Number Theory'],
-    Normal: ['Place Value of Whole Numbers'],
-    Difficult: ['Reading, Writing, and Comparing Whole Numbers'],
+    Medium: ['Place Value of Whole Numbers'],
+    Hard: ['Reading, Writing, and Comparing Whole Numbers'],
   },
   'Grade 5': {
     Easy: ['Number Theory', 'Basic Arithmetic'],
-    Normal: ['Number Theory', 'Basic Arithmetic'],
-    Difficult: ['Time Conversion', 'Number Theory', 'Word Problems', 'Order of Operations'],
+    Medium: ['Number Theory', 'Basic Arithmetic'],
+    Hard: ['Time Conversion', 'Number Theory', 'Word Problems', 'Order of Operations'],
   },
   'Grade 6': {
     Easy: ['Number Sense and Operations'],
-    Normal: ['Number Sense and Operations'],
-    Difficult: ['Rational Numbers', 'Geometric Measurements'],
+    Medium: ['Number Sense and Operations'],
+    Hard: ['Rational Numbers', 'Geometric Measurements'],
   },
 };
 
@@ -42,7 +42,9 @@ const normalizeLearningMetadataValue = (value) => String(value || '').trim();
 
 const normalizeDifficultyValue = (value) => {
   const difficulty = normalizeLearningMetadataValue(value);
-  if (/^(average|normal\s*\/\s*average)$/i.test(difficulty)) return 'Normal';
+  if (/^(normal|average|medium|normal\s*\/\s*average)$/i.test(difficulty)) return 'Medium';
+  if (/^(difficult|hard)$/i.test(difficulty)) return 'Hard';
+  if (/^easy$/i.test(difficulty)) return 'Easy';
   return difficulty;
 };
 
@@ -78,7 +80,7 @@ const validateLearningMetadata = ({ grade_level: gradeLevel, difficulty, math_to
   }
 
   if (!isValidDifficulty(difficulty)) {
-    return 'Difficulty must be Easy, Normal, or Difficult.';
+    return 'Difficulty must be Easy, Medium, or Hard.';
   }
 
   if (!isValidMathTopicForGradeDifficulty(gradeLevel, difficulty, mathTopic)) {

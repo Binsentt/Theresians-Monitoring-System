@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Download, FileText, Folder, HardDrive, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
+import { Download, FilePenLine, FileText, Folder, HardDrive, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
@@ -10,12 +10,12 @@ import {
   calculateLearningStorage,
   countFixedQuestionRecords,
   DIFFICULTY_LEVELS,
-  filterLearningFiles,
   formatLearningPreviewText,
   formatLearningFileSize,
   getLargestLearningFiles,
   getLearningFilePreviewKind,
   getMathTopicsForGradeDifficulty,
+  getQuestionFolderView,
   getQuestionFolderPath,
   GRADE_LEVELS,
   inferLearningFileUploadType,
@@ -23,7 +23,6 @@ import {
   isValidGradeLevel,
   isValidMathTopicForGradeDifficulty,
   normalizeMathTopicForGradeDifficulty,
-  QUESTION_FOLDER_STRUCTURE,
 } from './lessonQuestionManager.utils';
 import { apiUrl } from '../api';
 import '../styles/lessonQuestionManager.css';
@@ -62,7 +61,6 @@ function deriveUploadTitle(file) {
 }
 
 function formatDifficultyLabel(gradeLevel, difficulty) {
-  if (difficulty === 'Normal') return 'Normal / Average';
   return difficulty;
 }
 
@@ -86,6 +84,8 @@ export default function LessonQuestionManager() {
   const [previewFile, setPreviewFile] = useState(null);
   const [previewContent, setPreviewContent] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [selectedFolder, setSelectedFolder] = useState({ grade_level: '', difficulty: '' });
+  const [renamingFile, setRenamingFile] = useState(null);
   const [filters, setFilters] = useState(initialFilterState);
 
   const showNotification = (message, type = 'success') => {
@@ -123,7 +123,13 @@ export default function LessonQuestionManager() {
     loadFilesAndFolders();
   }, [navigate]);
 
-  const filteredFiles = useMemo(() => filterLearningFiles(files, filters), [files, filters]);
+  const folderView = useMemo(() => getQuestionFolderView(files, {
+    grade_level: selectedFolder.grade_level,
+    difficulty: selectedFolder.difficulty,
+    search: filters.search,
+    math_topic: filters.math_topic,
+    file_type: filters.file_type,
+  }), [files, filters.file_type, filters.math_topic, filters.search, selectedFolder.difficulty, selectedFolder.grade_level]);
   const uploadTopicOptions = useMemo(
     () => getMathTopicsForGradeDifficulty(form.grade_level, form.difficulty),
     [form.difficulty, form.grade_level]
@@ -133,13 +139,16 @@ export default function LessonQuestionManager() {
     [editingFile]
   );
   const filterTopicOptions = useMemo(
-    () => getMathTopicsForGradeDifficulty(filters.grade_level, filters.difficulty),
-    [filters.difficulty, filters.grade_level]
+    () => getMathTopicsForGradeDifficulty(selectedFolder.grade_level, selectedFolder.difficulty),
+    [selectedFolder.difficulty, selectedFolder.grade_level]
   );
   const inferredFileType = inferLearningFileUploadType(form.file?.name);
   const uploadType = form.file_type;
-  const displayedFiles = filteredFiles;
-  const tableEmptyMessage = 'No math content found. Upload a question file to begin.';
+  const isDifficultyFolderOpen = Boolean(selectedFolder.grade_level && selectedFolder.difficulty);
+  const displayedFiles = isDifficultyFolderOpen ? folderView.files : [];
+  const tableEmptyMessage = isDifficultyFolderOpen
+    ? 'No files in this folder yet. Upload a question file for this grade and difficulty.'
+    : 'Open a difficulty folder to view uploaded files.';
   const storageSummary = useMemo(() => calculateLearningStorage(files), [files]);
   const largestFiles = useMemo(() => getLargestLearningFiles(files), [files]);
   const trashRows = useMemo(() => [
@@ -247,6 +256,7 @@ export default function LessonQuestionManager() {
         published: Boolean(data.learningFile?.published),
       };
       setFiles((current) => [uploadedFile, ...current.filter((file) => file.id !== uploadedFile.id)]);
+      setSelectedFolder({ grade_level: uploadedFile.grade_level || form.grade_level, difficulty: uploadedFile.difficulty || form.difficulty });
       showNotification('File uploaded successfully');
       resetForm();
       setShowUploadForm(false);
@@ -259,7 +269,10 @@ export default function LessonQuestionManager() {
   };
 
   const moveFileToTrash = async (file) => {
-    if (!window.confirm(`Delete "${file.title}" from staged uploads?`)) return;
+    const confirmMessage = file.published
+      ? `Delete "${file.title}"? This file is active in the game and will be removed from the website storage.`
+      : `Delete "${file.title}" from staged uploads?`;
+    if (!window.confirm(confirmMessage)) return;
     try {
       const response = await fetch(apiUrl(`/api/learning-files/${file.id}`), { method: 'DELETE' });
       const data = await response.json();
@@ -332,10 +345,18 @@ export default function LessonQuestionManager() {
     setPreviewContent('');
     setPreviewFile({ ...file, previewKind, publicUrl: getPublicUrl(file.file_url) });
 
-    if (previewKind !== 'text' || !file.file_url) return;
+    if (previewKind !== 'text') return;
 
     try {
       setPreviewLoading(true);
+      const previewResponse = file.id ? await fetch(apiUrl(`/api/learning-files/${file.id}/preview`)) : null;
+      if (previewResponse?.ok) {
+        const previewData = await previewResponse.json();
+        setPreviewContent(formatLearningPreviewText(previewData.content || '', file));
+        return;
+      }
+
+      if (!file.file_url) return;
       const response = await fetch(getPublicUrl(file.file_url));
       if (!response.ok) throw new Error('Preview fetch failed');
       setPreviewContent(formatLearningPreviewText(await response.text(), file));
@@ -405,6 +426,14 @@ export default function LessonQuestionManager() {
 
   const openUploadModal = () => {
     setShowNewMenu(false);
+    const gradeLevel = selectedFolder.grade_level || '';
+    const difficulty = selectedFolder.difficulty || '';
+    setForm({
+      ...initialFormState,
+      grade_level: gradeLevel,
+      difficulty,
+      math_topic: buildNextTopicValue(gradeLevel, difficulty, ''),
+    });
     setShowUploadForm(true);
   };
 
@@ -434,6 +463,58 @@ export default function LessonQuestionManager() {
     }
   };
 
+  const openFolder = (folder) => {
+    if (folder.type === 'grade') {
+      setSelectedFolder({ grade_level: folder.grade_level, difficulty: '' });
+    } else if (folder.type === 'difficulty') {
+      setSelectedFolder({ grade_level: folder.grade_level, difficulty: folder.difficulty });
+    }
+    setFilters((prev) => ({ ...prev, math_topic: '', file_type: '' }));
+  };
+
+  const goToBreadcrumb = (index) => {
+    if (index === 0) {
+      setSelectedFolder({ grade_level: '', difficulty: '' });
+    } else if (index === 1) {
+      setSelectedFolder((prev) => ({ grade_level: prev.grade_level, difficulty: '' }));
+    }
+    setFilters((prev) => ({ ...prev, math_topic: '', file_type: '' }));
+  };
+
+  const goBackFolder = () => {
+    if (selectedFolder.difficulty) {
+      setSelectedFolder((prev) => ({ grade_level: prev.grade_level, difficulty: '' }));
+    } else {
+      setSelectedFolder({ grade_level: '', difficulty: '' });
+    }
+    setFilters((prev) => ({ ...prev, math_topic: '', file_type: '' }));
+  };
+
+  const saveRenamedFile = async () => {
+    const title = String(renamingFile?.title || '').trim();
+    if (!title) {
+      showNotification('File name is required.', 'error');
+      return;
+    }
+
+    try {
+      const response = await fetch(apiUrl(`/api/learning-files/${renamingFile.id}/rename`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Rename failed');
+      const renamedFile = data.learningFile || data || { ...renamingFile, title };
+      setFiles((current) => current.map((file) => (file.id === renamedFile.id ? { ...file, ...renamedFile } : file)));
+      setRenamingFile(null);
+      showNotification('File renamed successfully.');
+    } catch (error) {
+      console.error(error);
+      showNotification(error.message || 'Rename failed.', 'error');
+    }
+  };
+
   const tableColumns = [
     {
       key: 'title',
@@ -446,7 +527,7 @@ export default function LessonQuestionManager() {
               {row.title}
             </button>
             <span className="file-meta">
-              {row.grade_level || 'Unknown grade'} | {row.difficulty || 'Unknown difficulty'} | {row.math_topic || 'Unknown topic'}
+              {row.grade_level || 'Unknown grade'} | {row.difficulty || 'Unknown difficulty'}
             </span>
             <span className="file-meta">
               {getQuestionFolderPath(row.grade_level, row.difficulty)}
@@ -454,6 +535,12 @@ export default function LessonQuestionManager() {
           </div>
         </div>
       ),
+    },
+    { key: 'math_topic', header: 'Topic Identifier', render: (value) => value || 'Unknown topic' },
+    {
+      key: 'file_type',
+      header: 'File Type',
+      render: (value) => (value === 'lesson' ? 'Lesson File' : 'Fixed Question File'),
     },
     {
       key: 'published',
@@ -472,6 +559,7 @@ export default function LessonQuestionManager() {
       className: 'drive-actions-cell',
       render: (_, row) => (
         <div className="drive-row-actions">
+          <button type="button" className="drive-action-button" onClick={() => setRenamingFile(row)}><FilePenLine size={16} />Rename</button>
           <button type="button" className="drive-action-button" onClick={() => previewLearningFile(row)}><FileText size={16} />Preview</button>
           <button type="button" className="drive-action-button" onClick={() => moveFileToTrash(row)}><Trash2 size={16} />Delete</button>
           <button type="button" className="drive-action-button primary" onClick={() => pushFileToGame(row)}><Upload size={16} />Push to Game</button>
@@ -584,51 +672,64 @@ export default function LessonQuestionManager() {
 
               <div className="drive-manager-surface">
                 {managerView === 'files' && (
-                  <>
-                    <section className="drive-panel">
-                      <div className="drive-panel-header">
-                        <div>
-                          <h2>Questions</h2>
-                          <div className="folder-breadcrumb">
-                            <span>Fixed game question folder structure</span>
-                          </div>
+                  <section className="drive-panel question-folder-panel">
+                    <div className="drive-panel-header">
+                      <div>
+                        <h2>{selectedFolder.difficulty || selectedFolder.grade_level || 'Questions'}</h2>
+                        <div className="folder-breadcrumb" aria-label="Question folder path">
+                          {folderView.path.map((part, index) => (
+                            <React.Fragment key={`${part}-${index}`}>
+                              {index > 0 && <span className="breadcrumb-separator"> &gt; </span>}
+                              <button
+                                type="button"
+                                className="folder-breadcrumb-button"
+                                onClick={() => goToBreadcrumb(index)}
+                                disabled={index === folderView.path.length - 1}
+                              >
+                                {part}
+                              </button>
+                            </React.Fragment>
+                          ))}
                         </div>
+                        <p className="empty-text">
+                          {isDifficultyFolderOpen
+                            ? 'Uploaded files stay staged until Push to Game is clicked.'
+                            : 'Open a folder to manage the same grade and difficulty structure used by the game.'}
+                        </p>
                       </div>
+                      {selectedFolder.grade_level && (
+                        <button type="button" className="btn btn-secondary" onClick={goBackFolder}>
+                          Back
+                        </button>
+                      )}
+                    </div>
+
+                    {!isDifficultyFolderOpen && (
                       <div className="drive-folder-grid fixed-question-grid">
-                        {QUESTION_FOLDER_STRUCTURE.map((gradeFolder) => (
-                          <div key={gradeFolder.grade} className="drive-folder-card fixed-question-folder">
+                        {folderView.childFolders.map((folder) => (
+                          <button
+                            key={`${folder.type}-${folder.grade_level}-${folder.difficulty || ''}`}
+                            type="button"
+                            className="drive-folder-card fixed-question-folder"
+                            onClick={() => openFolder(folder)}
+                          >
                             <div className="drive-folder-card-main">
                               <Folder size={28} aria-hidden="true" />
-                              <strong>{gradeFolder.folderName}</strong>
+                              <strong>{folder.label}</strong>
                             </div>
-                            <div className="fixed-difficulty-list">
-                              {gradeFolder.difficulties.map((difficulty) => (
-                                <button
-                                  key={`${gradeFolder.grade}-${difficulty}`}
-                                  type="button"
-                                  className="drive-action-button"
-                                  onClick={() => {
-                                    handleFilterChange('grade_level', gradeFolder.grade);
-                                    handleFilterChange('difficulty', difficulty);
-                                  }}
-                                >
-                                  {difficulty}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
+                            <span className="file-meta">
+                              {folder.type === 'grade'
+                                ? `Questions/${folder.label}/`
+                                : getQuestionFolderPath(folder.grade_level, folder.difficulty)}
+                            </span>
+                          </button>
                         ))}
                       </div>
-                    </section>
+                    )}
 
-                    <section className="drive-panel">
-                      <div className="drive-panel-header">
-                        <div>
-                          <h2>Uploaded Files</h2>
-                          <p className="empty-text">Uploaded files stay staged until Push to Game is clicked.</p>
-                        </div>
-                      </div>
-                      <div className="manager-modal-fields">
+                    {isDifficultyFolderOpen && (
+                      <>
+                        <div className="manager-modal-fields folder-file-filters">
                           <div className="form-group">
                             <label className="form-label">Search Files</label>
                             <input
@@ -640,39 +741,14 @@ export default function LessonQuestionManager() {
                             />
                           </div>
                           <div className="form-group">
-                            <label className="form-label">Grade Level</label>
-                            <select className="select-field" value={filters.grade_level} onChange={(event) => handleFilterChange('grade_level', event.target.value)}>
-                              <option value="">All grades</option>
-                              {GRADE_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
-                            </select>
-                          </div>
-                          <div className="form-group">
-                            <label className="form-label">Difficulty</label>
-                            <select className="select-field" value={filters.difficulty} onChange={(event) => handleFilterChange('difficulty', event.target.value)}>
-                              <option value="">All difficulties</option>
-                              {DIFFICULTY_LEVELS.map((difficulty) => (
-                                <option key={difficulty} value={difficulty}>
-                                  {formatDifficultyLabel(filters.grade_level, difficulty)}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="form-group">
                             <label className="form-label">Topic</label>
                             <select
                               className="select-field"
                               value={filters.math_topic}
-                              disabled={!filters.grade_level || !filters.difficulty}
                               onChange={(event) => handleFilterChange('math_topic', event.target.value)}
                             >
-                              {!filters.grade_level || !filters.difficulty ? (
-                                <option value="">Select grade and difficulty first</option>
-                              ) : (
-                                <>
-                                  <option value="">All topics</option>
-                                  {filterTopicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)}
-                                </>
-                              )}
+                              <option value="">All topics</option>
+                              {filterTopicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)}
                             </select>
                           </div>
                           <div className="form-group">
@@ -683,10 +759,11 @@ export default function LessonQuestionManager() {
                               <option value="fixed_questions">Fixed Question File</option>
                             </select>
                           </div>
-                      </div>
-                      <DataTable columns={tableColumns} data={displayedFiles} emptyMessage={tableEmptyMessage} className="drive-table" />
-                    </section>
-                  </>
+                        </div>
+                        <DataTable columns={tableColumns} data={displayedFiles} emptyMessage={tableEmptyMessage} className="drive-table" />
+                      </>
+                    )}
+                  </section>
                 )}
 
                 {managerView === 'trash' && (
@@ -858,6 +935,33 @@ export default function LessonQuestionManager() {
                       <Download size={16} />Download
                     </button>
                     <button type="button" className="btn btn-secondary" onClick={closePreview}>Close</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {renamingFile && (
+              <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setRenamingFile(null)}>
+                <div className="manager-modal drive-create-folder-modal" role="dialog" aria-modal="true" aria-labelledby="rename-file-title" onMouseDown={(event) => event.stopPropagation()}>
+                  <div className="manager-modal-header">
+                    <h2 id="rename-file-title">Rename File</h2>
+                    <button type="button" className="icon-button" aria-label="Cancel rename" onClick={() => setRenamingFile(null)}>x</button>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label required">File Name</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      value={renamingFile.title || ''}
+                      onChange={(event) => setRenamingFile((prev) => ({ ...prev, title: event.target.value }))}
+                    />
+                  </div>
+                  <p className="empty-text">
+                    Folder metadata stays unchanged: {getQuestionFolderPath(renamingFile.grade_level, renamingFile.difficulty)}
+                  </p>
+                  <div className="edit-actions">
+                    <button type="button" className="btn btn-primary" onClick={saveRenamedFile}>Save</button>
+                    <button type="button" className="btn btn-secondary" onClick={() => setRenamingFile(null)}>Cancel</button>
                   </div>
                 </div>
               </div>

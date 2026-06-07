@@ -105,7 +105,7 @@ test('question publishing replaces the active Godot bundle for one grade difficu
         id: 77,
         title: 'addition-quiz',
         grade_level: 'Grade 1',
-        difficulty: 'Normal',
+        difficulty: 'Medium',
         math_topic: 'Addition',
         subject: 'Mathematics',
         deleted_at: null,
@@ -133,12 +133,106 @@ test('question publishing replaces the active Godot bundle for one grade difficu
   const response = await requestJson(baseUrl, '/api/questions/publish/77', { method: 'POST' });
 
   assert.equal(response.status, 200);
-  assert.deepEqual(unpublishedLearningFiles.params, ['Grade 1', 'Normal', 'Addition', 77]);
+  assert.deepEqual(unpublishedLearningFiles.params, ['Grade 1', 'Medium', 'Addition', 77]);
   assert.match(unpublishedLearningFiles.sql, /id <> \$4/);
-  assert.deepEqual(unpublishedQuestions.params, ['Grade 1', 'Normal', 'Addition', 77]);
+  assert.deepEqual(unpublishedQuestions.params, ['Grade 1', 'Medium', 'Addition', 77]);
   assert.match(unpublishedQuestions.sql, /lf\.id <> \$4/);
   assert.deepEqual(publishedLearningFile.params, [77]);
   assert.deepEqual(publishedQuestions.params, [77]);
+});
+
+test('question folder APIs expose system folders and legacy difficulty files by canonical folder', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  const queryCalls = [];
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('from public.learning_files lf')) {
+      queryCalls.push({ sql, params });
+      return resultRows([{
+        id: 88,
+        title: 'legacy-normal',
+        file_name: 'legacy-normal.json',
+        grade_level: 'Grade 1',
+        difficulty: 'Normal',
+        math_topic: 'Addition',
+        file_type: 'fixed_questions',
+        published: true,
+        uploaded_at: '2026-06-01T00:00:00.000Z',
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const foldersResponse = await requestJson(baseUrl, '/api/question-folders');
+  const filesResponse = await requestJson(baseUrl, '/api/learning-files/folder?grade_level=Grade%201&difficulty=Medium');
+
+  assert.equal(foldersResponse.status, 200);
+  assert.equal(foldersResponse.body.root.name, 'Questions');
+  assert.equal(foldersResponse.body.grades.length, 6);
+  assert.deepEqual(foldersResponse.body.grades[0].difficulties.map((item) => item.name), ['Easy', 'Medium', 'Hard']);
+  assert.equal(filesResponse.status, 200);
+  assert.equal(filesResponse.body.path, 'Questions/Grade 1/Medium');
+  assert.equal(filesResponse.body.files[0].difficulty, 'Medium');
+  assert.equal(filesResponse.body.files[0].status, 'Active in Game');
+  assert.deepEqual(queryCalls[0].params, ['Grade 1', 'Medium']);
+  assert.match(queryCalls[0].sql, /normal/i);
+});
+
+test('learning file preview and rename endpoints preserve canonical folder metadata', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.learning_files') && params[0] === 77) {
+      return resultRows([{
+        id: 77,
+        title: 'legacy-hard',
+        file_name: 'legacy-hard.json',
+        grade_level: 'Grade 2',
+        difficulty: 'Difficult',
+        math_topic: 'Problem Solving',
+        file_type: 'fixed_questions',
+        published: false,
+        file_url: null,
+      }]);
+    }
+    if (sql.startsWith('update public.learning_files') && sql.includes('set title = $1')) {
+      return resultRows([{
+        id: 77,
+        title: params[0],
+        file_name: 'legacy-hard.json',
+        grade_level: 'Grade 2',
+        difficulty: 'Difficult',
+        math_topic: 'Problem Solving',
+        file_type: 'fixed_questions',
+        published: false,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const previewResponse = await requestJson(baseUrl, '/api/learning-files/77/preview');
+  const renameResponse = await requestJson(baseUrl, '/api/learning-files/77/rename', {
+    method: 'PUT',
+    body: JSON.stringify({ title: 'renamed-hard' }),
+  });
+
+  assert.equal(previewResponse.status, 200);
+  assert.equal(previewResponse.body.file.difficulty, 'Hard');
+  assert.equal(previewResponse.body.file.folder_name, 'Questions/Grade 2/Hard');
+  assert.equal(renameResponse.status, 200);
+  assert.equal(renameResponse.body.learningFile.title, 'renamed-hard');
+  assert.equal(renameResponse.body.learningFile.difficulty, 'Hard');
+  assert.equal(renameResponse.body.learningFile.folder_name, 'Questions/Grade 2/Hard');
 });
 
 test('Godot question endpoint accepts grade and topic query aliases', async (t) => {
@@ -163,6 +257,32 @@ test('Godot question endpoint accepts grade and topic query aliases', async (t) 
   assert.equal(response.status, 200);
   assert.deepEqual(queryCalls[0], ['Mathematics', 'Grade 1', 'Easy', 'Basic Addition']);
   assert.deepEqual(queryCalls[1], ['Mathematics', 'Grade 1', 'Easy', 'Basic Addition']);
+});
+
+test('Godot question endpoint maps Medium and Hard to legacy Normal and Difficult rows', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  const queryCalls = [];
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('from public.learning_files') || sql.includes('from public.questions q')) {
+      queryCalls.push({ sql, params });
+      return resultRows([]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201&difficulty=Medium&topic=Addition');
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(queryCalls[0].params, ['Mathematics', 'Grade 1', 'Medium', 'Addition']);
+  assert.deepEqual(queryCalls[1].params, ['Mathematics', 'Grade 1', 'Medium', 'Addition']);
+  assert.match(queryCalls[0].sql, /normal/i);
+  assert.match(queryCalls[1].sql, /normal/i);
 });
 
 test('Godot question endpoint normalizes numeric grade aliases and scopes to one active source', async (t) => {
