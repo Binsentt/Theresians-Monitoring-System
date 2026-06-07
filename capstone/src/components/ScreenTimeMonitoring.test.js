@@ -144,7 +144,10 @@ describe('ScreenTimeMonitoring', () => {
     await waitForContent(container, 'Noah Santos');
 
     expect(global.fetch.mock.calls[0][0]).toContain('sort_by=student_name');
-    expect(global.fetch.mock.calls[0][0]).toContain('sort_order=asc');
+    expect(global.fetch.mock.calls[0][0]).not.toContain('sort_order=');
+    expect(container.textContent).not.toContain('Order');
+    expect(container.textContent).not.toContain('Ascending');
+    expect(container.textContent).not.toContain('Descending');
     const dataRows = Array.from(container.querySelectorAll('tbody tr'));
     expect(dataRows.map((row) => row.children[1]?.textContent)).toEqual(['Ava Santos', 'Noah Santos']);
     expect(container.textContent).not.toContain('Auto Saved');

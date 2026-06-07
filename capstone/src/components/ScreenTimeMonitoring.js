@@ -27,7 +27,6 @@ const initialFilters = {
   parent_id: '',
   status: '',
   sort_by: 'student_name',
-  sort_order: 'asc',
 };
 
 const statusLabels = {
@@ -89,11 +88,10 @@ const buildQueryString = (filters, mode) => {
   const params = new URLSearchParams();
   params.set('limit', '50');
   params.set('sort_by', filters.sort_by || 'student_name');
-  params.set('sort_order', filters.sort_order || 'asc');
 
   Object.entries(filters).forEach(([key, value]) => {
     const trimmed = String(value || '').trim();
-    if (!trimmed || ['sort_by', 'sort_order'].includes(key)) return;
+    if (!trimmed || key === 'sort_by') return;
     if (mode === 'children' && ['grade_level', 'section', 'parent_id'].includes(key)) return;
     params.set(key, trimmed);
   });
@@ -343,18 +341,6 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                       onChange={(event) => setFilter('sort_by', event.target.value)}
                     >
                       {SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                    </select>
-                  </label>
-
-                  <label>
-                    Order
-                    <select
-                      className="screen-time-input"
-                      value={filters.sort_order}
-                      onChange={(event) => setFilter('sort_order', event.target.value)}
-                    >
-                      <option value="desc">Descending</option>
-                      <option value="asc">Ascending</option>
                     </select>
                   </label>
 

@@ -284,8 +284,12 @@ test('account management rejects updating student game accounts', async (t) => {
     await close(server);
   });
 
-  setQueryHandler(async (sql) => {
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
     if (sql.startsWith('select * from public.accounts where id = $1')) {
+      if (Number(params[0]) === 1) {
+        return resultRows([{ id: 1, name: 'Ada Admin', email: 'ada@example.com', role: 'admin', is_archived: false, session_version: 0 }]);
+      }
       return resultRows([{ id: 44, name: 'Game Student', email: 'student@example.com', role: 'student' }]);
     }
     if (sql.startsWith('update public.accounts')) updatedAccount = true;
@@ -294,6 +298,7 @@ test('account management rejects updating student game accounts', async (t) => {
 
   const response = await requestJson(baseUrl, '/api/accounts/44', {
     method: 'PUT',
+    headers: { Authorization: 'Bearer admin-token' },
     body: JSON.stringify({ name: 'Updated Student' }),
   });
 
@@ -311,8 +316,12 @@ test('account management rejects deleting student game accounts', async (t) => {
     await close(server);
   });
 
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
   setQueryHandler(async (sql) => {
-    if (sql.startsWith('select id, role from public.accounts where id = $1')) {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, name: 'Ada Admin', email: 'ada@example.com', role: 'admin', is_archived: false, session_version: 0 }]);
+    }
+    if (sql.startsWith('select id, email, role, is_archived from public.accounts where id = $1')) {
       return resultRows([{ id: 44, role: 'student' }]);
     }
     if (sql.startsWith('delete from public.accounts') || sql.startsWith('update public.accounts set is_archived')) {
@@ -321,11 +330,500 @@ test('account management rejects deleting student game accounts', async (t) => {
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/accounts/44', { method: 'DELETE' });
+  const response = await requestJson(baseUrl, '/api/accounts/44', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer admin-token' },
+  });
 
   assert.equal(response.status, 403);
   assert.match(response.body.error, /website accounts/i);
   assert.equal(deletedAccount, false);
+});
+
+test('account management blocks self-edit through the API', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let updatedAccount = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 10, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{
+        id: Number(params[0]),
+        name: 'Ada Admin',
+        email: 'ada@example.com',
+        role: 'admin',
+        is_archived: false,
+        session_version: 0,
+      }]);
+    }
+    if (sql.startsWith('update public.accounts')) updatedAccount = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts/10', {
+    method: 'PUT',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({ name: 'Updated Admin' }),
+  });
+
+  assert.equal(response.status, 403);
+  assert.equal(response.body.error, 'You cannot edit your own account here. Please use My Profile.');
+  assert.equal(updatedAccount, false);
+});
+
+test('profile update lets authenticated users edit their own profile outside Manage Users', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let updateParams = null;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 10, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.accounts where id = $1') || sql.startsWith('select * from accounts where id = $1')) {
+      return resultRows([{
+        id: Number(params[0]),
+        name: 'Ada Admin',
+        email: 'ada@example.com',
+        role: 'admin',
+        is_archived: false,
+        session_version: 0,
+        status: 'Active',
+      }]);
+    }
+    if (sql.startsWith('update public.accounts set name=$1, email=$2, mobile_number=$3')) {
+      updateParams = params;
+      return resultRows([{
+        id: Number(params[7]),
+        name: params[0],
+        email: params[1],
+        role: 'admin',
+        mobile_number: params[2],
+        address: params[3],
+        birthday: params[4],
+        gender: params[5],
+        status: params[6],
+        is_archived: false,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/user/10', {
+    method: 'PUT',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({
+      name: 'Ada Updated',
+      email: 'ada.updated@example.com',
+      mobile_number: '09123456789',
+      address: 'Updated Street',
+      birthday: '',
+      gender: 'Female',
+      status: 'Active',
+      role: 'teacher',
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.user.name, 'Ada Updated');
+  assert.equal(response.body.user.role, 'admin');
+  assert.equal(updateParams[1], 'ada.updated@example.com');
+});
+
+test('account management blocks self-delete through the API', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let deletedAccount = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 10, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{
+        id: Number(params[0]),
+        name: 'Ada Admin',
+        email: 'ada@example.com',
+        role: 'admin',
+        is_archived: false,
+        session_version: 0,
+      }]);
+    }
+    if (sql.startsWith('select id, email, role, is_archived from public.accounts where id = $1')) {
+      return resultRows([{ id: Number(params[0]), role: 'admin', email: 'ada@example.com', is_archived: false }]);
+    }
+    if (sql.startsWith('delete from public.accounts') || sql.startsWith('update public.accounts set is_archived')) {
+      deletedAccount = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts/10', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+
+  assert.equal(response.status, 403);
+  assert.equal(response.body.error, 'You cannot delete your own account.');
+  assert.equal(deletedAccount, false);
+});
+
+test('account management blocks deleting the last active admin account', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let deletedAccount = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 11, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{
+        id: Number(params[0]),
+        name: 'Other Admin',
+        email: 'other-admin@example.com',
+        role: 'admin',
+        is_archived: false,
+        session_version: 0,
+      }]);
+    }
+    if (sql.startsWith('select id, email, role')) {
+      return resultRows([{ id: 10, role: 'admin', email: 'ada@example.com', is_archived: false }]);
+    }
+    if (sql.startsWith('select count')) {
+      return resultRows([{ count: '1' }]);
+    }
+    if (sql.startsWith('delete from public.accounts') || sql.startsWith('update public.accounts set is_archived')) {
+      deletedAccount = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts/10?permanent=true', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+
+  assert.equal(response.status, 403);
+  assert.equal(response.body.error, 'Cannot delete the last admin account.');
+  assert.equal(deletedAccount, false);
+});
+
+test('account management blocks archiving the last active admin account', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let archivedAccount = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 11, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      if (Number(params[0]) === 11) {
+        return resultRows([{
+          id: 11,
+          name: 'Other Admin',
+          email: 'other-admin@example.com',
+          role: 'admin',
+          is_archived: false,
+          session_version: 0,
+        }]);
+      }
+      return resultRows([{ id: 10, name: 'Ada Admin', email: 'ada@example.com', role: 'admin', is_archived: false }]);
+    }
+    if (sql.startsWith('select id, email, role, is_archived from public.accounts where id = $1')) {
+      return resultRows([{ id: 10, role: 'admin', email: 'ada@example.com', is_archived: false }]);
+    }
+    if (sql.startsWith('select count')) {
+      return resultRows([{ count: '1' }]);
+    }
+    if (sql.startsWith('update public.accounts set is_archived = true')) {
+      archivedAccount = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts/10', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+
+  assert.equal(response.status, 403);
+  assert.equal(response.body.error, 'Cannot archive the last admin account.');
+  assert.equal(archivedAccount, false);
+});
+
+test('account management blocks downgrading the last active admin role', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let updatedAccount = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 11, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      if (Number(params[0]) === 11) {
+        return resultRows([{
+          id: 11,
+          name: 'Other Admin',
+          email: 'other-admin@example.com',
+          role: 'admin',
+          is_archived: false,
+          session_version: 0,
+        }]);
+      }
+      return resultRows([{
+        id: 10,
+        name: 'Ada Admin',
+        email: 'ada@example.com',
+        role: 'admin',
+        is_archived: false,
+        session_version: 0,
+      }]);
+    }
+    if (sql.startsWith('select count')) {
+      return resultRows([{ count: '1' }]);
+    }
+    if (sql.startsWith('update public.accounts')) {
+      updatedAccount = true;
+      return resultRows([{
+        id: 10,
+        name: 'Ada Admin',
+        email: 'ada@example.com',
+        role: 'admin',
+        is_archived: false,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts/10', {
+    method: 'PUT',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({
+      name: 'Ada Admin',
+      email: 'ada@example.com',
+      role: 'teacher',
+      employee_id: '1234567890',
+    }),
+  });
+
+  assert.equal(response.status, 403);
+  assert.equal(response.body.error, 'Cannot change the role of the last admin account.');
+  assert.equal(updatedAccount, false);
+});
+
+test('account management allows archiving another admin when another active admin remains', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let archivedAccount = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 11, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{
+        id: Number(params[0]),
+        name: 'Other Admin',
+        email: 'other-admin@example.com',
+        role: 'admin',
+        is_archived: false,
+        session_version: 0,
+      }]);
+    }
+    if (sql.startsWith('select id, email, role')) {
+      return resultRows([{ id: 10, role: 'admin', email: 'ada@example.com', is_archived: false }]);
+    }
+    if (sql.startsWith('select count')) {
+      return resultRows([{ count: '2' }]);
+    }
+    if (sql.startsWith('update public.accounts set is_archived = true')) {
+      archivedAccount = true;
+      return resultRows([{ id: Number(params[0]), role: 'admin', is_archived: true, session_version: 2 }]);
+    }
+    if (sql.startsWith('delete from public.login_otp_device_skips')) {
+      return emptyResult;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts/10', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(response.body.message, /archived/i);
+  assert.equal(archivedAccount, true);
+});
+
+test('admin account management writes audit log entries for create edit archive restore and role change', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const auditEntries = [];
+  const accounts = new Map([
+    [1, { id: 1, name: 'Ada Admin', email: 'ada@example.com', role: 'admin', is_archived: false, session_version: 0 }],
+    [42, { id: 42, name: 'Target Teacher', email: 'teacher@example.com', role: 'teacher', is_archived: false, session_version: 0, employee_id: '1234567890' }],
+    [43, { id: 43, name: 'Role Change User', email: 'role-change@example.com', role: 'teacher', is_archived: false, session_version: 0, employee_id: '5555555555' }],
+  ]);
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select 1 from public.accounts where parent_id')) {
+      return emptyResult;
+    }
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows(accounts.has(Number(params[0])) ? [accounts.get(Number(params[0]))] : []);
+    }
+    if (sql.startsWith('select id, role from public.accounts where id = $1')) {
+      const account = accounts.get(Number(params[0]));
+      return resultRows(account ? [{ id: account.id, role: account.role }] : []);
+    }
+    if (sql.startsWith('insert into public.accounts')) {
+      const created = {
+        id: 90,
+        name: params[0],
+        email: params[1],
+        role: params[3],
+        mobile_number: params[4],
+        address: params[5],
+        birthday: params[6],
+        gender: params[7],
+        employee_id: params[8],
+        parent_id: params[11],
+      };
+      accounts.set(created.id, created);
+      return resultRows([created]);
+    }
+    if (sql.startsWith('update public.accounts set name=')) {
+      const id = Number(params[12]);
+      const updated = {
+        ...accounts.get(id),
+        name: params[0],
+        email: params[1],
+        role: params[2],
+        mobile_number: params[4],
+        address: params[5],
+        birthday: params[6],
+        gender: params[7],
+        status: params[8],
+        employee_id: params[9],
+        is_archived: params[10],
+        parent_id: params[11],
+      };
+      accounts.set(id, updated);
+      return resultRows([updated]);
+    }
+    if (sql.startsWith('select id, email, role, is_archived from public.accounts where id = $1')) {
+      const account = accounts.get(Number(params[0]));
+      return resultRows(account ? [{ id: account.id, email: account.email, role: account.role, is_archived: account.is_archived }] : []);
+    }
+    if (sql.startsWith('select count')) {
+      return resultRows([{ count: '2' }]);
+    }
+    if (sql.startsWith('update public.accounts set is_archived = true')) {
+      const account = { ...accounts.get(Number(params[0])), is_archived: true, status: 'Offline', session_version: 1 };
+      accounts.set(account.id, account);
+      return resultRows([account]);
+    }
+    if (sql.startsWith('delete from public.login_otp_device_skips')) {
+      return emptyResult;
+    }
+    if (sql.startsWith('update public.accounts set is_archived = false')) {
+      const account = { ...accounts.get(Number(params[0])), is_archived: false };
+      accounts.set(account.id, account);
+      return resultRows([account]);
+    }
+    if (sql.startsWith('insert into public.admin_audit_logs')) {
+      auditEntries.push({ adminName: params[0], action: params[1], targetUser: params[2] });
+      return resultRows([{ id: auditEntries.length }]);
+    }
+    return emptyResult;
+  });
+
+  const authHeaders = { Authorization: 'Bearer admin-token' };
+  const createResponse = await requestJson(baseUrl, '/api/accounts', {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify({
+      name: 'New Parent',
+      email: 'new.parent@gmail.com',
+      role: 'parent',
+    }),
+  });
+  const editResponse = await requestJson(baseUrl, '/api/accounts/42', {
+    method: 'PUT',
+    headers: authHeaders,
+    body: JSON.stringify({
+      name: 'Edited Teacher',
+      email: 'teacher@example.com',
+      employee_id: '1234567890',
+    }),
+  });
+  const roleChangeResponse = await requestJson(baseUrl, '/api/accounts/43', {
+    method: 'PUT',
+    headers: authHeaders,
+    body: JSON.stringify({
+      name: 'Role Change User',
+      email: 'role-change@example.com',
+      role: 'parent',
+    }),
+  });
+  const archiveResponse = await requestJson(baseUrl, '/api/accounts/42', {
+    method: 'DELETE',
+    headers: authHeaders,
+  });
+  const restoreResponse = await requestJson(baseUrl, '/api/accounts/42/restore', {
+    method: 'POST',
+    headers: authHeaders,
+  });
+
+  assert.equal(createResponse.status, 201);
+  assert.equal(editResponse.status, 200);
+  assert.equal(roleChangeResponse.status, 200);
+  assert.equal(archiveResponse.status, 200);
+  assert.equal(restoreResponse.status, 200);
+  assert.deepEqual(auditEntries.map((entry) => entry.adminName), [
+    'Ada Admin',
+    'Ada Admin',
+    'Ada Admin',
+    'Ada Admin',
+    'Ada Admin',
+    'Ada Admin',
+  ]);
+  assert.deepEqual(auditEntries.map((entry) => entry.action), [
+    'Create Account',
+    'Edit Account',
+    'Edit Account',
+    'Change Role',
+    'Archive Account',
+    'Restore Account',
+  ]);
+  assert.equal(auditEntries[0].targetUser, 'New Parent');
+  assert.equal(auditEntries[2].targetUser, 'Role Change User');
 });
 
 test('credential email failure logs safe production diagnostics', async (t) => {
@@ -557,9 +1055,13 @@ test('archiving an account invalidates sessions and OTP skip records', async (t)
     await close(server);
   });
 
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
   setQueryHandler(async (sql, params) => {
     statements.push({ sql, params });
-    if (sql.startsWith('select id, role from public.accounts where id = $1')) {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, name: 'Ada Admin', email: 'ada@example.com', role: 'admin', is_archived: false, session_version: 0 }]);
+    }
+    if (sql.startsWith('select id, email, role, is_archived from public.accounts where id = $1')) {
       return resultRows([{ id: Number(params[0]), role: 'teacher' }]);
     }
     if (sql.startsWith('update public.accounts set is_archived = true')) {
@@ -571,7 +1073,10 @@ test('archiving an account invalidates sessions and OTP skip records', async (t)
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/accounts/42', { method: 'DELETE' });
+  const response = await requestJson(baseUrl, '/api/accounts/42', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer admin-token' },
+  });
 
   assert.equal(response.status, 200);
   assert.match(response.body.message, /archived/i);

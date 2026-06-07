@@ -85,6 +85,7 @@ describe('StudentAnalytics defensive rendering', () => {
         progress_percentage: 74,
         correct_answers: 41,
         total_questions: 50,
+        score: 925,
         total_quests_completed: 7,
         total_play_time: 5400,
       },
@@ -101,13 +102,17 @@ describe('StudentAnalytics defensive rendering', () => {
     });
 
     expect(container.querySelector('.student-profile-card')).toBeTruthy();
+    expect(container.querySelector('.student-profile-logo')).toBeFalsy();
     expect(container.querySelectorAll('.student-metric-card')).toHaveLength(6);
     expect(container.textContent).toContain('Student ID');
     expect(container.textContent).toContain('44');
+    expect(container.textContent).toContain('Grade & Section');
+    expect(container.textContent).toContain('Grade 3 - Section A');
     expect(container.textContent).toContain('Current Scene');
     expect(container.textContent).toContain('oak_leaf_village.tscn');
-    expect(container.textContent).toContain('Total Playtime');
-    expect(container.textContent).toContain('1 hr 30 min');
+    expect(container.textContent).toContain('Game Score');
+    expect(container.textContent).toContain('925');
+    expect(container.textContent).not.toContain('Total Playtime');
     expect(container.textContent).toContain('Game Performance');
     expect(container.textContent).toContain('Performance Insight');
     expect(container.textContent).toContain('Easy');

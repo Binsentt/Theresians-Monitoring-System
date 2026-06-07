@@ -5,7 +5,6 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronLeft,
-  Clock,
   Layers,
   Lightbulb,
   MapPin,
@@ -17,25 +16,11 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { buildStudentProgressDetailUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
 import { clampPercent, normalizeDisplayList, safeDisplayText, toFiniteNumber } from './studentProgress.utils';
-import logoImage from '../assets/images/STS_Logo.png';
 import '../styles/studentprogress.css';
 
 const formatWholePercent = (value) => `${clampPercent(value, 0).toFixed(0)}%`;
 
 const formatCount = (value) => String(Math.round(toFiniteNumber(value, 0)));
-
-const formatPlaytime = ({ seconds, minutes }) => {
-  const minuteValue = minutes !== undefined && minutes !== null && minutes !== ''
-    ? Math.max(0, Math.floor(toFiniteNumber(minutes, 0)))
-    : Math.max(0, Math.floor(toFiniteNumber(seconds, 0) / 60));
-
-  if (minuteValue <= 0) return '0 min';
-  if (minuteValue < 60) return `${minuteValue} min`;
-
-  const hours = Math.floor(minuteValue / 60);
-  const remaining = minuteValue % 60;
-  return remaining ? `${hours} hr ${remaining} min` : `${hours} hr`;
-};
 
 const getInitials = (name) => {
   const parts = safeDisplayText(name, '')
@@ -116,6 +101,7 @@ export default function StudentAnalytics() {
   const resolvedStudentId = safeDisplayText(progress?.student_id || progress?.id || studentId, 'N/A');
   const grade = safeDisplayText(progress?.grade_level || progress?.grade, 'N/A');
   const section = safeDisplayText(progress?.section, 'N/A');
+  const gradeSection = grade === 'N/A' && section === 'N/A' ? 'N/A' : `${grade} - ${section}`;
   const currentQuest = safeDisplayText(analysis?.currentQuest || progress?.current_quest, 'N/A');
   const currentDifficulty = safeDisplayText(progress?.difficulty_level || progress?.difficulty, 'Unknown');
   const currentScene = safeDisplayText(
@@ -127,18 +113,14 @@ export default function StudentAnalytics() {
     Math.min(10, Math.round(questCompletion / 10))
   );
   const questCompletionBar = clampPercent(completedQuests * 10, questCompletion);
-  const totalPlaytime = formatPlaytime({
-    seconds: progress?.total_play_time ?? progress?.duration_seconds,
-    minutes: progress?.total_playtime_minutes,
-  });
   const performanceInsight = accuracy >= 80 ? 'Consistently strong results' : 'Needs guided reinforcement';
   const metricCards = [
     { label: 'Total Progress', value: formatWholePercent(questCompletion), icon: Target, tone: 'blue' },
     { label: 'Accuracy', value: formatWholePercent(accuracy), icon: BarChart3, tone: 'green' },
     { label: 'Correct Answers', value: formatCount(correctAnswers), icon: CheckCircle2, tone: 'green' },
     { label: 'Incorrect Answers', value: formatCount(incorrectAnswers), icon: XCircle, tone: 'red' },
-    { label: 'Completed Quests', value: formatCount(completedQuests), icon: Trophy, tone: 'orange' },
-    { label: 'Total Playtime', value: totalPlaytime, icon: Clock, tone: 'blue' },
+    { label: 'Game Score', value: formatCount(gameScore), icon: Trophy, tone: 'blue' },
+    { label: 'Completed Quests', value: formatCount(completedQuests), icon: BookOpen, tone: 'orange' },
   ];
   const performanceBars = [
     { label: 'Completion', value: questCompletion, tone: 'blue' },
@@ -170,11 +152,8 @@ export default function StudentAnalytics() {
               <div className="student-profile-copy">
                 <p className="crumb">Analytics / Student Details</p>
                 <h1>{studentName}</h1>
-                <p className="subtitle">Detailed performance insights, progress metrics, and learning recommendations for this student.</p>
+                <p className="subtitle">Focused learning progress, gameplay performance, and support recommendations.</p>
               </div>
-            </div>
-            <div className="student-profile-logo" aria-label="Saint Theresa School logo">
-              <img src={logoImage} alt="Saint Theresa School logo" />
             </div>
             <div className="student-profile-meta">
               <div>
@@ -182,24 +161,16 @@ export default function StudentAnalytics() {
                 <strong>{resolvedStudentId}</strong>
               </div>
               <div>
-                <span>Grade</span>
-                <strong>{grade}</strong>
+                <span>Grade & Section</span>
+                <strong>{gradeSection}</strong>
               </div>
               <div>
-                <span>Section</span>
-                <strong>{section}</strong>
+                <span>Current Difficulty</span>
+                <strong>{currentDifficulty}</strong>
               </div>
               <div>
                 <span>Current Quest</span>
                 <strong>{currentQuest}</strong>
-              </div>
-              <div>
-                <span>Difficulty</span>
-                <strong>{currentDifficulty}</strong>
-              </div>
-              <div>
-                <span>Current Scene</span>
-                <strong>{currentScene}</strong>
               </div>
             </div>
           </section>

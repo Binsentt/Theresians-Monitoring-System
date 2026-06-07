@@ -160,6 +160,31 @@ describe('ManageUsers edit flow', () => {
     expect(container.textContent).not.toContain('Game Student');
   });
 
+  test('marks the logged-in account and removes clickable row actions for it', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({
+      id: 10,
+      role: 'admin',
+      name: 'Admin User',
+      email: 'admin@gmail.com',
+    }));
+
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    const rows = Array.from(container.querySelectorAll('tbody tr'));
+    const currentAccountRow = rows.find((row) => row.textContent.includes('admin@gmail.com'));
+    const otherAccountRow = rows.find((row) => row.textContent.includes('maria@gmail.com'));
+
+    expect(currentAccountRow).toBeTruthy();
+    expect(currentAccountRow.textContent).toContain('Current Account');
+    expect(currentAccountRow.textContent).toContain('Protected');
+    expect(currentAccountRow.querySelector('.edit-action-btn')).toBeNull();
+    expect(currentAccountRow.querySelector('.delete-action-btn')).toBeNull();
+    expect(otherAccountRow.querySelector('.edit-action-btn')).toBeTruthy();
+    expect(otherAccountRow.querySelector('.delete-action-btn')).toBeTruthy();
+  });
+
   test('Edit Parent form exposes linked children management', async () => {
     await act(async () => {
       root.render(<ManageUsers />);

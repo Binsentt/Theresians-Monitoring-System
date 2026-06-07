@@ -286,6 +286,15 @@ const ensureSchema = async () => {
     }
     await pool.query('CREATE INDEX IF NOT EXISTS idx_announcements_target_created ON public.announcements(target_role, created_at DESC)');
 
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.admin_audit_logs (
+      id SERIAL PRIMARY KEY,
+      admin_name VARCHAR(255) NOT NULL,
+      action VARCHAR(100) NOT NULL,
+      target_user VARCHAR(255) NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created_at ON public.admin_audit_logs(created_at DESC)');
+
     await pool.query(`CREATE TABLE IF NOT EXISTS public.folders (
       id SERIAL PRIMARY KEY,
       name VARCHAR(255) UNIQUE NOT NULL,
@@ -528,6 +537,58 @@ const requireAuthenticatedRoles = (allowedRoles) => (req, res, next) => {
 
   req.authenticatedRole = role;
   next();
+};
+
+const requireAccountManagementAdmin = (req, res, next) => {
+  if (!req.authenticatedUser) {
+    return res.status(401).json({ error: 'Authentication is required.' });
+  }
+
+  if (normalizeAccountRole(req.authenticatedUser.role) !== 'admin') {
+    return res.status(403).json({ error: 'Only admins can manage accounts.' });
+  }
+
+  req.authenticatedRole = 'admin';
+  next();
+};
+
+const isSameAccount = (authenticatedAccount, targetAccount, fallbackTargetId) => {
+  const authenticatedId = String(authenticatedAccount?.id ?? '').trim();
+  const targetId = String(targetAccount?.id ?? fallbackTargetId ?? '').trim();
+  const authenticatedEmail = String(authenticatedAccount?.email || '').trim().toLowerCase();
+  const targetEmail = String(targetAccount?.email || '').trim().toLowerCase();
+
+  return Boolean(
+    (authenticatedId && targetId && authenticatedId === targetId) ||
+    (authenticatedEmail && targetEmail && authenticatedEmail === targetEmail)
+  );
+};
+
+const countActiveAdminAccounts = async () => {
+  const result = await pool.query(
+    `SELECT COUNT(*)::int AS count
+     FROM public.accounts
+     WHERE LOWER(role) = 'admin'
+       AND COALESCE(is_archived, false) = false`
+  );
+  return Number(result.rows[0]?.count || 0);
+};
+
+const formatAuditTargetUser = (account) => {
+  const name = String(account?.name || '').trim();
+  const email = String(account?.email || '').trim();
+  const id = account?.id !== undefined && account?.id !== null ? String(account.id) : '';
+  return name || email || (id ? `Account ${id}` : 'Unknown Account');
+};
+
+const writeAdminAuditLog = async (adminAccount, action, targetAccount) => {
+  const adminName = String(adminAccount?.name || adminAccount?.email || '').trim() || 'Unknown Admin';
+  const targetUser = formatAuditTargetUser(targetAccount);
+  await pool.query(
+    `INSERT INTO public.admin_audit_logs (admin_name, action, target_user, created_at)
+     VALUES ($1, $2, $3, NOW())`,
+    [adminName, action, targetUser]
+  );
 };
 const normalizeOptionalText = (value) => {
   const normalized = String(value ?? '').trim();
@@ -2117,6 +2178,10 @@ app.post('/api/accounts', async (req, res) => {
       role: finalRole,
     });
 
+    if (normalizeAccountRole(req.authenticatedUser?.role) === 'admin') {
+      await writeAdminAuditLog(req.authenticatedUser, 'Create Account', created);
+    }
+
     res.status(201).json(responsePayload);
   } catch (err) {
     console.error('Create account failed:', err.message);
@@ -2159,9 +2224,9 @@ app.get('/api/accounts', async (req, res) => {
 });
 
 // --- UPDATED PUT ROUTE (FIXED: Properly handles all fields, includes comprehensive logging) ---
-app.put('/api/accounts/:id', async (req, res) => {
+app.put('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) => {
   const { id } = req.params;
-  const { name, email, password, mobile_number, address, birthday, gender, status, employee_id, is_archived } = req.body;
+  const { name, email, password, mobile_number, address, birthday, gender, status, employee_id, is_archived, role } = req.body;
 
   try {
     const currentData = await pool.query('SELECT * FROM public.accounts WHERE id = $1', [id]);
@@ -2172,11 +2237,26 @@ app.put('/api/accounts/:id', async (req, res) => {
     const old = currentData.rows[0];
     const finalEmail = email && email.trim() !== '' ? email.toLowerCase().trim() : old.email;
     const oldRole = normalizeAccountRole(old.role);
+    if (isSameAccount(req.authenticatedUser, old, id)) {
+      return res.status(403).json({ error: 'You cannot edit your own account here. Please use My Profile.' });
+    }
     if (!isWebsiteManagedAccountRole(oldRole)) {
       return res.status(403).json({ error: 'Manage Users can only update website accounts.' });
     }
 
-    const finalRole = oldRole;
+    const roleProvided = Object.prototype.hasOwnProperty.call(req.body, 'role');
+    const finalRole = roleProvided ? normalizeAccountRole(role) : oldRole;
+    if (!isWebsiteManagedAccountRole(finalRole)) {
+      return res.status(400).json({ error: 'Manage Users can only assign website account roles.' });
+    }
+    const roleChanged = finalRole !== oldRole;
+    if (oldRole === 'admin' && finalRole !== 'admin') {
+      const activeAdminCount = await countActiveAdminAccounts();
+      if (!old.is_archived && activeAdminCount <= 1) {
+        return res.status(403).json({ error: 'Cannot change the role of the last admin account.' });
+      }
+    }
+
     const birthdayResult = resolveOptionalBirthday(birthday !== undefined ? birthday : old.birthday);
     if (birthdayResult.error) {
       return res.status(400).json({ error: birthdayResult.error });
@@ -2224,6 +2304,10 @@ app.put('/api/accounts/:id', async (req, res) => {
     }
 
     const updatedUser = serializeUser(updateResult.rows[0]);
+    await writeAdminAuditLog(req.authenticatedUser, 'Edit Account', updatedUser);
+    if (roleChanged) {
+      await writeAdminAuditLog(req.authenticatedUser, 'Change Role', updatedUser);
+    }
     res.json({ success: true, message: 'Profile updated successfully', user: updatedUser });
   } catch (err) {
     console.error('Update Error:', err.message);
@@ -3292,29 +3376,37 @@ app.post('/api/game/result', async (req, res) => {
   }
 });
 
-app.delete('/api/accounts/:id', async (req, res) => {
+app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const permanent = String(req.query.permanent).toLowerCase() === 'true';
-    const accountResult = await pool.query('SELECT id, role FROM public.accounts WHERE id = $1', [id]);
+    const accountResult = await pool.query('SELECT id, email, role, is_archived FROM public.accounts WHERE id = $1', [id]);
     if (accountResult.rows.length === 0) {
       return res.status(404).json({ error: 'Account not found' });
     }
-    const accountRole = normalizeAccountRole(accountResult.rows[0].role);
+    const targetAccount = accountResult.rows[0];
+    const accountRole = normalizeAccountRole(targetAccount.role);
+    if (isSameAccount(req.authenticatedUser, targetAccount, id)) {
+      return res.status(403).json({ error: 'You cannot delete your own account.' });
+    }
     if (!isWebsiteManagedAccountRole(accountRole)) {
       return res.status(403).json({ error: 'Manage Users can only delete website accounts.' });
     }
     if (accountRole === 'admin') {
-      return res.status(403).json({ error: 'Admin accounts cannot be archived or deleted from Manage Users.' });
+      const activeAdminCount = await countActiveAdminAccounts();
+      if (!targetAccount.is_archived && activeAdminCount <= 1) {
+        return res.status(403).json({ error: permanent ? 'Cannot delete the last admin account.' : 'Cannot archive the last admin account.' });
+      }
     }
 
     if (permanent) {
       await pool.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [id]);
       await pool.query('DELETE FROM public.accounts WHERE id = $1', [id]);
+      await writeAdminAuditLog(req.authenticatedUser, 'Delete Account', targetAccount);
       return res.json({ success: true, message: 'Account permanently deleted' });
     }
 
-    await pool.query(
+    const archiveResult = await pool.query(
       `UPDATE public.accounts
        SET is_archived = true,
            status = 'Offline',
@@ -3322,10 +3414,11 @@ app.delete('/api/accounts/:id', async (req, res) => {
            otp_expires_at = NULL,
            session_version = COALESCE(session_version, 0) + 1
        WHERE id = $1
-       RETURNING *`,
+      RETURNING *`,
       [id]
     );
     await pool.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [id]);
+    await writeAdminAuditLog(req.authenticatedUser, 'Archive Account', archiveResult.rows[0] || targetAccount);
     res.json({ success: true, message: 'Account archived' });
   } catch (err) {
     console.error('Delete/archive failed:', err.message);
@@ -3333,7 +3426,7 @@ app.delete('/api/accounts/:id', async (req, res) => {
   }
 });
 
-app.post('/api/accounts/:id/restore', async (req, res) => {
+app.post('/api/accounts/:id/restore', requireAccountManagementAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const accountResult = await pool.query('SELECT id, role FROM public.accounts WHERE id = $1', [id]);
@@ -3344,6 +3437,7 @@ app.post('/api/accounts/:id/restore', async (req, res) => {
 
     const result = await pool.query('UPDATE public.accounts SET is_archived = false WHERE id = $1 RETURNING *', [id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+    await writeAdminAuditLog(req.authenticatedUser, 'Restore Account', result.rows[0]);
     res.json({ success: true, message: 'Account restored', user: serializeUser(result.rows[0]) });
   } catch (err) {
     console.error('Restore failed:', err.message);
@@ -3484,6 +3578,62 @@ app.get('/api/user/:id', async (req, res) => {
   } catch (err) {
     console.error('Fetch user failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+app.put('/api/user/:id', async (req, res) => {
+  try {
+    if (!req.authenticatedUser) {
+      return res.status(401).json({ error: 'Authentication is required.' });
+    }
+
+    const { id } = req.params;
+    const currentData = await pool.query('SELECT * FROM public.accounts WHERE id = $1', [id]);
+    if (currentData.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const old = currentData.rows[0];
+    if (old.is_archived) {
+      return res.status(401).json({ error: 'Session expired. Please log in again.' });
+    }
+    if (!isSameAccount(req.authenticatedUser, old, id)) {
+      return res.status(403).json({ error: 'You can only update your own profile.' });
+    }
+
+    const birthdayResult = resolveOptionalBirthday(req.body.birthday !== undefined ? req.body.birthday : old.birthday);
+    if (birthdayResult.error) {
+      return res.status(400).json({ error: birthdayResult.error });
+    }
+
+    const finalEmail = req.body.email && req.body.email.trim() !== ''
+      ? req.body.email.toLowerCase().trim()
+      : old.email;
+    const result = await pool.query(
+      `UPDATE public.accounts
+       SET name=$1, email=$2, mobile_number=$3, address=$4, birthday=$5, gender=$6, status=$7
+       WHERE id=$8
+       RETURNING *`,
+      [
+        req.body.name || old.name,
+        finalEmail,
+        req.body.mobile_number !== undefined ? req.body.mobile_number : old.mobile_number,
+        req.body.address !== undefined ? req.body.address : old.address,
+        birthdayResult.birthday,
+        req.body.gender !== undefined ? req.body.gender : old.gender,
+        req.body.status || old.status || 'Active',
+        id,
+      ]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(500).json({ error: 'Failed to update profile' });
+    }
+
+    res.json({ success: true, message: 'Profile updated successfully', user: serializeUser(result.rows[0]) });
+  } catch (err) {
+    console.error('Profile update failed:', err.message);
+    res.status(500).json({ error: 'Profile update failed' });
   }
 });
 

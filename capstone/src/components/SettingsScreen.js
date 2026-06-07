@@ -11,6 +11,7 @@ import {
   validateOptionalAdultBirthday,
 } from './manageUsers.utils';
 import { apiUrl } from '../api';
+import { buildAuthHeaders } from './session.utils';
 import '../styles/settings.css';
 
 export default function SettingsScreen() {
@@ -290,9 +291,9 @@ export default function SettingsScreen() {
 
       console.log('📤 Sending profile update payload:', payload);
 
-      const response = await fetch(apiUrl(`/api/accounts/${user.id}`), {
+      const response = await fetch(apiUrl(`/api/user/${user.id}`), {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
         body: JSON.stringify(payload),
       });
 

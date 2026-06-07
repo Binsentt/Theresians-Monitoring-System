@@ -19,6 +19,7 @@ import {
   validateOptionalAdultBirthday,
 } from './manageUsers.utils';
 import { apiUrl } from '../api';
+import { buildAuthHeaders } from './session.utils';
 import '../styles/manageusers.css';
 
 export default function ManageUsers() {
@@ -76,6 +77,31 @@ export default function ManageUsers() {
   const filteredUsers = filterUsers(users, searchTerm, roleFilter);
   const usersPerPage = 8;
   const paginatedUsers = paginateItems(filteredUsers, currentPage, usersPerPage);
+  const currentUserId = user?.id !== undefined && user?.id !== null ? String(user.id) : '';
+  const currentUserEmail = String(user?.email || '').trim().toLowerCase();
+
+  const isCurrentAccount = (account) => {
+    const accountId = account?.id !== undefined && account?.id !== null ? String(account.id) : '';
+    const accountEmail = String(account?.email || '').trim().toLowerCase();
+    return Boolean(
+      (currentUserId && accountId && currentUserId === accountId) ||
+      (currentUserEmail && accountEmail && currentUserEmail === accountEmail)
+    );
+  };
+
+  const showSelfEditWarning = () => {
+    setValidationModal({
+      title: 'Current Account',
+      message: 'You cannot edit your own account here. Please use My Profile.'
+    });
+  };
+
+  const showSelfDeleteWarning = () => {
+    setValidationModal({
+      title: 'Current Account',
+      message: 'You cannot delete your own account.'
+    });
+  };
 
   const validateBirthday = (date) => {
     return validateOptionalAdultBirthday(date);
@@ -235,7 +261,7 @@ export default function ManageUsers() {
 
       const response = await fetch(apiUrl('/api/accounts'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
         body: JSON.stringify(payload),
       });
       const data = await response.json();
@@ -262,6 +288,11 @@ export default function ManageUsers() {
   };
 
   const handleEditClick = (u) => {
+    if (isCurrentAccount(u)) {
+      showSelfEditWarning();
+      return;
+    }
+
     setEditingUser(u);
     setEditErrors({});
     setRelationEmail('');
@@ -390,9 +421,10 @@ export default function ManageUsers() {
 
       const response = await fetch(apiUrl(`/api/accounts/${editingUser.id}`), {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
         body: JSON.stringify(payload),
       });
+      const data = await response.json().catch(() => ({}));
 
       if (response.ok) {
         setValidationModal({
@@ -404,7 +436,7 @@ export default function ManageUsers() {
       } else {
         setValidationModal({
           title: 'Error',
-          message: 'Failed to update user'
+          message: data.error || 'Failed to update user'
         });
       }
     } catch (error) {
@@ -419,11 +451,19 @@ export default function ManageUsers() {
 
   const handleDeleteUser = async () => {
     if (!deletingUser?.id) return;
+    if (isCurrentAccount(deletingUser)) {
+      showSelfDeleteWarning();
+      setDeletingUser(null);
+      return;
+    }
+
     setDeleting(true);
     try {
       const response = await fetch(apiUrl(`/api/accounts/${deletingUser.id}`), {
         method: 'DELETE',
+        headers: buildAuthHeaders(),
       });
+      const data = await response.json().catch(() => ({}));
 
       if (response.ok) {
         setValidationModal({
@@ -435,7 +475,7 @@ export default function ManageUsers() {
       } else {
         setValidationModal({
           title: 'Error',
-          message: 'Failed to archive user'
+          message: data.error || 'Failed to archive user'
         });
       }
     } catch (error) {
@@ -449,12 +489,18 @@ export default function ManageUsers() {
   };
 
   const handlePermanentDeleteUser = async (userToDelete) => {
+    if (isCurrentAccount(userToDelete)) {
+      showSelfDeleteWarning();
+      return;
+    }
     if (!window.confirm(`Permanently delete ${userToDelete.name}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
       const response = await fetch(apiUrl(`/api/accounts/${userToDelete.id}?permanent=true`), {
         method: 'DELETE',
+        headers: buildAuthHeaders(),
       });
+      const data = await response.json().catch(() => ({}));
 
       if (response.ok) {
         setValidationModal({
@@ -465,7 +511,7 @@ export default function ManageUsers() {
       } else {
         setValidationModal({
           title: 'Error',
-          message: 'Failed to delete user permanently'
+          message: data.error || 'Failed to delete user permanently'
         });
       }
     } catch (error) {
@@ -482,8 +528,9 @@ export default function ManageUsers() {
     try {
       const response = await fetch(apiUrl(`/api/accounts/${userToRestore.id}/restore`), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
       });
+      const data = await response.json().catch(() => ({}));
       if (response.ok) {
         setValidationModal({
           title: 'Success',
@@ -493,7 +540,7 @@ export default function ManageUsers() {
       } else {
         setValidationModal({
           title: 'Error',
-          message: 'Failed to restore user'
+          message: data.error || 'Failed to restore user'
         });
       }
     } catch (error) {
@@ -782,33 +829,41 @@ export default function ManageUsers() {
                       </td>
                     </tr>
                   ) : (
-                    paginatedUsers.pageItems.map((u) => (
-                      <tr key={u.id}>
-                        <td>{u.name || 'No name set'}</td>
-                        <td className="email-cell">{u.email}</td>
-                        <td>
-                          <span className={`role-badge role-${normalizeRole(u.role)}`}>
-                            {formatRoleLabel(u.role)}
-                          </span>
-                        </td>
-                        <td>{isParentRole(u.role) ? (u.parent_id || 'Not generated') : '-'}</td>
-                        <td>{u.mobile_number || '-'}</td>
-                        <td>{u.birthday ? new Date(u.birthday).toLocaleDateString() : 'Not set'}</td>
-                        <td className="actions-cell">
-                          {showArchived ? (
-                            <>
-                              <button className="restore-action-btn" onClick={() => handleRestoreUser(u)}>Restore</button>
-                              <button className="delete-action-btn" onClick={() => handlePermanentDeleteUser(u)}>Delete</button>
-                            </>
-                          ) : (
-                            <>
-                              <button className="edit-action-btn" onClick={() => handleEditClick(u)}>Edit</button>
-                              <button className="delete-action-btn" onClick={() => setDeletingUser(u)}>Delete</button>
-                            </>
-                          )}
-                        </td>
-                      </tr>
-                    ))
+                    paginatedUsers.pageItems.map((u) => {
+                      const currentAccount = isCurrentAccount(u);
+                      return (
+                        <tr key={u.id}>
+                          <td>{u.name || 'No name set'}</td>
+                          <td className="email-cell">{u.email}</td>
+                          <td>
+                            <span className="role-badge-group">
+                              <span className={`role-badge role-${normalizeRole(u.role)}`}>
+                                {formatRoleLabel(u.role)}
+                              </span>
+                              {currentAccount && <span className="protected-account-badge">Protected</span>}
+                            </span>
+                          </td>
+                          <td>{isParentRole(u.role) ? (u.parent_id || 'Not generated') : '-'}</td>
+                          <td>{u.mobile_number || '-'}</td>
+                          <td>{u.birthday ? new Date(u.birthday).toLocaleDateString() : 'Not set'}</td>
+                          <td className="actions-cell">
+                            {currentAccount ? (
+                              <span className="current-account-badge">Current Account</span>
+                            ) : showArchived ? (
+                              <>
+                                <button className="restore-action-btn" onClick={() => handleRestoreUser(u)}>Restore</button>
+                                <button className="delete-action-btn" onClick={() => handlePermanentDeleteUser(u)}>Delete</button>
+                              </>
+                            ) : (
+                              <>
+                                <button className="edit-action-btn" onClick={() => handleEditClick(u)}>Edit</button>
+                                <button className="delete-action-btn" onClick={() => setDeletingUser(u)}>Delete</button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
