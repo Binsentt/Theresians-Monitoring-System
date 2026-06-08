@@ -222,7 +222,14 @@ export const getQuestionFolderView = (files, selection = {}) => {
         grade_level: folder.grade,
         godotFolderName: folder.godotFolderName,
       })),
-      files: [],
+      files: filterLearningFiles(files, {
+        search: selection.search || '',
+        folder: '',
+        grade_level: '',
+        difficulty: '',
+        math_topic: selection.math_topic || '',
+        file_type: selection.file_type || '',
+      }),
     };
   }
 
@@ -236,7 +243,14 @@ export const getQuestionFolderView = (files, selection = {}) => {
         grade_level: gradeLevel,
         difficulty: level,
       })),
-      files: [],
+      files: filterLearningFiles(files, {
+        search: selection.search || '',
+        folder: '',
+        grade_level: gradeLevel,
+        difficulty: '',
+        math_topic: selection.math_topic || '',
+        file_type: selection.file_type || '',
+      }),
     };
   }
 

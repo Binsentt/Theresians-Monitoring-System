@@ -366,11 +366,32 @@ const generateRandomPassword = () => {
   return value;
 };
 
-const createRememberToken = (user) => {
+const THIRTY_DAY_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+
+const normalizeOptionalIsoDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+const isExpiredIsoDate = (value, now = new Date()) => {
+  if (!value) return false;
+  const expiresAt = new Date(value);
+  return !Number.isNaN(expiresAt.getTime()) && expiresAt <= now;
+};
+
+const createRememberToken = (user, options = {}) => {
+  const issuedAt = options.now instanceof Date ? options.now : new Date();
+  const sessionExpiresAt = new Date(issuedAt.getTime() + THIRTY_DAY_SESSION_MS);
   return jwt.sign({
     userId: user.id,
     email: user.email,
+    role: user.role,
     sessionVersion: Number(user.session_version || 0),
+    sessionIssuedAt: issuedAt.toISOString(),
+    sessionExpiresAt: sessionExpiresAt.toISOString(),
+    otpVerifiedAt: issuedAt.toISOString(),
+    otpTrustExpiresAt: normalizeOptionalIsoDate(options.otpTrustExpiresAt),
   }, JWT_SECRET, { expiresIn: '30d' });
 };
 
@@ -436,6 +457,9 @@ const resolveAuthenticatedAccountFromToken = async (token) => {
   const payload = verifyRememberToken(token);
   if (!payload?.userId) {
     return { ok: false, reason: 'invalid_token' };
+  }
+  if (isExpiredIsoDate(payload.sessionExpiresAt)) {
+    return { ok: false, reason: 'session_expired' };
   }
 
   const result = await pool.query('SELECT * FROM public.accounts WHERE id = $1', [payload.userId]);
@@ -2057,7 +2081,9 @@ app.post('/api/login', async (req, res) => {
     if (normalizedDeviceId) {
       const skipResult = await pool.query(buildLoginDeviceSkipLookup(user.id, normalizedDeviceId));
       if (skipResult.rows.length > 0) {
-        const sessionToken = createRememberToken(user);
+        const sessionToken = createRememberToken(user, {
+          otpTrustExpiresAt: skipResult.rows[0]?.otp_skipped_until,
+        });
         await pool.query(
           'UPDATE public.accounts SET otp_code = NULL, otp_expires_at = NULL, status = $1 WHERE id = $2',
           ['Active', user.id]
@@ -2136,13 +2162,14 @@ app.post('/api/login/verify-otp', async (req, res) => {
       return res.status(401).json({ error: 'OTP expired' });
     }
 
-    const rememberToken = createRememberToken(user);
-    await pool.query('UPDATE public.accounts SET otp_code = NULL, otp_expires_at = NULL, status = $1 WHERE id = $2', ['Active', user.id]);
     const normalizedDeviceId = normalizeLoginDeviceId(deviceId);
+    let otpTrustExpiresAt = null;
     if (skipOtpFor30Days && normalizedDeviceId) {
-      const otpSkipExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-      await pool.query(buildLoginDeviceSkipUpsert(user.id, normalizedDeviceId, otpSkipExpiresAt));
+      otpTrustExpiresAt = new Date(Date.now() + THIRTY_DAY_SESSION_MS);
+      await pool.query(buildLoginDeviceSkipUpsert(user.id, normalizedDeviceId, otpTrustExpiresAt));
     }
+    const rememberToken = createRememberToken(user, { otpTrustExpiresAt });
+    await pool.query('UPDATE public.accounts SET otp_code = NULL, otp_expires_at = NULL, status = $1 WHERE id = $2', ['Active', user.id]);
 
     const serializedUser = serializeUser({ ...user, status: 'Active' });
     res.json({

@@ -19,7 +19,7 @@ import {
   validateOptionalAdultBirthday,
 } from './manageUsers.utils';
 import { apiUrl } from '../api';
-import { buildAuthHeaders } from './session.utils';
+import { buildAuthHeaders, clearStoredSession } from './session.utils';
 import '../styles/manageusers.css';
 
 export default function ManageUsers() {
@@ -567,8 +567,7 @@ export default function ManageUsers() {
   }, [currentPage, paginatedUsers.currentPage]);
 
   const handleLogout = () => {
-    localStorage.removeItem('loggedInUser');
-    localStorage.removeItem('token');
+    clearStoredSession();
     navigate('/');
   };
 

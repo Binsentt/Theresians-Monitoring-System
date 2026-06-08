@@ -279,7 +279,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).not.toContain('addition-quiz');
   });
 
-  test('opens Questions, Grade, and Difficulty folders with breadcrumbs and scoped files', async () => {
+  test('fixed system folder cards filter files by grade and difficulty without leaving the structure', async () => {
     fixtures.files = [
       {
         id: 77,
@@ -303,6 +303,16 @@ describe('LessonQuestionManager upload and trash controls', () => {
         file_type: 'fixed_questions',
         published: true,
       },
+      {
+        id: 79,
+        title: 'grade-two-easy',
+        file_name: 'grade-two-easy.json',
+        grade_level: 'Grade 2',
+        difficulty: 'Easy',
+        math_topic: 'Shapes',
+        file_type: 'fixed_questions',
+        published: false,
+      },
     ];
 
     await act(async () => {
@@ -310,33 +320,50 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
 
     expect(container.textContent).toContain('Questions');
+    expect(container.textContent).toContain('Selected Folder: Questions');
     expect(container.textContent).toContain('Grade 1');
     expect(container.textContent).toContain('Grade 6');
     expect(container.textContent).not.toContain('Grade1');
+    expect(container.textContent).toContain('addition-quiz');
+    expect(container.textContent).toContain('medium-quiz');
+    expect(container.textContent).toContain('grade-two-easy');
 
     await act(async () => {
       clickByText(container, 'Grade 1');
     });
 
-    expect(container.textContent).toContain('Questions > Grade 1');
+    expect(container.textContent).toContain('Selected Folder: Questions / Grade 1');
     expect(container.textContent).toContain('Easy');
     expect(container.textContent).toContain('Medium');
     expect(container.textContent).toContain('Hard');
-    expect(container.textContent).not.toContain('addition-quiz');
+    expect(container.textContent).toContain('Grade 6');
+    expect(container.textContent).toContain('addition-quiz');
+    expect(container.textContent).toContain('medium-quiz');
+    expect(container.textContent).not.toContain('grade-two-easy');
 
     await act(async () => {
       clickByText(container, 'Easy');
     });
 
-    expect(container.textContent).toContain('Questions > Grade 1 > Easy');
+    expect(container.textContent).toContain('Selected Folder: Questions / Grade 1 / Easy');
+    expect(container.textContent).toContain('Currently Viewing: Grade 1 - Easy');
+    expect(container.textContent).toContain('Grade 6');
     expect(container.textContent).toContain('addition-quiz');
     expect(container.textContent).toContain('Basic Addition');
     expect(container.textContent).toContain('Fixed Question File');
     expect(container.textContent).toContain('Staged');
     expect(container.textContent).not.toContain('medium-quiz');
+    expect(container.textContent).not.toContain('grade-two-easy');
     expect(container.textContent).toContain('Rename');
     expect(container.textContent).toContain('Preview');
     expect(container.textContent).toContain('Delete');
     expect(container.textContent).toContain('Push to Game');
+
+    await act(async () => {
+      clickByText(container, 'Hard');
+    });
+
+    expect(container.textContent).toContain('Selected Folder: Questions / Grade 1 / Hard');
+    expect(container.textContent).toContain('No files available in Grade 1 - Hard.');
   });
 });

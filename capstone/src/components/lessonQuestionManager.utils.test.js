@@ -104,7 +104,7 @@ describe('lesson question manager helpers', () => {
     expect(getQuestionFolderPath('Grade 6', 'Difficult')).toBe('Questions/Grade 6/Hard');
   });
 
-  test('returns folder explorer children and files for the selected path', () => {
+  test('returns fixed system folder filters and files for the selected path', () => {
     const files = [
       { id: 1, title: 'Easy Quiz', grade_level: 'Grade 1', difficulty: 'Easy' },
       { id: 2, title: 'Legacy Medium Quiz', grade_level: 'Grade 1', difficulty: 'Normal' },
@@ -117,7 +117,11 @@ describe('lesson question manager helpers', () => {
         expect.objectContaining({ label: 'Grade 1', type: 'grade' }),
         expect.objectContaining({ label: 'Grade 6', type: 'grade' }),
       ]),
-      files: [],
+      files: [
+        expect.objectContaining({ id: 1, difficulty: 'Easy' }),
+        expect.objectContaining({ id: 2, difficulty: 'Medium' }),
+        expect.objectContaining({ id: 3, difficulty: 'Hard' }),
+      ],
     });
     expect(getQuestionFolderView(files, { grade_level: 'Grade 1' })).toMatchObject({
       path: ['Questions', 'Grade 1'],
@@ -126,7 +130,10 @@ describe('lesson question manager helpers', () => {
         expect.objectContaining({ label: 'Medium', difficulty: 'Medium' }),
         expect.objectContaining({ label: 'Hard', difficulty: 'Hard' }),
       ]),
-      files: [],
+      files: [
+        expect.objectContaining({ id: 1, difficulty: 'Easy' }),
+        expect.objectContaining({ id: 2, difficulty: 'Medium' }),
+      ],
     });
     expect(getQuestionFolderView(files, { grade_level: 'Grade 1', difficulty: 'Medium' }).files).toEqual([
       expect.objectContaining({ id: 2, difficulty: 'Medium' }),

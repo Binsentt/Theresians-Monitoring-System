@@ -11,7 +11,7 @@ import {
   validateOptionalAdultBirthday,
 } from './manageUsers.utils';
 import { apiUrl } from '../api';
-import { buildAuthHeaders } from './session.utils';
+import { buildAuthHeaders, clearStoredSession } from './session.utils';
 import '../styles/settings.css';
 
 export default function SettingsScreen() {
@@ -144,8 +144,7 @@ export default function SettingsScreen() {
   }, []);
 
   const handleLogout = () => {
-    localStorage.removeItem('loggedInUser');
-    localStorage.removeItem('token');
+    clearStoredSession();
     navigate('/');
   };
 

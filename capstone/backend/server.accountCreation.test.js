@@ -9,6 +9,7 @@ let passwordMatches = false;
 let emailSendResult = { sent: true, provider: 'test' };
 let verifiedTokenPayload = {};
 let signedTokenPayloads = [];
+let signedTokenOptions = [];
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const mockPool = {
@@ -40,8 +41,9 @@ const serverDependencyStubs = {
   },
   cors: () => createMiddleware(),
   jsonwebtoken: {
-    sign: (payload) => {
+    sign: (payload, secret, options) => {
       signedTokenPayloads.push(payload);
+      signedTokenOptions.push(options || {});
       return 'token';
     },
     verify: () => verifiedTokenPayload,
@@ -98,6 +100,7 @@ const resetTestState = () => {
   emailSendResult = { sent: true, provider: 'test' };
   verifiedTokenPayload = {};
   signedTokenPayloads = [];
+  signedTokenOptions = [];
   setQueryHandler(async () => emptyResult);
 };
 
@@ -1136,7 +1139,38 @@ test('session validation rejects archived accounts and stale token versions', as
   assert.match(staleVersionResponse.body.error, /expired/i);
 });
 
-test('remember tokens include the account session version', async (t) => {
+test('session validation rejects tokens after their explicit 30-day expiry', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let accountLookups = 0;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = {
+    userId: 77,
+    email: 'teacher@example.com',
+    sessionVersion: 1,
+    sessionExpiresAt: new Date(Date.now() - 1000).toISOString(),
+  };
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      accountLookups += 1;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/session/validate', {
+    headers: { Authorization: 'Bearer expired-token' },
+  });
+
+  assert.equal(response.status, 401);
+  assert.match(response.body.error, /expired/i);
+  assert.equal(accountLookups, 0);
+});
+
+test('remember tokens include 30-day session metadata and the account session version', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -1160,7 +1194,7 @@ test('remember tokens include the account session version', async (t) => {
       }]);
     }
     if (sql.includes('from public.login_otp_device_skips')) {
-      return resultRows([{ id: 1 }]);
+      return resultRows([{ id: 1, otp_skipped_until: '2026-07-08T00:00:00.000Z' }]);
     }
     if (sql.startsWith('update public.accounts set otp_code = null')) {
       return emptyResult;
@@ -1179,4 +1213,14 @@ test('remember tokens include the account session version', async (t) => {
 
   assert.equal(response.status, 200);
   assert.equal(signedTokenPayloads[0].sessionVersion, 5);
+  assert.equal(signedTokenPayloads[0].role, 'teacher');
+  assert.equal(signedTokenPayloads[0].otpTrustExpiresAt, '2026-07-08T00:00:00.000Z');
+  assert.ok(signedTokenPayloads[0].sessionIssuedAt);
+  assert.ok(signedTokenPayloads[0].otpVerifiedAt);
+  assert.ok(signedTokenPayloads[0].sessionExpiresAt);
+  assert.equal(signedTokenOptions[0].expiresIn, '30d');
+  assert.equal(
+    Math.round((new Date(signedTokenPayloads[0].sessionExpiresAt) - new Date(signedTokenPayloads[0].sessionIssuedAt)) / (24 * 60 * 60 * 1000)),
+    30
+  );
 });

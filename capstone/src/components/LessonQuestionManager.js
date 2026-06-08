@@ -23,6 +23,7 @@ import {
   isValidGradeLevel,
   isValidMathTopicForGradeDifficulty,
   normalizeMathTopicForGradeDifficulty,
+  QUESTION_FOLDER_STRUCTURE,
 } from './lessonQuestionManager.utils';
 import { apiUrl } from '../api';
 import '../styles/lessonQuestionManager.css';
@@ -145,10 +146,16 @@ export default function LessonQuestionManager() {
   const inferredFileType = inferLearningFileUploadType(form.file?.name);
   const uploadType = form.file_type;
   const isDifficultyFolderOpen = Boolean(selectedFolder.grade_level && selectedFolder.difficulty);
-  const displayedFiles = isDifficultyFolderOpen ? folderView.files : [];
-  const tableEmptyMessage = isDifficultyFolderOpen
-    ? 'No files in this folder yet. Upload a question file for this grade and difficulty.'
-    : 'Open a difficulty folder to view uploaded files.';
+  const selectedFolderPath = selectedFolder.grade_level
+    ? `Questions / ${selectedFolder.grade_level}${selectedFolder.difficulty ? ` / ${selectedFolder.difficulty}` : ''}`
+    : 'Questions';
+  const currentlyViewing = selectedFolder.grade_level
+    ? `${selectedFolder.grade_level}${selectedFolder.difficulty ? ` - ${selectedFolder.difficulty}` : ''}`
+    : 'All Question Files';
+  const displayedFiles = folderView.files;
+  const tableEmptyMessage = selectedFolder.grade_level
+    ? `No files available in ${selectedFolder.grade_level}${selectedFolder.difficulty ? ` - ${selectedFolder.difficulty}` : ''}.`
+    : 'No question files available yet.';
   const storageSummary = useMemo(() => calculateLearningStorage(files), [files]);
   const largestFiles = useMemo(() => getLargestLearningFiles(files), [files]);
   const trashRows = useMemo(() => [
@@ -463,30 +470,18 @@ export default function LessonQuestionManager() {
     }
   };
 
-  const openFolder = (folder) => {
-    if (folder.type === 'grade') {
-      setSelectedFolder({ grade_level: folder.grade_level, difficulty: '' });
-    } else if (folder.type === 'difficulty') {
-      setSelectedFolder({ grade_level: folder.grade_level, difficulty: folder.difficulty });
-    }
+  const selectGradeFolder = (gradeLevel) => {
+    setSelectedFolder({ grade_level: gradeLevel, difficulty: '' });
     setFilters((prev) => ({ ...prev, math_topic: '', file_type: '' }));
   };
 
-  const goToBreadcrumb = (index) => {
-    if (index === 0) {
-      setSelectedFolder({ grade_level: '', difficulty: '' });
-    } else if (index === 1) {
-      setSelectedFolder((prev) => ({ grade_level: prev.grade_level, difficulty: '' }));
-    }
+  const selectDifficultyFolder = (gradeLevel, difficulty) => {
+    setSelectedFolder({ grade_level: gradeLevel, difficulty });
     setFilters((prev) => ({ ...prev, math_topic: '', file_type: '' }));
   };
 
-  const goBackFolder = () => {
-    if (selectedFolder.difficulty) {
-      setSelectedFolder((prev) => ({ grade_level: prev.grade_level, difficulty: '' }));
-    } else {
-      setSelectedFolder({ grade_level: '', difficulty: '' });
-    }
+  const clearSelectedFolder = () => {
+    setSelectedFolder({ grade_level: '', difficulty: '' });
     setFilters((prev) => ({ ...prev, math_topic: '', file_type: '' }));
   };
 
@@ -675,94 +670,107 @@ export default function LessonQuestionManager() {
                   <section className="drive-panel question-folder-panel">
                     <div className="drive-panel-header">
                       <div>
-                        <h2>{selectedFolder.difficulty || selectedFolder.grade_level || 'Questions'}</h2>
-                        <div className="folder-breadcrumb" aria-label="Question folder path">
-                          {folderView.path.map((part, index) => (
-                            <React.Fragment key={`${part}-${index}`}>
-                              {index > 0 && <span className="breadcrumb-separator"> &gt; </span>}
-                              <button
-                                type="button"
-                                className="folder-breadcrumb-button"
-                                onClick={() => goToBreadcrumb(index)}
-                                disabled={index === folderView.path.length - 1}
-                              >
-                                {part}
-                              </button>
-                            </React.Fragment>
-                          ))}
+                        <h2>Questions</h2>
+                        <div className="selected-folder-summary" aria-label="Selected question folder">
+                          <strong>Selected Folder: </strong>
+                          <span>{selectedFolderPath}</span>
                         </div>
                         <p className="empty-text">
-                          {isDifficultyFolderOpen
-                            ? 'Uploaded files stay staged until Push to Game is clicked.'
-                            : 'Open a folder to manage the same grade and difficulty structure used by the game.'}
+                          Select a grade or difficulty to filter the uploaded question files below.
                         </p>
                       </div>
                       {selectedFolder.grade_level && (
-                        <button type="button" className="btn btn-secondary" onClick={goBackFolder}>
-                          Back
+                        <button type="button" className="btn btn-secondary" onClick={clearSelectedFolder}>
+                          Show All
                         </button>
                       )}
                     </div>
 
-                    {!isDifficultyFolderOpen && (
-                      <div className="drive-folder-grid fixed-question-grid">
-                        {folderView.childFolders.map((folder) => (
-                          <button
-                            key={`${folder.type}-${folder.grade_level}-${folder.difficulty || ''}`}
-                            type="button"
-                            className="drive-folder-card fixed-question-folder"
-                            onClick={() => openFolder(folder)}
+                    <div className="drive-folder-grid fixed-question-grid">
+                      {QUESTION_FOLDER_STRUCTURE.map((gradeFolder) => {
+                        const gradeSelected = selectedFolder.grade_level === gradeFolder.grade;
+                        return (
+                          <div
+                            key={gradeFolder.grade}
+                            className={`drive-folder-card fixed-question-folder ${gradeSelected ? 'selected' : ''}`}
                           >
-                            <div className="drive-folder-card-main">
-                              <Folder size={28} aria-hidden="true" />
-                              <strong>{folder.label}</strong>
-                            </div>
-                            <span className="file-meta">
-                              {folder.type === 'grade'
-                                ? `Questions/${folder.label}/`
-                                : getQuestionFolderPath(folder.grade_level, folder.difficulty)}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {isDifficultyFolderOpen && (
-                      <>
-                        <div className="manager-modal-fields folder-file-filters">
-                          <div className="form-group">
-                            <label className="form-label">Search Files</label>
-                            <input
-                              type="text"
-                              className="input-field"
-                              value={filters.search}
-                              onChange={(event) => handleFilterChange('search', event.target.value)}
-                              placeholder="Search file name or metadata"
-                            />
-                          </div>
-                          <div className="form-group">
-                            <label className="form-label">Topic</label>
-                            <select
-                              className="select-field"
-                              value={filters.math_topic}
-                              onChange={(event) => handleFilterChange('math_topic', event.target.value)}
+                            <button
+                              type="button"
+                              className="drive-folder-card-main system-grade-button"
+                              onClick={() => selectGradeFolder(gradeFolder.grade)}
                             >
+                              <Folder size={28} aria-hidden="true" />
+                              <strong>{gradeFolder.folderName}</strong>
+                            </button>
+                            <span className="file-meta">
+                              Questions/{gradeFolder.folderName}/
+                            </span>
+                            <div className="fixed-difficulty-list" aria-label={`${gradeFolder.folderName} difficulty folders`}>
+                              {gradeFolder.difficulties.map((difficulty) => {
+                                const difficultySelected = gradeSelected && selectedFolder.difficulty === difficulty;
+                                return (
+                                  <button
+                                    key={`${gradeFolder.grade}-${difficulty}`}
+                                    type="button"
+                                    className={`drive-action-button system-difficulty-button ${difficultySelected ? 'selected' : ''}`}
+                                    onClick={() => selectDifficultyFolder(gradeFolder.grade, difficulty)}
+                                  >
+                                    {difficulty}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="question-folder-table-header">
+                      <div>
+                        <h3>Currently Viewing: {currentlyViewing}</h3>
+                        <p className="empty-text">Uploaded files stay staged until Push to Game is clicked.</p>
+                      </div>
+                    </div>
+
+                    <div className="manager-modal-fields folder-file-filters">
+                      <div className="form-group">
+                        <label className="form-label">Search Files</label>
+                        <input
+                          type="text"
+                          className="input-field"
+                          value={filters.search}
+                          onChange={(event) => handleFilterChange('search', event.target.value)}
+                          placeholder="Search file name or metadata"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Topic</label>
+                        <select
+                          className="select-field"
+                          value={filters.math_topic}
+                          disabled={!isDifficultyFolderOpen}
+                          onChange={(event) => handleFilterChange('math_topic', event.target.value)}
+                        >
+                          {!isDifficultyFolderOpen ? (
+                            <option value="">Select a difficulty first</option>
+                          ) : (
+                            <>
                               <option value="">All topics</option>
                               {filterTopicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)}
-                            </select>
-                          </div>
-                          <div className="form-group">
-                            <label className="form-label">File Type</label>
-                            <select className="select-field" value={filters.file_type} onChange={(event) => handleFilterChange('file_type', event.target.value)}>
-                              <option value="">All file types</option>
-                              <option value="lesson">Lesson File</option>
-                              <option value="fixed_questions">Fixed Question File</option>
-                            </select>
-                          </div>
-                        </div>
-                        <DataTable columns={tableColumns} data={displayedFiles} emptyMessage={tableEmptyMessage} className="drive-table" />
-                      </>
-                    )}
+                            </>
+                          )}
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">File Type</label>
+                        <select className="select-field" value={filters.file_type} onChange={(event) => handleFilterChange('file_type', event.target.value)}>
+                          <option value="">All file types</option>
+                          <option value="lesson">Lesson File</option>
+                          <option value="fixed_questions">Fixed Question File</option>
+                        </select>
+                      </div>
+                    </div>
+                    <DataTable columns={tableColumns} data={displayedFiles} emptyMessage={tableEmptyMessage} className="drive-table" />
                   </section>
                 )}
 

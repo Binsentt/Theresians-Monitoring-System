@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { clearStoredSession } from '../session.utils';
 import '../../styles/analyticsSidebar.css';
 
 const IconDashboard = () => (
@@ -143,8 +144,7 @@ export default function AnalyticsSidebar({ role = 'admin', activeItem, onSelect,
 
   const handleClick = (item) => {
     if (item.actionKey === 'logout') {
-      localStorage.removeItem('loggedInUser');
-      localStorage.removeItem('token');
+      clearStoredSession();
       navigate('/');
       if (isMobile) {
         setIsOpen(false);

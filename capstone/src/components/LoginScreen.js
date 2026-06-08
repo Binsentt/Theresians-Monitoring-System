@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import logoImage from '../assets/images/STS_Logo.png';
 import { apiUrl } from '../api';
 import { getDefaultDashboardRoute, normalizeRole } from './manageUsers.utils';
 import { getOrCreateLoginDeviceId } from './session.utils';
+
+const SESSION_EXPIRED_MESSAGE = 'Your session has expired. Please login and verify OTP again.';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -20,6 +22,7 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Load saved theme on mount
   useEffect(() => {
@@ -29,6 +32,12 @@ export default function LoginScreen() {
     if (savedToken) setRememberToken(savedToken);
     setDeviceId(getOrCreateLoginDeviceId());
   }, []);
+
+  useEffect(() => {
+    if (location?.state?.sessionExpired) {
+      setErrorMessage(SESSION_EXPIRED_MESSAGE);
+    }
+  }, [location?.state]);
 
   useEffect(() => {
     if (!otpExpiresAt) {
@@ -273,7 +282,7 @@ export default function LoginScreen() {
                   onChange={(event) => setSkipOtpFor30Days(event.target.checked)}
                   disabled={loading}
                 />
-                <span>Don't send OTP for 30 days on this device</span>
+                <span>Trust this device for 30 days</span>
               </label>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
                 <small style={{ color: '#555' }}>

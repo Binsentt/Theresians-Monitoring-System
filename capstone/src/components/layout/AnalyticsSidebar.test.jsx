@@ -69,6 +69,7 @@ describe('AnalyticsSidebar role items', () => {
     document.body.appendChild(container);
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1 }));
     localStorage.setItem('token', 'token-value');
+    localStorage.setItem('rememberToken', 'thirty-day-token');
     mockNavigate.mockReset();
 
     await act(async () => {
@@ -87,6 +88,7 @@ describe('AnalyticsSidebar role items', () => {
 
     expect(localStorage.getItem('loggedInUser')).toBeNull();
     expect(localStorage.getItem('token')).toBeNull();
+    expect(localStorage.getItem('rememberToken')).toBeNull();
     expect(mockNavigate).toHaveBeenCalledWith('/');
 
     act(() => {
