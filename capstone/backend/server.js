@@ -3165,6 +3165,45 @@ app.post('/api/game/parent/validate', async (req, res) => {
   }
 });
 
+app.get('/api/game/profile/check/:student_id', async (req, res) => {
+  try {
+    const studentId = resolvePositiveInteger(req.params.student_id);
+    if (!studentId || Number.isNaN(studentId)) {
+      return res.status(400).json({ error: 'A valid numeric student_id is required.' });
+    }
+
+    const existing = await pool.query(
+      `SELECT 1
+       FROM public.student_game_progress
+       WHERE student_id = $1
+       LIMIT 1`,
+      [studentId]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(409).json({
+        ok: false,
+        exists: true,
+        should_block: true,
+        can_play: false,
+        error: 'Student ID already has an existing game profile. Please use Load Game.',
+        message: 'Student ID already has an existing game profile. Please use Load Game.',
+      });
+    }
+
+    return res.json({
+      ok: true,
+      exists: false,
+      should_block: false,
+      can_play: true,
+      message: 'Student ID is available for a new game.',
+    });
+  } catch (err) {
+    console.error('Game profile check failed:', err.message);
+    return res.status(500).json({ error: 'Failed to check existing game profile.' });
+  }
+});
+
 app.post('/api/game/progress', async (req, res) => {
   const {
     parent_id,
@@ -4408,9 +4447,35 @@ app.post('/api/playtime/start', async (req, res) => {
     }
 
     const totalToday = await getDailyPlaytimeTotal(studentId);
+    const remainingMinutes = Math.max(0, PLAYTIME_DAILY_LIMIT_MINUTES - totalToday);
+
+    const activeSessionResult = await pool.query(
+      `SELECT *
+       FROM public.playtime_sessions
+       WHERE student_id = $1
+         AND status = 'Playing'
+       ORDER BY start_time DESC NULLS LAST, id DESC
+       LIMIT 1`,
+      [studentId]
+    );
+
+    if (activeSessionResult.rows.length > 0) {
+      return res.status(200).json({
+        success: true,
+        session_id: activeSessionResult.rows[0].id,
+        session: activeSessionResult.rows[0],
+        total_playtime_today: totalToday,
+        remaining_minutes: remainingMinutes,
+        daily_limit_minutes: PLAYTIME_DAILY_LIMIT_MINUTES,
+        can_play: true,
+        message: 'Existing playtime session resumed.',
+      });
+    }
+
     if (totalToday >= PLAYTIME_DAILY_LIMIT_MINUTES) {
       return res.status(403).json({
         error: 'Daily playtime limit reached.',
+        message: 'Daily playtime limit reached.',
         total_playtime_today: totalToday,
         remaining_minutes: 0,
         can_play: false,
@@ -4443,6 +4508,11 @@ app.post('/api/playtime/start', async (req, res) => {
       success: true,
       session_id: result.rows[0]?.id,
       session: result.rows[0],
+      total_playtime_today: totalToday,
+      remaining_minutes: remainingMinutes,
+      daily_limit_minutes: PLAYTIME_DAILY_LIMIT_MINUTES,
+      can_play: true,
+      message: 'Playtime session started.',
     });
   } catch (err) {
     console.error('Start playtime session failed:', err.message);
