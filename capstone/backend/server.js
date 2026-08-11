@@ -14,6 +14,7 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 const pool = require('./database/db');
 const {
   normalizeParentCode,
+  normalizeStudentCode,
   normalizeGameStudentName,
   buildGameStudentEmail,
   toNullableNumber,
@@ -157,6 +158,7 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS parent_id VARCHAR(6)');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS game_student_id VARCHAR(6)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS session_version INTEGER DEFAULT 0');
     await pool.query('UPDATE public.accounts SET is_archived = false WHERE is_archived IS NULL');
     await pool.query('UPDATE public.accounts SET session_version = 0 WHERE session_version IS NULL');
@@ -173,6 +175,7 @@ const ensureSchema = async () => {
     await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS accounts_employee_id_key ON public.accounts(employee_id)');
     await pool.query("UPDATE public.accounts SET parent_id = NULL WHERE parent_id IS NOT NULL AND parent_id !~ '^\\d{6}$'");
     await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS accounts_parent_id_key ON public.accounts(parent_id) WHERE parent_id IS NOT NULL');
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS accounts_game_student_id_key ON public.accounts(game_student_id) WHERE game_student_id IS NOT NULL');
     await backfillParentCodes();
     await pool.query(`CREATE TABLE IF NOT EXISTS public.student_game_progress (
       id SERIAL PRIMARY KEY,
@@ -3222,66 +3225,81 @@ app.post('/api/game/progress', async (req, res) => {
     }
 
     const parent = parentResult.rows[0];
-    const submittedStudentId = resolveScopeId(req.body?.student_id ?? req.body?.resolved_student_id);
-    if (Number.isNaN(submittedStudentId)) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Student ID must be a valid number.' });
-    }
+    // Prefer authoritative six-digit student code when provided.
+    const submittedStudentCode = normalizeStudentCode(String(req.body?.student_id || '').trim());
+    let student = null;
+    let studentResult = null;
 
-    let studentResult;
-    if (submittedStudentId) {
+    if (submittedStudentCode) {
+      // Attempt to find a student account with this game_student_id linked to this parent
       studentResult = await client.query(
         `SELECT s.*
          FROM public.accounts s
          JOIN public.teacher_student_relationships r ON r.student_id = s.id
          WHERE r.teacher_id = $1
-           AND r.student_id = $2
+           AND s.game_student_id = $2
            AND LOWER(r.relationship_type) = 'parent'
            AND COALESCE(s.is_archived, false) = false
          LIMIT 1`,
-        [parent.id, submittedStudentId]
+        [parent.id, submittedStudentCode]
       );
-      if (studentResult.rows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(403).json({ error: 'Student is not linked to this parent.' });
+
+      if (studentResult.rows.length > 0) {
+        student = studentResult.rows[0];
+      } else {
+        // If an account exists with this student code but not linked to this parent, reject.
+        const existing = await client.query('SELECT * FROM public.accounts WHERE game_student_id = $1 LIMIT 1', [submittedStudentCode]);
+        if (existing.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(403).json({ error: 'Student is not linked to this parent.' });
+        }
+
+        // No existing account with this code: create a new student account tied to this code.
+        const studentPassword = await hashPassword(generateRandomPassword());
+        const email = buildGameStudentEmail(parent.id, studentName || `student-${submittedStudentCode}`);
+        studentResult = await client.query(
+          `INSERT INTO public.accounts (name, email, password, role, status, is_archived, must_change_password, game_student_id)
+           VALUES ($1, $2, $3, 'student', 'Offline', false, false, $4)
+           RETURNING *`,
+          [studentName || '', email, studentPassword, submittedStudentCode]
+        );
+        student = studentResult.rows[0];
       }
     } else {
-      studentResult = await client.query(
-        `SELECT s.*
-         FROM public.accounts s
-         JOIN public.teacher_student_relationships r ON r.student_id = s.id
-         WHERE r.teacher_id = $1
-           AND LOWER(r.relationship_type) = 'parent'
-           AND LOWER(TRIM(s.name)) = LOWER($2)
-         ORDER BY s.id
-         LIMIT 1`,
-        [parent.id, studentName]
-      );
-    }
-
-    let student = studentResult.rows[0];
-    if (!student) {
-      const email = buildGameStudentEmail(parent.id, studentName);
-      studentResult = await client.query(
-        'SELECT * FROM public.accounts WHERE LOWER(email) = LOWER($1) LIMIT 1',
-        [email]
-      );
-    }
-
-    if (!student && studentResult.rows.length > 0) {
-      student = studentResult.rows[0];
-    }
-
-    if (!student) {
-      const studentPassword = await hashPassword(generateRandomPassword());
-      const email = buildGameStudentEmail(parent.id, studentName);
-      studentResult = await client.query(
-        `INSERT INTO public.accounts (name, email, password, role, status, is_archived, must_change_password)
-         VALUES ($1, $2, $3, 'student', 'Offline', false, false)
-         RETURNING *`,
-        [studentName, email, studentPassword]
-      );
-      student = studentResult.rows[0];
+      // Backwards-compatible numeric student_id (database id) path
+      const submittedStudentId = resolveScopeId(req.body?.student_id ?? req.body?.resolved_student_id);
+      if (submittedStudentId && !Number.isNaN(submittedStudentId)) {
+        studentResult = await client.query(
+          `SELECT s.*
+           FROM public.accounts s
+           JOIN public.teacher_student_relationships r ON r.student_id = s.id
+           WHERE r.teacher_id = $1
+             AND r.student_id = $2
+             AND LOWER(r.relationship_type) = 'parent'
+             AND COALESCE(s.is_archived, false) = false
+           LIMIT 1`,
+          [parent.id, submittedStudentId]
+        );
+        if (studentResult.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(403).json({ error: 'Student is not linked to this parent.' });
+        }
+        student = studentResult.rows[0];
+      } else {
+        // Fallback to matching by name (least preferred)
+        studentResult = await client.query(
+          `SELECT s.*
+           FROM public.accounts s
+           JOIN public.teacher_student_relationships r ON r.student_id = s.id
+           WHERE r.teacher_id = $1
+             AND LOWER(r.relationship_type) = 'parent'
+             AND LOWER(TRIM(s.name)) = LOWER($2)
+           ORDER BY s.id
+           LIMIT 1`,
+          [parent.id, studentName]
+        );
+        if (studentResult.rows.length > 0) student = studentResult.rows[0];
+      }
     }
 
     await client.query(

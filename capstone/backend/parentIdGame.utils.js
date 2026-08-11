@@ -3,6 +3,11 @@ const normalizeParentCode = (value) => {
   return /^\d{6}$/.test(code) ? code : null;
 };
 
+const normalizeStudentCode = (value) => {
+  const code = String(value || '').trim();
+  return /^\d{6}$/.test(code) ? code : null;
+};
+
 const normalizeGameStudentName = (value) =>
   String(value || '').trim().replace(/\s+/g, ' ');
 
@@ -51,6 +56,7 @@ const resolveAccuracyRate = (payload = {}) => {
 
 module.exports = {
   normalizeParentCode,
+  normalizeStudentCode,
   normalizeGameStudentName,
   buildGameStudentEmail,
   toNullableNumber,
