@@ -310,3 +310,96 @@ test('Godot question endpoint normalizes numeric grade aliases and scopes to one
   assert.match(queryCalls[0].sql, /order by uploaded_at desc, id desc limit 1/);
   assert.match(queryCalls[1].sql, /order by active_lf\.uploaded_at desc, active_lf\.id desc limit 1/);
 });
+
+test('Godot question endpoint exposes a published restored-import record in the provider shape', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.includes('from public.learning_files')) {
+      return resultRows([{
+        id: 42,
+        title: 'easy',
+        file_name: 'restored-questions-easy.docx',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: null,
+        file_type: 'fixed_questions',
+        source: 'restored_import',
+        published: true,
+      }]);
+    }
+    if (sql.includes('from public.questions q')) {
+      return resultRows([{
+        id: 91,
+        learning_file_id: 42,
+        question: '5 + 2 = ?',
+        options: ['8', '7', '6', '9'],
+        correct_answer: '7',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: null,
+        source: 'restored_import',
+        published: true,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201');
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.questions, [{
+    id: 91,
+    learning_file_id: 42,
+    question: '5 + 2 = ?',
+    options: ['8', '7', '6', '9'],
+    correct_answer: '7',
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    math_topic: null,
+    source: 'restored_import',
+  }]);
+});
+
+test('Lesson and Question Manager receives restored-import learning files through its existing endpoint', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.includes('from public.learning_files lf') && sql.includes('where lf.deleted_at is null')) {
+      return resultRows([{
+        id: 42,
+        title: 'easy',
+        file_name: 'restored-questions-easy.docx',
+        file_url: '/uploads/restored-questions-easy.docx',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: null,
+        file_type: 'fixed_questions',
+        source: 'restored_import',
+        published: false,
+        folder_name: null,
+        uploaded_by_name: 'Unknown',
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.length, 1);
+  assert.equal(response.body[0].id, 42);
+  assert.equal(response.body[0].source, 'restored_import');
+  assert.equal(response.body[0].folder_name, 'Questions/Grade 1/Easy');
+  assert.equal(response.body[0].difficulty, 'Easy');
+});

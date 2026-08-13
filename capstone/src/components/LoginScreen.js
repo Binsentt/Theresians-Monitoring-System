@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import logoImage from '../assets/images/STS_Logo.png';
 import { apiUrl } from '../api';
 import { getDefaultDashboardRoute, normalizeRole } from './manageUsers.utils';
 import { getOrCreateLoginDeviceId } from './session.utils';
+import { validateEmail, validatePassword, validateOtp } from '../utils/validation.utils';
 
 const SESSION_EXPIRED_MESSAGE = 'Your session has expired. Please login and verify OTP again.';
 
@@ -21,8 +22,83 @@ export default function LoginScreen() {
   const [skipOtpFor30Days, setSkipOtpFor30Days] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  // Field validation states
+  const [emailError, setEmailError] = useState('');
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordTouched, setPasswordTouched] = useState(false);
+  const [otpError, setOtpError] = useState('');
+  const [otpTouched, setOtpTouched] = useState(false);
+
+  // Refs for focus management
+  const emailInputRef = useRef(null);
+  const passwordInputRef = useRef(null);
+  const otpInputRef = useRef(null);
+
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Validation handlers
+  const validateEmailField = (emailValue) => {
+    const validation = validateEmail(emailValue);
+    setEmailError(validation.error || '');
+    return validation.isValid;
+  };
+
+  const validatePasswordField = (passwordValue) => {
+    const validation = validatePassword(passwordValue);
+    setPasswordError(validation.error || '');
+    return validation.isValid;
+  };
+
+  const validateOtpField = (otpValue) => {
+    const validation = validateOtp(otpValue);
+    setOtpError(validation.error || '');
+    return validation.isValid;
+  };
+
+  const handleEmailChange = (e) => {
+    const value = e.target.value;
+    setEmail(value);
+    // Validate in real-time after field has been touched or if error exists
+    if (emailTouched || emailError) {
+      validateEmailField(value);
+    }
+  };
+
+  const handleEmailBlur = () => {
+    setEmailTouched(true);
+    validateEmailField(email);
+  };
+
+  const handlePasswordChange = (e) => {
+    const value = e.target.value;
+    setPassword(value);
+    // Validate in real-time after field has been touched or if error exists
+    if (passwordTouched || passwordError) {
+      validatePasswordField(value);
+    }
+  };
+
+  const handlePasswordBlur = () => {
+    setPasswordTouched(true);
+    validatePasswordField(password);
+  };
+
+  const handleOtpChange = (e) => {
+    const value = e.target.value.replace(/[^0-9]/g, ''); // Only allow digits
+    setOtp(value);
+    // Validate in real-time after field has been touched or if error exists
+    if (otpTouched || otpError) {
+      validateOtpField(value);
+    }
+  };
+
+  const handleOtpBlur = () => {
+    setOtpTouched(true);
+    validateOtpField(otp);
+  };
 
   // Load saved theme on mount
   useEffect(() => {
@@ -76,21 +152,27 @@ export default function LoginScreen() {
   };
 
   const handleLogin = async () => {
-  
-    if (!email && !password) {
-      setErrorMessage('Email and password fields are empty.');
-      return;
-    }
-    if (!email) {
-      setErrorMessage('Please enter your email address.');
-      return;
-    }
-    if (!password) {
-      setErrorMessage('Password field is empty.');
-      return;
-    }
-    setErrorMessage('');
+    // Mark all fields as touched
+    setEmailTouched(true);
+    setPasswordTouched(true);
 
+    // Validate all fields
+    const isEmailValid = validateEmailField(email);
+    const isPasswordValid = validatePasswordField(password);
+
+    if (!isEmailValid || !isPasswordValid) {
+      // Focus first invalid field
+      if (!isEmailValid && emailInputRef.current) {
+        emailInputRef.current.focus();
+      } else if (!isPasswordValid && passwordInputRef.current) {
+        passwordInputRef.current.focus();
+      }
+      // Clear any backend error message when validation fails
+      setErrorMessage('');
+      return;
+    }
+
+    setErrorMessage('');
     setLoading(true);
     try {
       const response = await fetch(apiUrl('/api/login'), {
@@ -119,6 +201,9 @@ export default function LoginScreen() {
         setPendingUserId(data.userId);
         setOtpExpiresAt(data.otpExpiresAt);
         setStep(2);
+        // Clear field errors when transitioning to OTP step
+        setOtpError('');
+        setOtpTouched(false);
         if (data.warning) {
           setErrorMessage(data.warning);
         } else {
@@ -133,10 +218,22 @@ export default function LoginScreen() {
   };
 
   const handleVerifyOtp = async () => {
-    if (!otp) {
-      setErrorMessage('Please enter the verification code.');
+    // Mark OTP field as touched
+    setOtpTouched(true);
+
+    // Validate OTP
+    const isOtpValid = validateOtpField(otp);
+
+    if (!isOtpValid) {
+      // Focus OTP field
+      if (otpInputRef.current) {
+        otpInputRef.current.focus();
+      }
+      // Clear any backend error message when validation fails
+      setErrorMessage('');
       return;
     }
+
     setErrorMessage('');
     setLoading(true);
     try {
@@ -211,28 +308,43 @@ export default function LoginScreen() {
             <>
 
               <div className="sts-input-group">
-                <label className="sts-label">Email Address</label>
+                <label className="sts-label" htmlFor="email-input">Email Address</label>
                 <input
+                  id="email-input"
+                  ref={emailInputRef}
                   type="email"
-                  className="sts-input-field"
+                  className={`sts-input-field ${emailTouched && emailError ? 'sts-input-error' : ''}`}
                   placeholder="email@example.com"
                   value={email}
-                  onChange={e => setEmail(e.target.value)}
+                  onChange={handleEmailChange}
+                  onBlur={handleEmailBlur}
                   disabled={loading}
+                  aria-invalid={emailTouched && !!emailError}
+                  aria-describedby={emailError ? 'email-error' : undefined}
                 />
+                {emailTouched && emailError && (
+                  <div id="email-error" className="sts-field-error">
+                    {emailError}
+                  </div>
+                )}
               </div>
 
               <div className="sts-input-group">
-                <label className="sts-label">Password</label>
+                <label className="sts-label" htmlFor="password-input">Password</label>
                 
                 <div className="password-field-wrapper login-password-field">
                   <input
+                    id="password-input"
+                    ref={passwordInputRef}
                     type={showPassword ? "text" : "password"}
-                    className="sts-input-field"
+                    className={`sts-input-field ${passwordTouched && passwordError ? 'sts-input-error' : ''}`}
                     placeholder="••••••••"
                     value={password}
-                    onChange={e => setPassword(e.target.value)}
+                    onChange={handlePasswordChange}
+                    onBlur={handlePasswordBlur}
                     disabled={loading}
+                    aria-invalid={passwordTouched && !!passwordError}
+                    aria-describedby={passwordError ? 'password-error' : undefined}
                   />
 
                   <button
@@ -248,6 +360,12 @@ export default function LoginScreen() {
                     )}
                   </button>
                 </div>
+
+                {passwordTouched && passwordError && (
+                  <div id="password-error" className="sts-field-error">
+                    {passwordError}
+                  </div>
+                )}
 
                 <div className="pw-footer-row">
                   <span className="forgot-pass-link-bottom" onClick={() => navigate('/reset-password')}>
@@ -266,14 +384,25 @@ export default function LoginScreen() {
                 Enter the 6-digit code sent to <b>{email}</b>
               </p>
               <div className="sts-input-group">
+                <label className="sts-label" htmlFor="otp-input">Verification Code</label>
                 <input
-                  className="sts-input-field otp-input"
+                  id="otp-input"
+                  ref={otpInputRef}
+                  className={`sts-input-field otp-input ${otpTouched && otpError ? 'sts-input-error' : ''}`}
                   type="text"
                   placeholder="000000"
                   value={otp}
-                  onChange={e => setOtp(e.target.value)}
+                  onChange={handleOtpChange}
+                  onBlur={handleOtpBlur}
                   maxLength={6}
+                  aria-invalid={otpTouched && !!otpError}
+                  aria-describedby={otpError ? 'otp-error' : undefined}
                 />
+                {otpTouched && otpError && (
+                  <div id="otp-error" className="sts-field-error">
+                    {otpError}
+                  </div>
+                )}
               </div>
               <label className="otp-device-skip-option">
                 <input
@@ -309,6 +438,11 @@ export default function LoginScreen() {
                   setOtpExpiresAt(null);
                   setSkipOtpFor30Days(false);
                   setErrorMessage('');
+                  // Clear field errors
+                  setOtpError('');
+                  setOtpTouched(false);
+                  setEmailTouched(false);
+                  setPasswordTouched(false);
                 }}
                 className="back-login-btn"
               >

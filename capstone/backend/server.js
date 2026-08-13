@@ -3167,9 +3167,48 @@ app.post('/api/game/parent/validate', async (req, res) => {
 
 app.get('/api/game/profile/check/:student_id', async (req, res) => {
   try {
-    const studentId = resolvePositiveInteger(req.params.student_id);
-    if (!studentId || Number.isNaN(studentId)) {
-      return res.status(400).json({ error: 'A valid numeric student_id is required.' });
+    const studentCode = normalizeStudentCode(req.params.student_id);
+    const parentCode = normalizeParentCode(req.query.parent_id);
+    if (!studentCode) {
+      return res.status(400).json({ error: 'Student ID must be exactly 6 digits.' });
+    }
+    if (!parentCode) {
+      return res.status(400).json({ error: 'Parent ID must be exactly 6 digits.' });
+    }
+
+    const linkedStudent = await pool.query(
+      `SELECT s.id
+       FROM public.accounts s
+       JOIN public.teacher_student_relationships r ON r.student_id = s.id
+       JOIN public.accounts p ON p.id = r.teacher_id
+       WHERE s.game_student_id = $1
+         AND p.parent_id = $2
+         AND LOWER(r.relationship_type) = 'parent'
+         AND COALESCE(s.is_archived, false) = false
+         AND COALESCE(p.is_archived, false) = false
+       LIMIT 1`,
+      [studentCode, parentCode]
+    );
+
+    if (linkedStudent.rows.length === 0) {
+      const existingStudent = await pool.query(
+        'SELECT id FROM public.accounts WHERE game_student_id = $1 AND COALESCE(is_archived, false) = false LIMIT 1',
+        [studentCode]
+      );
+      if (existingStudent.rows.length > 0) {
+        return res.status(403).json({
+          ok: false,
+          should_block: true,
+          can_play: false,
+          error: 'Student is not linked to this parent.',
+        });
+      }
+      return res.status(404).json({
+        ok: false,
+        should_block: true,
+        can_play: false,
+        error: 'Student ID is not registered to this parent.',
+      });
     }
 
     const existing = await pool.query(
@@ -3177,7 +3216,7 @@ app.get('/api/game/profile/check/:student_id', async (req, res) => {
        FROM public.student_game_progress
        WHERE student_id = $1
        LIMIT 1`,
-      [studentId]
+      [linkedStudent.rows[0].id]
     );
 
     if (existing.rows.length > 0) {
@@ -4431,9 +4470,9 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
 
 app.post('/api/playtime/start', async (req, res) => {
   try {
-    const studentId = resolvePositiveInteger(req.body.student_id);
-    if (!studentId || Number.isNaN(studentId)) {
-      return res.status(400).json({ error: 'A valid student_id is required.' });
+    const studentCode = normalizeStudentCode(req.body.student_id);
+    if (!studentCode) {
+      return res.status(400).json({ error: 'Student ID must be exactly 6 digits.' });
     }
 
     const studentName = String(req.body.student_name || '').trim();
@@ -4441,10 +4480,28 @@ app.post('/api/playtime/start', async (req, res) => {
       return res.status(400).json({ error: 'student_name is required.' });
     }
 
-    const parentCode = req.body.parent_id ? normalizeParentCode(req.body.parent_id) : null;
-    if (req.body.parent_id && !parentCode) {
-      return res.status(400).json({ error: 'A valid parent_id is required.' });
+    const parentCode = normalizeParentCode(req.body.parent_id);
+    if (!parentCode) {
+      return res.status(400).json({ error: 'Parent ID must be exactly 6 digits.' });
     }
+
+    const linkedStudentResult = await pool.query(
+      `SELECT s.id
+       FROM public.accounts s
+       JOIN public.teacher_student_relationships r ON r.student_id = s.id
+       JOIN public.accounts p ON p.id = r.teacher_id
+       WHERE s.game_student_id = $1
+         AND p.parent_id = $2
+         AND LOWER(r.relationship_type) = 'parent'
+         AND COALESCE(s.is_archived, false) = false
+         AND COALESCE(p.is_archived, false) = false
+       LIMIT 1`,
+      [studentCode, parentCode]
+    );
+    if (linkedStudentResult.rows.length === 0) {
+      return res.status(403).json({ error: 'Student is not linked to this parent.', can_play: false });
+    }
+    const studentId = linkedStudentResult.rows[0].id;
 
     const totalToday = await getDailyPlaytimeTotal(studentId);
     const remainingMinutes = Math.max(0, PLAYTIME_DAILY_LIMIT_MINUTES - totalToday);

@@ -256,6 +256,52 @@ html, body {
   text-decoration: underline;
 }
 
+/* ========== FORM VALIDATION STYLING ========== */
+
+.sts-input-error {
+  border-color: #dc3545 !important;
+  box-shadow: 0 0 5px rgba(220, 53, 69, 0.3) !important;
+  background-color: #fff5f5;
+}
+
+[data-theme='dark'] .sts-input-error {
+  background-color: rgba(220, 53, 69, 0.1);
+}
+
+.sts-field-error {
+  color: #dc3545;
+  font-size: 13px;
+  margin-top: 6px;
+  display: block;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+[data-theme='dark'] .sts-field-error {
+  color: #ff6b6b;
+}
+
+/* Ensure spacing is consistent with error messages */
+.sts-input-group {
+  position: relative;
+}
+
+/* Add some breathing room for error text */
+.sts-input-group .sts-field-error {
+  margin-bottom: -6px;
+  padding-bottom: 6px;
+}
+
+/* Adjust margin for input groups that have error messages */
+.sts-input-group:has(.sts-field-error) {
+  margin-bottom: 24px;
+}
+
+/* Adjust password field wrapper for errors */
+.password-field-wrapper .sts-input-error {
+  padding-right: 48px;
+}
+
 @keyframes pageFadeIn {
   from { opacity: 0; }
   to { opacity: 1; }

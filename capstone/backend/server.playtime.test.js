@@ -104,6 +104,7 @@ const requestJson = async (baseUrl, path, options = {}) => {
 test('playtime start creates a Playing session for Godot gameplay', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let linkedStudentValues = null;
   let insertedValues = null;
   t.after(async () => {
     resetTestState();
@@ -111,6 +112,10 @@ test('playtime start creates a Playing session for Godot gameplay', async (t) =>
   });
 
   setQueryHandler(async (sql, params) => {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $1')) {
+      linkedStudentValues = params;
+      return resultRows([{ id: 44 }]);
+    }
     if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
       return resultRows([{ total_playtime_today: 25 }]);
     }
@@ -132,7 +137,7 @@ test('playtime start creates a Playing session for Godot gameplay', async (t) =>
   const response = await requestJson(baseUrl, '/api/playtime/start', {
     method: 'POST',
     body: JSON.stringify({
-      student_id: 44,
+      student_id: '001234',
       parent_id: '123456',
       student_name: 'Ava Santos',
       grade_level: 'Grade 3',
@@ -143,7 +148,54 @@ test('playtime start creates a Playing session for Godot gameplay', async (t) =>
   assert.equal(response.status, 201);
   assert.equal(response.body.success, true);
   assert.equal(response.body.session_id, 77);
+  assert.deepEqual(linkedStudentValues, ['001234', '123456']);
   assert.deepEqual(insertedValues.slice(0, 5), [44, '123456', 'Ava Santos', 'Grade 3', 'Section A']);
+});
+
+test('playtime start returns explicit can_play contract for authorized sessions', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $1')) {
+      return resultRows([{ id: 44 }]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
+      return resultRows([{ total_playtime_today: 25 }]);
+    }
+    if (sql.startsWith('insert into public.playtime_sessions')) {
+      return resultRows([{
+        id: 78,
+        student_id: 44,
+        parent_id: '123456',
+        student_name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        section: 'Section A',
+        status: 'Playing',
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: '001234',
+      parent_id: '123456',
+      student_name: 'Ava Santos',
+      grade_level: 'Grade 3',
+      section: 'Section A',
+    }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal(response.body.success, true);
+  assert.equal(response.body.can_play, true);
+  assert.equal(response.body.message, 'Playtime session started.');
 });
 
 test('playtime end updates the active session and returns calculated duration', async (t) => {

@@ -275,19 +275,20 @@ router.get('/activity-logs/:id', async (req, res) => {
  */
 router.post('/activity-logs', async (req, res) => {
   try {
-    const {
-      student_id,
-      student_name,
-      grade_level,
-      section,
-      current_quest,
-      save_status = 'pending',
-      total_play_time = 0,
-      quest_progress = 0,
-      role = 'Student',
-      status = 'Online',
-      activity_description = 'Gameplay Session'
-    } = req.body;
+    const student_id = req.body?.student_id;
+    const student_name = req.body?.student_name;
+    const grade_level = req.body?.grade_level || req.body?.grade || null;
+    const section = req.body?.section || null;
+    const current_quest = req.body?.current_quest || req.body?.quest || null;
+    const save_status = req.body?.save_status || 'pending';
+    const total_play_time = req.body?.total_play_time ?? req.body?.duration_seconds ?? req.body?.duration ?? 0;
+    const quest_progress = req.body?.quest_progress ?? req.body?.completion_percentage ?? 0;
+    const role = req.body?.role || 'Student';
+    const status = req.body?.status || 'Online';
+    const activity_description = req.body?.activity_description || 'Gameplay Session';
+    const login_time = req.body?.login_time || req.body?.timestamp || req.body?.played_at || null;
+    const logout_time = req.body?.logout_time || null;
+    const activity_timestamp = req.body?.activity_timestamp || req.body?.timestamp || req.body?.played_at || null;
 
     if (!student_id || !student_name) {
       return res.status(400).json({ error: 'student_id and student_name are required' });
@@ -296,11 +297,13 @@ router.post('/activity-logs', async (req, res) => {
     const query = `
       INSERT INTO public.activity_logs (
         student_id, student_name, grade_level, section, current_quest,
-        save_status, total_play_time, last_played, quest_progress,
-        difficulty_level, role, status, activity_description,
-        login_time, session_date, activity_timestamp
+        save_status, total_play_time, last_played, quest_progress, lesson_progress,
+        difficulty_level, role, status, activity_description, current_scene, current_map,
+        login_time, logout_time, session_date, activity_timestamp, created_at
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, $11, $12, NOW(), CURRENT_DATE, NOW()
+        $1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()), $9, $9,
+        $10, $11, $12, $13, $14, $15,
+        $16, $17, CURRENT_DATE, COALESCE($18, COALESCE($8, NOW())), NOW()
       )
       RETURNING *
     `;
@@ -313,11 +316,17 @@ router.post('/activity-logs', async (req, res) => {
       current_quest || null,
       save_status,
       total_play_time,
+      login_time || activity_timestamp,
       quest_progress,
       resolveDifficultyFromScene(req.body || {}),
       role,
       normalizePlaytimeStatus(status, 'Online'),
-      activity_description
+      activity_description,
+      req.body?.current_scene || req.body?.currentScene || req.body?.scene || req.body?.scene_name || null,
+      req.body?.current_map || req.body?.currentMap || req.body?.map || req.body?.map_name || null,
+      login_time || activity_timestamp,
+      logout_time,
+      activity_timestamp
     ]);
 
     res.status(201).json({
