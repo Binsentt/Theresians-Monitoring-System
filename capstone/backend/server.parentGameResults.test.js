@@ -611,4 +611,27 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(res.body, null);
     assert.deepEqual(req.parentChildAccess, { parentId: 19, studentId: 44 });
   });
+
+  await t.test('parent-scoped views resolve by parent code and keep the canonical parent relationship', async () => {
+    let parentScopeSql = '';
+    let parentScopeParams = [];
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('from public.teacher_student_relationships tsr') && sql.includes('scope_owner.parent_id')) {
+        parentScopeSql = sql;
+        parentScopeParams = params;
+        return resultRows([{ student_id: 44, student_name: 'Ava Santos' }]);
+      }
+      if (sql.includes('from public.accounts parent') && sql.includes('gr.parent_id = parent.parent_id')) {
+        return resultRows([{ unlinked_count: 0 }]);
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/parent/children?parent_id=112832');
+
+    assert.equal(response.status, 200);
+    assert.equal(parentScopeParams[0], '112832');
+    assert.match(parentScopeSql, /scope_owner\.parent_id/);
+    assert.doesNotMatch(parentScopeSql, /tsr\.teacher_id = \$1/);
+  });
 });

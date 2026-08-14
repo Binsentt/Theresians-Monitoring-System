@@ -75,6 +75,28 @@ const app = express();
 const port = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-in-production';
 
+const getValidatedActiveParentAccount = async (parentCode) => {
+  const result = await pool.query(
+    `SELECT id, name, parent_id, role, is_archived
+     FROM public.accounts
+     WHERE parent_id = $1
+       AND LOWER(role) IN ('parent', 'parent_teacher')
+     LIMIT 1`,
+    [parentCode]
+  );
+
+  if (result.rows.length === 0) {
+    return { parent: null, error: { status: 404, message: 'Parent ID does not exist.' } };
+  }
+
+  const parent = result.rows[0];
+  if (Boolean(parent.is_archived)) {
+    return { parent: null, error: { status: 403, message: 'Parent account is no longer active.' } };
+  }
+
+  return { parent, error: null };
+};
+
 app.use(cors());
 app.use(express.json());
 
@@ -733,6 +755,73 @@ const resolveParentScopeId = (value) => resolveScopeId(value);
 
 const resolveTeacherScopeId = (value) => resolveScopeId(value);
 
+const resolveParentAccountId = async (value) => {
+  if (value === undefined || value === null || value === '') return null;
+
+  const valueText = String(value).trim();
+  if (!valueText) return null;
+
+  const numericValue = Number.parseInt(valueText, 10);
+  if (!Number.isNaN(numericValue)) {
+    const directMatch = await pool.query(
+      `SELECT id
+       FROM public.accounts
+       WHERE id = $1
+         AND LOWER(role) IN ('parent', 'parent_teacher')
+         AND COALESCE(is_archived, false) = false
+       LIMIT 1`,
+      [numericValue]
+    );
+    if (directMatch.rows.length > 0) {
+      return directMatch.rows[0].id;
+    }
+  }
+
+  const parentCode = normalizeParentCode(valueText);
+  if (!parentCode) return null;
+
+  const codeMatch = await pool.query(
+    `SELECT id
+     FROM public.accounts
+     WHERE parent_id = $1
+       AND LOWER(role) IN ('parent', 'parent_teacher')
+       AND COALESCE(is_archived, false) = false
+     LIMIT 1`,
+    [parentCode]
+  );
+
+  return codeMatch.rows[0]?.id ?? null;
+};
+
+const ensureParentStudentRelationship = async (client, { teacherId, studentId, relationshipType = 'parent' }) => {
+  if (!teacherId || !studentId) return null;
+
+  const normalizedRelationshipType = String(relationshipType || 'parent').trim().toLowerCase() || 'parent';
+  const existing = await client.query(
+    `SELECT id
+     FROM public.teacher_student_relationships
+     WHERE teacher_id = $1
+       AND student_id = $2
+       AND LOWER(relationship_type) = $3
+     LIMIT 1`,
+    [teacherId, studentId, normalizedRelationshipType]
+  );
+
+  if (existing.rows.length > 0) {
+    return existing.rows[0];
+  }
+
+  const inserted = await client.query(
+    `INSERT INTO public.teacher_student_relationships (teacher_id, student_id, relationship_type)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (teacher_id, student_id, relationship_type) DO NOTHING
+     RETURNING *`,
+    [teacherId, studentId, normalizedRelationshipType]
+  );
+
+  return inserted.rows[0] ?? { teacher_id: teacherId, student_id: studentId, relationship_type: normalizedRelationshipType };
+};
+
 const appendTeacherScopeFilter = ({ teacherId, params, studentColumn }) => {
   if (!teacherId) return '';
   params.push(teacherId);
@@ -796,10 +885,10 @@ const normalizeTopAchieverRow = (row, index = 0) => {
 };
 
 const verifyParentChildAccess = async (req, res, next) => {
-  const parentId = resolveParentScopeId(req.query.parent_id);
+  const parentId = await resolveParentAccountId(req.query.parent_id);
   const studentId = resolveScopeId(req.params.studentId);
 
-  if (!parentId || Number.isNaN(parentId)) {
+  if (!parentId) {
     return res.status(400).json({ error: 'A valid parent ID is required.' });
   }
   if (!studentId || Number.isNaN(studentId)) {
@@ -3141,27 +3230,18 @@ app.post('/api/game/parent/validate', async (req, res) => {
   try {
     const parentCode = normalizeParentCode(req.body?.parent_id);
     if (!parentCode) {
-      return res.status(400).json({ error: 'Parent ID must be exactly 6 digits.' });
+      return res.status(400).json({ ok: false, error: 'Parent ID must be exactly 6 digits.' });
     }
 
-    const result = await pool.query(
-      `SELECT id, name, parent_id
-       FROM public.accounts
-       WHERE parent_id = $1
-         AND LOWER(role) IN ('parent', 'parent_teacher')
-          AND COALESCE(is_archived, false) = false
-       LIMIT 1`,
-      [parentCode]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Parent ID not found.' });
+    const { parent, error } = await getValidatedActiveParentAccount(parentCode);
+    if (error) {
+      return res.status(error.status).json({ ok: false, success: false, error: error.message });
     }
 
-    res.json({ success: true, parent: result.rows[0] });
+    res.json({ ok: true, success: true, parent, message: 'Parent ID is valid.' });
   } catch (err) {
     console.error('Validate Parent ID failed:', err.message);
-    res.status(500).json({ error: 'Failed to validate Parent ID' });
+    res.status(500).json({ ok: false, success: false, error: 'Unable to connect to the server. Please try again.' });
   }
 });
 
@@ -3174,6 +3254,11 @@ app.get('/api/game/profile/check/:student_id', async (req, res) => {
     }
     if (!parentCode) {
       return res.status(400).json({ error: 'Parent ID must be exactly 6 digits.' });
+    }
+
+    const { parent, error } = await getValidatedActiveParentAccount(parentCode);
+    if (error) {
+      return res.status(error.status).json({ ok: false, success: false, error: error.message });
     }
 
     const linkedStudent = await pool.query(
@@ -3196,18 +3281,21 @@ app.get('/api/game/profile/check/:student_id', async (req, res) => {
         [studentCode]
       );
       if (existingStudent.rows.length > 0) {
-        return res.status(403).json({
+        return res.status(409).json({
           ok: false,
+          exists: true,
           should_block: true,
           can_play: false,
-          error: 'Student is not linked to this parent.',
+          error: 'Student ID already has an existing game profile. Please use Load Game.',
+          message: 'Student ID already has an existing game profile. Please use Load Game.',
         });
       }
-      return res.status(404).json({
-        ok: false,
-        should_block: true,
-        can_play: false,
-        error: 'Student ID is not registered to this parent.',
+      return res.status(200).json({
+        ok: true,
+        exists: false,
+        should_block: false,
+        can_play: true,
+        message: 'Student ID is available for a new game.',
       });
     }
 
@@ -3380,12 +3468,11 @@ app.post('/api/game/progress', async (req, res) => {
       }
     }
 
-    await client.query(
-      `INSERT INTO public.teacher_student_relationships (teacher_id, student_id, relationship_type)
-       VALUES ($1, $2, 'Parent')
-       ON CONFLICT (teacher_id, student_id, relationship_type) DO NOTHING`,
-      [parent.id, student.id]
-    );
+    await ensureParentStudentRelationship(client, {
+      teacherId: parent.id,
+      studentId: student.id,
+      relationshipType: 'parent',
+    });
 
     const scoreValue = Math.round(toNullableNumber(score) ?? 0);
     const correctAnswersValue = Math.round(toNullableNumber(correct_answers) ?? 0);
@@ -3909,11 +3996,11 @@ app.put('/api/user/:id', async (req, res) => {
 // --- NEW: Get Top Achievers (game progress data) ---
 const handleTopAchieversRequest = async (req, res) => {
   try {
-    const parentId = resolveParentScopeId(req.query.parent_id);
+    const parentId = await resolveParentAccountId(req.query.parent_id);
     const teacherId = resolveTeacherScopeId(req.query.teacher_id);
 
     // Validate scope IDs if provided
-    if ((parentId && Number.isNaN(parentId)) || (teacherId && Number.isNaN(teacherId))) {
+    if ((req.query.parent_id && parentId === null) || (teacherId && Number.isNaN(teacherId))) {
       return res.status(400).json({ error: 'Invalid scope ID' });
     }
 
@@ -4010,8 +4097,8 @@ app.get('/api/activity-logs', async (req, res) => {
     const queryLimit = Math.min(parseInt(limit) || 50, 500);
     const queryOffset = Math.max(parseInt(offset) || 0, 0);
     const searchTerm = search ? `%${search.toLowerCase()}%` : null;
-    const parentId = resolveParentScopeId(parent_id);
-    if (Number.isNaN(parentId)) return res.status(400).json({ error: 'Invalid parent ID' });
+    const parentId = await resolveParentAccountId(parent_id);
+    if (parent_id && parentId === null) return res.status(400).json({ error: 'Invalid parent ID' });
     const selectedStudentId = resolveScopeId(student_id);
     if (Number.isNaN(selectedStudentId)) return res.status(400).json({ error: 'Invalid student ID' });
 
@@ -4485,23 +4572,65 @@ app.post('/api/playtime/start', async (req, res) => {
       return res.status(400).json({ error: 'Parent ID must be exactly 6 digits.' });
     }
 
+    // Verify parent exists and is active
+    const { parent, error } = await getValidatedActiveParentAccount(parentCode);
+    if (error) {
+      return res.status(error.status).json({ error: error.message, can_play: false });
+    }
+    const parentId = parent.id;
+
+    // Check for linked student (existing student account linked to this parent)
     const linkedStudentResult = await pool.query(
       `SELECT s.id
        FROM public.accounts s
        JOIN public.teacher_student_relationships r ON r.student_id = s.id
-       JOIN public.accounts p ON p.id = r.teacher_id
-       WHERE s.game_student_id = $1
-         AND p.parent_id = $2
+       WHERE r.teacher_id = $1
+         AND s.game_student_id = $2
          AND LOWER(r.relationship_type) = 'parent'
          AND COALESCE(s.is_archived, false) = false
-         AND COALESCE(p.is_archived, false) = false
        LIMIT 1`,
-      [studentCode, parentCode]
+      [parentId, studentCode]
     );
-    if (linkedStudentResult.rows.length === 0) {
-      return res.status(403).json({ error: 'Student is not linked to this parent.', can_play: false });
+
+    let studentId = null;
+    if (linkedStudentResult.rows.length > 0) {
+      // Student is already linked to this parent
+      studentId = linkedStudentResult.rows[0].id;
+    } else {
+      // Student not found or not linked to this parent
+      // For NEW GAME registration, allow it if student doesn't exist yet
+      const existingStudentResult = await pool.query(
+        `SELECT id
+         FROM public.accounts
+         WHERE game_student_id = $1
+           AND COALESCE(is_archived, false) = false
+         LIMIT 1`,
+        [studentCode]
+      );
+
+      if (existingStudentResult.rows.length > 0) {
+        // Student exists but is not linked to this parent - reject
+        return res.status(403).json({ error: 'Student ID is already registered with a different parent.', can_play: false });
+      }
+
+      // NEW GAME: Student doesn't exist yet, this is acceptable for new registration
+      // The account will be created when game/progress is called during finalization
+      // For playtime session, we create a temporary/pending entry or use a placeholder
+      // We'll still allow the playtime session to proceed since the account will exist by game start
+      // Return a special response indicating this is a new student pending registration
+      return res.status(200).json({
+        success: true,
+        session_id: 0,
+        is_new_registration: true,
+        total_playtime_today: 0,
+        remaining_minutes: PLAYTIME_DAILY_LIMIT_MINUTES,
+        daily_limit_minutes: PLAYTIME_DAILY_LIMIT_MINUTES,
+        can_play: true,
+        message: 'New student registration. Playtime session ready to start upon account creation.',
+      });
     }
-    const studentId = linkedStudentResult.rows[0].id;
+
+    // Existing student: proceed with normal playtime logic
 
     const totalToday = await getDailyPlaytimeTotal(studentId);
     const remainingMinutes = Math.max(0, PLAYTIME_DAILY_LIMIT_MINUTES - totalToday);
@@ -4656,8 +4785,8 @@ app.get(
 
 app.get('/api/parent/children', async (req, res) => {
   try {
-    const parentId = resolveParentScopeId(req.query.parent_id);
-    if (!parentId || Number.isNaN(parentId)) {
+    const parentId = await resolveParentAccountId(req.query.parent_id);
+    if (!parentId) {
       return res.status(400).json({ error: 'A valid parent ID is required.' });
     }
 
@@ -4797,8 +4926,8 @@ app.get('/api/students/progress', async (req, res) => {
   try {
     const teacherId = resolveTeacherScopeId(req.query.teacher_id);
     if (Number.isNaN(teacherId)) return res.status(400).json({ error: 'Invalid teacher ID' });
-    const parentId = resolveParentScopeId(req.query.parent_id);
-    if (Number.isNaN(parentId)) return res.status(400).json({ error: 'Invalid parent ID' });
+    const parentId = await resolveParentAccountId(req.query.parent_id);
+    if (req.query.parent_id && parentId === null) return res.status(400).json({ error: 'Invalid parent ID' });
 
     const params = [];
     let query = `
@@ -4828,8 +4957,8 @@ app.get('/api/analytics/overview', async (req, res) => {
   try {
     const teacherId = resolveTeacherScopeId(req.query.teacher_id);
     if (Number.isNaN(teacherId)) return res.status(400).json({ error: 'Invalid teacher ID' });
-    const parentId = resolveParentScopeId(req.query.parent_id);
-    if (Number.isNaN(parentId)) return res.status(400).json({ error: 'Invalid parent ID' });
+    const parentId = await resolveParentAccountId(req.query.parent_id);
+    if (req.query.parent_id && parentId === null) return res.status(400).json({ error: 'Invalid parent ID' });
 
     const params = [];
     let query = `
@@ -4873,8 +5002,8 @@ app.get('/api/analytics/recommendations', async (req, res) => {
   try {
     const teacherId = resolveTeacherScopeId(req.query.teacher_id);
     if (Number.isNaN(teacherId)) return res.status(400).json({ error: 'Invalid teacher ID' });
-    const parentId = resolveParentScopeId(req.query.parent_id);
-    if (Number.isNaN(parentId)) return res.status(400).json({ error: 'Invalid parent ID' });
+    const parentId = await resolveParentAccountId(req.query.parent_id);
+    if (req.query.parent_id && parentId === null) return res.status(400).json({ error: 'Invalid parent ID' });
 
     const params = [];
     let query = `
@@ -4964,8 +5093,8 @@ app.get('/api/student-progress/:studentId', async (req, res) => {
     if (Number.isNaN(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
     const teacherId = resolveTeacherScopeId(req.query.teacher_id);
     if (Number.isNaN(teacherId)) return res.status(400).json({ error: 'Invalid teacher ID' });
-    const parentId = resolveParentScopeId(req.query.parent_id);
-    if (Number.isNaN(parentId)) return res.status(400).json({ error: 'Invalid parent ID' });
+    const parentId = await resolveParentAccountId(req.query.parent_id);
+    if (req.query.parent_id && parentId === null) return res.status(400).json({ error: 'Invalid parent ID' });
 
     const params = [studentId];
     let query = `

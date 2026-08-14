@@ -198,6 +198,132 @@ test('playtime start returns explicit can_play contract for authorized sessions'
   assert.equal(response.body.message, 'Playtime session started.');
 });
 
+test('playtime start preserves six-digit external student IDs through the link lookup and rejects bad contracts', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let linkedStudentValues = null;
+  let totalTodayCallCount = 0;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $1')) {
+      linkedStudentValues = params;
+      if (params[0] === '001234' && params[1] === '123456') {
+        return resultRows([{ id: 44 }]);
+      }
+      return emptyResult;
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
+      totalTodayCallCount += 1;
+      return resultRows([{ total_playtime_today: 15 }]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('status = \'playing\'')) {
+      return emptyResult;
+    }
+    if (sql.startsWith('insert into public.playtime_sessions')) {
+      return resultRows([{
+        id: 88,
+        student_id: 44,
+        parent_id: '123456',
+        student_name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        section: 'Section A',
+        status: 'Playing',
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const validResponse = await requestJson(baseUrl, '/api/playtime/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: '001234',
+      parent_id: '123456',
+      student_name: 'Ava Santos',
+      grade_level: 'Grade 3',
+      section: 'Section A',
+    }),
+  });
+
+  assert.equal(validResponse.status, 201);
+  assert.equal(validResponse.body.success, true);
+  assert.deepEqual(linkedStudentValues, ['001234', '123456']);
+  assert.equal(totalTodayCallCount, 1);
+
+  const malformedStudent = await requestJson(baseUrl, '/api/playtime/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: '12345',
+      parent_id: '123456',
+      student_name: 'Ava Santos',
+      grade_level: 'Grade 3',
+      section: 'Section A',
+    }),
+  });
+  assert.equal(malformedStudent.status, 400);
+
+  const malformedParent = await requestJson(baseUrl, '/api/playtime/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: '001234',
+      parent_id: '12345',
+      student_name: 'Ava Santos',
+      grade_level: 'Grade 3',
+      section: 'Section A',
+    }),
+  });
+  assert.equal(malformedParent.status, 400);
+
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $1')) {
+      return emptyResult;
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
+      return resultRows([{ total_playtime_today: 15 }]);
+    }
+    return emptyResult;
+  });
+
+  const unlinkedResponse = await requestJson(baseUrl, '/api/playtime/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: '001234',
+      parent_id: '123456',
+      student_name: 'Ava Santos',
+      grade_level: 'Grade 3',
+      section: 'Section A',
+    }),
+  });
+  assert.equal(unlinkedResponse.status, 403);
+  assert.equal(unlinkedResponse.body.error, 'Student is not linked to this parent.');
+
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $1')) {
+      return resultRows([{ id: 44 }]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
+      return resultRows([{ total_playtime_today: 60 }]);
+    }
+    return emptyResult;
+  });
+
+  const limitResponse = await requestJson(baseUrl, '/api/playtime/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: '001234',
+      parent_id: '123456',
+      student_name: 'Ava Santos',
+      grade_level: 'Grade 3',
+      section: 'Section A',
+    }),
+  });
+  assert.equal(limitResponse.status, 403);
+  assert.equal(limitResponse.body.can_play, false);
+});
+
 test('playtime end updates the active session and returns calculated duration', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
