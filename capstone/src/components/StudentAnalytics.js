@@ -94,11 +94,15 @@ export default function StudentAnalytics() {
   const weaknesses = normalizeDisplayList(analysis?.weaknesses);
   const recommendations = normalizeDisplayList(analysis?.recommendations);
   const correctAnswers = toFiniteNumber(analysis?.totalCorrectAnswers ?? progress?.correct_answers, 0);
-  const totalQuestions = toFiniteNumber(progress?.total_questions, 0);
-  const incorrectAnswers = toFiniteNumber(analysis?.totalIncorrectAnswers, Math.max(totalQuestions - correctAnswers, 0));
+  const persistedTotalQuestions = toFiniteNumber(progress?.total_questions, 0);
+  const incorrectAnswers = toFiniteNumber(analysis?.totalIncorrectAnswers, Math.max(persistedTotalQuestions - correctAnswers, 0));
+  const analyzedTotalQuestions = correctAnswers + incorrectAnswers;
+  const totalQuestions = analyzedTotalQuestions > 0
+    ? analyzedTotalQuestions
+    : persistedTotalQuestions;
   const studentName = safeDisplayText(progress?.student_name, 'Student analytics');
   const studentInitials = getInitials(progress?.student_name);
-  const resolvedStudentId = safeDisplayText(progress?.student_id || progress?.id || studentId, 'N/A');
+  const resolvedStudentId = safeDisplayText(progress?.game_student_id, 'Not linked');
   const grade = safeDisplayText(progress?.grade_level || progress?.grade, 'N/A');
   const section = safeDisplayText(progress?.section, 'N/A');
   const gradeSection = grade === 'N/A' && section === 'N/A' ? 'N/A' : `${grade} - ${section}`;

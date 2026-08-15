@@ -75,6 +75,7 @@ describe('StudentAnalytics defensive rendering', () => {
     global.fetch = jest.fn(() => jsonResponse({
       progress: {
         student_id: 44,
+        game_student_id: '001234',
         student_name: 'Ava Santos',
         grade_level: 'Grade 3',
         section: 'Section A',
@@ -105,7 +106,7 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.querySelector('.student-profile-logo')).toBeFalsy();
     expect(container.querySelectorAll('.student-metric-card')).toHaveLength(6);
     expect(container.textContent).toContain('Student ID');
-    expect(container.textContent).toContain('44');
+    expect(container.textContent).toContain('001234');
     expect(container.textContent).toContain('Grade & Section');
     expect(container.textContent).toContain('Grade 3 - Section A');
     expect(container.textContent).toContain('Current Scene');

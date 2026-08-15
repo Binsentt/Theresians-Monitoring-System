@@ -201,6 +201,7 @@ export default function AdminTopAchievers() {
                       <tr>
                         <th>Rank</th>
                         <th>Student Name</th>
+                        <th>Student ID</th>
                         <th>Grade</th>
                         <th>Section</th>
                         <th>Completion</th>
@@ -220,6 +221,7 @@ export default function AdminTopAchievers() {
                             {index === 2 && <span className="rank-badge bronze">Bronze</span>}
                           </td>
                           <td className="name-cell">{achiever.student_name || 'Unknown'}</td>
+                          <td>{achiever.game_student_id || 'Not linked'}</td>
                           <td>{achiever.grade_level || 'N/A'}</td>
                           <td>{achiever.section || 'N/A'}</td>
                           <td className="progress-cell">

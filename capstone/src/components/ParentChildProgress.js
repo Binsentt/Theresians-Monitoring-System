@@ -332,14 +332,14 @@ export default function ParentChildProgress() {
                       <div>
                         <h2>{safeDisplayText(focusStudent.student_name, 'Unknown Child')}</h2>
                         <p>{[safeDisplayText(focusStudent.grade_level || focusStudent.grade, 'Grade N/A'), safeDisplayText(focusStudent.section, '')].filter(Boolean).join(' - ')}</p>
-                        <small>Student ID: {focusStudentId}</small>
+                        <small>Student ID: {focusStudent.game_student_id || 'Not linked'}</small>
                       </div>
                     </div>
 
                     <div className="child-progress-stats">
                       <div className="child-progress-stat">
                         <span>Student ID</span>
-                        <strong>{focusStudentId}</strong>
+                        <strong>{focusStudent.game_student_id || 'Not linked'}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Child</span>

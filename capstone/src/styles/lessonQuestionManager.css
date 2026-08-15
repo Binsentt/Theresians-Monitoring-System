@@ -641,6 +641,54 @@ button.drive-folder-card {
   min-width: 0;
 }
 
+.manager-inline-error {
+  margin: 6px 0 0;
+  color: #b42318;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.input-error {
+  border-color: #dc2626 !important;
+}
+
+.generated-questions-preview-modal {
+  max-width: 760px;
+}
+
+.generated-questions-list {
+  display: grid;
+  gap: 12px;
+  max-height: min(56vh, 620px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.generated-question-card {
+  border: 1px solid var(--border-color, #dbe3ef);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--bg-soft, #f8fbff);
+}
+
+.generated-question-card strong {
+  display: block;
+  color: var(--text-primary, #0f172a);
+}
+
+.generated-question-card ul {
+  display: grid;
+  gap: 5px;
+  margin: 12px 0 0;
+  padding-left: 20px;
+  color: var(--text-secondary, #475569);
+}
+
+.generated-question-card .correct-option {
+  color: var(--success-color, #15803d);
+  font-weight: 700;
+}
+
 .upload-progress {
   display: grid;
   gap: 8px;

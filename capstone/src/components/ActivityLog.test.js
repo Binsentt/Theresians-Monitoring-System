@@ -26,11 +26,12 @@ describe('ActivityLog table', () => {
     delete global.fetch;
   });
 
-  test('renders only the required five activity columns', async () => {
+  test('renders the activity columns with the external Student ID', async () => {
     global.fetch = jest.fn(() => jsonResponse({
       data: [{
         id: 1,
         student_id: 44,
+        game_student_id: '001234',
         student_name: 'Ava Santos',
         grade_level: 'Grade 3',
         current_quest: 'Fractions Gate',
@@ -47,8 +48,9 @@ describe('ActivityLog table', () => {
     });
 
     const headers = Array.from(container.querySelectorAll('th')).map((header) => header.textContent.trim());
-    expect(headers).toEqual(['Student Name', 'Grade', 'Time', 'Activity', 'Duration']);
+    expect(headers).toEqual(['Student Name', 'Student ID', 'Grade', 'Time', 'Activity', 'Duration']);
     expect(container.textContent).toContain('Ava Santos');
+    expect(container.textContent).toContain('001234');
     expect(container.textContent).toContain('Fractions Gate');
     expect(container.textContent).toContain('2m 5s');
     expect(headers).not.toContain('Section');

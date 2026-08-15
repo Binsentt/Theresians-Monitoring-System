@@ -8,7 +8,6 @@ import { DataTable } from './layout/Table';
 import { canAccessRole, normalizeRole } from './manageUsers.utils';
 import {
   calculateLearningStorage,
-  countFixedQuestionRecords,
   DIFFICULTY_LEVELS,
   formatLearningPreviewText,
   formatLearningFileSize,
@@ -45,6 +44,8 @@ const initialFilterState = {
   math_topic: '',
   file_type: '',
 };
+
+const MAX_LESSON_QUESTION_COUNT = 50;
 
 function formatUploadDate(dateString) {
   if (!dateString) return '-';
@@ -85,9 +86,13 @@ export default function LessonQuestionManager() {
   const [previewFile, setPreviewFile] = useState(null);
   const [previewContent, setPreviewContent] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [questionPreviewFile, setQuestionPreviewFile] = useState(null);
+  const [previewQuestions, setPreviewQuestions] = useState([]);
+  const [previewQuestionsLoading, setPreviewQuestionsLoading] = useState(false);
   const [selectedFolder, setSelectedFolder] = useState({ grade_level: '', difficulty: '' });
   const [renamingFile, setRenamingFile] = useState(null);
   const [filters, setFilters] = useState(initialFilterState);
+  const [formErrors, setFormErrors] = useState({});
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
@@ -167,6 +172,7 @@ export default function LessonQuestionManager() {
   ].sort((left, right) => new Date(right.deleted_at || 0) - new Date(left.deleted_at || 0)), [trashFiles]);
 
   const handleFormChange = (field, value) => {
+    setFormErrors((current) => ({ ...current, [field]: '' }));
     setForm((prev) => {
       if (field === 'grade_level' || field === 'difficulty') {
         const gradeLevel = field === 'grade_level' ? value : prev.grade_level;
@@ -200,7 +206,10 @@ export default function LessonQuestionManager() {
     });
   };
 
-  const resetForm = () => setForm(initialFormState);
+  const resetForm = () => {
+    setForm(initialFormState);
+    setFormErrors({});
+  };
 
   const handleUpload = async (event) => {
     event.preventDefault();
@@ -221,18 +230,12 @@ export default function LessonQuestionManager() {
       return;
     }
     const requestedCount = String(form.expected_question_count || '').trim();
-    if (uploadType === 'fixed_questions' && requestedCount) {
-      try {
-        const actualCount = countFixedQuestionRecords(await form.file.text(), form.file.name);
-        if (actualCount !== Number(requestedCount)) {
-          showNotification(`File contains ${actualCount} questions but you specified ${requestedCount}. Please check your file.`, 'error');
-          return;
-        }
-      } catch (error) {
-        console.error(error);
-        showNotification('Unable to read the question file for count validation.', 'error');
-        return;
+    if (uploadType === 'lesson' && (!/^\d+$/.test(requestedCount) || Number(requestedCount) < 1 || Number(requestedCount) > MAX_LESSON_QUESTION_COUNT)) {
+      setFormErrors({ expected_question_count: `Question Count must be a whole number between 1 and ${MAX_LESSON_QUESTION_COUNT}.` });
+      if (!requestedCount) {
+        setFormErrors({ expected_question_count: 'Question Count is required for Lesson PDF files.' });
       }
+      return;
     }
 
     const payload = new FormData();
@@ -242,7 +245,7 @@ export default function LessonQuestionManager() {
     payload.append('math_topic', form.math_topic.trim());
     payload.append('file_type', uploadType);
     payload.append('uploaded_by', user.id);
-    if (uploadType === 'fixed_questions' && requestedCount) {
+    if (uploadType === 'lesson') {
       payload.append('expected_question_count', requestedCount);
     }
     payload.append('file', form.file);
@@ -264,12 +267,12 @@ export default function LessonQuestionManager() {
       };
       setFiles((current) => [uploadedFile, ...current.filter((file) => file.id !== uploadedFile.id)]);
       setSelectedFolder({ grade_level: uploadedFile.grade_level || form.grade_level, difficulty: uploadedFile.difficulty || form.difficulty });
-      showNotification('File uploaded successfully');
+      showNotification(uploadType === 'lesson' ? 'Lesson questions generated and staged for review.' : 'File uploaded successfully');
       resetForm();
       setShowUploadForm(false);
     } catch (error) {
       console.error(error);
-      showNotification('Upload failed. Please try again.', 'error');
+      showNotification(error.message || 'Upload failed. Please try again.', 'error');
     } finally {
       setUploading(false);
     }
@@ -345,6 +348,29 @@ export default function LessonQuestionManager() {
     setPreviewFile(null);
     setPreviewContent('');
     setPreviewLoading(false);
+  };
+
+  const closeQuestionPreview = () => {
+    setQuestionPreviewFile(null);
+    setPreviewQuestions([]);
+    setPreviewQuestionsLoading(false);
+  };
+
+  const previewGeneratedQuestions = async (file) => {
+    setQuestionPreviewFile(file);
+    setPreviewQuestions([]);
+    setPreviewQuestionsLoading(true);
+    try {
+      const response = await fetch(apiUrl(`/api/learning-files/${file.id}/questions`));
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to preview generated questions.');
+      setPreviewQuestions(Array.isArray(data.questions) ? data.questions : []);
+    } catch (error) {
+      console.error(error);
+      showNotification(error.message || 'Unable to preview generated questions.', 'error');
+    } finally {
+      setPreviewQuestionsLoading(false);
+    }
   };
 
   const previewLearningFile = async (file) => {
@@ -535,7 +561,12 @@ export default function LessonQuestionManager() {
     {
       key: 'file_type',
       header: 'File Type',
-      render: (value) => (value === 'lesson' ? 'Lesson File' : 'Fixed Question File'),
+      render: (value) => (value === 'lesson' ? 'Lesson PDF File' : 'Fixed Question File'),
+    },
+    {
+      key: 'question_count',
+      header: 'Question Count',
+      render: (value, row) => Number.isInteger(Number(value)) ? Number(value) : (row.file_type === 'lesson' ? row.requested_question_count || '-' : '-'),
     },
     {
       key: 'published',
@@ -555,7 +586,7 @@ export default function LessonQuestionManager() {
       render: (_, row) => (
         <div className="drive-row-actions">
           <button type="button" className="drive-action-button" onClick={() => setRenamingFile(row)}><FilePenLine size={16} />Rename</button>
-          <button type="button" className="drive-action-button" onClick={() => previewLearningFile(row)}><FileText size={16} />Preview</button>
+          <button type="button" className="drive-action-button" onClick={() => (row.file_type === 'lesson' ? previewGeneratedQuestions(row) : previewLearningFile(row))}><FileText size={16} />Preview</button>
           <button type="button" className="drive-action-button" onClick={() => moveFileToTrash(row)}><Trash2 size={16} />Delete</button>
           <button type="button" className="drive-action-button primary" onClick={() => pushFileToGame(row)}><Upload size={16} />Push to Game</button>
         </div>
@@ -765,7 +796,7 @@ export default function LessonQuestionManager() {
                         <label className="form-label">File Type</label>
                         <select className="select-field" value={filters.file_type} onChange={(event) => handleFilterChange('file_type', event.target.value)}>
                           <option value="">All file types</option>
-                          <option value="lesson">Lesson File</option>
+                          <option value="lesson">Lesson PDF File</option>
                           <option value="fixed_questions">Fixed Question File</option>
                         </select>
                       </div>
@@ -863,7 +894,7 @@ export default function LessonQuestionManager() {
                     <div className="form-group">
                       <label className="form-label required">File Type</label>
                       <select className="select-field" value={form.file_type} onChange={(event) => handleFormChange('file_type', event.target.value)}>
-                        <option value="lesson">Lesson File</option>
+                        <option value="lesson">Lesson PDF File</option>
                         <option value="fixed_questions">Fixed Question File</option>
                       </select>
                     </div>
@@ -873,17 +904,23 @@ export default function LessonQuestionManager() {
                         {getQuestionFolderPath(form.grade_level, form.difficulty)}
                       </div>
                     </div>
-                    {form.file_type === 'fixed_questions' && (
+                    {form.file_type === 'lesson' && (
                       <div className="form-group">
-                        <label className="form-label">Fixed Questions Count</label>
+                        <label className="form-label required" htmlFor="expected-question-count">Question Count</label>
                         <input
+                          id="expected-question-count"
+                          name="expected_question_count"
                           type="number"
                           min="1"
+                          max={MAX_LESSON_QUESTION_COUNT}
                           step="1"
-                          className="input-field"
+                          required
+                          aria-invalid={Boolean(formErrors.expected_question_count)}
+                          className={`input-field ${formErrors.expected_question_count ? 'input-error' : ''}`}
                           value={form.expected_question_count}
                           onChange={(event) => handleFormChange('expected_question_count', event.target.value)}
                         />
+                        {formErrors.expected_question_count && <p className="manager-inline-error" role="alert">{formErrors.expected_question_count}</p>}
                       </div>
                     )}
                     <div className="form-group">
@@ -908,6 +945,41 @@ export default function LessonQuestionManager() {
                     <button type="button" className="btn btn-secondary" onClick={() => { resetForm(); setShowUploadForm(false); }} disabled={uploading}>Cancel</button>
                   </div>
                 </form>
+              </div>
+            )}
+
+            {questionPreviewFile && (
+              <div className="manager-modal-backdrop" role="presentation" onMouseDown={closeQuestionPreview}>
+                <div className="manager-modal generated-questions-preview-modal" role="dialog" aria-modal="true" aria-labelledby="generated-questions-preview-title" onMouseDown={(event) => event.stopPropagation()}>
+                  <div className="manager-modal-header">
+                    <div>
+                      <h2 id="generated-questions-preview-title">Generated Questions</h2>
+                      <p className="empty-text">{questionPreviewFile.title} — staged until Push to Game is clicked.</p>
+                    </div>
+                    <button type="button" className="icon-button" aria-label="Close generated questions preview" onClick={closeQuestionPreview}>x</button>
+                  </div>
+                  <div className="generated-questions-list">
+                    {previewQuestionsLoading ? (
+                      <p className="empty-text">Loading generated questions...</p>
+                    ) : previewQuestions.length === 0 ? (
+                      <p className="empty-text">No generated questions are available for this lesson yet.</p>
+                    ) : previewQuestions.map((question, index) => (
+                      <article key={question.id || `${question.question}-${index}`} className="generated-question-card">
+                        <strong>{index + 1}. {question.question}</strong>
+                        <ul>
+                          {(question.options || []).map((option, optionIndex) => (
+                            <li key={`${option}-${optionIndex}`} className={option === question.correct_answer ? 'correct-option' : ''}>
+                              {option}{option === question.correct_answer ? ' (Correct)' : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      </article>
+                    ))}
+                  </div>
+                  <div className="preview-actions">
+                    <button type="button" className="btn btn-secondary" onClick={closeQuestionPreview}>Close</button>
+                  </div>
+                </div>
               </div>
             )}
 

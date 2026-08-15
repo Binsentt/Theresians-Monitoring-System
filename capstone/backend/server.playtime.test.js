@@ -7,18 +7,23 @@ let queryHandler = async () => emptyResult;
 let verifiedTokenPayload = {};
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
+const runQuery = async (sql, params = []) => {
+  const rawSql = sql && typeof sql === 'object' && sql.text ? sql.text : sql;
+  const rawParams = sql && typeof sql === 'object' && Array.isArray(sql.values) ? sql.values : params;
+  const compacted = compactSql(rawSql);
+  const result = (await queryHandler(compacted, rawParams, rawSql)) || emptyResult;
+  if (result.rows?.length > 0) return result;
+
+  // /api/playtime/start now validates the database-authoritative parent code first.
+  if (compacted.includes('from public.accounts') && compacted.includes('where parent_id = $1') && compacted.includes('lower(role) in')) {
+    return { rows: [{ id: 19, parent_id: rawParams[0], name: 'Parent User' }] };
+  }
+  return result;
+};
 const mockPool = {
-  query: async (sql, params = []) => {
-    const rawSql = sql && typeof sql === 'object' && sql.text ? sql.text : sql;
-    const rawParams = sql && typeof sql === 'object' && Array.isArray(sql.values) ? sql.values : params;
-    return (await queryHandler(compactSql(rawSql), rawParams, rawSql)) || emptyResult;
-  },
+  query: runQuery,
   connect: async () => ({
-    query: async (sql, params = []) => {
-      const rawSql = sql && typeof sql === 'object' && sql.text ? sql.text : sql;
-      const rawParams = sql && typeof sql === 'object' && Array.isArray(sql.values) ? sql.values : params;
-      return (await queryHandler(compactSql(rawSql), rawParams, rawSql)) || emptyResult;
-    },
+    query: runQuery,
     release: () => {},
   }),
 };
@@ -112,7 +117,7 @@ test('playtime start creates a Playing session for Godot gameplay', async (t) =>
   });
 
   setQueryHandler(async (sql, params) => {
-    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $1')) {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $2')) {
       linkedStudentValues = params;
       return resultRows([{ id: 44 }]);
     }
@@ -148,8 +153,93 @@ test('playtime start creates a Playing session for Godot gameplay', async (t) =>
   assert.equal(response.status, 201);
   assert.equal(response.body.success, true);
   assert.equal(response.body.session_id, 77);
-  assert.deepEqual(linkedStudentValues, ['001234', '123456']);
+  assert.deepEqual(linkedStudentValues, [19, '001234']);
   assert.deepEqual(insertedValues.slice(0, 5), [44, '123456', 'Ava Santos', 'Grade 3', 'Section A']);
+});
+
+test('playtime start creates and links an unused six-digit Student ID for New Game', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let createdStudentValues = null;
+  let relationshipValues = null;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $2')) return emptyResult;
+    if (sql.includes('select id from public.accounts') && sql.includes('where game_student_id = $1')) return emptyResult;
+    if (sql.startsWith('insert into public.accounts')) {
+      createdStudentValues = params;
+      return resultRows([{ id: 55, name: 'Integration Test Student', game_student_id: '000042' }]);
+    }
+    if (sql.includes('from public.teacher_student_relationships') && sql.includes('lower(relationship_type) = $3')) return emptyResult;
+    if (sql.startsWith('insert into public.teacher_student_relationships')) {
+      relationshipValues = params;
+      return resultRows([{ id: 91, teacher_id: 19, student_id: 55, relationship_type: 'parent' }]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
+      return resultRows([{ total_playtime_today: 0 }]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes("status = 'playing'")) return emptyResult;
+    if (sql.startsWith('insert into public.playtime_sessions')) {
+      return resultRows([{ id: 92, student_id: 55, status: 'Playing' }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: '000042',
+      parent_id: '123456',
+      student_name: 'Integration Test Student',
+      grade_level: 'Grade 3',
+      section: '',
+    }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal(response.body.success, true);
+  assert.equal(response.body.is_new_registration, undefined);
+  assert.deepEqual(createdStudentValues.slice(-1), ['000042']);
+  assert.deepEqual(relationshipValues, [19, 55, 'parent']);
+});
+
+test('playtime start rejects an archived account that already owns the submitted Student ID', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let createdStudent = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $2')) return emptyResult;
+    if (sql.includes('select id from public.accounts') && sql.includes('where game_student_id = $1')) {
+      assert.doesNotMatch(sql, /coalesce\(is_archived, false\) = false/);
+      return resultRows([{ id: 55 }]);
+    }
+    if (sql.startsWith('insert into public.accounts')) createdStudent = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: '000042',
+      parent_id: '123456',
+      student_name: 'Integration Test Student',
+      grade_level: 'Grade 3',
+      section: '',
+    }),
+  });
+
+  assert.equal(response.status, 403);
+  assert.match(response.body.error, /already registered/i);
+  assert.equal(createdStudent, false);
 });
 
 test('playtime start returns explicit can_play contract for authorized sessions', async (t) => {
@@ -161,7 +251,7 @@ test('playtime start returns explicit can_play contract for authorized sessions'
   });
 
   setQueryHandler(async (sql, params) => {
-    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $1')) {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $2')) {
       return resultRows([{ id: 44 }]);
     }
     if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
@@ -209,9 +299,9 @@ test('playtime start preserves six-digit external student IDs through the link l
   });
 
   setQueryHandler(async (sql, params) => {
-    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $1')) {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $2')) {
       linkedStudentValues = params;
-      if (params[0] === '001234' && params[1] === '123456') {
+      if (params[0] === 19 && params[1] === '001234') {
         return resultRows([{ id: 44 }]);
       }
       return emptyResult;
@@ -250,7 +340,7 @@ test('playtime start preserves six-digit external student IDs through the link l
 
   assert.equal(validResponse.status, 201);
   assert.equal(validResponse.body.success, true);
-  assert.deepEqual(linkedStudentValues, ['001234', '123456']);
+  assert.deepEqual(linkedStudentValues, [19, '001234']);
   assert.equal(totalTodayCallCount, 1);
 
   const malformedStudent = await requestJson(baseUrl, '/api/playtime/start', {
@@ -278,11 +368,27 @@ test('playtime start preserves six-digit external student IDs through the link l
   assert.equal(malformedParent.status, 400);
 
   setQueryHandler(async (sql, params) => {
-    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $1')) {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $2')) {
       return emptyResult;
+    }
+    if (sql.includes('select id from public.accounts') && sql.includes('where game_student_id = $1')) {
+      return emptyResult;
+    }
+    if (sql.startsWith('insert into public.accounts')) {
+      return resultRows([{ id: 45, game_student_id: '001234' }]);
+    }
+    if (sql.includes('from public.teacher_student_relationships') && sql.includes('lower(relationship_type) = $3')) {
+      return emptyResult;
+    }
+    if (sql.startsWith('insert into public.teacher_student_relationships')) {
+      return resultRows([{ id: 92, teacher_id: 19, student_id: 45, relationship_type: 'parent' }]);
     }
     if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
       return resultRows([{ total_playtime_today: 15 }]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes("status = 'playing'")) return emptyResult;
+    if (sql.startsWith('insert into public.playtime_sessions')) {
+      return resultRows([{ id: 93, student_id: 45, status: 'Playing' }]);
     }
     return emptyResult;
   });
@@ -297,11 +403,12 @@ test('playtime start preserves six-digit external student IDs through the link l
       section: 'Section A',
     }),
   });
-  assert.equal(unlinkedResponse.status, 403);
-  assert.equal(unlinkedResponse.body.error, 'Student is not linked to this parent.');
+  assert.equal(unlinkedResponse.status, 201);
+  assert.equal(unlinkedResponse.body.is_new_registration, undefined);
+  assert.equal(unlinkedResponse.body.can_play, true);
 
   setQueryHandler(async (sql, params) => {
-    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $1')) {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $2')) {
       return resultRows([{ id: 44 }]);
     }
     if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {

@@ -103,6 +103,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
     global.fetch = jest.fn((url) => successPayloadForUrl(url, {
       children: [{
         id: 44,
+        game_student_id: '001234',
         student_name: 'Ava Santos',
         grade_level: 'Grade 3',
         section: 'Section A',
@@ -117,7 +118,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
 
     expect(container.textContent).toContain('Ava Santos');
     expect(container.textContent).toContain('Student ID');
-    expect(container.textContent).toContain('44');
+    expect(container.textContent).toContain('001234');
     expect(container.textContent).toContain('Quiz Sessions');
     expect(container.textContent).toContain('No game progress data available yet.');
     expect(container.textContent).not.toContain('My Children');
@@ -204,8 +205,8 @@ describe('ParentChildProgress child selection and game warnings', () => {
       fetchedUrls.push(url);
       return successPayloadForUrl(url, {
         children: [
-          { id: 44, student_name: 'Ava Santos', grade_level: 'Grade 3', section: 'Section A' },
-          { id: 45, student_name: 'Noah Santos', grade_level: 'Grade 1', section: 'Section B' },
+          { id: 44, game_student_id: '001234', student_name: 'Ava Santos', grade_level: 'Grade 3', section: 'Section A' },
+          { id: 45, game_student_id: '001245', student_name: 'Noah Santos', grade_level: 'Grade 1', section: 'Section B' },
         ],
         unlinked_count: 0,
       });
@@ -224,7 +225,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
 
     expect(container.textContent).toContain('Noah Santos');
     expect(container.textContent).toContain('Student ID');
-    expect(container.textContent).toContain('45');
+    expect(container.textContent).toContain('001245');
     expect(fetchedUrls.some((url) => url.startsWith('/api/parent/children/45/quizzes?'))).toBe(true);
     expect(fetchedUrls.some((url) => url.startsWith('/api/parent/children/44/quizzes?'))).toBe(false);
   });

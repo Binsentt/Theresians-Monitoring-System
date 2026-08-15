@@ -84,6 +84,17 @@ describe('LessonQuestionManager upload and trash controls', () => {
         ));
         return okJson({ success: true, message: 'Content pushed to game.', learningFile: fixtures.files[0] });
       }
+      if (value.includes('/api/learning-files/77/questions')) {
+        return okJson({
+          questions: [{
+            id: 501,
+            question: 'What is 2 + 3?',
+            options: ['4', '5', '6'],
+            correct_answer: '5',
+            published: false,
+          }],
+        });
+      }
       if (value.includes('/api/learning-files/77') && options.method === 'DELETE') {
         fixtures.files = fixtures.files.filter((file) => file.id !== 77);
         return okJson({ success: true });
@@ -137,8 +148,47 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.querySelector('.fixed-destination-display').textContent.trim()).toBe('Questions/Grade 3/Medium');
     expect(container.textContent).not.toContain('Select Folder');
     expect(container.textContent).not.toContain('New Folder');
-    expect(container.textContent).toContain('Lesson File');
+    expect(container.textContent).toContain('Lesson PDF File');
     expect(container.textContent).toContain('Fixed Question File');
+  });
+
+  test('Question Count is required only for Lesson PDF File uploads and is hidden for fixed question files', async () => {
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+
+    await act(async () => {
+      clickByText(container, 'New');
+    });
+    await act(async () => {
+      clickByText(container, 'Upload File');
+    });
+
+    expect(container.querySelector('.drive-upload-modal').textContent).not.toContain('Question Count');
+    const selects = container.querySelectorAll('.drive-upload-modal select');
+    await act(async () => {
+      setSelectValue(selects[3], 'lesson');
+    });
+
+    const countField = container.querySelector('input[name="expected_question_count"]');
+    expect(container.textContent).toContain('Question Count');
+    expect(countField).toBeTruthy();
+    expect(countField.required).toBe(true);
+    expect(countField.min).toBe('1');
+    expect(countField.max).toBe('50');
+
+    await act(async () => {
+      setSelectValue(selects[0], 'Grade 1');
+      setSelectValue(selects[1], 'Easy');
+      const fileInput = container.querySelector('input[type="file"]');
+      const file = new File(['%PDF-1.4 lesson'], 'addition-lesson.pdf', { type: 'application/pdf' });
+      Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      container.querySelector('.drive-upload-modal').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain('Question Count is required for Lesson PDF files.');
+    expect(global.fetch).not.toHaveBeenCalledWith('/api/learning-files/upload', expect.anything());
   });
 
   test('restores a trashed file and reports the requested success message', async () => {
@@ -220,6 +270,36 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('Preview');
     expect(container.textContent).toContain('Delete');
     expect(container.textContent).toContain('Push to Game');
+  });
+
+  test('Lesson PDF Preview shows staged generated questions before Push to Game', async () => {
+    fixtures.files = [{
+      id: 77,
+      title: 'addition-lesson',
+      file_name: 'addition-lesson.pdf',
+      file_url: '/uploads/addition-lesson.pdf',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      file_type: 'lesson',
+      question_count: 1,
+      published: false,
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+
+    await act(async () => {
+      clickByText(container, 'Preview');
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/77/questions');
+    expect(container.textContent).toContain('Generated Questions');
+    expect(container.textContent).toContain('What is 2 + 3?');
+    expect(container.textContent).toContain('5 (Correct)');
+    expect(container.textContent).toContain('staged until Push to Game is clicked');
   });
 
   test('Push to Game activates the staged file only after the button is clicked', async () => {

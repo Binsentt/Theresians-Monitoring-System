@@ -4,12 +4,13 @@ import logoImage from '../assets/images/STS_Logo.png';
 import {
   combineAddressFields,
   formatRoleLabel,
-  getDefaultDashboardRoute,
   isParentRole,
   normalizeRole,
   splitAddressFields,
   validateOptionalAdultBirthday,
 } from './manageUsers.utils';
+import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import { DashboardContainer, MainContent, PageContent, TopBar } from './layout/AppLayout';
 import { apiUrl } from '../api';
 import { buildAuthHeaders, clearStoredSession } from './session.utils';
 import '../styles/settings.css';
@@ -475,24 +476,30 @@ export default function SettingsScreen() {
 
   if (loading) return <div className="loading">Loading...</div>;
 
-  return (
-    <div className="settings-container" data-theme={theme}>
-      {/* Header */}
-      <div className="settings-header">
-        <button
-          className="back-btn"
-          onClick={() => {
-            navigate(getDefaultDashboardRoute(user?.role));
-          }}
-        >
-          Back
-        </button>
-        <img src={logoImage} alt="Logo" className="settings-logo" />
-        <h1>Settings</h1>
-      </div>
+  const role = normalizeRole(user?.role || 'parent');
 
-      {/* Main Content */}
-      <div className="settings-content">
+  return (
+    <DashboardContainer
+      className="settings-dashboard-shell"
+      sidebar={(
+        <AnalyticsSidebar
+          role={role}
+          activeItem="settings"
+          logoSrc={logoImage}
+          portalLabel={`${formatRoleLabel(role)} Portal`}
+        />
+      )}
+      main={(
+        <MainContent>
+          <TopBar className="settings-topbar">
+            <div>
+              <h1>Settings</h1>
+              <p>Manage your profile, password, and appearance.</p>
+            </div>
+          </TopBar>
+          <PageContent>
+            <div className="settings-container" data-theme={theme}>
+              <div className="settings-content">
         {/* Sidebar */}
         <aside className="settings-sidebar">
           <button
@@ -909,7 +916,11 @@ export default function SettingsScreen() {
             ×
           </button>
         </div>
+              )}
+            </div>
+          </PageContent>
+        </MainContent>
       )}
-    </div>
+    />
   );
 }

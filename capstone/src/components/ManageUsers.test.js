@@ -204,6 +204,39 @@ describe('ManageUsers edit flow', () => {
     expect(global.fetch).toHaveBeenCalledWith('/api/teacher-student-relationships?teacherId=8');
   });
 
+  test('Linked Children shows the authoritative Student ID returned by the backend', async () => {
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/accounts')) {
+        return Promise.resolve({ ok: true, json: async () => accountsPayload });
+      }
+      if (String(url).includes('/api/teacher-student-relationships')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            relationships: [{
+              id: 44,
+              student_name: 'Child One',
+              student_email: 'child@example.com',
+              game_student_id: '001234',
+            }],
+          }),
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+    const editButtons = Array.from(container.querySelectorAll('button')).filter((button) => button.textContent === 'Edit');
+    await act(async () => {
+      editButtons[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('STUDENT ID');
+    expect(container.textContent).toContain('001234');
+  });
+
   test('Add User form uses system-generated credentials without manual password input', async () => {
     await act(async () => {
       root.render(<ManageUsers />);

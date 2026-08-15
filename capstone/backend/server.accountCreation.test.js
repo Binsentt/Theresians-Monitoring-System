@@ -1224,3 +1224,137 @@ test('remember tokens include 30-day session metadata and the account session ve
     30
   );
 });
+
+test('active Parent/Teacher accounts receive a canonical Parent ID and pass Godot validation', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let insertParams = null;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select 1 from public.accounts where parent_id = $1')) return emptyResult;
+    if (sql.startsWith('insert into public.accounts')) {
+      insertParams = params;
+      return resultRows([{
+        id: 301,
+        name: params[0],
+        email: params[1],
+        role: params[3],
+        employee_id: params[8],
+        parent_id: params[11],
+        is_archived: false,
+      }]);
+    }
+    if (sql.includes('from public.accounts where parent_id = $1') && sql.includes('lower(role) in')) {
+      return resultRows([{
+        id: 301,
+        name: 'Pat Combined',
+        parent_id: params[0],
+        role: 'parent_teacher',
+        is_archived: false,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const created = await requestJson(baseUrl, '/api/accounts', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'Pat Combined',
+      email: 'pat.combined@example.com',
+      role: 'Parent/Teacher',
+      employee_id: '1234567890',
+    }),
+  });
+
+  assert.equal(created.status, 201);
+  assert.equal(insertParams[3], 'parent_teacher');
+  assert.match(insertParams[11], /^\d{6}$/);
+  assert.equal(created.body.user.parent_id, insertParams[11]);
+
+  const validated = await requestJson(baseUrl, '/api/game/parent/validate', {
+    method: 'POST',
+    body: JSON.stringify({ parent_id: insertParams[11] }),
+  });
+
+  assert.equal(validated.status, 200);
+  assert.equal(validated.body.ok, true);
+  assert.equal(validated.body.parent.role, 'parent_teacher');
+});
+
+test('archived Parent/Teacher accounts are rejected by Godot Parent ID validation', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.includes('from public.accounts where parent_id = $1') && sql.includes('lower(role) in')) {
+      return resultRows([{
+        id: 302,
+        name: 'Archived Combined',
+        parent_id: '123456',
+        role: 'parent_teacher',
+        is_archived: true,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/parent/validate', {
+    method: 'POST',
+    body: JSON.stringify({ parent_id: '123456' }),
+  });
+
+  assert.equal(response.status, 403);
+  assert.match(response.body.error, /no longer active/i);
+});
+
+test('Parent ID generation retries a duplicate code before creating a Parent account', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const codeChecks = [];
+  let insertedParentId = null;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select 1 from public.accounts where parent_id = $1')) {
+      codeChecks.push(params[0]);
+      return codeChecks.length === 1 ? resultRows([{ id: 99 }]) : emptyResult;
+    }
+    if (sql.startsWith('insert into public.accounts')) {
+      insertedParentId = params[11];
+      return resultRows([{
+        id: 303,
+        name: params[0],
+        email: params[1],
+        role: params[3],
+        parent_id: params[11],
+        is_archived: false,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/accounts', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'Retry Parent',
+      email: 'retry.parent@example.com',
+      role: 'parent',
+    }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal(codeChecks.length, 2);
+  assert.equal(insertedParentId, codeChecks[1]);
+  assert.match(insertedParentId, /^\d{6}$/);
+});

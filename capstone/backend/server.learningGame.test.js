@@ -1,15 +1,23 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
+let parsedPdfText = '';
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const mockPool = {
   query: async (sql, params = []) => {
     return (await queryHandler(compactSql(sql), params, sql)) || emptyResult;
   },
+  connect: async () => ({
+    query: async (sql, params = []) => (await queryHandler(compactSql(sql), params, sql)) || emptyResult,
+    release: () => {},
+  }),
 };
 
 const dbPath = require.resolve('./database/db');
@@ -20,9 +28,13 @@ require.cache[dbPath] = {
   exports: mockPool,
 };
 
+let nextUploadedFile = null;
 const createMiddleware = () => (req, res, next) => next();
 const multerStub = () => ({
-  single: createMiddleware,
+  single: () => (req, res, next) => {
+    if (nextUploadedFile) req.file = nextUploadedFile;
+    next();
+  },
   array: createMiddleware,
   fields: createMiddleware,
 });
@@ -37,7 +49,7 @@ const serverDependencyStubs = {
     verify: () => ({}),
   },
   multer: multerStub,
-  'pdf-parse': async () => ({ text: '' }),
+  'pdf-parse': async () => ({ text: parsedPdfText }),
 };
 
 const originalLoad = Module._load;
@@ -233,6 +245,211 @@ test('learning file preview and rename endpoints preserve canonical folder metad
   assert.equal(renameResponse.body.learningFile.title, 'renamed-hard');
   assert.equal(renameResponse.body.learningFile.difficulty, 'Hard');
   assert.equal(renameResponse.body.learningFile.folder_name, 'Questions/Grade 2/Hard');
+});
+
+test('lesson upload fails gracefully without OPENAI_API_KEY before it stores a staged record', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lesson-upload-test-'));
+  const tempPdf = path.join(tempDir, 'lesson.pdf');
+  fs.writeFileSync(tempPdf, '%PDF-1.4\nLesson about basic addition');
+  const priorKey = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  nextUploadedFile = {
+    path: tempPdf,
+    originalname: 'lesson.pdf',
+    mimetype: 'application/pdf',
+    size: fs.statSync(tempPdf).size,
+  };
+  t.after(async () => {
+    nextUploadedFile = null;
+    if (priorKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = priorKey;
+    if (fs.existsSync(tempPdf)) fs.unlinkSync(tempPdf);
+    if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir);
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let insertCalled = false;
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('insert into public.learning_files')) insertCalled = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/upload', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: 'Addition lesson',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      file_type: 'lesson',
+      expected_question_count: '2',
+    }),
+  });
+
+  assert.equal(response.status, 503);
+  assert.equal(response.body.error, 'Question AI is not configured. Set OPENAI_API_KEY on the backend service.');
+  assert.equal(insertCalled, false);
+});
+
+test('lesson upload generates exactly the requested staged questions through the server-side OpenAI call', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lesson-upload-success-test-'));
+  const uploadName = `lesson-success-${Date.now()}.pdf`;
+  const tempPdf = path.join(tempDir, uploadName);
+  const uploadsDir = path.join(__dirname, 'uploads');
+  const uploadsBefore = new Set(fs.readdirSync(uploadsDir));
+  fs.writeFileSync(tempPdf, '%PDF-1.4\nLesson about basic addition');
+  const priorKey = process.env.OPENAI_API_KEY;
+  const originalFetch = global.fetch;
+  process.env.OPENAI_API_KEY = 'server-test-key';
+  parsedPdfText = 'Addition combines quantities using counters.';
+  nextUploadedFile = {
+    path: tempPdf,
+    originalname: uploadName,
+    mimetype: 'application/pdf',
+    size: fs.statSync(tempPdf).size,
+  };
+  t.after(async () => {
+    nextUploadedFile = null;
+    parsedPdfText = '';
+    global.fetch = originalFetch;
+    if (priorKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = priorKey;
+    if (fs.existsSync(tempPdf)) fs.unlinkSync(tempPdf);
+    for (const entry of fs.readdirSync(uploadsDir)) {
+      const candidate = path.join(uploadsDir, entry);
+      if (!uploadsBefore.has(entry) && entry.endsWith(`_${uploadName}`) && fs.existsSync(candidate)) {
+        fs.unlinkSync(candidate);
+      }
+    }
+    if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir);
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let openAiRequest = null;
+  let storedQuestions = 0;
+  global.fetch = async (url, options) => {
+    if (url === 'https://api.openai.com/v1/responses') {
+      openAiRequest = JSON.parse(options.body);
+      return {
+        ok: true,
+        json: async () => ({ output_text: JSON.stringify({
+          questions: [
+            { question: 'What is 1 + 1?', options: ['1', '2', '3'], correct_answer: '2' },
+            { question: 'What is 2 + 1?', options: ['2', '3', '4'], correct_answer: '3' },
+          ],
+        }) }),
+      };
+    }
+    return originalFetch(url, options);
+  };
+  setQueryHandler(async (sql) => {
+    if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return emptyResult;
+    if (sql.startsWith('insert into public.learning_files')) {
+      return resultRows([{
+        id: 202,
+        title: 'Addition lesson',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+        file_type: 'lesson',
+        published: false,
+      }]);
+    }
+    if (sql.startsWith('insert into public.questions')) {
+      storedQuestions += 1;
+      return emptyResult;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/upload', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: 'Addition lesson',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      file_type: 'lesson',
+      expected_question_count: '2',
+    }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal(openAiRequest.model, 'gpt-5-mini');
+  assert.equal(openAiRequest.text.format.schema.properties.questions.maxItems, 2);
+  assert.equal(response.body.learningFile.question_count, 2);
+  assert.equal(response.body.learningFile.published, false);
+  assert.equal(storedQuestions, 2);
+});
+
+test('relationship lookup returns the authoritative game Student ID for linked students', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let relationshipSql = '';
+  setQueryHandler(async (sql) => {
+    if (sql.includes('from public.teacher_student_relationships')) {
+      relationshipSql = sql;
+      return resultRows([{
+        id: 12,
+        student_id: 99,
+        student_name: 'Linked Student',
+        student_email: 'student@example.com',
+        game_student_id: '001234',
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/teacher-student-relationships?teacherId=8');
+
+  assert.equal(response.status, 200);
+  assert.match(relationshipSql, /s\.game_student_id/);
+  assert.equal(response.body.relationships[0].game_student_id, '001234');
+});
+
+test('learning file question preview returns staged structured questions without publishing them', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('from public.questions') && params[0] === 77) {
+      return resultRows([{
+        id: 101,
+        learning_file_id: 77,
+        question: 'What is 2 + 3?',
+        options: ['4', '5', '6'],
+        correct_answer: '5',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+        source: 'ai',
+        published: false,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/77/questions');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.questions.length, 1);
+  assert.equal(response.body.questions[0].question, 'What is 2 + 3?');
+  assert.equal(response.body.questions[0].published, false);
 });
 
 test('Godot question endpoint accepts grade and topic query aliases', async (t) => {

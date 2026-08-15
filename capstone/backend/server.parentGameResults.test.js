@@ -6,14 +6,25 @@ const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
+const runQuery = async (sql, params = []) => {
+  const compacted = compactSql(sql);
+  const result = (await queryHandler(compacted, params, sql)) || emptyResult;
+  if (result.rows?.length > 0) return result;
+
+  // Current routes resolve either an internal parent key or the six-digit parent code before child access.
+  // These tests are about the following relationship route, so supply that resolver seam by default.
+  if (compacted.startsWith('select id from public.accounts') && compacted.includes('where id = $1')) {
+    return { rows: [{ id: Number(params[0]) }] };
+  }
+  if (compacted.includes('from public.accounts') && compacted.includes('where parent_id = $1') && compacted.includes('lower(role) in')) {
+    return { rows: [{ id: 19, parent_id: params[0], name: 'Parent User' }] };
+  }
+  return result;
+};
 const mockPool = {
-  query: async (sql, params = []) => {
-    return (await queryHandler(compactSql(sql), params, sql)) || emptyResult;
-  },
+  query: runQuery,
   connect: async () => ({
-    query: async (sql, params = []) => {
-      return (await queryHandler(compactSql(sql), params, sql)) || emptyResult;
-    },
+    query: runQuery,
     release: () => {},
   }),
 };
@@ -225,6 +236,72 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(insertedValues[10], false);
   });
 
+  await t.test('resolves a six-digit game Student ID before persisting a question result', async () => {
+    let insertedValues = null;
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+        assert.deepEqual(params, [19, '001234']);
+        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+      }
+      if (sql.startsWith('insert into public.game_results')) {
+        insertedValues = params;
+        return emptyResult;
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: '001234',
+        student_name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        difficulty: 'Hard',
+        math_topic: 'Fractions',
+        score: 0,
+        total_items: 1,
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(response.body.student_id, 44);
+    assert.equal(insertedValues[2], 44);
+    assert.equal(insertedValues[4], 'Hard');
+  });
+
+  await t.test('resolves a Godot activity log public Student ID through its parent link', async () => {
+    let insertedValues = null;
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('s.game_student_id = $1') && sql.includes('join public.accounts parent')) {
+        assert.deepEqual(params, ['001234', '123456']);
+        return resultRows([{ id: 44 }]);
+      }
+      if (sql.startsWith('insert into public.activity_logs')) {
+        insertedValues = params;
+        return resultRows([{ id: 99, student_id: 44 }]);
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/activity-logs', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: '001234',
+        student_name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        status: 'Playing',
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(insertedValues[0], 44);
+  });
+
   await t.test('stores a normalized Godot save payload as progress and activity data', async () => {
     const inserts = [];
     setQueryHandler(async (sql, params) => {
@@ -340,6 +417,7 @@ test('parent game results routes and access middleware', async (t) => {
 
     assert.equal(response.status, 201);
     assert.equal(insertedValues[3], 'Grade 3');
+    assert.equal(insertedValues[4], 'Medium');
     assert.equal(insertedValues[5], 'Fractions');
     assert.equal(insertedValues[7], 1);
     assert.equal(insertedValues[8], 100);
@@ -616,7 +694,7 @@ test('parent game results routes and access middleware', async (t) => {
     let parentScopeSql = '';
     let parentScopeParams = [];
     setQueryHandler(async (sql, params) => {
-      if (sql.includes('from public.teacher_student_relationships tsr') && sql.includes('scope_owner.parent_id')) {
+      if (sql.includes('from public.teacher_student_relationships tsr') && sql.includes('where tsr.teacher_id = $1')) {
         parentScopeSql = sql;
         parentScopeParams = params;
         return resultRows([{ student_id: 44, student_name: 'Ava Santos' }]);
@@ -630,8 +708,124 @@ test('parent game results routes and access middleware', async (t) => {
     const response = await requestJson(baseUrl, '/api/parent/children?parent_id=112832');
 
     assert.equal(response.status, 200);
-    assert.equal(parentScopeParams[0], '112832');
-    assert.match(parentScopeSql, /scope_owner\.parent_id/);
-    assert.doesNotMatch(parentScopeSql, /tsr\.teacher_id = \$1/);
+    assert.equal(parentScopeParams[0], 19);
+    assert.match(parentScopeSql, /tsr\.teacher_id = \$1/);
   });
+});
+
+test('student monitoring keeps the external six-digit game Student ID beside the internal route key', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select p.*') && sql.includes('from public.student_game_progress p')) {
+      assert.match(sql, /a\.game_student_id/);
+      return resultRows([{
+        student_id: 44,
+        game_student_id: '001234',
+        student_name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        correct_answers: 8,
+        total_questions: 10,
+        accuracy_rate: 80,
+        progress_percentage: 70,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/students/progress');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body[0].student_id, 44);
+  assert.equal(response.body[0].game_student_id, '001234');
+});
+
+test('student analytics reports insufficient data instead of inferring hard-question weaknesses', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select id') && sql.includes('from public.accounts') && sql.includes('where id = $1')) {
+      return emptyResult;
+    }
+    if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+      return resultRows([{ id: 19, parent_id: '112832' }]);
+    }
+    if (sql.startsWith('select p.*') && sql.includes('where p.student_id = $1')) {
+      return resultRows([{
+        student_id: 44,
+        game_student_id: '001234',
+        student_name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        correct_answers: 0,
+        total_questions: 0,
+        accuracy_rate: 0,
+        progress_percentage: 0,
+      }]);
+    }
+    if (sql.includes('from public.game_results') || sql.includes('from public.activity_logs')) {
+      return resultRows([]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/student-progress/44?parent_id=112832');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.analysis.dataAvailability, 'insufficient');
+  assert.match(response.body.analysis.recommendations[0], /insufficient performance data/i);
+  assert.deepEqual(response.body.analysis.difficultyBreakdown, { easy: null, medium: null, hard: null });
+  assert.equal(response.body.analysis.weaknesses.length, 0);
+});
+
+test('student analytics derives difficulty recommendations from recorded question attempts', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select p.*') && sql.includes('where p.student_id = $1')) {
+      return resultRows([{
+        student_id: params[0],
+        student_name: 'Ava Santos',
+        game_student_id: '001234',
+        grade_level: 'Grade 3',
+        current_quest: 'Quest 4',
+        progress_percentage: 82,
+        total_questions: 0,
+      }]);
+    }
+    if (sql.includes('from public.game_results') && sql.includes('where resolved_student_id = $1')) {
+      return resultRows([
+        { difficulty: 'Easy', score: 9, total_items: 10, math_topic: 'Fractions' },
+        { difficulty: 'Normal', score: 8, total_items: 10, math_topic: 'Fractions' },
+        { difficulty: 'Hard', score: 2, total_items: 10, math_topic: 'Fractions' },
+      ]);
+    }
+    if (sql.includes('from public.activity_logs') && sql.includes('where student_id = $1')) {
+      return resultRows([{ student_id: params[0], activity_description: 'Gameplay Session' }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/student-progress/44');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.analysis.dataAvailability, 'sufficient');
+  assert.deepEqual(response.body.analysis.difficultyBreakdown, { easy: 90, medium: 80, hard: 20 });
+  assert.match(response.body.analysis.strengths.join(' '), /Good quest completion consistency/i);
+  assert.match(response.body.analysis.weaknesses.join(' '), /Higher difficulty problems/i);
+  assert.match(response.body.analysis.recommendations.join(' '), /Easy and Medium performance is strong/i);
 });

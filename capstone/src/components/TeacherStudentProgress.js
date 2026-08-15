@@ -229,6 +229,7 @@ export default function TeacherStudentProgress() {
                     <thead>
                       <tr>
                         <th>Student Name</th>
+                        <th>Student ID</th>
                         <th>Grade Level</th>
                         <th>Section</th>
                         <th>Current Quest</th>
@@ -247,6 +248,7 @@ export default function TeacherStudentProgress() {
                           onClick={() => navigate(`/teacher/student-progress/${student.student_id}`)}
                         >
                           <td>{student.student_name || 'Unknown'}</td>
+                          <td>{student.game_student_id || 'Not linked'}</td>
                           <td>{student.grade_level || 'N/A'}</td>
                           <td>{student.section || getDefaultSection(student.grade_level, student.student_id)}</td>
                           <td>{student.current_quest || 'N/A'}</td>

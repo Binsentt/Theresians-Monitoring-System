@@ -305,6 +305,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
               <thead>
                 <tr>
                   <th>Student Name</th>
+                  <th>Student ID</th>
                   <th>Grade</th>
                   <th>Time</th>
                   <th>Activity</th>
@@ -317,6 +318,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
                     <td className="name-cell">
                       <strong>{activity.student_name || '-'}</strong>
                     </td>
+                    <td>{activity.game_student_id || 'Not linked'}</td>
                     <td className="grade-cell">
                       <span className="grade-badge">{getActivityLogGrade(activity)}</span>
                     </td>

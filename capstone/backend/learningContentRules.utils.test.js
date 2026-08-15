@@ -5,12 +5,14 @@ const {
   ALLOWED_DIFFICULTIES,
   ALLOWED_MATH_TOPICS,
   GRADE_TOPIC_MAP,
+  MAX_LESSON_QUESTION_COUNT,
   getMathTopicsForGrade,
   getMathTopicsForGradeDifficulty,
   isValidDifficulty,
   isValidMathTopicForGrade,
   isValidMathTopicForGradeDifficulty,
   parseExpectedQuestionCount,
+  parseLessonQuestionCount,
   validateLearningMetadata,
   validateExpectedQuestionCount,
 } = require('./learningContentRules.utils');
@@ -117,4 +119,13 @@ test('parses and validates fixed question counts for uploaded question bundles',
     validateExpectedQuestionCount([{ question: 'A' }], '2'),
     'File contains 1 questions but you specified 2. Please check your file.'
   );
+});
+
+test('lesson Question Count accepts only required bounded whole numbers', () => {
+  assert.deepEqual(parseLessonQuestionCount('20'), { value: 20, error: null });
+  assert.equal(parseLessonQuestionCount('').error, 'Question Count is required for Lesson PDF files.');
+  assert.equal(parseLessonQuestionCount('0').error, 'Question Count must be a whole number between 1 and 50.');
+  assert.equal(parseLessonQuestionCount('-1').error, 'Question Count must be a whole number between 1 and 50.');
+  assert.equal(parseLessonQuestionCount('2.5').error, 'Question Count must be a whole number between 1 and 50.');
+  assert.equal(parseLessonQuestionCount(String(MAX_LESSON_QUESTION_COUNT + 1)).error, 'Question Count must be a whole number between 1 and 50.');
 });

@@ -1,5 +1,7 @@
 const ALLOWED_GRADE_LEVELS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
 const ALLOWED_DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
+const MIN_LESSON_QUESTION_COUNT = 1;
+const MAX_LESSON_QUESTION_COUNT = 50;
 
 const GRADE_TOPIC_MAP = {
   'Grade 1': {
@@ -96,6 +98,21 @@ const parseExpectedQuestionCount = (value) => {
   return Number.isInteger(count) && count > 0 ? count : null;
 };
 
+const parseLessonQuestionCount = (value) => {
+  const rawValue = String(value ?? '').trim();
+  if (!rawValue) {
+    return { value: null, error: 'Question Count is required for Lesson PDF files.' };
+  }
+  if (!/^\d+$/.test(rawValue)) {
+    return { value: null, error: `Question Count must be a whole number between ${MIN_LESSON_QUESTION_COUNT} and ${MAX_LESSON_QUESTION_COUNT}.` };
+  }
+  const count = Number(rawValue);
+  if (count < MIN_LESSON_QUESTION_COUNT || count > MAX_LESSON_QUESTION_COUNT) {
+    return { value: null, error: `Question Count must be a whole number between ${MIN_LESSON_QUESTION_COUNT} and ${MAX_LESSON_QUESTION_COUNT}.` };
+  }
+  return { value: count, error: null };
+};
+
 const validateExpectedQuestionCount = (questions, expectedCount) => {
   const count = parseExpectedQuestionCount(expectedCount);
   if (!count) return null;
@@ -107,6 +124,8 @@ const validateExpectedQuestionCount = (questions, expectedCount) => {
 module.exports = {
   ALLOWED_GRADE_LEVELS,
   ALLOWED_DIFFICULTIES,
+  MIN_LESSON_QUESTION_COUNT,
+  MAX_LESSON_QUESTION_COUNT,
   GRADE_TOPIC_MAP,
   ALLOWED_MATH_TOPICS,
   getMathTopicsForGrade,
@@ -118,5 +137,6 @@ module.exports = {
   isValidMathTopicForGradeDifficulty,
   validateLearningMetadata,
   parseExpectedQuestionCount,
+  parseLessonQuestionCount,
   validateExpectedQuestionCount,
 };

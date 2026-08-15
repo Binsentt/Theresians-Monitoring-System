@@ -62,6 +62,7 @@ export default function TopAchievers() {
               <tr>
                 <th>Rank</th>
                 <th>Student Name</th>
+                <th>Student ID</th>
                 <th>Grade</th>
                 <th>Section</th>
                 <th>Completion</th>
@@ -84,6 +85,7 @@ export default function TopAchievers() {
                     )}
                   </td>
                   <td>{achiever.student_name || 'Unknown'}</td>
+                  <td>{achiever.game_student_id || 'Not linked'}</td>
                   <td>{achiever.grade_level || 'N/A'}</td>
                   <td>{achiever.section || 'N/A'}</td>
                   <td className="progress-cell">

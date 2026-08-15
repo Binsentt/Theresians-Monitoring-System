@@ -383,7 +383,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                         <tr key={record.id || `${record.student_id}-${index}`}>
                           <td>{index + 1}</td>
                           <td>{record.student_name || record.child_name || 'Unknown'}</td>
-                          <td>{record.student_id || '-'}</td>
+                          <td>{record.game_student_id || 'Not linked'}</td>
                           {!isChildView && <td>{record.parent_id || '-'}</td>}
                           <td>{record.grade_level || '-'}</td>
                           <td>{record.section || '-'}</td>

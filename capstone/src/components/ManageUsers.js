@@ -1139,6 +1139,7 @@ export default function ManageUsers() {
                               <thead>
                                 <tr>
                                   <th>STUDENT NAME</th>
+                                  <th>STUDENT ID</th>
                                   <th>EMAIL</th>
                                   <th>ACTION</th>
                                 </tr>
@@ -1147,6 +1148,7 @@ export default function ManageUsers() {
                                 {teacherRelations.map((relation) => (
                                   <tr key={relation.id}>
                                     <td>{relation.student_name || 'Unknown'}</td>
+                                    <td>{relation.game_student_id || 'Not linked'}</td>
                                     <td>{relation.student_email || 'N/A'}</td>
                                     <td>
                                       <button
