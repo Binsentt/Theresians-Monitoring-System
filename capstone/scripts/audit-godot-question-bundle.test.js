@@ -6,10 +6,12 @@ const path = require('path');
 
 const {
   applyTopicOverrides,
+  assessTopic,
   auditGodotQuestionBundle,
   canonicalDifficulty,
   inferMetadata,
   normalizeQuestion,
+  parseDocxQuestionLines,
 } = require('./audit-godot-question-bundle');
 const {
   applyClientProvidedImportPlan,
@@ -126,6 +128,54 @@ test('dry-run question audit resolves a letter answer to its supplied choice', (
     answer: '4',
     topic: null,
   });
+});
+
+test('DOCX parser preserves question punctuation that ends in a letter matching an option marker', () => {
+  const parsed = parseDocxQuestionLines([
+    '4. There are 28 fish. 9 were transferred. How many are left?',
+    'A. 18',
+    'B. 17',
+    'C. 19',
+    'D. 20Answer: C. 19',
+  ]);
+
+  assert.deepEqual(parsed, [{
+    question: 'There are 28 fish. 9 were transferred. How many are left?',
+    choices: ['18', '17', '19', '20'],
+    answer: '19',
+    topic: null,
+  }]);
+});
+
+test('DOCX parser recognizes compact lowercase option markers without treating prose as an option', () => {
+  const parsed = parseDocxQuestionLines([
+    'What number is 10,000 less than 31,211?a. 21,200b. 21,211c. 21,210d. 21,201',
+    'Answer: B (21,211)',
+  ]);
+
+  assert.deepEqual(parsed, [{
+    question: 'What number is 10,000 less than 31,211?',
+    choices: ['21,200', '21,211', '21,210', '21,201'],
+    answer: '21,211',
+    topic: null,
+  }]);
+});
+
+test('an exact controlled DOCX header topic is authoritative while a multi-topic header is not', () => {
+  const metadata = { grade: 'Grade 4', difficulty: 'Medium' };
+  const authoritative = assessTopic(metadata, [], {
+    source_topic_header: 'Place Value of Whole Numbers',
+  });
+  assert.equal(authoritative.topic, 'Place Value of Whole Numbers');
+  assert.equal(authoritative.source, 'Explicit client header metadata');
+  assert.equal(authoritative.classification, 'AUTHORITATIVE');
+
+  const ambiguous = assessTopic({ grade: 'Grade 1', difficulty: 'Easy' }, [], {
+    source_topic_header: 'Basic Addition, Subtraction, Shapes, and Place Value',
+  });
+  assert.equal(ambiguous.topic, null);
+  assert.equal(ambiguous.source, 'Explicit client header metadata');
+  assert.equal(ambiguous.classification, 'AMBIGUOUS');
 });
 
 const withFixtureDirectory = (callback) => {

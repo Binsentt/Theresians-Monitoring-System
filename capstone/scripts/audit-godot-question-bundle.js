@@ -73,8 +73,37 @@ const normalizeQuestionWithValidation = (candidate = {}) => {
 
 const normalizeQuestion = (candidate = {}) => normalizeQuestionWithValidation(candidate).question;
 
-const parseDocxQuestions = (filePath) => {
-  const lines = readDocxText(filePath);
+// Client DOCX files use both one-option-per-line and compact `?a. ...b. ...`
+// layouts.  The first A marker must have a natural question boundary; after it
+// is found, the ordered B-D markers may be adjacent to a preceding choice.
+const findOptionMarkers = (line, canContinueChoices = false) => {
+  const firstOptionMatch = /(^|[\s?!.:])([Aa])[.)]\s*/g.exec(line);
+  if (firstOptionMatch) {
+    const firstMarkerIndex = firstOptionMatch.index + firstOptionMatch[1].length;
+    const markers = [{
+      markerIndex: firstMarkerIndex,
+      contentStart: firstOptionMatch.index + firstOptionMatch[0].length,
+    }];
+    const subsequentOptions = /([B-Db-d])[.)]\s*/g;
+    subsequentOptions.lastIndex = markers[0].contentStart;
+    let nextMatch;
+    while ((nextMatch = subsequentOptions.exec(line))) {
+      markers.push({
+        markerIndex: nextMatch.index,
+        contentStart: nextMatch.index + nextMatch[0].length,
+      });
+    }
+    return markers;
+  }
+
+  if (canContinueChoices) {
+    const continuation = line.match(/^([B-Db-d])[.)]\s*/);
+    if (continuation) return [{ markerIndex: 0, contentStart: continuation[0].length }];
+  }
+  return [];
+};
+
+const parseDocxQuestionLines = (lines) => {
   const parsed = [];
   let current = null;
   const finishCurrent = () => {
@@ -105,15 +134,14 @@ const parseDocxQuestions = (filePath) => {
       line = line.slice(0, answerMatch.index).trim();
     }
 
-    const optionMatches = Array.from(line.matchAll(/([A-Da-d])[.)]\s*/g));
-    if (optionMatches.length > 0) {
-      const questionPrefix = line.slice(0, optionMatches[0].index).trim();
+    const optionMarkers = findOptionMarkers(line, Boolean(current?.choices?.length));
+    if (optionMarkers.length > 0) {
+      const questionPrefix = line.slice(0, optionMarkers[0].markerIndex).trim();
       if (questionPrefix) startQuestion(questionPrefix);
       if (!current) current = { question: '', choices: [], correct_answer: '' };
-      optionMatches.forEach((match, index) => {
-        const optionStart = match.index + match[0].length;
-        const optionEnd = index + 1 < optionMatches.length ? optionMatches[index + 1].index : line.length;
-        const option = line.slice(optionStart, optionEnd).trim();
+      optionMarkers.forEach((marker, index) => {
+        const optionEnd = index + 1 < optionMarkers.length ? optionMarkers[index + 1].markerIndex : line.length;
+        const option = line.slice(marker.contentStart, optionEnd).trim();
         if (option) current.choices.push(option);
       });
       continue;
@@ -125,6 +153,14 @@ const parseDocxQuestions = (filePath) => {
   }
   finishCurrent();
   return parsed;
+};
+
+const parseDocxQuestions = (filePath) => parseDocxQuestionLines(readDocxText(filePath));
+
+const extractDocxTopicHeader = (lines) => {
+  const headerLine = (lines || []).find((line) => /(?:lesson|topic)\s*:/i.test(String(line || '')));
+  const match = String(headerLine || '').match(/(?:lesson|topic)\s*:\s*(.+)$/i);
+  return match ? String(match[1]).trim() : null;
 };
 
 const parseJsonQuestions = (filePath) => {
@@ -197,12 +233,33 @@ const resolveTopic = (questions) => {
   return null;
 };
 
-const assessTopic = (metadata, validQuestions) => {
+const assessTopic = (metadata, validQuestions, sourceMetadata = {}) => {
   const explicitTopic = resolveTopic(validQuestions);
   const explicitTopics = [...new Set(validQuestions.map((question) => question.topic).filter(Boolean))];
   const topicOptions = metadata.grade && metadata.difficulty
     ? getMathTopicsForGradeDifficulty(metadata.grade, metadata.difficulty)
     : [];
+  const headerTopic = String(sourceMetadata.source_topic_header || '').trim();
+  if (headerTopic) {
+    if (topicOptions.includes(headerTopic)) {
+      return {
+        topic: headerTopic,
+        detectedTopic: headerTopic,
+        topicOptions,
+        source: 'Explicit client header metadata',
+        classification: 'AUTHORITATIVE',
+        reason: null,
+      };
+    }
+    return {
+      topic: null,
+      detectedTopic: headerTopic,
+      topicOptions,
+      source: 'Explicit client header metadata',
+      classification: /,|\band\b/i.test(headerTopic) ? 'AMBIGUOUS' : 'MISSING — NEEDS USER REVIEW',
+      reason: `Explicit header topic "${headerTopic}" is not one controlled topic for the inferred grade and difficulty.`,
+    };
+  }
   if (explicitTopics.length > 1) {
     return {
       topic: null,
@@ -343,9 +400,16 @@ const auditGodotQuestionBundle = (rootPath) => {
     const extension = path.extname(filePath).toLowerCase();
     let questions = [];
     let parseError = null;
+    let sourceTopicHeader = null;
     if (SUPPORTED_EXTENSIONS.has(extension)) {
       try {
-        questions = extension === '.docx' ? parseDocxQuestions(filePath) : parseJsonQuestions(filePath);
+        if (extension === '.docx') {
+          const lines = readDocxText(filePath);
+          sourceTopicHeader = extractDocxTopicHeader(lines);
+          questions = parseDocxQuestionLines(lines);
+        } else {
+          questions = parseJsonQuestions(filePath);
+        }
       } catch (error) {
         parseError = error.message;
       }
@@ -376,7 +440,7 @@ const auditGodotQuestionBundle = (rootPath) => {
         canonicalQuestions.set(signature, { path: metadata.relativePath, questionIndex: index + 1 });
       }
     });
-    const topicAssessment = assessTopic(metadata, validQuestions);
+    const topicAssessment = assessTopic(metadata, validQuestions, { source_topic_header: sourceTopicHeader });
     const eligibility = resolveImportEligibility({
       extension,
       parseError,
@@ -395,6 +459,7 @@ const auditGodotQuestionBundle = (rootPath) => {
       legacy_difficulty: metadata.legacyDifficulty,
       topic_identifier: topicAssessment.topic,
       detected_topic_identifier: topicAssessment.detectedTopic,
+      source_topic_header: sourceTopicHeader,
       detected_topic_identifiers: [...new Set(validQuestions.map((question) => question.topic).filter(Boolean))],
       detected_topic_distribution: validQuestions.reduce((distribution, question) => {
         increment(distribution, question.topic || 'Missing');
@@ -475,12 +540,15 @@ if (require.main === module) {
 
 module.exports = {
   applyTopicOverrides,
+  assessTopic,
   auditGodotQuestionBundle,
   canonicalDifficulty,
   inferMetadata,
   normalizeQuestion,
   normalizeQuestionWithValidation,
   parseDocxQuestions,
+  parseDocxQuestionLines,
+  extractDocxTopicHeader,
   parseJsonQuestions,
   readDocxText,
 };
