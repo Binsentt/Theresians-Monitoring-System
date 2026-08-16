@@ -358,12 +358,31 @@ button.drive-folder-card {
 .drive-table .data-table {
   border-collapse: separate;
   border-spacing: 0;
+  width: 100%;
+  min-width: 1120px;
+  table-layout: fixed;
 }
 
 .drive-table .data-table-th {
   color: var(--text-muted, #64748b);
   font-weight: 800;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
 }
+
+.drive-table .data-table-td {
+  vertical-align: middle;
+}
+
+.drive-name-column { width: 25%; min-width: 280px; }
+.drive-topic-column { width: 13%; min-width: 140px; }
+.drive-type-column { width: 11%; min-width: 124px; }
+.drive-count-column { width: 8%; min-width: 96px; text-align: center; }
+.drive-status-column { width: 12%; min-width: 130px; }
+.drive-date-column { width: 10%; min-width: 118px; }
+.drive-size-column { width: 7%; min-width: 84px; }
+.drive-actions-cell { width: 14%; min-width: 214px; }
 
 .drive-file-name svg {
   flex: 0 0 auto;
@@ -379,10 +398,15 @@ button.drive-folder-card {
 
 .file-name-title {
   font-weight: 800;
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-preview-trigger {
-  width: fit-content;
+  width: 100%;
   border: 0;
   background: transparent;
   color: var(--text-primary, #0b2447);
@@ -401,10 +425,6 @@ button.drive-folder-card {
 .empty-text {
   color: var(--text-muted, #64748b);
   font-size: 0.92rem;
-}
-
-.drive-actions-cell {
-  width: min(300px, 100%);
 }
 
 .drive-row-actions {
@@ -453,6 +473,38 @@ button.drive-folder-card {
 .manager-status-pill.active {
   color: #166534;
   background: #dcfce7;
+}
+
+.manager-status-pill.review {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.manager-status-pill.generating {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.manager-status-pill.superseded {
+  color: #475569;
+  background: #e2e8f0;
+}
+
+.manager-status-pill.failed {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.manager-status-stack {
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+}
+
+.manager-status-detail {
+  color: var(--text-muted, #64748b);
+  font-size: 0.75rem;
+  font-weight: 700;
 }
 
 .fixed-question-grid .drive-folder-card {

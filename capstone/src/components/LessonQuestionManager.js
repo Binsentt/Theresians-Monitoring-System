@@ -490,14 +490,7 @@ export default function LessonQuestionManager() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Push to Game failed');
 
-      setFiles((current) => current.map((item) => {
-        const sameDestination = item.grade_level === file.grade_level
-          && item.difficulty === file.difficulty
-          && item.math_topic === file.math_topic;
-        if (item.id === file.id) return { ...item, published: true };
-        if (sameDestination) return { ...item, published: false };
-        return item;
-      }));
+      await loadFilesAndFolders();
       showNotification(data.message || 'Content pushed to game.');
     } catch (error) {
       console.error(error);
@@ -549,12 +542,13 @@ export default function LessonQuestionManager() {
     {
       key: 'title',
       header: 'Name',
+      className: 'drive-name-column',
       render: (_, row) => (
         <div className="drive-file-name">
           <FileText size={18} aria-hidden="true" />
           <div className="file-name-cell">
             <button type="button" className="file-name-title file-preview-trigger" onClick={() => previewLearningFile(row)}>
-              {row.title}
+              {row.generated_question_set_name || row.title}
             </button>
             <span className="file-meta">
               {row.grade_level || 'Unknown grade'} | {row.difficulty || 'Unknown difficulty'}
@@ -562,42 +556,56 @@ export default function LessonQuestionManager() {
             <span className="file-meta">
               {getQuestionFolderPath(row.grade_level, row.difficulty)}
             </span>
+            {row.source_lesson && (
+              <span className="file-meta">Source Lesson: {row.source_lesson}</span>
+            )}
           </div>
         </div>
       ),
     },
-    { key: 'math_topic', header: 'Topic Identifier', render: (value) => value || 'Unknown topic' },
+    { key: 'math_topic', header: 'Topic Identifier', className: 'drive-topic-column', render: (value) => value || 'Unknown topic' },
     {
       key: 'file_type',
       header: 'File Type',
+      className: 'drive-type-column',
       render: (value) => (value === 'lesson' ? 'Lesson PDF File' : 'Fixed Question File'),
     },
     {
       key: 'question_count',
       header: 'Question Count',
+      className: 'drive-count-column',
       render: (value, row) => Number.isInteger(Number(value)) ? Number(value) : (row.file_type === 'lesson' ? row.requested_question_count || '-' : '-'),
     },
     {
-      key: 'published',
+      key: 'status',
       header: 'Status',
-      render: (value) => (
-        <span className={`manager-status-pill ${value ? 'active' : 'staged'}`}>
-          {value ? 'Active in Game' : 'Staged'}
-        </span>
-      ),
+      className: 'drive-status-column',
+      render: (_, row) => {
+        const lifecycle = row.lifecycle || {};
+        const label = lifecycle.label || row.status || (row.published ? 'Active in Game' : 'Staged');
+        const tone = lifecycle.tone || (row.published ? 'active' : 'staged');
+        const publishLabel = lifecycle.publishLabel
+          || (row.publish_status === 'superseded' ? 'Superseded/Replaced' : null);
+        return (
+          <div className="manager-status-stack">
+            <span className={`manager-status-pill ${tone}`}>{label}</span>
+            {publishLabel && publishLabel !== label && <span className="manager-status-detail">{publishLabel}</span>}
+          </div>
+        );
+      },
     },
-    { key: 'uploaded_at', header: 'Date modified', render: (value) => formatUploadDate(value) },
-    { key: 'file_size', header: 'File size', render: (value) => formatLearningFileSize(value) },
+    { key: 'uploaded_at', header: 'Date Modified', className: 'drive-date-column', render: (value, row) => formatUploadDate(row.published_at || row.generated_at || value) },
+    { key: 'file_size', header: 'File Size', className: 'drive-size-column', render: (value) => formatLearningFileSize(value) },
     {
       key: 'actions',
-      header: '',
+      header: 'Actions',
       className: 'drive-actions-cell',
       render: (_, row) => (
         <div className="drive-row-actions">
           <button type="button" className="drive-action-button" onClick={() => setRenamingFile(row)}><FilePenLine size={16} />Rename</button>
           <button type="button" className="drive-action-button" onClick={() => (row.file_type === 'lesson' ? previewGeneratedQuestions(row) : previewLearningFile(row))}><FileText size={16} />Preview</button>
           <button type="button" className="drive-action-button" onClick={() => moveFileToTrash(row)}><Trash2 size={16} />Delete</button>
-          <button type="button" className="drive-action-button primary" onClick={() => pushFileToGame(row)}><Upload size={16} />Push to Game</button>
+          <button type="button" className="drive-action-button primary" onClick={() => pushFileToGame(row)} disabled={row.generation_status === 'generating' || row.generation_status === 'failed'}><Upload size={16} />Push to Game</button>
         </div>
       ),
     },

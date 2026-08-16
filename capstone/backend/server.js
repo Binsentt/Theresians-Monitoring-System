@@ -60,6 +60,9 @@ const {
   generateLessonQuestions,
 } = require('./lessonQuestionGeneration');
 const {
+  toQuestionSetResponse,
+} = require('./questionSetLifecycle.utils');
+const {
   buildMailDiagnostics,
   buildResendEmailConfig,
   resolveAppUrl,
@@ -74,6 +77,14 @@ const {
   resolveDifficultyFromScene,
   sortRowsByStudentName,
 } = require('./progressScene.utils');
+const {
+  buildStudentAnalyticsMetrics,
+} = require('./studentAnalyticsMetrics.utils');
+const {
+  buildGroundedInsightInput,
+  buildInsightFingerprint,
+  generateGroundedStudentInsight,
+} = require('./studentAnalyticsInsight.utils');
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -243,6 +254,18 @@ const ensureSchema = async () => {
     );`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_parent_id ON public.game_results(parent_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_resolved_student_id ON public.game_results(resolved_student_id)');
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.student_ai_insights (
+      id SERIAL PRIMARY KEY,
+      student_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+      input_fingerprint VARCHAR(64) NOT NULL,
+      insight JSONB NOT NULL,
+      generated_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL,
+      generated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      stale_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT student_ai_insights_student_unique UNIQUE (student_id)
+    );`);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_student_ai_insights_student_stale ON public.student_ai_insights(student_id, stale_at)');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.teacher_student_relationships (
       id SERIAL PRIMARY KEY,
       teacher_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
@@ -353,6 +376,21 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS requested_question_count INTEGER');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_status VARCHAR(32)');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS publish_status VARCHAR(32)');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_failed_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_error_code VARCHAR(100)');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS published_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL');
+    await pool.query(`UPDATE public.learning_files
+      SET generation_status = CASE WHEN LOWER(file_type) = 'lesson' THEN 'ready_for_review' ELSE 'not_applicable' END
+      WHERE generation_status IS NULL OR BTRIM(generation_status) = ''`);
+    await pool.query(`UPDATE public.learning_files
+      SET publish_status = CASE WHEN published THEN 'active' ELSE 'staged' END
+      WHERE publish_status IS NULL OR BTRIM(publish_status) = ''`);
+    await pool.query("ALTER TABLE public.learning_files ALTER COLUMN generation_status SET DEFAULT 'not_applicable'");
+    await pool.query("ALTER TABLE public.learning_files ALTER COLUMN publish_status SET DEFAULT 'staged'");
     await pool.query('UPDATE public.learning_files SET deleted_at = trashed_at WHERE deleted_at IS NULL AND trashed_at IS NOT NULL');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.questions (
       id SERIAL PRIMARY KEY,
@@ -372,6 +410,7 @@ const ensureSchema = async () => {
     await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_published ON public.learning_files(published)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_questions_published ON public.questions(published)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_grade_difficulty_topic ON public.learning_files(grade_level, difficulty, math_topic)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_lifecycle ON public.learning_files(generation_status, publish_status)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_questions_grade_difficulty_topic ON public.questions(grade_level, difficulty, math_topic)');
   } catch (err) {
     console.error('Schema initialization failed:', err.message);
@@ -705,12 +744,16 @@ const getDefaultSection = (gradeLevel, studentId) => {
 };
 
 const normalizeStudentProgressRow = (row) => {
-  const incorrectAnswers = Number(row.total_questions || 0) - Number(row.correct_answers || 0);
+  const totalQuestions = toNullableNumber(row.total_questions);
+  const correctAnswers = toNullableNumber(row.correct_answers);
+  const incorrectAnswers = totalQuestions === null || correctAnswers === null
+    ? null
+    : Math.max(0, totalQuestions - correctAnswers);
   const difficultyLevel = resolveDifficultyFromScene(row);
   return {
     ...row,
-    section: row.section || getDefaultSection(row.grade_level, row.student_id),
-    incorrect_answers: incorrectAnswers < 0 ? 0 : incorrectAnswers,
+    section: row.section || null,
+    incorrect_answers: incorrectAnswers,
     difficulty: difficultyLevel,
     difficulty_level: difficultyLevel,
   };
@@ -767,12 +810,11 @@ const canonicalDifficultySql = (columnName) => (
 
 const normalizeLearningFileRow = (row) => {
   const difficulty = normalizeDifficultyValue(row?.difficulty);
-  return {
+  return toQuestionSetResponse({
     ...row,
     difficulty,
     folder_name: buildQuestionFolderPath(row?.grade_level, difficulty),
-    status: row?.published ? 'Active in Game' : 'Staged',
-  };
+  });
 };
 
 const resolveScopeId = (value) => {
@@ -1255,42 +1297,71 @@ const saveUploadedLearningFile = async ({ title, grade_level, math_topic, file_t
   return result.rows[0];
 };
 
-const publishLearningFile = async (fileId) => {
-  const fileResult = await pool.query(
-    'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL',
-    [fileId]
-  );
-  const learningFile = fileResult.rows[0];
-  if (!learningFile) {
-    const error = new Error('Uploaded file not found');
-    error.statusCode = 404;
-    throw error;
-  }
+const createLifecycleHttpError = (message, statusCode) => {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+};
 
-  const canonicalDifficulty = normalizeDifficultyValue(learningFile.difficulty);
-  const destinationParams = [
-    learningFile.grade_level,
-    canonicalDifficulty,
-    learningFile.math_topic,
-    fileId,
-  ];
-  const learningDifficulty = canonicalDifficultySql('difficulty');
-  const linkedLearningDifficulty = canonicalDifficultySql('lf.difficulty');
-
-  await pool.query('BEGIN');
+const publishLearningFile = async (fileId, publisherId) => {
+  const client = await pool.connect();
   try {
-    await pool.query(
+    await client.query('BEGIN');
+    const fileResult = await client.query(
+      'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      [fileId]
+    );
+    const learningFile = fileResult.rows[0];
+    if (!learningFile) {
+      throw createLifecycleHttpError('Uploaded file not found', 404);
+    }
+
+    if (learningFile.generation_status === 'generating') {
+      throw createLifecycleHttpError('Question generation is still in progress.', 409);
+    }
+    if (learningFile.generation_status === 'failed') {
+      throw createLifecycleHttpError('Failed question sets must be generated successfully before publishing.', 409);
+    }
+
+    const questionCountResult = await client.query(
+      `SELECT COUNT(*)::INTEGER AS question_count
+       FROM public.questions
+       WHERE learning_file_id = $1
+         AND BTRIM(question) <> ''
+         AND BTRIM(correct_answer) <> ''`,
+      [fileId]
+    );
+    if (Number(questionCountResult.rows[0]?.question_count || 0) < 1) {
+      throw createLifecycleHttpError('A question set must contain valid questions before it can be published.', 422);
+    }
+
+    const canonicalDifficulty = normalizeDifficultyValue(learningFile.difficulty);
+    const scopeKey = `${learningFile.grade_level}|${canonicalDifficulty}|${learningFile.math_topic}`;
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [scopeKey]);
+
+    const destinationParams = [
+      learningFile.grade_level,
+      canonicalDifficulty,
+      learningFile.math_topic,
+      fileId,
+    ];
+    const learningDifficulty = canonicalDifficultySql('difficulty');
+    const linkedLearningDifficulty = canonicalDifficultySql('lf.difficulty');
+
+    await client.query(
       `UPDATE public.learning_files
-       SET published = false
+       SET published = false,
+           publish_status = 'superseded'
        WHERE grade_level = $1
          AND ${learningDifficulty} = $2
          AND math_topic = $3
          AND id <> $4
          AND subject = 'Mathematics'
-         AND deleted_at IS NULL`,
+         AND deleted_at IS NULL
+         AND (published = true OR publish_status = 'active')`,
       destinationParams
     );
-    await pool.query(
+    await client.query(
       `UPDATE public.questions q
        SET published = false
        FROM public.learning_files lf
@@ -1300,21 +1371,39 @@ const publishLearningFile = async (fileId) => {
          AND lf.math_topic = $3
          AND lf.id <> $4
          AND lf.subject = 'Mathematics'
-         AND lf.deleted_at IS NULL`,
+         AND lf.deleted_at IS NULL
+         AND lf.publish_status = 'superseded'`,
       destinationParams
     );
-    const publishedResult = await pool.query('UPDATE public.learning_files SET published = true WHERE id = $1 RETURNING *', [fileId]);
-    await pool.query('UPDATE public.questions SET published = true WHERE learning_file_id = $1', [fileId]);
-    await pool.query('COMMIT');
+    const publishedResult = await client.query(
+      `UPDATE public.learning_files
+       SET published = true,
+           publish_status = 'active',
+           published_at = CURRENT_TIMESTAMP,
+           published_by = $2
+       WHERE id = $1
+       RETURNING *`,
+      [fileId, publisherId || null]
+    );
+    await client.query('UPDATE public.questions SET published = true WHERE learning_file_id = $1', [fileId]);
+    await client.query('COMMIT');
     return normalizeLearningFileRow(publishedResult.rows[0] || learningFile);
   } catch (error) {
-    await pool.query('ROLLBACK');
+    await client.query('ROLLBACK').catch(() => {});
     throw error;
+  } finally {
+    client.release();
   }
 };
 
 const unpublishLearningFile = async (fileId) => {
-  await pool.query('UPDATE public.learning_files SET published = false WHERE id = $1', [fileId]);
+  await pool.query(
+    `UPDATE public.learning_files
+     SET published = false,
+         publish_status = 'staged'
+     WHERE id = $1`,
+    [fileId]
+  );
   await pool.query('UPDATE public.questions SET published = false WHERE learning_file_id = $1', [fileId]);
 };
 
@@ -2085,21 +2174,19 @@ const buildGradeSummary = (rows) => {
   }, {});
 
   return Object.entries(grouped).map(([grade, items]) => {
-    const avgAccuracy = items.length
-      ? Math.round(items.reduce((sum, s) => sum + Number(s.accuracy_rate || 0), 0) / items.length)
-      : 0;
-    const avgProgress = items.length
-      ? Math.round(items.reduce((sum, s) => sum + Number(s.progress_percentage || 0), 0) / items.length)
-      : 0;
-    const easyAvg = items.length
-      ? Math.round(items.reduce((sum, s) => sum + (s.analysis?.difficultyBreakdown?.easy || 0), 0) / items.length)
-      : 0;
-    const mediumAvg = items.length
-      ? Math.round(items.reduce((sum, s) => sum + (s.analysis?.difficultyBreakdown?.medium || 0), 0) / items.length)
-      : 0;
-    const hardAvg = items.length
-      ? Math.round(items.reduce((sum, s) => sum + (s.analysis?.difficultyBreakdown?.hard || 0), 0) / items.length)
-      : 0;
+    const averageAvailable = (values) => {
+      const available = values
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value));
+      return available.length
+        ? Math.round(available.reduce((sum, value) => sum + value, 0) / available.length)
+        : null;
+    };
+    const avgAccuracy = averageAvailable(items.map((item) => item.accuracy_rate));
+    const avgProgress = averageAvailable(items.map((item) => item.progress_percentage));
+    const easyAvg = averageAvailable(items.map((item) => item.analysis?.difficultyBreakdown?.easy));
+    const mediumAvg = averageAvailable(items.map((item) => item.analysis?.difficultyBreakdown?.medium));
+    const hardAvg = averageAvailable(items.map((item) => item.analysis?.difficultyBreakdown?.hard));
 
     return {
       grade,
@@ -2112,149 +2199,19 @@ const buildGradeSummary = (rows) => {
   });
 };
 
-const buildAIRecommendations = (rows) => {
-  const attemptedRows = Array.isArray(rows)
-    ? rows.filter((row) => Number(row.total_questions || 0) > 0)
-    : [];
-
-  if (attemptedRows.length === 0) {
-    return ['Insufficient performance data. Complete more learning activities to generate recommendations.'];
-  }
-
-  const recommendations = [];
-  const gradeSummary = buildGradeSummary(attemptedRows);
-  const overallAccuracy = attemptedRows.length
-    ? Math.round(attemptedRows.reduce((sum, item) => sum + Number(item.accuracy_rate || 0), 0) / attemptedRows.length)
-    : 0;
-  const overallProgress = attemptedRows.length
-    ? Math.round(attemptedRows.reduce((sum, item) => sum + Number(item.progress_percentage || 0), 0) / attemptedRows.length)
-    : 0;
-
-  if (overallAccuracy < 75) {
-    recommendations.push('Many students are showing below-target accuracy; reinforce key concepts with short review sessions.');
-  }
-  if (overallProgress < 70) {
-    recommendations.push('Overall quest progress is moderate; encourage consistent game practice and daily learning goals.');
-  }
-
-  gradeSummary.forEach((grade) => {
-    if (grade.averageAccuracy < 70) {
-      recommendations.push(`Students in ${grade.grade} need more accuracy-focused practice. Use simpler review activities before moving to harder challenges.`);
-    }
-    if (grade.difficultyAverage.hard > 0 && grade.difficultyAverage.easy > 0 && grade.difficultyAverage.hard < grade.difficultyAverage.easy) {
-      recommendations.push(`Students in ${grade.grade} struggle more with hard difficulty items; add extra medium-level reinforcement before hard challenges.`);
-    }
-  });
-
-  if (recommendations.length === 0) {
-    recommendations.push('Current gameplay shows steady progress. Continue the existing practice routine and review new results weekly.');
-  }
-
-  return recommendations;
-};
-
-const normalizeAnalyticsDifficulty = (value) => {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (['easy'].includes(normalized)) return 'easy';
-  if (['normal', 'medium', 'average', 'normal / average'].includes(normalized)) return 'medium';
-  if (['difficult', 'hard'].includes(normalized)) return 'hard';
-  return null;
-};
-
-const buildDifficultyBreakdown = (quizSessions = []) => {
-  const totals = {
-    easy: { score: 0, items: 0 },
-    medium: { score: 0, items: 0 },
-    hard: { score: 0, items: 0 },
-  };
-
-  quizSessions.forEach((quiz) => {
-    const difficulty = normalizeAnalyticsDifficulty(quiz?.difficulty);
-    const score = Number(quiz?.score || 0);
-    const items = Number(quiz?.total_items || quiz?.totalItems || 0);
-    if (!difficulty || !Number.isFinite(score) || !Number.isFinite(items) || items <= 0) return;
-    totals[difficulty].score += Math.max(0, score);
-    totals[difficulty].items += items;
-  });
-
-  return Object.fromEntries(Object.entries(totals).map(([difficulty, values]) => [
-    difficulty,
-    values.items > 0 ? Math.round((values.score / values.items) * 100) : null,
-  ]));
-};
-
 const generateStudentAnalysis = (record, quizSessions = [], activityLogs = []) => {
-  const recordedTotals = quizSessions.reduce((total, quiz) => total + Math.max(0, Number(quiz?.total_items || quiz?.totalItems || 0)), 0);
-  const recordedCorrect = quizSessions.reduce((total, quiz) => total + Math.max(0, Number(quiz?.score || 0)), 0);
-  const total = recordedTotals > 0 ? recordedTotals : Math.max(0, Number(record.total_questions || 0));
-  const correct = recordedTotals > 0 ? recordedCorrect : Math.max(0, Number(record.correct_answers || 0));
-  const incorrect = Math.max(0, total - correct);
-  const accuracy = total > 0 ? Math.round((correct / total) * 100) : 0;
-  const progress = Number(record.progress_percentage || 0);
-  const difficultyBreakdown = buildDifficultyBreakdown(quizSessions);
-
-  const strengths = [];
-  const weaknesses = [];
-  const recommendations = [];
-
-  if (total <= 0) {
-    return {
-      dataAvailability: 'insufficient',
-      totalCorrectAnswers: correct,
-      totalIncorrectAnswers: incorrect,
-      currentQuest: record.current_quest || 'N/A',
-      difficultyBreakdown,
-      strengths,
-      weaknesses,
-      recommendations: ['Insufficient performance data. Complete more learning activities to generate recommendations.'],
-      engagement: {
-        activityCount: activityLogs.length,
-        quizSessionCount: quizSessions.length,
-      },
-    };
-  }
-
-  if (accuracy >= 90) strengths.push('Strong accuracy across recorded gameplay attempts.');
-  else if (accuracy >= 75) strengths.push('Good understanding of the majority of recorded problems.');
-
-  if (progress >= 80) strengths.push('Good quest completion consistency.');
-  if (record.score >= 90) strengths.push('Excellent scoring pace during gameplay.');
-  if (difficultyBreakdown.hard !== null && difficultyBreakdown.hard >= 80) strengths.push('Strong performance on hard questions.');
-
-  if (accuracy < 70) weaknesses.push('Needs more practice to improve accuracy.');
-  if (incorrect > correct) weaknesses.push('Many questions are answered incorrectly; review fundamentals.');
-  if (difficultyBreakdown.hard !== null && difficultyBreakdown.hard < 70) weaknesses.push('Higher difficulty problems are still challenging.');
-
-  if (
-    difficultyBreakdown.easy !== null
-    && difficultyBreakdown.medium !== null
-    && difficultyBreakdown.hard !== null
-    && difficultyBreakdown.easy >= 75
-    && difficultyBreakdown.medium >= 75
-    && difficultyBreakdown.hard < 70
-  ) {
-    recommendations.push('Easy and Medium performance is strong; reinforce prerequisite skills before adding more Hard questions.');
-  } else if (accuracy >= 85 && progress >= 80) {
-    recommendations.push('Maintain current practice routine and add occasional challenge problems.');
-  } else if (accuracy < 70) {
-    recommendations.push('Revisit recent quests and use shorter guided practice before moving to harder questions.');
-  } else {
-    recommendations.push('Revisit recent quests and focus on areas with lower accuracy.');
-  }
-
-  if (difficultyBreakdown.hard !== null && difficultyBreakdown.hard < 70) {
-    recommendations.push('Use targeted review sessions for harder concepts and track the next hard-question attempts.');
-  }
-
+  const metrics = buildStudentAnalyticsMetrics({ progress: record, quizSessions });
   return {
-    dataAvailability: 'sufficient',
-    totalCorrectAnswers: correct,
-    totalIncorrectAnswers: incorrect,
-    currentQuest: record.current_quest || 'N/A',
-    difficultyBreakdown,
-    strengths,
-    weaknesses,
-    recommendations,
+    dataAvailability: metrics.totalQuestions === null || metrics.totalQuestions <= 0 ? 'insufficient' : 'available',
+    totalCorrectAnswers: metrics.correctAnswers,
+    totalIncorrectAnswers: metrics.incorrectAnswers,
+    currentQuest: metrics.currentQuest || 'N/A',
+    difficultyBreakdown: Object.fromEntries(
+      Object.entries(metrics.difficultyBreakdown).map(([difficulty, entry]) => [difficulty, entry.accuracy])
+    ),
+    strengths: [],
+    weaknesses: [],
+    recommendations: [],
     engagement: {
       activityCount: activityLogs.length,
       quizSessionCount: quizSessions.length,
@@ -2339,6 +2296,53 @@ const buildStudentAnalyticsReadiness = ({ progress, quizSessions = [], activityL
       ],
     },
   };
+};
+
+const MIN_GROUNDED_INSIGHT_RESULTS = 5;
+
+const buildAiInsightState = ({ metrics, cachedInsight, inputFingerprint }) => {
+  if (metrics.validResultCount < MIN_GROUNDED_INSIGHT_RESULTS) {
+    return {
+      status: 'insufficient_data',
+      required_result_count: MIN_GROUNDED_INSIGHT_RESULTS,
+      valid_result_count: metrics.validResultCount,
+      message: 'Not enough gameplay data yet to generate a reliable analysis.',
+    };
+  }
+
+  if (
+    cachedInsight
+    && cachedInsight.input_fingerprint === inputFingerprint
+    && !cachedInsight.stale_at
+  ) {
+    return {
+      status: 'cached',
+      required_result_count: MIN_GROUNDED_INSIGHT_RESULTS,
+      valid_result_count: metrics.validResultCount,
+      generated_at: cachedInsight.generated_at || null,
+      insight: cachedInsight.insight,
+    };
+  }
+
+  return {
+    status: cachedInsight ? 'stale' : 'not_generated',
+    required_result_count: MIN_GROUNDED_INSIGHT_RESULTS,
+    valid_result_count: metrics.validResultCount,
+    message: cachedInsight
+      ? 'New gameplay data is available. Generate a refreshed insight when you are ready.'
+      : 'Generate a grounded insight from the recorded gameplay results.',
+  };
+};
+
+const markStudentInsightStale = async (queryClient, studentId) => {
+  if (!studentId) return;
+  await queryClient.query(
+    `UPDATE public.student_ai_insights
+     SET stale_at = COALESCE(stale_at, CURRENT_TIMESTAMP),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE student_id = $1`,
+    [studentId]
+  );
 };
 
 app.use('/api', attachAuthenticatedAccount);
@@ -2821,7 +2825,8 @@ app.delete('/api/folders/:id', requireLessonQuestionManagerAccess, async (req, r
     await pool.query(
       `UPDATE public.learning_files
        SET deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP),
-           published = false
+           published = false,
+           publish_status = 'staged'
        WHERE folder_id = $1`,
       [folderId]
     );
@@ -2901,6 +2906,7 @@ const resolveLearningFolderId = async (rawFolderId) => {
 
 app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, upload.single('file'), async (req, res) => {
   let storedFilePath = null;
+  let persistedLearningFileId = null;
   try {
     const { title, grade_level, difficulty, math_topic, file_type, folder_id, expected_question_count } = req.body;
     if (!req.file) return res.status(400).json({ error: 'File is required' });
@@ -2939,8 +2945,8 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
       return res.status(400).json({ error: folderResolution.error });
     }
 
-    let questions = [];
     let requestedQuestionCount = null;
+    let fixedQuestions = [];
     if (normalizedType === 'lesson') {
       const parsedCount = parseLessonQuestionCount(expected_question_count);
       if (parsedCount.error) {
@@ -2948,25 +2954,13 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         return res.status(400).json({ error: parsedCount.error });
       }
       requestedQuestionCount = parsedCount.value;
-      if (!String(process.env.OPENAI_API_KEY || '').trim()) {
-        cleanTemporaryUpload(req.file.path);
-        return res.status(503).json({ error: 'Question AI is not configured. Set OPENAI_API_KEY on the backend service.' });
-      }
-      questions = await generateQuestionTextFromLesson(
-        req.file.path,
-        String(title).trim(),
-        normalizedGrade,
-        normalizedDifficulty,
-        normalizedTopic,
-        requestedQuestionCount
-      );
     } else {
       if (String(expected_question_count ?? '').trim()) {
         cleanTemporaryUpload(req.file.path);
         return res.status(400).json({ error: 'Question Count is only available for Lesson PDF files.' });
       }
-      questions = await parseFixedQuestionsFile({ path: req.file.path, originalname: req.file.originalname });
-      if (questions.length === 0) {
+      fixedQuestions = await parseFixedQuestionsFile({ path: req.file.path, originalname: req.file.originalname });
+      if (fixedQuestions.length === 0) {
         cleanTemporaryUpload(req.file.path);
         return res.status(400).json({ error: 'Fixed Question File does not contain valid questions.' });
       }
@@ -2978,13 +2972,13 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     storedFilePath = destinationPath;
     const fileUrl = buildFileUrl(fileName);
 
-    const client = await pool.connect();
-    let learningFile;
-    try {
-      await client.query('BEGIN');
-      const insertResult = await client.query(
-        `INSERT INTO public.learning_files (title, file_name, file_url, grade_level, difficulty, math_topic, file_type, subject, folder_id, published, source, uploaded_by, file_size, requested_question_count)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'Mathematics', $8, false, $9, $10, $11, $12)
+    const createLearningFile = async (generationStatus) => {
+      const insertResult = await pool.query(
+        `INSERT INTO public.learning_files (
+          title, file_name, file_url, grade_level, difficulty, math_topic,
+          file_type, subject, folder_id, published, source, uploaded_by,
+          file_size, requested_question_count, generation_status, publish_status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'Mathematics', $8, false, $9, $10, $11, $12, $13, 'staged')
          RETURNING *`,
         [
           String(title).trim(),
@@ -2999,16 +2993,107 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
           req.authenticatedUser.id,
           req.file.size || null,
           requestedQuestionCount,
+          generationStatus,
         ]
       );
+      persistedLearningFileId = insertResult.rows[0].id;
+      return insertResult.rows[0];
+    };
 
+    if (normalizedType === 'lesson') {
+      let learningFile = await createLearningFile('generating');
+      try {
+        if (!String(process.env.OPENAI_API_KEY || '').trim()) {
+          throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured. Set OPENAI_API_KEY on the backend service.');
+        }
+        const questions = await generateQuestionTextFromLesson(
+          storedFilePath,
+          String(title).trim(),
+          normalizedGrade,
+          normalizedDifficulty,
+          normalizedTopic,
+          requestedQuestionCount
+        );
+
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await saveQuestionsForFile(learningFile.id, questions.map((question) => ({
+            ...question,
+            grade_level: learningFile.grade_level,
+            difficulty: learningFile.difficulty,
+            math_topic: learningFile.math_topic,
+            source: 'ai',
+          })), client);
+          const completedResult = await client.query(
+            `UPDATE public.learning_files
+             SET generation_status = 'ready_for_review',
+                 generated_at = CURRENT_TIMESTAMP,
+                 generation_failed_at = NULL,
+                 generation_error_code = NULL
+             WHERE id = $1
+             RETURNING *`,
+            [learningFile.id]
+          );
+          learningFile = completedResult.rows[0] || learningFile;
+          await client.query('COMMIT');
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw error;
+        } finally {
+          client.release();
+        }
+
+        return res.status(201).json({
+          success: true,
+          learningFile: normalizeLearningFileRow({ ...learningFile, question_count: questions.length }),
+        });
+      } catch (error) {
+        await pool.query(
+          `UPDATE public.learning_files
+           SET generation_status = 'failed',
+               generation_failed_at = CURRENT_TIMESTAMP,
+               generation_error_code = $2
+           WHERE id = $1`,
+          [learningFile.id, error instanceof QuestionGenerationError ? error.code : 'QUESTION_GENERATION_FAILED']
+        ).catch((persistError) => console.error('Failed to persist question generation status:', persistError.message));
+        throw error;
+      }
+    }
+
+    const client = await pool.connect();
+    let learningFile;
+    try {
+      await client.query('BEGIN');
+      const insertResult = await client.query(
+        `INSERT INTO public.learning_files (
+          title, file_name, file_url, grade_level, difficulty, math_topic,
+          file_type, subject, folder_id, published, source, uploaded_by,
+          file_size, requested_question_count, generation_status, publish_status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'Mathematics', $8, false, $9, $10, $11, NULL, 'not_applicable', 'staged')
+         RETURNING *`,
+        [
+          String(title).trim(),
+          req.file.originalname,
+          fileUrl,
+          normalizedGrade,
+          normalizedDifficulty,
+          normalizedTopic,
+          normalizedType,
+          folderResolution.folderId,
+          'fixed',
+          req.authenticatedUser.id,
+          req.file.size || null,
+        ]
+      );
       learningFile = insertResult.rows[0];
-      await saveQuestionsForFile(learningFile.id, questions.map((question) => ({
+      persistedLearningFileId = learningFile.id;
+      await saveQuestionsForFile(learningFile.id, fixedQuestions.map((question) => ({
         ...question,
         grade_level: learningFile.grade_level,
         difficulty: learningFile.difficulty,
         math_topic: learningFile.math_topic,
-        source: normalizedType === 'lesson' ? 'ai' : 'fixed',
+        source: 'fixed',
       })), client);
       await client.query('COMMIT');
     } catch (error) {
@@ -3018,13 +3103,18 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
       client.release();
     }
 
-    res.status(201).json({ success: true, learningFile: { ...learningFile, question_count: questions.length } });
+    res.status(201).json({
+      success: true,
+      learningFile: normalizeLearningFileRow({ ...learningFile, question_count: fixedQuestions.length }),
+    });
   } catch (err) {
     if (err instanceof QuestionGenerationError && err.providerDiagnostics) {
       console.error('Question AI provider diagnostics:', err.providerDiagnostics);
     }
     console.error('Upload failed:', err.message);
-    cleanTemporaryUpload(storedFilePath || req.file?.path);
+    if (!persistedLearningFileId) {
+      cleanTemporaryUpload(storedFilePath || req.file?.path);
+    }
     if (err instanceof QuestionGenerationError) {
       const status = err.code === 'QUESTION_AI_NOT_CONFIGURED' ? 503
         : err.code === 'QUESTION_AI_EMPTY_LESSON' || err.code === 'QUESTION_AI_INVALID_REQUEST' ? 422
@@ -3228,7 +3318,11 @@ app.put('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (re
            difficulty = $3,
            math_topic = $4,
            file_type = $5,
-           folder_id = $6
+           folder_id = $6,
+           published = false,
+           publish_status = 'staged',
+           published_at = NULL,
+           published_by = NULL
      WHERE id = $7
         AND deleted_at IS NULL
        RETURNING *`,
@@ -3313,7 +3407,7 @@ app.post('/api/questions/publish/:id', requireLessonQuestionManagerAccess, async
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
-    const learningFile = await publishLearningFile(fileId);
+    const learningFile = await publishLearningFile(fileId, req.authenticatedUser.id);
     res.json({ success: true, message: 'Content pushed to game.', learningFile });
   } catch (err) {
     console.error('Publish failed:', err.message);
@@ -4029,6 +4123,9 @@ app.post('/api/game/result', async (req, res) => {
         !resolvedStudentId,
       ]
     );
+    if (resolvedStudentId) {
+      await markStudentInsightStale(pool, resolvedStudentId);
+    }
 
     res.status(201).json({ success: true, resolved: Boolean(resolvedStudentId), student_id: resolvedStudentId });
   } catch (err) {
@@ -5243,11 +5340,18 @@ app.get('/api/students/progress', requireAnalyticsAccess, async (req, res) => {
     query += " ORDER BY LOWER(COALESCE(NULLIF(a.name, ''), NULLIF(p.student_name, ''), '')), p.student_id ASC";
 
     const result = await pool.query(query, params);
-    const rows = sortRowsByStudentName(result.rows.map(normalizeStudentProgressRow).map((row) => ({
-      ...row,
-      performance_percentage: row.accuracy_rate || row.progress_percentage || 0,
-      difficultyBreakdown: generateStudentAnalysis(row).difficultyBreakdown,
-    })));
+    const rows = sortRowsByStudentName(result.rows.map(normalizeStudentProgressRow).map((row) => {
+      const metrics = buildStudentAnalyticsMetrics({ progress: row });
+      return {
+        ...row,
+        correct_answers: metrics.correctAnswers,
+        incorrect_answers: metrics.incorrectAnswers,
+        total_questions: metrics.totalQuestions,
+        accuracy_rate: metrics.accuracy,
+        performance_percentage: metrics.accuracy,
+        difficultyBreakdown: metrics.difficultyBreakdown,
+      };
+    }));
     res.json(rows);
   } catch (err) {
     console.error('Fetch students progress failed:', err.message);
@@ -5268,18 +5372,18 @@ app.get('/api/analytics/overview', requireAnalyticsAccess, async (req, res) => {
     query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'p.student_id' });
 
     const result = await pool.query(query, params);
-    const rows = result.rows.map(normalizeStudentProgressRow).map((row) => ({
-      ...row,
-      analysis: generateStudentAnalysis(row),
-    }));
+    const rows = result.rows.map(normalizeStudentProgressRow).map((row) => {
+      const metrics = buildStudentAnalyticsMetrics({ progress: row });
+      return { ...row, metrics, analysis: generateStudentAnalysis(row) };
+    });
 
     const gradeSummary = buildGradeSummary(rows);
-    const averageAccuracy = rows.length
-      ? Math.round(rows.reduce((sum, item) => sum + Number(item.accuracy_rate || 0), 0) / rows.length)
-      : 0;
-    const averageProgress = rows.length
-      ? Math.round(rows.reduce((sum, item) => sum + Number(item.progress_percentage || 0), 0) / rows.length)
-      : 0;
+    const averageOfAvailable = (values) => {
+      const available = values.filter((value) => Number.isFinite(value));
+      return available.length ? Math.round(available.reduce((sum, value) => sum + value, 0) / available.length) : null;
+    };
+    const averageAccuracy = averageOfAvailable(rows.map((item) => item.metrics.accuracy));
+    const averageProgress = averageOfAvailable(rows.map((item) => item.metrics.totalProgress));
     const studentCount = rows.length;
 
     res.json({
@@ -5287,7 +5391,7 @@ app.get('/api/analytics/overview', requireAnalyticsAccess, async (req, res) => {
       averageAccuracy,
       averageProgress,
       gradeSummary,
-      sections: Array.from(new Set(rows.map((row) => row.section || getDefaultSection(row.grade_level, row.student_id)))).sort(),
+      sections: Array.from(new Set(rows.map((row) => row.section).filter(Boolean))).sort(),
     });
   } catch (err) {
     console.error('Fetch analytics overview failed:', err.message);
@@ -5296,29 +5400,11 @@ app.get('/api/analytics/overview', requireAnalyticsAccess, async (req, res) => {
 });
 
 app.get('/api/analytics/recommendations', requireAnalyticsAccess, async (req, res) => {
-  try {
-    const scope = resolveAnalyticsScope(req);
-    const params = [];
-    let query = `
-      SELECT p.*, a.name AS student_name, a.email AS student_email, a.role AS student_role, a.game_student_id
-      FROM public.student_game_progress p
-      LEFT JOIN accounts a ON a.id = p.student_id
-      WHERE 1=1
-    `;
-    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'p.student_id' });
-
-    const result = await pool.query(query, params);
-    const rows = result.rows.map(normalizeStudentProgressRow).map((row) => ({
-      ...row,
-      analysis: generateStudentAnalysis(row),
-    }));
-
-    const recommendations = buildAIRecommendations(rows);
-    res.json({ recommendations });
-  } catch (err) {
-    console.error('Fetch analytics recommendations failed:', err.message);
-    res.status(500).json({ error: 'Failed to fetch AI recommendations' });
-  }
+  res.json({
+    recommendations: [],
+    status: 'user_triggered_per_student',
+    message: 'Grounded AI Insights are requested from an individual student analysis after enough gameplay results are available.',
+  });
 });
 
 app.get('/api/students/progress-analysis', requireAuthenticatedRoles(['admin', 'teacher', 'parent_teacher']), async (req, res) => {
@@ -5383,6 +5469,104 @@ app.get('/api/students/progress-analysis', requireAuthenticatedRoles(['admin', '
   }
 });
 
+app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, async (req, res) => {
+  try {
+    const studentId = parseInt(req.params.studentId, 10);
+    if (Number.isNaN(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
+
+    const progressResult = await pool.query(
+      `SELECT p.*, a.name AS student_name
+       FROM public.student_game_progress p
+       LEFT JOIN public.accounts a ON a.id = p.student_id
+       WHERE p.student_id = $1
+       ORDER BY p.last_played DESC NULLS LAST, p.id DESC
+       LIMIT 1`,
+      [studentId]
+    );
+    if (progressResult.rows.length === 0) return res.status(404).json({ error: 'Student progress not found' });
+
+    const [quizResult, playtimeResult] = await Promise.all([
+      pool.query(
+        `SELECT math_topic, difficulty, score, total_items, played_at
+         FROM public.game_results
+         WHERE resolved_student_id = $1
+         ORDER BY played_at ASC NULLS LAST, id ASC
+         LIMIT 500`,
+        [studentId]
+      ),
+      pool.query(
+        `SELECT total_playtime_minutes, status
+         FROM public.playtime_sessions
+         WHERE student_id = $1
+         ORDER BY date_played DESC, id DESC
+         LIMIT 500`,
+        [studentId]
+      ),
+    ]);
+    const progress = normalizeStudentProgressRow(progressResult.rows[0]);
+    const metrics = buildStudentAnalyticsMetrics({
+      progress,
+      quizSessions: quizResult.rows,
+      playtimeSessions: playtimeResult.rows,
+    });
+    const input = buildGroundedInsightInput({ gradeLevel: progress.grade_level, metrics });
+    const inputFingerprint = buildInsightFingerprint(input);
+    const cachedResult = await pool.query(
+      `SELECT input_fingerprint, insight, generated_at, stale_at
+       FROM public.student_ai_insights
+       WHERE student_id = $1
+       LIMIT 1`,
+      [studentId]
+    );
+    const cachedInsight = cachedResult.rows[0] || null;
+    const currentState = buildAiInsightState({ metrics, cachedInsight, inputFingerprint });
+    if (currentState.status === 'insufficient_data' || currentState.status === 'cached') {
+      return res.status(currentState.status === 'insufficient_data' ? 422 : 200).json(currentState);
+    }
+
+    let insight;
+    try {
+      insight = await generateGroundedStudentInsight({ input });
+    } catch (error) {
+      if (error instanceof QuestionGenerationError && error.providerDiagnostics) {
+        console.error('Grounded AI provider diagnostics:', error.providerDiagnostics);
+      }
+      const status = error?.code === 'ANALYTICS_AI_NOT_CONFIGURED' ? 503 : 502;
+      return res.status(status).json({
+        status: 'unavailable',
+        error: status === 503
+          ? 'Grounded AI Insights are not configured on the backend service.'
+          : 'Grounded AI Insights are unavailable right now.',
+      });
+    }
+
+    const savedResult = await pool.query(
+      `INSERT INTO public.student_ai_insights (
+         student_id, input_fingerprint, insight, generated_by, generated_at, stale_at, updated_at
+       ) VALUES ($1, $2, $3::jsonb, $4, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP)
+       ON CONFLICT (student_id) DO UPDATE
+       SET input_fingerprint = EXCLUDED.input_fingerprint,
+           insight = EXCLUDED.insight,
+           generated_by = EXCLUDED.generated_by,
+           generated_at = CURRENT_TIMESTAMP,
+           stale_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       RETURNING insight, generated_at`,
+      [studentId, inputFingerprint, JSON.stringify(insight), req.authenticatedUser.id]
+    );
+    return res.json({
+      status: currentState.status === 'stale' ? 'regenerated' : 'generated',
+      required_result_count: MIN_GROUNDED_INSIGHT_RESULTS,
+      valid_result_count: metrics.validResultCount,
+      generated_at: savedResult.rows[0]?.generated_at || null,
+      insight: savedResult.rows[0]?.insight || insight,
+    });
+  } catch (err) {
+    console.error('Generate grounded student insight failed:', err.message);
+    return res.status(500).json({ error: 'Failed to generate grounded AI insight' });
+  }
+});
+
 app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
@@ -5404,7 +5588,7 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
     if (result.rows.length === 0) return res.status(404).json({ error: 'Student progress not found' });
 
     const progress = normalizeStudentProgressRow(result.rows[0]);
-    const [quizResult, activityResult] = await Promise.all([
+    const [quizResult, activityResult, playtimeResult] = await Promise.all([
       pool.query(
         `SELECT math_topic, difficulty, percentage, score, total_items, played_at
          FROM public.game_results
@@ -5421,14 +5605,41 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
          LIMIT 100`,
         [studentId]
       ),
+      pool.query(
+        `SELECT total_playtime_minutes, status, date_played, end_time
+         FROM public.playtime_sessions
+         WHERE student_id = $1
+         ORDER BY date_played DESC, id DESC
+         LIMIT 100`,
+        [studentId]
+      ),
     ]);
+    const metrics = buildStudentAnalyticsMetrics({
+      progress,
+      quizSessions: quizResult.rows,
+      playtimeSessions: playtimeResult.rows,
+    });
+    const insightInput = buildGroundedInsightInput({ gradeLevel: progress.grade_level, metrics });
+    const insightFingerprint = buildInsightFingerprint(insightInput);
+    const cachedInsightResult = await pool.query(
+      `SELECT input_fingerprint, insight, generated_at, stale_at
+       FROM public.student_ai_insights
+       WHERE student_id = $1
+       LIMIT 1`,
+      [studentId]
+    );
+    const aiInsight = buildAiInsightState({
+      metrics,
+      cachedInsight: cachedInsightResult.rows[0] || null,
+      inputFingerprint: insightFingerprint,
+    });
     const analysis = generateStudentAnalysis(progress, quizResult.rows, activityResult.rows);
     const analyticsReadiness = buildStudentAnalyticsReadiness({
       progress,
       quizSessions: quizResult.rows,
       activityLogs: activityResult.rows,
     });
-    res.json({ progress, analysis, analyticsReadiness });
+    res.json({ progress, metrics, analysis, analyticsReadiness, aiInsight });
   } catch (err) {
     console.error('Fetch student progress failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch student progress' });

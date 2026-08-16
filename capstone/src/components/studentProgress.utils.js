@@ -1,14 +1,3 @@
-const defaultSectionMap = {
-  'Grade 1': ['Section A', 'Section B', 'Section C'],
-  'Grade 2': ['Section A', 'Section B', 'Section C'],
-  'Grade 3': ['Section A', 'Section B', 'Section C'],
-  'Grade 4': ['Section A', 'Section B', 'Section C'],
-  'Grade 5': ['Section A', 'Section B', 'Section C'],
-  'Grade 6': ['Section A', 'Section B', 'Section C'],
-};
-
-const defaultSections = ['Section A', 'Section B', 'Section C'];
-
 const sceneDifficultyMap = {
   oak_leaf_village: 'Easy',
   city_of_knowledge: 'Medium',
@@ -31,6 +20,7 @@ export const clampPercent = (value, fallback = 0) => {
 };
 
 export const formatPercent = (value, fallback = '--') => {
+  if (value === undefined || value === null || value === '') return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? `${parsed.toFixed(0)}%` : fallback;
 };
@@ -99,29 +89,22 @@ export const sortStudentsByName = (students) => {
   ));
 };
 
-export const getDefaultSection = (grade, studentId) => {
-  const letters = ['A', 'B', 'C'];
-  const index = studentId ? studentId % letters.length : 0;
-  return `Section ${letters[index]}`;
-};
-
 export const normalizeStudentProgressRow = (row = {}) => {
-  const totalQuestions = toNumber(row.total_questions);
-  const correctAnswers = toNumber(row.correct_answers);
-  const fallbackIncorrectAnswers = Math.max(totalQuestions - correctAnswers, 0);
+  const totalQuestions = Number(row.total_questions);
+  const correctAnswers = Number(row.correct_answers);
+  const hasAnswerTotals = Number.isFinite(totalQuestions) && Number.isFinite(correctAnswers);
+  const fallbackIncorrectAnswers = hasAnswerTotals ? Math.max(totalQuestions - correctAnswers, 0) : null;
   const difficultyLevel = resolveDifficultyFromScene(row);
 
   return {
     ...row,
-    section: row.section || getDefaultSection(row.grade_level, row.student_id),
-    incorrect_answers: toNumber(row.incorrect_answers ?? fallbackIncorrectAnswers),
-    performance_percentage: toNumber(
-      row.performance_percentage ?? row.accuracy_rate ?? row.progress_percentage
-    ),
+    section: row.section || null,
+    incorrect_answers: toFiniteNumber(row.incorrect_answers ?? fallbackIncorrectAnswers, null),
+    performance_percentage: toFiniteNumber(row.performance_percentage ?? row.accuracy_rate, null),
     difficultyBreakdown: {
-      easy: toNumber(row.difficultyBreakdown?.easy),
-      medium: toNumber(row.difficultyBreakdown?.medium),
-      hard: toNumber(row.difficultyBreakdown?.hard),
+      easy: toFiniteNumber(row.difficultyBreakdown?.easy?.accuracy ?? row.difficultyBreakdown?.easy, null),
+      medium: toFiniteNumber(row.difficultyBreakdown?.medium?.accuracy ?? row.difficultyBreakdown?.medium, null),
+      hard: toFiniteNumber(row.difficultyBreakdown?.hard?.accuracy ?? row.difficultyBreakdown?.hard, null),
     },
     difficulty: difficultyLevel,
     difficulty_level: difficultyLevel,
@@ -144,14 +127,10 @@ export const getStudentProgressSectionOptions = (students, selectedGrade = '') =
     new Set(
       safeStudents
         .filter((student) => !selectedGrade || student.grade_level === selectedGrade)
-        .map((student) => student.section || getDefaultSection(student.grade_level, student.student_id))
+        .map((student) => student.section)
         .filter(Boolean)
     )
   ).sort();
-
-  if (selectedGrade && availableSections.length === 0) {
-    return defaultSectionMap[selectedGrade] || defaultSections;
-  }
 
   return availableSections;
 };

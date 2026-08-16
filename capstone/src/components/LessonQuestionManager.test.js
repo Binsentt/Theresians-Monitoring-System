@@ -351,6 +351,44 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('Active in Game');
   });
 
+  test('shows persisted ready-for-review and publish lifecycle states without treating them as active', async () => {
+    fixtures.files = [{
+      id: 88,
+      title: 'fractions-lesson',
+      generated_question_set_name: 'fractions-lesson — Generated Questions',
+      source_lesson: 'fractions.pdf',
+      file_name: 'fractions.pdf',
+      grade_level: 'Grade 3',
+      difficulty: 'Medium',
+      math_topic: 'Fractions',
+      file_type: 'lesson',
+      question_count: 3,
+      generation_status: 'ready_for_review',
+      publish_status: 'staged',
+      lifecycle: { label: 'Ready for Review', tone: 'review', publishLabel: 'Staged' },
+      published: false,
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    const gradeThreeCard = Array.from(container.querySelectorAll('.fixed-question-folder'))
+      .find((card) => card.querySelector('.system-grade-button')?.textContent.includes('Grade 3'));
+    await act(async () => {
+      gradeThreeCard.querySelector('.system-grade-button').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      Array.from(gradeThreeCard.querySelectorAll('.system-difficulty-button'))
+        .find((button) => button.textContent.trim() === 'Medium')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Ready for Review');
+    expect(container.textContent).toContain('Staged');
+    expect(container.textContent).toContain('Source Lesson: fractions.pdf');
+    expect(container.textContent).not.toContain('Active in Game');
+  });
+
   test('Delete removes a staged upload from the table', async () => {
     window.confirm = jest.fn(() => true);
     fixtures.files = [{

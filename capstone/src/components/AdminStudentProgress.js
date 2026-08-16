@@ -7,7 +7,7 @@ import { buildScopedApiUrl } from './analyticsEndpoints';
 import { buildAuthHeaders } from './session.utils';
 import {
   filterStudentProgress,
-  getDefaultSection,
+  formatPercent,
   getStudentProgressSectionOptions,
   normalizeDisplayList,
   normalizeStudentProgressPayload,
@@ -110,7 +110,7 @@ export default function AdminStudentProgress() {
           <TopBar>
             <div className="header-info">
               <h1>Student Performance Dashboard</h1>
-              <p>Monitor all students across Grades 1–6 with smart filters, live search, and AI-driven recommendations.</p>
+              <p>Monitor deterministic student metrics. Open View Analysis for optional grounded, student-specific insights.</p>
             </div>
           </TopBar>
 
@@ -134,7 +134,7 @@ export default function AdminStudentProgress() {
             </ContentSection>
 
             <ContentSection
-              title="Filters & Recommendations"
+              title="Filters & Student Insights"
               contentClassName="student-progress-panel"
             >
               <div className="student-progress-filters-card">
@@ -171,8 +171,8 @@ export default function AdminStudentProgress() {
 
               <div className="analytics-insights-panel">
                 <div className="insights-header">
-                  <h2>AI Recommendations</h2>
-                  <p>Smart guidance based on current quest and grade performance.</p>
+                  <h2>Student Insights</h2>
+                  <p>Grounded AI interpretation is requested per student from View Analysis.</p>
                 </div>
                 {recommendations.length > 0 ? (
                   <ul className="recommendation-list">
@@ -181,7 +181,7 @@ export default function AdminStudentProgress() {
                     ))}
                   </ul>
                 ) : (
-                  <div className="fallback-note">Analytics currently unavailable. Please try again later.</div>
+                  <div className="fallback-note">Open a student’s View Analysis to see recorded metrics or request a grounded insight when enough results are available.</div>
                 )}
               </div>
             </ContentSection>
@@ -224,11 +224,11 @@ export default function AdminStudentProgress() {
                           <td>{student.student_name || 'Unknown'}</td>
                           <td>{student.game_student_id || 'Not linked'}</td>
                           <td>{student.grade_level || 'N/A'}</td>
-                          <td>{student.section || getDefaultSection(student.grade_level, student.student_id)}</td>
+                          <td>{student.section || 'Not available'}</td>
                           <td>{student.current_quest || 'N/A'}</td>
-                          <td>{student.correct_answers ?? 0}</td>
-                          <td>{student.incorrect_answers ?? 0}</td>
-                          <td>{Number(student.performance_percentage || 0).toFixed(0)}%</td>
+                          <td>{student.correct_answers ?? 'Not available'}</td>
+                          <td>{student.incorrect_answers ?? 'Not available'}</td>
+                          <td>{formatPercent(student.performance_percentage, 'Not available')}</td>
                           <td className="difficulty-cell">
                             <div className={`difficulty-chip ${String(student.difficulty_level || student.difficulty || 'Unknown').toLowerCase()}`}>
                               {student.difficulty_level || student.difficulty || 'Unknown'}

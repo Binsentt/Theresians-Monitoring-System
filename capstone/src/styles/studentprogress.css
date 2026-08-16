@@ -721,6 +721,18 @@
   line-height: 1.55;
 }
 
+.student-data-unavailable {
+  margin: 8px 0 0;
+  color: var(--text-muted, #64748b);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.student-insight-action {
+  width: fit-content;
+  margin-top: 14px;
+}
+
 .student-insight-list ul {
   display: grid;
   gap: 10px;

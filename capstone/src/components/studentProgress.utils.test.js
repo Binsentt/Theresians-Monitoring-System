@@ -1,6 +1,6 @@
 import {
   filterStudentProgress,
-  getDefaultSection,
+  getStudentProgressSectionOptions,
   normalizeStudentProgressPayload,
   resolveDifficultyFromScene,
 } from './studentProgress.utils';
@@ -20,7 +20,7 @@ describe('student progress helpers', () => {
     expect(result).toEqual([
       expect.objectContaining({
         student_id: 7,
-        section: 'Section B',
+        section: null,
         incorrect_answers: 2,
         performance_percentage: 80,
       })
@@ -56,9 +56,11 @@ describe('student progress helpers', () => {
     ).toEqual([2]);
   });
 
-  test('builds a deterministic default section when the backend does not provide one', () => {
-    expect(getDefaultSection('Grade 2', 3)).toBe('Section A');
-    expect(getDefaultSection('Grade 2', 4)).toBe('Section B');
+  test('does not invent section filters when section data has not been synced', () => {
+    expect(getStudentProgressSectionOptions([
+      { student_id: 3, grade_level: 'Grade 2', section: null },
+      { student_id: 4, grade_level: 'Grade 2', section: '' },
+    ], 'Grade 2')).toEqual([]);
   });
 
   test('maps current Godot scene or map to the displayed difficulty instead of manual values', () => {

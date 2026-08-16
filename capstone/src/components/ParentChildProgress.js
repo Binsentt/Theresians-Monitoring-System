@@ -29,7 +29,10 @@ export default function ParentChildProgress() {
   const [parentAccountId, setParentAccountId] = useState(null);
   const [quizSessions, setQuizSessions] = useState([]);
   const [topicCoverage, setTopicCoverage] = useState([]);
-  const [selectedChildAnalysis, setSelectedChildAnalysis] = useState(null);
+  const [selectedChildMetrics, setSelectedChildMetrics] = useState(null);
+  const [selectedChildAiInsight, setSelectedChildAiInsight] = useState(null);
+  const [insightLoading, setInsightLoading] = useState(false);
+  const [insightError, setInsightError] = useState('');
   const [selectedAnalyticsReadiness, setSelectedAnalyticsReadiness] = useState(null);
   const [childDetailsLoading, setChildDetailsLoading] = useState(false);
   const [childDetailsError, setChildDetailsError] = useState('');
@@ -133,7 +136,9 @@ export default function ParentChildProgress() {
     if (!focusStudentId || !parentAccountId) {
       setQuizSessions([]);
       setTopicCoverage([]);
-      setSelectedChildAnalysis(null);
+      setSelectedChildMetrics(null);
+      setSelectedChildAiInsight(null);
+      setInsightError('');
       setSelectedAnalyticsReadiness(null);
       setChildDetailsLoading(false);
       setChildDetailsError('');
@@ -165,14 +170,16 @@ export default function ParentChildProgress() {
 
         setQuizSessions(Array.isArray(quizzesPayload?.data) ? quizzesPayload.data : []);
         setTopicCoverage(Array.isArray(topicsPayload) ? topicsPayload : []);
-        setSelectedChildAnalysis(analyticsPayload?.analysis && typeof analyticsPayload.analysis === 'object' ? analyticsPayload.analysis : null);
+        setSelectedChildMetrics(analyticsPayload?.metrics && typeof analyticsPayload.metrics === 'object' ? analyticsPayload.metrics : null);
+        setSelectedChildAiInsight(analyticsPayload?.aiInsight && typeof analyticsPayload.aiInsight === 'object' ? analyticsPayload.aiInsight : null);
         setSelectedAnalyticsReadiness(analyticsPayload?.analyticsReadiness && typeof analyticsPayload.analyticsReadiness === 'object' ? analyticsPayload.analyticsReadiness : null);
       } catch (err) {
         console.error('Child game result load error:', err);
         if (!active) return;
         setQuizSessions([]);
         setTopicCoverage([]);
-        setSelectedChildAnalysis(null);
+        setSelectedChildMetrics(null);
+        setSelectedChildAiInsight(null);
         setSelectedAnalyticsReadiness(null);
         setChildDetailsError('Quiz session details are currently unavailable.');
       } finally {
@@ -210,9 +217,36 @@ export default function ParentChildProgress() {
     }));
   }, [quizSessions]);
 
-  const selectedRecommendations = useMemo(() => {
-    return normalizeDisplayList(selectedChildAnalysis?.recommendations);
-  }, [selectedChildAnalysis]);
+  const selectedRecommendations = useMemo(() => (
+    normalizeDisplayList(selectedChildAiInsight?.insight?.recommendations)
+  ), [selectedChildAiInsight]);
+
+  const generateChildInsight = async () => {
+    if (!focusStudentId) return;
+    setInsightLoading(true);
+    setInsightError('');
+    try {
+      const response = await fetch(
+        buildScopedApiUrl(`/api/student-progress/${focusStudentId}/ai-insight`, 'parent'),
+        { method: 'POST', headers: { ...buildAuthHeaders(), 'Content-Type': 'application/json' } }
+      );
+      const payload = await response.json();
+      if (payload?.status === 'insufficient_data') {
+        setSelectedChildAiInsight(payload);
+        return;
+      }
+      if (!response.ok) {
+        setInsightError(payload?.error || 'Grounded AI Insights are unavailable right now.');
+        return;
+      }
+      setSelectedChildAiInsight(payload);
+    } catch (err) {
+      console.error('Child grounded insight request failed:', err);
+      setInsightError('Grounded AI Insights are unavailable right now.');
+    } finally {
+      setInsightLoading(false);
+    }
+  };
 
   const focusStudentInitials = useMemo(() => {
     const name = focusStudent?.student_name || focusStudent?.name || '';
@@ -303,7 +337,7 @@ export default function ParentChildProgress() {
               </div>
               <div className="analytics-card">
                 <span>Math activities</span>
-                <strong>{toFiniteNumber(focusStudent?.total_questions, 0)}</strong>
+                <strong>{selectedChildMetrics?.totalQuestions ?? 'Not available'}</strong>
               </div>
             </ContentSection>
 
@@ -358,15 +392,15 @@ export default function ParentChildProgress() {
                       </div>
                       <div className="child-progress-stat">
                         <span>Score</span>
-                        <strong>{toFiniteNumber(focusStudent.score, 0)}</strong>
+                        <strong>{selectedChildMetrics?.gameScore ?? 'Not available'}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Accuracy</span>
-                        <strong>{formatPercent(focusStudent.performance_percentage ?? focusStudent.accuracy_rate, '0%')}</strong>
+                        <strong>{formatPercent(selectedChildMetrics?.accuracy, 'Not available')}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Progress</span>
-                        <strong>{formatPercent(focusStudent.progress_percentage ?? focusStudent.performance_percentage, '0%')}</strong>
+                        <strong>{formatPercent(selectedChildMetrics?.totalProgress, 'Not available')}</strong>
                       </div>
                     </div>
 
@@ -489,11 +523,11 @@ export default function ParentChildProgress() {
 
               <div className="analytics-insights-panel">
                 <div className="insights-header">
-                  <h2>Recommendations</h2>
-                  <p>Math-focused guidance based on current performance, progress, and learning insights.</p>
+                  <h2>Grounded AI Insight</h2>
+                  <p>Optional child-specific interpretation of the recorded gameplay metrics.</p>
                 </div>
                 {loading || childDetailsLoading ? (
-                  <div className="fallback-note">Loading recommendations...</div>
+                  <div className="fallback-note">Loading child analytics...</div>
                 ) : selectedRecommendations.length > 0 ? (
                   <ul className="recommendation-list">
                     {selectedRecommendations.map((item, index) => (
@@ -501,7 +535,14 @@ export default function ParentChildProgress() {
                     ))}
                   </ul>
                 ) : (
-                  <div className="fallback-note">No child-specific recommendations available yet.</div>
+                  <div className="fallback-note">
+                    {insightError || selectedChildAiInsight?.message || 'Generate an insight only when you want an interpretation of this child’s recorded metrics.'}
+                  </div>
+                )}
+                {selectedChildAiInsight?.status !== 'insufficient_data' && focusStudentId && (
+                  <button type="button" className="btn btn-primary" onClick={generateChildInsight} disabled={insightLoading}>
+                    {insightLoading ? 'Generating insight...' : selectedChildAiInsight?.status === 'stale' ? 'Generate refreshed insight' : 'Generate grounded insight'}
+                  </button>
                 )}
               </div>
             </ContentSection>

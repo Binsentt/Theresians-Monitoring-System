@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const Module = require('node:module');
+const { buildStudentAnalyticsMetrics } = require('./studentAnalyticsMetrics.utils');
+const { buildGroundedInsightInput, buildInsightFingerprint } = require('./studentAnalyticsInsight.utils');
 
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
@@ -244,6 +246,89 @@ test('a parent receives 403 for an unrelated student analytics detail request', 
 
   const response = await requestJson(baseUrl, '/api/student-progress/99?scope=parent', { headers: authHeaders('parent') });
   assert.equal(response.status, 403);
+});
+
+test('grounded insight generation keeps analytics authentication and child scope server-enforced', async (t) => {
+  reset();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  queryHandler = async (sql) => {
+    if (sql.startsWith('select 1') && sql.includes('from public.teacher_student_relationships')) return emptyResult;
+    return emptyResult;
+  };
+
+  assert.equal((await requestJson(baseUrl, '/api/student-progress/99/ai-insight', { method: 'POST' })).status, 401);
+  assert.equal((await requestJson(baseUrl, '/api/student-progress/99/ai-insight', { method: 'POST', headers: authHeaders('invalid') })).status, 401);
+  assert.equal((await requestJson(baseUrl, '/api/student-progress/99/ai-insight?role=admin&user_id=1', {
+    method: 'POST',
+    headers: authHeaders('student'),
+    body: JSON.stringify({ role: 'admin', user_id: 1 }),
+  })).status, 403);
+  assert.equal((await requestJson(baseUrl, '/api/student-progress/99/ai-insight?scope=parent&parent_id=1', {
+    method: 'POST',
+    headers: authHeaders('parent'),
+    body: JSON.stringify({ role: 'admin', parent_id: 1 }),
+  })).status, 403);
+});
+
+test('grounded insight endpoint returns a current cache without another provider request', async (t) => {
+  reset();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const originalFetch = global.fetch;
+  t.after(async () => { global.fetch = originalFetch; reset(); await close(server); });
+
+  const progress = {
+    student_id: 44,
+    grade_level: 'Grade 3',
+    score: 12,
+    correct_answers: 3,
+    total_questions: 5,
+    accuracy_rate: 60,
+    progress_percentage: 42,
+    total_quests_completed: 1,
+    current_quest: 'Fraction Forest',
+  };
+  const results = Array.from({ length: 5 }, (_, index) => ({
+    score: index < 3 ? 1 : 0,
+    total_items: 1,
+    difficulty: 'Medium',
+    math_topic: 'Fractions',
+  }));
+  const input = buildGroundedInsightInput({
+    gradeLevel: progress.grade_level,
+    metrics: buildStudentAnalyticsMetrics({ progress, quizSessions: results, playtimeSessions: [] }),
+  });
+  const cachedInsight = { performance_insight: 'Cached grounded insight.', strengths: [], weaknesses: [], recommendations: [] };
+  queryHandler = async (sql) => {
+    if (sql.startsWith('select p.*') && sql.includes('from public.student_game_progress p')) return resultRows([progress]);
+    if (sql.includes('from public.game_results')) return resultRows(results);
+    if (sql.includes('from public.playtime_sessions')) return resultRows([]);
+    if (sql.includes('from public.student_ai_insights')) {
+      return resultRows([{
+        input_fingerprint: buildInsightFingerprint(input),
+        insight: cachedInsight,
+        generated_at: '2026-08-16T00:00:00.000Z',
+        stale_at: null,
+      }]);
+    }
+    return emptyResult;
+  };
+  global.fetch = async (url, options) => {
+    if (String(url).startsWith(baseUrl)) return originalFetch(url, options);
+    throw new Error('provider must not be called for a current cache');
+  };
+
+  const response = await requestJson(baseUrl, '/api/student-progress/44/ai-insight', {
+    method: 'POST',
+    headers: authHeaders('admin'),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.status, 'cached');
+  assert.deepEqual(response.body.insight, cachedInsight);
 });
 
 test('Parent/Teacher may use separate authenticated teacher and parent contexts', async (t) => {

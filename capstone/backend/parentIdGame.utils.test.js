@@ -42,7 +42,9 @@ test('resolves numeric gameplay values without saving invalid numbers', () => {
   assert.equal(toNullableNumber('abc'), null);
 });
 
-test('uses lesson progress before quest progress for saved progress percentage', () => {
+test('uses the explicit authoritative total progress before legacy progress fields', () => {
+  assert.equal(resolveProgressPercentage({ progress_percentage: 72, lesson_progress: 64, quest_progress: 41 }), 72);
+  assert.equal(resolveProgressPercentage({ completion_percentage: 68, lesson_progress: 64, quest_progress: 41 }), 68);
   assert.equal(resolveProgressPercentage({ lesson_progress: 64, quest_progress: 41 }), 64);
   assert.equal(resolveProgressPercentage({ quest_progress: '41' }), 41);
   assert.equal(resolveProgressPercentage({}), 0);

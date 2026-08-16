@@ -81,4 +81,29 @@ describe('Student Progress summary cards', () => {
       options?.headers?.Authorization === 'Bearer analytics-test-token'
     ))).toBe(true);
   });
+
+  test('does not render unavailable student metrics as fabricated zeroes', async () => {
+    global.fetch = jest.fn((url) => {
+      const value = String(url);
+      if (value.startsWith('/api/students/progress')) {
+        return jsonResponse([
+          { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 3' },
+        ]);
+      }
+      if (value.startsWith('/api/analytics/overview')) {
+        return jsonResponse({ studentCount: 1, averageAccuracy: null, averageProgress: null });
+      }
+      if (value.startsWith('/api/analytics/recommendations')) {
+        return jsonResponse({ recommendations: [] });
+      }
+      return jsonResponse({});
+    });
+
+    await act(async () => {
+      root.render(<AdminStudentProgress />);
+    });
+
+    expect(container.textContent).toContain('Not available');
+    expect(container.textContent).not.toContain('0%');
+  });
 });

@@ -827,9 +827,10 @@ test('student analytics reports insufficient data instead of inferring hard-ques
 
   assert.equal(response.status, 200);
   assert.equal(response.body.analysis.dataAvailability, 'insufficient');
-  assert.match(response.body.analysis.recommendations[0], /insufficient performance data/i);
   assert.deepEqual(response.body.analysis.difficultyBreakdown, { easy: null, medium: null, hard: null });
+  assert.deepEqual(response.body.analysis.recommendations, []);
   assert.equal(response.body.analysis.weaknesses.length, 0);
+  assert.equal(response.body.aiInsight.status, 'insufficient_data');
 });
 
 test('student analytics derives difficulty recommendations from recorded question attempts', async (t) => {
@@ -873,9 +874,10 @@ test('student analytics derives difficulty recommendations from recorded questio
   });
 
   assert.equal(response.status, 200);
-  assert.equal(response.body.analysis.dataAvailability, 'sufficient');
+  assert.equal(response.body.analysis.dataAvailability, 'available');
   assert.deepEqual(response.body.analysis.difficultyBreakdown, { easy: 90, medium: 80, hard: 20 });
-  assert.match(response.body.analysis.strengths.join(' '), /Good quest completion consistency/i);
-  assert.match(response.body.analysis.weaknesses.join(' '), /Higher difficulty problems/i);
-  assert.match(response.body.analysis.recommendations.join(' '), /Easy and Medium performance is strong/i);
+  assert.deepEqual(response.body.analysis.strengths, []);
+  assert.deepEqual(response.body.analysis.weaknesses, []);
+  assert.deepEqual(response.body.analysis.recommendations, []);
+  assert.equal(response.body.aiInsight.status, 'insufficient_data');
 });

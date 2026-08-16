@@ -34,6 +34,12 @@ const clampPercentage = (value) => {
 };
 
 const resolveProgressPercentage = (payload = {}) => {
+  const progressPercentage = clampPercentage(payload.progress_percentage);
+  if (progressPercentage !== null) return progressPercentage;
+
+  const completionPercentage = clampPercentage(payload.completion_percentage);
+  if (completionPercentage !== null) return completionPercentage;
+
   const lessonProgress = clampPercentage(payload.lesson_progress);
   if (lessonProgress !== null) return lessonProgress;
 

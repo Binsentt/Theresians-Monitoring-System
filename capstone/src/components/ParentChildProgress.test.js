@@ -51,9 +51,13 @@ const successPayloadForUrl = (url, childrenPayload) => {
       student_id: 44,
       student_name: 'Ava Santos',
     },
-    analysis: {
-      recommendations: ['Practice fractions for Ava.'],
+    metrics: {
+      gameScore: 12,
+      accuracy: 60,
+      totalProgress: 42,
+      totalQuestions: 5,
     },
+    aiInsight: { status: 'cached', insight: { recommendations: ['Practice fractions for Ava.'] } },
     analyticsReadiness: {
       aiIntegration: { ready: true },
     },
@@ -63,9 +67,13 @@ const successPayloadForUrl = (url, childrenPayload) => {
       student_id: 45,
       student_name: 'Noah Santos',
     },
-    analysis: {
-      recommendations: ['Practice shapes for Noah.'],
+    metrics: {
+      gameScore: 8,
+      accuracy: 50,
+      totalProgress: 35,
+      totalQuestions: 5,
     },
+    aiInsight: { status: 'cached', insight: { recommendations: ['Practice shapes for Noah.'] } },
     analyticsReadiness: {
       aiIntegration: { ready: true },
     },
@@ -184,7 +192,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('Please contact the school admin.');
   });
 
-  test('shows recommendations for only the selected child', async () => {
+  test('shows grounded recommendations for only the selected child', async () => {
     global.fetch = jest.fn((url) => successPayloadForUrl(url, {
       children: [ {
         id: 44,

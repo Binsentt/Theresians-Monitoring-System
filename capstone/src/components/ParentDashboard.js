@@ -238,7 +238,7 @@ export default function ParentDashboard() {
               )}
             </ContentSection>
 
-            <ContentSection title="Recommendations">
+            <ContentSection title="Child Insights">
               {analyticsRecommendations.length > 0 ? (
                 <div className="recommendations-list">
                   {analyticsRecommendations.slice(0, 4).map((rec, index) => (
@@ -248,7 +248,7 @@ export default function ParentDashboard() {
                   ))}
                 </div>
               ) : (
-                <div className="fallback-note">No recommendations available yet.</div>
+                <div className="fallback-note">Open Child Progress to view child-specific metrics or request a grounded insight when enough results are available.</div>
               )}
             </ContentSection>
 

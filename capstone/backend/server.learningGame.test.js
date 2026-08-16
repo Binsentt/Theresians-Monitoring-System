@@ -135,6 +135,9 @@ test('question publishing replaces the active Godot bundle for one grade difficu
         deleted_at: null,
       }]);
     }
+    if (sql.startsWith('select count(*)::integer as question_count') && sql.includes('from public.questions')) {
+      return resultRows([{ question_count: 1 }]);
+    }
     if (sql.startsWith('update public.learning_files') && sql.includes('published = false')) {
       unpublishedLearningFiles = { sql, params };
       return emptyResult;
@@ -161,7 +164,7 @@ test('question publishing replaces the active Godot bundle for one grade difficu
   assert.match(unpublishedLearningFiles.sql, /id <> \$4/);
   assert.deepEqual(unpublishedQuestions.params, ['Grade 1', 'Medium', 'Addition', 77]);
   assert.match(unpublishedQuestions.sql, /lf\.id <> \$4/);
-  assert.deepEqual(publishedLearningFile.params, [77]);
+  assert.deepEqual(publishedLearningFile.params, [77, 1]);
   assert.deepEqual(publishedQuestions.params, [77]);
 });
 
@@ -259,7 +262,7 @@ test('learning file preview and rename endpoints preserve canonical folder metad
   assert.equal(renameResponse.body.learningFile.folder_name, 'Questions/Grade 2/Hard');
 });
 
-test('lesson upload fails gracefully without OPENAI_API_KEY before it stores a staged record', async (t) => {
+test('lesson upload fails gracefully and persists a failed source record without OPENAI_API_KEY', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lesson-upload-test-'));
@@ -284,8 +287,15 @@ test('lesson upload fails gracefully without OPENAI_API_KEY before it stores a s
   });
 
   let insertCalled = false;
+  let failedStatusPersisted = false;
   setQueryHandler(async (sql) => {
-    if (sql.startsWith('insert into public.learning_files')) insertCalled = true;
+    if (sql.startsWith('insert into public.learning_files')) {
+      insertCalled = true;
+      return resultRows([{ id: 303 }]);
+    }
+    if (sql.startsWith('update public.learning_files') && sql.includes("generation_status = 'failed'")) {
+      failedStatusPersisted = true;
+    }
     return emptyResult;
   });
 
@@ -303,7 +313,8 @@ test('lesson upload fails gracefully without OPENAI_API_KEY before it stores a s
 
   assert.equal(response.status, 503);
   assert.equal(response.body.error, 'Question AI is not configured. Set OPENAI_API_KEY on the backend service.');
-  assert.equal(insertCalled, false);
+  assert.equal(insertCalled, true);
+  assert.equal(failedStatusPersisted, true);
 });
 
 test('lesson upload generates exactly the requested staged questions through the server-side OpenAI call', async (t) => {

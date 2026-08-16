@@ -60,6 +60,14 @@ describe('StudentAnalytics defensive rendering', () => {
         recommendations: [{ message: 'Practice fractions.' }],
         difficultyBreakdown: { easy: '60', medium: null, hard: 'not-a-number' },
       },
+      metrics: {
+        totalProgress: 'bad-number',
+        accuracy: '87.5',
+        correctAnswers: null,
+        incorrectAnswers: null,
+        difficultyBreakdown: { easy: { accuracy: '60' }, medium: { accuracy: null }, hard: { accuracy: 'not-a-number' } },
+      },
+      aiInsight: { status: 'insufficient_data', message: 'Not enough gameplay data yet to generate a reliable analysis.' },
     }));
 
     await act(async () => {
@@ -68,7 +76,8 @@ describe('StudentAnalytics defensive rendering', () => {
 
     expect(container.textContent).toContain('Student analytics');
     expect(container.textContent).toContain('88%');
-    expect(container.textContent).toContain('Practice fractions.');
+    expect(container.textContent).toContain('Not enough gameplay data yet to generate a reliable analysis.');
+    expect(container.textContent).not.toContain('Practice fractions.');
     expect(container.textContent).not.toContain('[object Object]');
     expect(global.fetch.mock.calls[0][1]?.headers?.Authorization).toBe('Bearer student-detail-token');
   });
@@ -98,6 +107,27 @@ describe('StudentAnalytics defensive rendering', () => {
         recommendations: ['Practice fractions.'],
         difficultyBreakdown: { easy: 40, medium: 25, hard: 35 },
       },
+      metrics: {
+        validResultCount: 6,
+        gameScore: 925,
+        totalProgress: 74,
+        accuracy: 82,
+        correctAnswers: 41,
+        incorrectAnswers: 9,
+        totalQuestions: 50,
+        completedQuests: 7,
+        currentQuest: 'Oak Leaf Village Quest',
+        difficultyBreakdown: { easy: { accuracy: 40 }, medium: { accuracy: 25 }, hard: { accuracy: 35 } },
+      },
+      aiInsight: {
+        status: 'cached',
+        insight: {
+          performance_insight: 'Recorded results show steady progress.',
+          strengths: ['Strong accuracy across current quests.'],
+          weaknesses: ['Needs review on word problems.'],
+          recommendations: ['Practice fractions.'],
+        },
+      },
     }));
 
     await act(async () => {
@@ -117,7 +147,8 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('925');
     expect(container.textContent).not.toContain('Total Playtime');
     expect(container.textContent).toContain('Game Performance');
-    expect(container.textContent).toContain('Performance Insight');
+    expect(container.textContent).toContain('Grounded AI Insight');
+    expect(container.textContent).toContain('Recorded results show steady progress.');
     expect(container.textContent).toContain('Easy');
     expect(container.textContent).toContain('Medium');
     expect(container.textContent).toContain('Hard');
