@@ -46,6 +46,7 @@ describe('App public auth routes', () => {
       name: 'Pending Parent',
       role: 'parent',
       mustChangePassword: true,
+      requiresInitialPasswordSetup: true,
     }));
     global.fetch = jest.fn(() => Promise.resolve({
       ok: true,
@@ -57,6 +58,7 @@ describe('App public auth routes', () => {
           name: 'Pending Parent',
           role: 'parent',
           mustChangePassword: true,
+          requiresInitialPasswordSetup: true,
         },
       }),
     }));
@@ -68,5 +70,37 @@ describe('App public auth routes', () => {
     expect(window.location.pathname).toBe('/parent-dashboard');
     expect(container.textContent).toContain('Parent Dashboard');
     expect(container.textContent).toContain('Change Your Temporary Password');
+  });
+
+  test('uses the restored server eligibility marker instead of a stale local temporary flag', async () => {
+    window.history.pushState({}, '', '/admin-dashboard');
+    localStorage.setItem('rememberToken', 'established-admin-token');
+    localStorage.setItem('loggedInUser', JSON.stringify({
+      id: 1,
+      name: 'Established Admin',
+      role: 'admin',
+      mustChangePassword: true,
+    }));
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        valid: true,
+        user: {
+          id: 1,
+          name: 'Established Admin',
+          role: 'admin',
+          mustChangePassword: false,
+          requiresInitialPasswordSetup: false,
+        },
+      }),
+    }));
+
+    await act(async () => {
+      root.render(<App />);
+    });
+
+    expect(window.location.pathname).toBe('/admin-dashboard');
+    expect(container.textContent).not.toContain('Change Your Temporary Password');
   });
 });

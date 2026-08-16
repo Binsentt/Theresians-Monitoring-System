@@ -131,13 +131,21 @@ describe('SettingsScreen dashboard layout', () => {
       email: 'parent-teacher@example.com',
       role: 'parent_teacher',
       mustChangePassword: true,
+      requiresInitialPasswordSetup: true,
     }));
     global.fetch = jest.fn((url) => Promise.resolve({
       ok: true,
       json: async () => (String(url).includes('/api/account/initial-password')
         ? {
           success: true,
-          user: { id: 8, name: 'Parent Teacher', email: 'parent-teacher@example.com', role: 'parent_teacher', mustChangePassword: false },
+          user: {
+            id: 8,
+            name: 'Parent Teacher',
+            email: 'parent-teacher@example.com',
+            role: 'parent_teacher',
+            mustChangePassword: false,
+            requiresInitialPasswordSetup: false,
+          },
           rememberToken: 'permanent-settings-token',
         }
         : {
@@ -146,6 +154,7 @@ describe('SettingsScreen dashboard layout', () => {
           email: 'parent-teacher@example.com',
           role: 'parent_teacher',
           mustChangePassword: true,
+          requiresInitialPasswordSetup: true,
         }),
     }));
 
@@ -181,5 +190,47 @@ describe('SettingsScreen dashboard layout', () => {
     expect(passwordRequest[1].headers.Authorization).toBe('Bearer settings-session-token');
     expect(JSON.parse(passwordRequest[1].body)).toEqual({ newPassword: 'new-permanent-password-123' });
     expect(container.textContent).not.toContain('Your account is still using a temporary password.');
+  });
+
+  test('keeps the normal current-password form when authoritative account state is permanent', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({
+      id: 1,
+      name: 'Established Admin',
+      email: 'admin@example.com',
+      role: 'admin',
+      mustChangePassword: true,
+      requiresInitialPasswordSetup: false,
+    }));
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => ({
+        id: 1,
+        name: 'Established Admin',
+        email: 'admin@example.com',
+        role: 'admin',
+        mustChangePassword: true,
+        requiresInitialPasswordSetup: false,
+      }),
+    }));
+
+    await act(async () => {
+      root.render(<SettingsScreen />);
+    });
+    const passwordTab = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent.includes('Change Password'));
+    await act(async () => {
+      passwordTab.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).not.toContain('Your account is still using a temporary password.');
+
+    const openFormButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Change Password');
+    await act(async () => {
+      openFormButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Current Password *');
+    expect(container.querySelectorAll('input[type="password"]')).toHaveLength(3);
   });
 });

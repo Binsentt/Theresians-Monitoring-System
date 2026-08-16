@@ -53,6 +53,8 @@ const {
 } = require('./loginOtp.utils');
 const {
   buildAccountHealthCheckResponse,
+  hasTemporaryPasswordCredentialMetadata,
+  requiresInitialPasswordSetup,
   serializeUser,
 } = require('./accountResponse.utils');
 const {
@@ -538,6 +540,11 @@ const resolveAuthenticatedAccountFromToken = async (token) => {
   if (!account || account.is_archived) {
     return { ok: false, reason: 'account_inactive' };
   }
+  if (account.must_change_password === true
+    && hasTemporaryPasswordCredentialMetadata(account)
+    && isTemporaryPasswordExpired(account.temporary_password_expires_at)) {
+    return { ok: false, reason: 'temporary_password_expired' };
+  }
 
   const tokenVersion = Number(payload.sessionVersion || 0);
   const accountVersion = Number(account.session_version || 0);
@@ -555,6 +562,11 @@ const attachAuthenticatedAccount = async (req, res, next) => {
   try {
     const authResult = await resolveAuthenticatedAccountFromToken(token);
     if (!authResult.ok) {
+      if (authResult.reason === 'temporary_password_expired') {
+        return res.status(401).json({
+          error: 'Temporary password expired. Contact an administrator to issue a new temporary password.',
+        });
+      }
       return res.status(401).json({ error: 'Session expired. Please log in again.' });
     }
     req.authenticatedUser = authResult.account;
@@ -852,14 +864,16 @@ const replaceAccountPassword = async ({ account, newPassword, requireTemporaryPa
   }
 
   if (requireTemporaryPassword) {
-    if (!account.must_change_password) {
+    if (!requiresInitialPasswordSetup(account)) {
+      if (account.must_change_password === true
+        && hasTemporaryPasswordCredentialMetadata(account)
+        && isTemporaryPasswordExpired(account.temporary_password_expires_at)) {
+        const error = new Error('Temporary password expired. Contact an administrator to issue a new temporary password.');
+        error.statusCode = 401;
+        throw error;
+      }
       const error = new Error('Password setup is not required for this account.');
       error.statusCode = 400;
-      throw error;
-    }
-    if (isTemporaryPasswordExpired(account.temporary_password_expires_at)) {
-      const error = new Error('Temporary password expired. Contact an administrator to issue a new temporary password.');
-      error.statusCode = 401;
       throw error;
     }
   }
@@ -2479,7 +2493,9 @@ app.post('/api/login', async (req, res) => {
     if (user.is_archived) return res.status(403).json({ error: 'Account archived. Restore before signing in.' });
     const passwordMatches = await comparePassword(password, user.password);
     if (!passwordMatches) return res.status(401).json({ error: 'Incorrect password' });
-    if (user.must_change_password && isTemporaryPasswordExpired(user.temporary_password_expires_at)) {
+    if (user.must_change_password === true
+      && hasTemporaryPasswordCredentialMetadata(user)
+      && isTemporaryPasswordExpired(user.temporary_password_expires_at)) {
       return res.status(401).json({ error: 'Temporary password expired. Contact an administrator to issue a new temporary password.' });
     }
 
@@ -2499,6 +2515,7 @@ app.post('/api/login', async (req, res) => {
           success: true,
           user: serializedUser,
           mustChangePassword: serializedUser.mustChangePassword,
+          requiresInitialPasswordSetup: serializedUser.requiresInitialPasswordSetup,
           rememberToken: sessionToken,
         });
       }
@@ -2582,6 +2599,7 @@ app.post('/api/login/verify-otp', async (req, res) => {
       success: true,
       user: serializedUser,
       mustChangePassword: serializedUser.mustChangePassword,
+      requiresInitialPasswordSetup: serializedUser.requiresInitialPasswordSetup,
       rememberToken,
     });
   } catch (err) {

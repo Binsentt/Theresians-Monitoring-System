@@ -134,9 +134,12 @@ export default function LoginScreen() {
   }, [otpExpiresAt]);
 
   const persistSuccessfulLogin = (payload) => {
+    const requiresInitialPasswordSetup = payload?.requiresInitialPasswordSetup === true
+      || payload?.user?.requiresInitialPasswordSetup === true;
     const sessionUser = {
       ...payload.user,
-      mustChangePassword: Boolean(payload.mustChangePassword || payload.user?.mustChangePassword),
+      mustChangePassword: requiresInitialPasswordSetup,
+      requiresInitialPasswordSetup,
     };
 
     if (payload.rememberToken) {

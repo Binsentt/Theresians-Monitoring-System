@@ -181,7 +181,10 @@ test('admin account creation accepts optional profile fields and emails entered 
         birthday: params[6],
         gender: params[7],
         employee_id: params[8],
+        must_change_password: params[10],
         parent_id: params[11],
+        temporary_password_issued_at: params[12],
+        temporary_password_expires_at: params[13],
       }]);
     }
     return emptyResult;
@@ -199,8 +202,9 @@ test('admin account creation accepts optional profile fields and emails entered 
 
   assert.equal(response.status, 201);
   assert.equal(insertParams[6], null);
-  assert.equal(insertParams[7], null);
-  assert.match(insertParams[2], /^hashed:/);
+    assert.equal(insertParams[7], null);
+    assert.match(insertParams[2], /^hashed:/);
+    assert.equal(insertParams[10], true);
   assert.ok(insertParams[12] instanceof Date);
   assert.ok(insertParams[13] instanceof Date);
   assert.equal(await serverDependencyStubs.bcrypt.compare(hashedPasswordInputs.at(-1), insertParams[2]), true);
@@ -215,7 +219,8 @@ test('admin account creation accepts optional profile fields and emails entered 
   assert.ok(sentMessages[0].html.includes(escapedGeneratedPassword));
   assert.match(sentMessages[0].html, /Account Role:/);
   assert.match(sentMessages[0].html, /Parent/);
-  assert.equal(response.body.emailSent, true);
+    assert.equal(response.body.emailSent, true);
+    assert.equal(response.body.user.requiresInitialPasswordSetup, true);
 });
 
 test('teacher account creation emails the entered address with the account role', async (t) => {
@@ -238,6 +243,9 @@ test('teacher account creation emails the entered address with the account role'
         password: params[2],
         role: params[3],
         employee_id: params[8],
+        must_change_password: params[10],
+        temporary_password_issued_at: params[12],
+        temporary_password_expires_at: params[13],
       }]);
     }
     return emptyResult;
@@ -255,12 +263,14 @@ test('teacher account creation emails the entered address with the account role'
   });
 
   assert.equal(response.status, 201);
-  assert.equal(insertParams[1], 'tessa.teacher@example.com');
+    assert.equal(insertParams[1], 'tessa.teacher@example.com');
+    assert.equal(insertParams[10], true);
   assert.equal(sentMessages.length, 1);
   assert.equal(sentMessages[0].to, 'tessa.teacher@example.com');
   assert.match(sentMessages[0].html, /Account Role:/);
   assert.match(sentMessages[0].html, /Teacher/);
-  assert.equal(response.body.emailSent, true);
+    assert.equal(response.body.emailSent, true);
+    assert.equal(response.body.user.requiresInitialPasswordSetup, true);
 });
 
 test('account management list excludes Godot student accounts', async (t) => {
@@ -853,7 +863,10 @@ test('admin account management writes audit log entries for create edit archive 
         birthday: params[6],
         gender: params[7],
         employee_id: params[8],
+        must_change_password: params[10],
         parent_id: params[11],
+        temporary_password_issued_at: params[12],
+        temporary_password_expires_at: params[13],
       };
       accounts.set(created.id, created);
       return resultRows([created]);
@@ -1390,7 +1403,10 @@ test('active Parent/Teacher accounts receive a canonical Parent ID and pass Godo
         email: params[1],
         role: params[3],
         employee_id: params[8],
+        must_change_password: params[10],
         parent_id: params[11],
+        temporary_password_issued_at: params[12],
+        temporary_password_expires_at: params[13],
         is_archived: false,
       }]);
     }
@@ -1419,8 +1435,10 @@ test('active Parent/Teacher accounts receive a canonical Parent ID and pass Godo
 
   assert.equal(created.status, 201);
   assert.equal(insertParams[3], 'parent_teacher');
+  assert.equal(insertParams[10], true);
   assert.match(insertParams[11], /^\d{6}$/);
   assert.equal(created.body.user.parent_id, insertParams[11]);
+  assert.equal(created.body.user.requiresInitialPasswordSetup, true);
 
   const validated = await requestJson(baseUrl, '/api/game/parent/validate', {
     method: 'POST',

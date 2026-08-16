@@ -23,7 +23,7 @@ const updateStoredSession = (payload) => {
 
 export default function TemporaryPasswordExperience({ children }) {
   const [user, setUser] = useState(() => getStoredUserSession());
-  const [promptOpen, setPromptOpen] = useState(() => Boolean(getStoredUserSession()?.mustChangePassword));
+  const [promptOpen, setPromptOpen] = useState(() => getStoredUserSession()?.requiresInitialPasswordSetup === true);
   const [setupOpen, setSetupOpen] = useState(false);
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [deferred, setDeferred] = useState(false);
@@ -38,7 +38,7 @@ export default function TemporaryPasswordExperience({ children }) {
     const syncUser = () => {
       const nextUser = getStoredUserSession();
       setUser(nextUser);
-      if (!nextUser?.mustChangePassword) {
+      if (nextUser?.requiresInitialPasswordSetup !== true) {
         setPromptOpen(false);
         setSetupOpen(false);
         setConfirmationOpen(false);
@@ -54,7 +54,7 @@ export default function TemporaryPasswordExperience({ children }) {
     };
   }, []);
 
-  const requiresPermanentPassword = Boolean(user?.mustChangePassword);
+  const requiresPermanentPassword = user?.requiresInitialPasswordSetup === true;
 
   const openSetup = () => {
     setPromptOpen(false);

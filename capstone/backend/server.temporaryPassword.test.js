@@ -162,6 +162,7 @@ test('temporary credential routes enforce admin creation and reject expiry befor
           role: 'teacher',
           is_archived: false,
           must_change_password: true,
+          temporary_password_issued_at: new Date(Date.now() - 60_000).toISOString(),
           temporary_password_expires_at: new Date(Date.now() - 1).toISOString(),
         }],
       };
@@ -186,6 +187,7 @@ test('temporary credential routes enforce admin creation and reject expiry befor
     password: 'temporary-password',
     is_archived: false,
     must_change_password: true,
+    temporary_password_issued_at: new Date(Date.now() - 60_000).toISOString(),
     temporary_password_expires_at: new Date(Date.now() - 1).toISOString(),
     session_version: 0,
   };
@@ -211,6 +213,7 @@ test('temporary credential routes enforce admin creation and reject expiry befor
     password: 'temporary-password',
     is_archived: false,
     must_change_password: true,
+    temporary_password_issued_at: new Date(Date.now() - 1_000).toISOString(),
     temporary_password_expires_at: new Date(Date.now() + 1000).toISOString(),
     session_version: 0,
   };
@@ -266,4 +269,37 @@ test('temporary credential routes enforce admin creation and reject expiry befor
   assert.equal(normalPasswordChange.status, 200);
   assert.equal(normalPasswordChange.body.user.mustChangePassword, false);
   assert.equal(normalPasswordChange.body.rememberToken, 'new-session-token');
+});
+
+test('session validation does not treat stale temporary metadata as active for a permanent account', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    await close(server);
+  });
+
+  queryHandler = async (sql) => (
+    sql.startsWith('select * from public.accounts where id = $1')
+      ? {
+        rows: [{
+          id: 1,
+          name: 'Established Admin',
+          email: 'admin@example.com',
+          role: 'admin',
+          is_archived: false,
+          must_change_password: false,
+          temporary_password_issued_at: new Date(Date.now() - 120_000).toISOString(),
+          temporary_password_expires_at: new Date(Date.now() - 60_000).toISOString(),
+          session_version: 0,
+        }],
+      }
+      : emptyResult
+  );
+
+  const restoredSession = await requestJson(baseUrl, '/api/session/validate', {
+    headers: { Authorization: 'Bearer established-account-token' },
+  });
+
+  assert.equal(restoredSession.status, 200);
+  assert.equal(restoredSession.body.user.requiresInitialPasswordSetup, false);
 });

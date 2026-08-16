@@ -59,6 +59,7 @@ function DashboardRouteGate() {
           return;
         }
         localStorage.setItem('loggedInUser', JSON.stringify(payload.user));
+        window.dispatchEvent(new Event('session-user-updated'));
         if (active) setAllowed(true);
       } catch (error) {
         if (active) setAllowed(false);

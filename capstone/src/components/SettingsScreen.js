@@ -433,7 +433,7 @@ export default function SettingsScreen() {
 
   const handleChangePassword = async (e) => {
     e.preventDefault();
-    const requiresInitialPassword = Boolean(user?.mustChangePassword);
+    const requiresInitialPassword = user?.requiresInitialPasswordSetup === true;
     if (!validatePasswordChange(requiresInitialPassword)) return;
     if (requiresInitialPassword) {
       setShowInitialPasswordConfirmation(true);
@@ -453,7 +453,7 @@ export default function SettingsScreen() {
   if (loading) return <div className="loading">Loading...</div>;
 
   const role = normalizeRole(user?.role || 'parent');
-  const requiresInitialPassword = Boolean(user?.mustChangePassword);
+  const requiresInitialPassword = user?.requiresInitialPasswordSetup === true;
 
   return (
     <DashboardContainer
