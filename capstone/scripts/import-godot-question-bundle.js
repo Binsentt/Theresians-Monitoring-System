@@ -3,7 +3,8 @@
 // Explicit, approval-gated importer for clean bundled Godot question sets.
 // It is never imported by the server and dry-run is the default CLI mode.
 const path = require('path');
-const { auditGodotQuestionBundle } = require('./audit-godot-question-bundle');
+const fs = require('fs');
+const { applyTopicOverrides, auditGodotQuestionBundle } = require('./audit-godot-question-bundle');
 
 const CLIENT_PROVIDED_SOURCE = 'restored_import';
 const CLIENT_PROVIDED_LABEL = 'Client Provided';
@@ -23,7 +24,8 @@ const buildClientProvidedImportPlan = (audit, { actorId } = {}) => {
   }
 
   const operations = (audit.records || [])
-    .filter((record) => record.classification === 'READY TO IMPORT')
+    .filter((record) => record.import_eligibility === 'READY FOR IMPORT'
+      || (record.import_eligibility === undefined && record.classification === 'READY TO IMPORT'))
     .map((record) => ({
       learning_file: {
         title: record.title,
@@ -199,12 +201,30 @@ const applyClientProvidedImportPlan = async (plan, pool) => {
 const parseCliArguments = (argumentsList) => {
   const rootPath = argumentsList.find((argument) => !argument.startsWith('--'));
   const actorArgument = argumentsList.find((argument) => argument.startsWith('--actor-id='));
+  const topicOverridesArgument = argumentsList.find((argument) => argument.startsWith('--topic-overrides='));
   return {
     rootPath,
     actorId: actorArgument ? Number(actorArgument.slice('--actor-id='.length)) : null,
     apply: argumentsList.includes('--apply'),
     confirmed: argumentsList.includes('--confirm-client-provided-import'),
+    topicOverridesPath: topicOverridesArgument ? topicOverridesArgument.slice('--topic-overrides='.length) : null,
   };
+};
+
+const loadTopicOverrides = (topicOverridesPath) => {
+  if (!topicOverridesPath) return {};
+  const resolvedPath = path.resolve(topicOverridesPath);
+  if (!fs.existsSync(resolvedPath)) throw new Error('Topic overrides file does not exist.');
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(resolvedPath, 'utf8'));
+  } catch {
+    throw new Error('Topic overrides file must contain valid JSON.');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Topic overrides file must be a JSON object keyed by manifest source path.');
+  }
+  return parsed;
 };
 
 const runCli = async () => {
@@ -212,7 +232,9 @@ const runCli = async () => {
   if (!options.rootPath) {
     throw new Error('Usage: node scripts/import-godot-question-bundle.js <path-to-Godot-Questions> [--dry-run]');
   }
-  const audit = auditGodotQuestionBundle(path.resolve(options.rootPath));
+  let audit = auditGodotQuestionBundle(path.resolve(options.rootPath));
+  const overrides = loadTopicOverrides(options.topicOverridesPath);
+  if (options.topicOverridesPath) audit = applyTopicOverrides(audit, overrides);
   if (!options.apply) {
     const plan = buildClientProvidedImportPlan(audit);
     console.log(JSON.stringify({
@@ -222,6 +244,7 @@ const runCli = async () => {
       files_discovered: audit.files_discovered,
       proposed_import_count: plan.operations.length,
       proposed_import_question_count: plan.operations.reduce((count, operation) => count + operation.questions.length, 0),
+      topic_overrides_applied: Boolean(options.topicOverridesPath),
       excluded_by_classification: audit.classification_distribution,
       default_user_facing_status: plan.default_user_facing_status,
     }, null, 2));
@@ -259,5 +282,6 @@ if (require.main === module) {
 module.exports = {
   applyClientProvidedImportPlan,
   buildClientProvidedImportPlan,
+  loadTopicOverrides,
   parseCliArguments,
 };

@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 
 const {
+  applyTopicOverrides,
   auditGodotQuestionBundle,
   canonicalDifficulty,
   inferMetadata,
@@ -13,6 +14,7 @@ const {
 const {
   applyClientProvidedImportPlan,
   buildClientProvidedImportPlan,
+  parseCliArguments,
 } = require('./import-godot-question-bundle');
 
 test('dry-run question audit canonicalizes legacy difficulty folders without changing files', () => {
@@ -26,6 +28,91 @@ test('dry-run question audit canonicalizes legacy difficulty folders without cha
   );
   assert.equal(metadata.grade, 'Grade 3');
   assert.equal(metadata.difficulty, 'Medium');
+});
+
+test('manifest infers filename metadata but keeps a single mapped topic confirmation-gated', () => withFixtureDirectory((root) => {
+  writeJson(root, 'grade_4_medium.json', {
+    questions: [{
+      question: 'What is the value of 4 in 4,321?',
+      choices: ['4', '40', '400'],
+      correct_answer: 'C',
+    }],
+  });
+
+  const audit = auditGodotQuestionBundle(root);
+  const record = audit.records[0];
+  assert.equal(record.grade, 'Grade 4');
+  assert.equal(record.difficulty, 'Medium');
+  assert.equal(record.topic_identifier, 'Place Value of Whole Numbers');
+  assert.equal(record.topic_source, 'Existing grade/topic mapping');
+  assert.equal(record.topic_classification, 'DERIVABLE WITH HIGH CONFIDENCE');
+  assert.equal(record.import_eligibility, 'READY AFTER USER CONFIRMATION');
+  assert.equal(buildClientProvidedImportPlan(audit, { actorId: 17 }).operations.length, 0);
+
+  const confirmed = applyTopicOverrides(audit, {
+    'grade_4_medium.json': 'Place Value of Whole Numbers',
+  });
+  const confirmedRecord = confirmed.records[0];
+  assert.equal(confirmedRecord.topic_source, 'User-confirmed controlled topic');
+  assert.equal(confirmedRecord.topic_classification, 'USER CONFIRMED');
+  assert.equal(confirmedRecord.import_eligibility, 'READY FOR IMPORT');
+  assert.equal(confirmedRecord.classification, 'READY TO IMPORT');
+  assert.equal(buildClientProvidedImportPlan(confirmed, { actorId: 17 }).operations.length, 1);
+
+  const invalidSelection = applyTopicOverrides(audit, {
+    'grade_4_medium.json': 'Fractions',
+  });
+  assert.equal(invalidSelection.records[0].import_eligibility, 'READY AFTER USER CONFIRMATION');
+  assert.equal(invalidSelection.records[0].review_error, 'Selected topic must be one of the manifest controlled topic options.');
+  assert.equal(buildClientProvidedImportPlan(invalidSelection, { actorId: 17 }).operations.length, 0);
+}));
+
+test('manifest exposes malformed reasons and duplicate provenance without repairing client content', () => withFixtureDirectory((root) => {
+  const validQuestion = {
+    question: 'What is 2 + 2?',
+    choices: ['3', '4'],
+    correct_answer: 'B',
+    topic: 'Basic Addition',
+  };
+  writeJson(root, 'Grade1/Easy/canonical.json', { questions: [validQuestion] });
+  writeJson(root, 'Grade1/Easy/duplicate.json', { questions: [validQuestion] });
+  writeJson(root, 'Grade1/Easy/malformed.json', {
+    questions: [{ question: 'Missing answer', choices: ['A', 'B'], topic: 'Basic Addition' }],
+  });
+
+  const audit = auditGodotQuestionBundle(root);
+  const canonical = audit.records.find((record) => record.file_name === 'canonical.json');
+  const duplicate = audit.records.find((record) => record.file_name === 'duplicate.json');
+  const malformed = audit.records.find((record) => record.file_name === 'malformed.json');
+  assert.equal(canonical.import_eligibility, 'READY FOR IMPORT');
+  assert.equal(duplicate.import_eligibility, 'DUPLICATE ONLY');
+  assert.equal(duplicate.duplicate_details[0].canonical_source_path, canonical.path);
+  assert.equal(malformed.import_eligibility, 'NEEDS MANUAL QUESTION REPAIR');
+  assert.deepEqual(malformed.malformed_details, [{ question_index: 1, reason: 'Missing correct answer.' }]);
+}));
+
+test('manifest topic distribution counts source question metadata rather than one value per file', () => withFixtureDirectory((root) => {
+  writeJson(root, 'Grade1/Easy/two-questions.json', {
+    questions: [
+      { question: 'What is 1 + 1?', choices: ['1', '2'], correct_answer: 'B', topic: 'Basic Addition' },
+      { question: 'What is 2 + 2?', choices: ['3', '4'], correct_answer: 'B', topic: 'Basic Addition' },
+    ],
+  });
+  const audit = auditGodotQuestionBundle(root);
+  assert.deepEqual(audit.topic_distribution, { 'Basic Addition': 2 });
+}));
+
+test('import CLI accepts only an explicit local topic-overrides file option', () => {
+  assert.deepEqual(
+    parseCliArguments(['C:/Questions', '--topic-overrides=C:/review/topics.json', '--dry-run']),
+    {
+      rootPath: 'C:/Questions',
+      actorId: null,
+      apply: false,
+      confirmed: false,
+      topicOverridesPath: 'C:/review/topics.json',
+    }
+  );
 });
 
 test('dry-run question audit resolves a letter answer to its supplied choice', () => {
@@ -91,7 +178,9 @@ test('manifest strictly classifies client content and proposes only clean, fully
   assert.equal(clean.topic_identifier, 'Addition');
   assert.match(clean.content_fingerprint, /^[a-f0-9]{64}$/);
   assert.equal(duplicate.classification, 'DUPLICATE');
-  assert.equal(missingTopic.classification, 'MISSING TOPIC');
+  assert.equal(missingTopic.classification, 'NEEDS MANUAL REVIEW');
+  assert.equal(missingTopic.import_eligibility, 'READY AFTER USER CONFIRMATION');
+  assert.equal(missingTopic.topic_classification, 'AMBIGUOUS');
   assert.equal(malformed.classification, 'MALFORMED');
   assert.equal(partiallyMalformed.classification, 'MALFORMED');
   assert.equal(audit.malformed_file_count, 2);

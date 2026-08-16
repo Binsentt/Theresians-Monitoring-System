@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
+const { getMathTopicsForGradeDifficulty } = require('../backend/learningContentRules.utils');
 
 const SUPPORTED_EXTENSIONS = new Set(['.docx', '.json']);
 
@@ -39,7 +40,10 @@ const readDocxText = (filePath) => {
     .filter(Boolean);
 };
 
-const normalizeQuestion = (candidate = {}) => {
+const normalizeQuestionWithValidation = (candidate = {}) => {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return { question: null, reason: 'Question record must be an object.' };
+  }
   const question = String(candidate.question || candidate.question_text || candidate.text || '').trim();
   const choices = Array.isArray(candidate.choices)
     ? candidate.choices
@@ -50,14 +54,24 @@ const normalizeQuestion = (candidate = {}) => {
   const answer = optionIndex
     ? normalizedChoices[optionIndex.charCodeAt(0) - 'A'.charCodeAt(0)]
     : rawAnswer.replace(/^[A-D][.)]\s*/i, '').trim();
-  if (!question || normalizedChoices.length < 2 || !answer) return null;
-  return {
+  if (!question) return { question: null, reason: 'Missing question text.' };
+  if (!Array.isArray(candidate.choices) && !Array.isArray(candidate.options)) {
+    return { question: null, reason: 'Choices must be an array.' };
+  }
+  if (normalizedChoices.length < 2) return { question: null, reason: 'At least two choices are required.' };
+  if (!rawAnswer || !answer) return { question: null, reason: 'Missing correct answer.' };
+  if (!normalizedChoices.some((choice) => choice.localeCompare(answer, undefined, { sensitivity: 'accent' }) === 0)) {
+    return { question: null, reason: 'Correct answer is not present in the choices.' };
+  }
+  return { question: {
     question,
     choices: normalizedChoices,
     answer,
     topic: String(candidate.topic || candidate.math_topic || '').trim() || null,
-  };
+  } };
 };
+
+const normalizeQuestion = (candidate = {}) => normalizeQuestionWithValidation(candidate).question;
 
 const parseDocxQuestions = (filePath) => {
   const lines = readDocxText(filePath);
@@ -65,8 +79,8 @@ const parseDocxQuestions = (filePath) => {
   let current = null;
   const finishCurrent = () => {
     if (!current) return;
-    const normalized = normalizeQuestion(current);
-    parsed.push(normalized || { invalid: true });
+    const result = normalizeQuestionWithValidation(current);
+    parsed.push(result.question || { invalid: true, reason: result.reason });
     current = null;
   };
 
@@ -117,7 +131,10 @@ const parseJsonQuestions = (filePath) => {
   const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
   const entries = Array.isArray(payload) ? payload : payload.questions;
   if (!Array.isArray(entries)) throw new Error('JSON must be an array or contain a questions array.');
-  return entries.map((entry) => normalizeQuestion(entry) || { invalid: true });
+  return entries.map((entry) => {
+    const result = normalizeQuestionWithValidation(entry);
+    return result.question || { invalid: true, reason: result.reason };
+  });
 };
 
 const discoverFiles = (rootPath) => {
@@ -136,7 +153,7 @@ const discoverFiles = (rootPath) => {
 const inferMetadata = (rootPath, filePath) => {
   const relativePath = path.relative(rootPath, filePath).replace(/\\/g, '/');
   const normalized = relativePath.toLowerCase();
-  const gradeMatch = normalized.match(/grade[ _]?([1-6])\b/);
+  const gradeMatch = normalized.match(/(?:^|[\\/_ -])grade[ _-]?([1-6])(?=$|[\\/_ .-])/);
   const difficultySegment = relativePath.split('/').find((segment) => canonicalDifficulty(segment));
   const baseDifficulty = path.basename(normalized, path.extname(normalized)).match(/(?:^|[_ -])(easy|normal|medium|difficult|hard)(?:$|[_ -])/i);
   const rawDifficulty = difficultySegment || baseDifficulty?.[1] || null;
@@ -180,104 +197,123 @@ const resolveTopic = (questions) => {
   return null;
 };
 
-const classifyRecord = ({ extension, parseError, validQuestions, invalidQuestions, duplicateCount, metadata, topic }) => {
-  if (!SUPPORTED_EXTENSIONS.has(extension)) return 'UNSUPPORTED FORMAT';
-  if (parseError || validQuestions.length === 0 || invalidQuestions > 0) return 'MALFORMED';
-  if (duplicateCount > 0) return 'DUPLICATE';
-  if (!metadata.grade) return 'MISSING GRADE';
-  if (!metadata.difficulty) return 'MISSING DIFFICULTY';
-  if (!topic) {
-    const uniqueTopics = new Set(validQuestions.map((question) => question.topic).filter(Boolean));
-    return uniqueTopics.size > 1 ? 'NEEDS MANUAL REVIEW' : 'MISSING TOPIC';
+const assessTopic = (metadata, validQuestions) => {
+  const explicitTopic = resolveTopic(validQuestions);
+  const explicitTopics = [...new Set(validQuestions.map((question) => question.topic).filter(Boolean))];
+  const topicOptions = metadata.grade && metadata.difficulty
+    ? getMathTopicsForGradeDifficulty(metadata.grade, metadata.difficulty)
+    : [];
+  if (explicitTopics.length > 1) {
+    return {
+      topic: null,
+      detectedTopic: null,
+      topicOptions,
+      source: 'Conflicting explicit client metadata',
+      classification: 'AMBIGUOUS',
+      reason: 'The source contains more than one explicit topic identifier.',
+    };
   }
-  return 'READY TO IMPORT';
+  if (explicitTopic) {
+    if (topicOptions.includes(explicitTopic)) {
+      return {
+        topic: explicitTopic,
+        detectedTopic: explicitTopic,
+        topicOptions,
+        source: 'Explicit client metadata',
+        classification: 'AUTHORITATIVE',
+        reason: null,
+      };
+    }
+    return {
+      topic: null,
+      detectedTopic: explicitTopic,
+      topicOptions,
+      source: 'Explicit client metadata (not in controlled vocabulary)',
+      classification: 'MISSING — NEEDS USER REVIEW',
+      reason: `Explicit topic "${explicitTopic}" is not valid for the inferred grade and difficulty.`,
+    };
+  }
+  if (topicOptions.length === 1) {
+    return {
+      topic: topicOptions[0],
+      detectedTopic: null,
+      topicOptions,
+      source: 'Existing grade/topic mapping',
+      classification: 'DERIVABLE WITH HIGH CONFIDENCE',
+      reason: 'One controlled topic exists for this grade and difficulty; an authorized reviewer must still confirm it.',
+    };
+  }
+  if (topicOptions.length > 1) {
+    return {
+      topic: null,
+      detectedTopic: null,
+      topicOptions,
+      source: 'Existing grade/topic mapping',
+      classification: 'AMBIGUOUS',
+      reason: 'Multiple controlled topics exist for this grade and difficulty.',
+    };
+  }
+  return {
+    topic: null,
+    detectedTopic: null,
+    topicOptions,
+    source: 'No authoritative topic evidence found',
+    classification: 'MISSING — NEEDS USER REVIEW',
+    reason: 'No controlled topic mapping exists for the inferred grade and difficulty.',
+  };
 };
 
-const auditGodotQuestionBundle = (rootPath) => {
-  const files = discoverFiles(rootPath);
+const resolveImportEligibility = ({ extension, parseError, validQuestions, invalidQuestions, duplicateCount, metadata, topicAssessment }) => {
+  if (!SUPPORTED_EXTENSIONS.has(extension)) return { value: 'UNSUPPORTED', classification: 'UNSUPPORTED FORMAT', reason: 'Unsupported source format.' };
+  if (parseError || validQuestions.length === 0 || invalidQuestions > 0) {
+    return { value: 'NEEDS MANUAL QUESTION REPAIR', classification: 'MALFORMED', reason: parseError || 'One or more question records failed validation.' };
+  }
+  if (duplicateCount >= validQuestions.length) return { value: 'DUPLICATE ONLY', classification: 'DUPLICATE', reason: 'Every valid question is already represented by an earlier canonical source.' };
+  if (duplicateCount > 0) return { value: 'NEEDS MANUAL QUESTION REPAIR', classification: 'DUPLICATE', reason: 'The source mixes duplicate and unique questions and requires manual review.' };
+  if (!metadata.grade || !metadata.difficulty) return { value: 'UNCLASSIFIED', classification: 'UNCLASSIFIED', reason: 'Grade and/or difficulty could not be inferred from explicit client structure.' };
+  if (topicAssessment.classification === 'AUTHORITATIVE') return { value: 'READY FOR IMPORT', classification: 'READY TO IMPORT', reason: null };
+  return { value: 'READY AFTER USER CONFIRMATION', classification: 'NEEDS MANUAL REVIEW', reason: topicAssessment.reason };
+};
+
+const recordFingerprint = (record) => fingerprint({
+  grade: record.grade,
+  difficulty: record.difficulty,
+  topic: record.topic_identifier,
+  questions: (record.questions || []).map((question) => questionSignature(question)).sort(),
+});
+
+const attachPrivateSource = (record, sourceRecord) => {
+  Object.defineProperty(record, 'questions', { value: sourceRecord.questions, enumerable: false });
+  Object.defineProperty(record, 'source_file_bytes', { value: sourceRecord.source_file_bytes, enumerable: false });
+  Object.defineProperty(record, 'source_file_mime_type', { value: sourceRecord.source_file_mime_type, enumerable: false });
+  return record;
+};
+
+const summarizeAudit = (records, files) => {
   const gradeDistribution = {};
   const difficultyDistribution = {};
   const topicDistribution = {};
   const classificationDistribution = {};
-  const signatures = new Set();
   let validQuestionCount = 0;
   let duplicateQuestionCount = 0;
   let malformedQuestionCount = 0;
   let malformedFileCount = 0;
   let metadataIncompleteFileCount = 0;
-
-  const records = files.map((filePath) => {
-    const metadata = inferMetadata(rootPath, filePath);
-    const extension = path.extname(filePath).toLowerCase();
-    let questions = [];
-    let parseError = null;
-    if (SUPPORTED_EXTENSIONS.has(extension)) {
-      try {
-        questions = extension === '.docx' ? parseDocxQuestions(filePath) : parseJsonQuestions(filePath);
-      } catch (error) {
-        parseError = error.message;
-      }
-    }
-    const validQuestions = questions.filter((question) => !question.invalid);
-    const invalidQuestions = questions.length - validQuestions.length;
-    let duplicateCount = 0;
-    for (const question of validQuestions) {
-      const signature = questionSignature(question);
-      if (signatures.has(signature)) duplicateCount += 1;
-      else signatures.add(signature);
-    }
-    const topic = resolveTopic(validQuestions);
-    const classification = classifyRecord({
-      extension,
-      parseError,
-      validQuestions,
-      invalidQuestions,
-      duplicateCount,
-      metadata,
-      topic,
-    });
-    if (parseError || validQuestions.length === 0 || invalidQuestions > 0) malformedFileCount += 1;
-    if (!metadata.grade || !metadata.difficulty || !topic) metadataIncompleteFileCount += 1;
-    increment(gradeDistribution, metadata.grade || 'Unclassified');
-    increment(difficultyDistribution, metadata.difficulty || 'Unclassified');
-    validQuestions.forEach((question) => increment(topicDistribution, question.topic || 'Missing'));
-    increment(classificationDistribution, classification);
-    validQuestionCount += validQuestions.length;
-    malformedQuestionCount += invalidQuestions;
-    duplicateQuestionCount += duplicateCount;
-    const record = {
-      path: metadata.relativePath,
-      file_name: path.basename(filePath),
-      title: path.basename(filePath, extension),
-      grade: metadata.grade,
-      difficulty: metadata.difficulty,
-      legacy_difficulty: metadata.legacyDifficulty,
-      topic_identifier: topic,
-      format: extension.slice(1),
-      valid_question_count: validQuestions.length,
-      malformed_question_count: invalidQuestions,
-      duplicate_question_count: duplicateCount,
-      parse_error: parseError,
-      parse_status: parseError ? 'PARSE ERROR' : (invalidQuestions > 0 ? 'PARTIALLY MALFORMED' : 'VALID'),
-      metadata_complete: Boolean(metadata.grade && metadata.difficulty && topic),
-      source_size_bytes: fs.statSync(filePath).size,
-      content_fingerprint: fingerprint({
-        grade: metadata.grade,
-        difficulty: metadata.difficulty,
-        topic,
-        questions: validQuestions.map((question) => questionSignature(question)).sort(),
-      }),
-      classification,
-      proposed_source_label: 'Client Provided',
-    };
-    Object.defineProperty(record, 'questions', { value: validQuestions, enumerable: false });
-    Object.defineProperty(record, 'source_file_bytes', { value: fs.readFileSync(filePath), enumerable: false });
-    Object.defineProperty(record, 'source_file_mime_type', { value: mimeTypeForExtension(extension), enumerable: false });
-    return record;
+  records.forEach((record) => {
+    increment(gradeDistribution, record.grade || 'Unclassified');
+    increment(difficultyDistribution, record.difficulty || 'Unclassified');
+    Object.entries(record.detected_topic_distribution || { Missing: record.valid_question_count })
+      .forEach(([topic, count]) => {
+        topicDistribution[topic || 'Missing'] = (topicDistribution[topic || 'Missing'] || 0) + count;
+      });
+    increment(classificationDistribution, record.classification);
+    validQuestionCount += record.valid_question_count;
+    duplicateQuestionCount += record.duplicate_question_count;
+    malformedQuestionCount += record.malformed_question_count;
+    if (record.parse_error || record.malformed_question_count > 0 || record.valid_question_count === 0) malformedFileCount += 1;
+    if (!record.metadata_complete) metadataIncompleteFileCount += 1;
   });
-
-  const proposedRecords = records.filter((record) => record.classification === 'READY TO IMPORT');
-
+  const proposedRecords = records.filter((record) => record.import_eligibility === 'READY FOR IMPORT');
   return {
     mode: 'dry-run-only',
     production_import_performed: false,
@@ -292,11 +328,139 @@ const auditGodotQuestionBundle = (rootPath) => {
     malformed_file_count: malformedFileCount,
     metadata_incomplete_file_count: metadataIncompleteFileCount,
     proposed_import_count: proposedRecords.length,
-    proposed_import_question_count: proposedRecords
-      .reduce((count, record) => count + record.valid_question_count, 0),
+    proposed_import_question_count: proposedRecords.reduce((count, record) => count + record.valid_question_count, 0),
     files,
     records,
   };
+};
+
+const auditGodotQuestionBundle = (rootPath) => {
+  const files = discoverFiles(rootPath);
+  const canonicalQuestions = new Map();
+
+  const records = files.map((filePath) => {
+    const metadata = inferMetadata(rootPath, filePath);
+    const extension = path.extname(filePath).toLowerCase();
+    let questions = [];
+    let parseError = null;
+    if (SUPPORTED_EXTENSIONS.has(extension)) {
+      try {
+        questions = extension === '.docx' ? parseDocxQuestions(filePath) : parseJsonQuestions(filePath);
+      } catch (error) {
+        parseError = error.message;
+      }
+    }
+    const validQuestions = questions.filter((question) => !question.invalid);
+    const malformedDetails = questions
+      .map((question, index) => (question.invalid ? {
+        question_index: index + 1,
+        reason: question.reason || 'Question could not be normalized.',
+      } : null))
+      .filter(Boolean);
+    const invalidQuestions = malformedDetails.length;
+    let duplicateCount = 0;
+    const duplicateDetails = [];
+    validQuestions.forEach((question, index) => {
+      const signature = questionSignature(question);
+      const questionFingerprint = fingerprint({ signature });
+      const canonical = canonicalQuestions.get(signature);
+      if (canonical) {
+        duplicateCount += 1;
+        duplicateDetails.push({
+          question_index: index + 1,
+          question_fingerprint: questionFingerprint,
+          canonical_source_path: canonical.path,
+          canonical_question_index: canonical.questionIndex,
+        });
+      } else {
+        canonicalQuestions.set(signature, { path: metadata.relativePath, questionIndex: index + 1 });
+      }
+    });
+    const topicAssessment = assessTopic(metadata, validQuestions);
+    const eligibility = resolveImportEligibility({
+      extension,
+      parseError,
+      validQuestions,
+      invalidQuestions,
+      duplicateCount,
+      metadata,
+      topicAssessment,
+    });
+    const record = {
+      path: metadata.relativePath,
+      file_name: path.basename(filePath),
+      title: path.basename(filePath, extension),
+      grade: metadata.grade,
+      difficulty: metadata.difficulty,
+      legacy_difficulty: metadata.legacyDifficulty,
+      topic_identifier: topicAssessment.topic,
+      detected_topic_identifier: topicAssessment.detectedTopic,
+      detected_topic_identifiers: [...new Set(validQuestions.map((question) => question.topic).filter(Boolean))],
+      detected_topic_distribution: validQuestions.reduce((distribution, question) => {
+        increment(distribution, question.topic || 'Missing');
+        return distribution;
+      }, {}),
+      topic_options: topicAssessment.topicOptions,
+      topic_source: topicAssessment.source,
+      topic_classification: topicAssessment.classification,
+      format: extension.slice(1),
+      valid_question_count: validQuestions.length,
+      malformed_question_count: invalidQuestions,
+      malformed_details: malformedDetails,
+      duplicate_question_count: duplicateCount,
+      duplicate_details: duplicateDetails,
+      parse_error: parseError,
+      parse_status: parseError ? 'PARSE ERROR' : (invalidQuestions > 0 ? 'PARTIALLY MALFORMED' : 'VALID'),
+      metadata_complete: Boolean(metadata.grade && metadata.difficulty && topicAssessment.classification === 'AUTHORITATIVE'),
+      source_size_bytes: fs.statSync(filePath).size,
+      import_eligibility: eligibility.value,
+      ineligibility_reason: eligibility.reason,
+      classification: eligibility.classification,
+      proposed_source_label: 'Client Provided',
+    };
+    Object.defineProperty(record, 'questions', { value: validQuestions, enumerable: false });
+    Object.defineProperty(record, 'source_file_bytes', { value: fs.readFileSync(filePath), enumerable: false });
+    Object.defineProperty(record, 'source_file_mime_type', { value: mimeTypeForExtension(extension), enumerable: false });
+    record.content_fingerprint = recordFingerprint(record);
+    return record;
+  });
+
+  return summarizeAudit(records, files);
+};
+
+const applyTopicOverrides = (audit, overrides = {}) => {
+  if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
+    throw new Error('Topic overrides must be an object keyed by manifest source path.');
+  }
+  const recordsByPath = new Map((audit.records || []).map((record) => [record.path, record]));
+  Object.keys(overrides).forEach((sourcePath) => {
+    if (!recordsByPath.has(sourcePath)) throw new Error(`Topic override does not match a manifest source path: ${sourcePath}`);
+  });
+  const records = (audit.records || []).map((originalRecord) => {
+    const selectedTopic = overrides[originalRecord.path];
+    if (selectedTopic === undefined) return originalRecord;
+    const record = { ...originalRecord };
+    attachPrivateSource(record, originalRecord);
+    const normalizedTopic = String(selectedTopic || '').trim();
+    if (!record.topic_options.includes(normalizedTopic)) {
+      record.review_error = 'Selected topic must be one of the manifest controlled topic options.';
+      return record;
+    }
+    if (record.import_eligibility === 'NEEDS MANUAL QUESTION REPAIR' || record.import_eligibility === 'UNSUPPORTED' || record.import_eligibility === 'UNCLASSIFIED' || record.import_eligibility === 'DUPLICATE ONLY') {
+      record.review_error = 'Topic confirmation cannot make an otherwise ineligible source importable.';
+      return record;
+    }
+    record.topic_identifier = normalizedTopic;
+    record.topic_source = 'User-confirmed controlled topic';
+    record.topic_classification = 'USER CONFIRMED';
+    record.metadata_complete = Boolean(record.grade && record.difficulty);
+    record.import_eligibility = 'READY FOR IMPORT';
+    record.ineligibility_reason = null;
+    record.classification = 'READY TO IMPORT';
+    record.content_fingerprint = recordFingerprint(record);
+    return record;
+  });
+  return summarizeAudit(records, audit.files || []);
 };
 
 if (require.main === module) {
@@ -310,10 +474,12 @@ if (require.main === module) {
 }
 
 module.exports = {
+  applyTopicOverrides,
   auditGodotQuestionBundle,
   canonicalDifficulty,
   inferMetadata,
   normalizeQuestion,
+  normalizeQuestionWithValidation,
   parseDocxQuestions,
   parseJsonQuestions,
   readDocxText,
