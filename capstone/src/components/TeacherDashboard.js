@@ -44,7 +44,7 @@ export default function TeacherDashboard() {
         logoSrc={logoImage}
         portalLabel="Teacher Portal"
         heading="Teacher Dashboard"
-        subheading="Your classroom overview is loading."
+        subheading="Your classroom overview."
       />
     );
   }

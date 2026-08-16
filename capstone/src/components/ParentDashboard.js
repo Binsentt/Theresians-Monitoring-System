@@ -156,7 +156,7 @@ export default function ParentDashboard() {
         logoSrc={logoImage}
         portalLabel="Parent Portal"
         heading="Parent Dashboard"
-        subheading="Your child's learning overview is loading."
+        subheading="Your child's learning overview."
       />
     );
   }

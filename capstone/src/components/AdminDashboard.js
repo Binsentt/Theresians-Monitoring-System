@@ -97,7 +97,7 @@ export default function AdminDashboard() {
         logoSrc={logoImage}
         portalLabel="Admin Portal"
         heading="Admin Dashboard"
-        subheading="Your school management overview is loading."
+        subheading="Your school management overview."
       />
     );
   }
