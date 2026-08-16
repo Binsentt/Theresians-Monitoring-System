@@ -5,6 +5,7 @@
 // future, explicitly approved import can be reviewed before it is performed.
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
 const SUPPORTED_EXTENSIONS = new Set(['.docx', '.json']);
@@ -125,7 +126,7 @@ const discoverFiles = (rootPath) => {
     for (const entry of fs.readdirSync(currentPath, { withFileTypes: true })) {
       const fullPath = path.join(currentPath, entry.name);
       if (entry.isDirectory()) walk(fullPath);
-      else if (SUPPORTED_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) discovered.push(fullPath);
+      else if (entry.isFile()) discovered.push(fullPath);
     }
   };
   walk(rootPath);
@@ -136,12 +137,17 @@ const inferMetadata = (rootPath, filePath) => {
   const relativePath = path.relative(rootPath, filePath).replace(/\\/g, '/');
   const normalized = relativePath.toLowerCase();
   const gradeMatch = normalized.match(/grade[ _]?([1-6])\b/);
-  const difficultySegment = normalized.split('/').find((segment) => canonicalDifficulty(segment));
+  const difficultySegment = relativePath.split('/').find((segment) => canonicalDifficulty(segment));
   const baseDifficulty = path.basename(normalized, path.extname(normalized)).match(/(?:^|[_ -])(easy|normal|medium|difficult|hard)(?:$|[_ -])/i);
+  const rawDifficulty = difficultySegment || baseDifficulty?.[1] || null;
+  const difficulty = canonicalDifficulty(rawDifficulty);
   return {
     relativePath,
     grade: gradeMatch ? `Grade ${gradeMatch[1]}` : null,
-    difficulty: canonicalDifficulty(difficultySegment || baseDifficulty?.[1]),
+    difficulty,
+    legacyDifficulty: rawDifficulty && ['normal', 'difficult'].includes(String(rawDifficulty).toLowerCase())
+      ? String(rawDifficulty)
+      : null,
   };
 };
 
@@ -156,10 +162,43 @@ const increment = (target, key) => {
   target[key] = (target[key] || 0) + 1;
 };
 
+const fingerprint = (value) => crypto.createHash('sha256')
+  .update(JSON.stringify(value))
+  .digest('hex');
+
+const mimeTypeForExtension = (extension) => {
+  if (extension === '.json') return 'application/json';
+  if (extension === '.docx') {
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
+  return 'application/octet-stream';
+};
+
+const resolveTopic = (questions) => {
+  const topics = [...new Set(questions.map((question) => question.topic).filter(Boolean))];
+  if (topics.length === 1 && questions.every((question) => question.topic === topics[0])) return topics[0];
+  return null;
+};
+
+const classifyRecord = ({ extension, parseError, validQuestions, invalidQuestions, duplicateCount, metadata, topic }) => {
+  if (!SUPPORTED_EXTENSIONS.has(extension)) return 'UNSUPPORTED FORMAT';
+  if (parseError || validQuestions.length === 0 || invalidQuestions > 0) return 'MALFORMED';
+  if (duplicateCount > 0) return 'DUPLICATE';
+  if (!metadata.grade) return 'MISSING GRADE';
+  if (!metadata.difficulty) return 'MISSING DIFFICULTY';
+  if (!topic) {
+    const uniqueTopics = new Set(validQuestions.map((question) => question.topic).filter(Boolean));
+    return uniqueTopics.size > 1 ? 'NEEDS MANUAL REVIEW' : 'MISSING TOPIC';
+  }
+  return 'READY TO IMPORT';
+};
+
 const auditGodotQuestionBundle = (rootPath) => {
   const files = discoverFiles(rootPath);
   const gradeDistribution = {};
   const difficultyDistribution = {};
+  const topicDistribution = {};
+  const classificationDistribution = {};
   const signatures = new Set();
   let validQuestionCount = 0;
   let duplicateQuestionCount = 0;
@@ -172,34 +211,72 @@ const auditGodotQuestionBundle = (rootPath) => {
     const extension = path.extname(filePath).toLowerCase();
     let questions = [];
     let parseError = null;
-    try {
-      questions = extension === '.docx' ? parseDocxQuestions(filePath) : parseJsonQuestions(filePath);
-    } catch (error) {
-      parseError = error.message;
+    if (SUPPORTED_EXTENSIONS.has(extension)) {
+      try {
+        questions = extension === '.docx' ? parseDocxQuestions(filePath) : parseJsonQuestions(filePath);
+      } catch (error) {
+        parseError = error.message;
+      }
     }
     const validQuestions = questions.filter((question) => !question.invalid);
     const invalidQuestions = questions.length - validQuestions.length;
-    if (parseError || validQuestions.length === 0) malformedFileCount += 1;
-    if (!metadata.grade || !metadata.difficulty) metadataIncompleteFileCount += 1;
-    increment(gradeDistribution, metadata.grade || 'Unclassified');
-    increment(difficultyDistribution, metadata.difficulty || 'Unclassified');
-    validQuestionCount += validQuestions.length;
-    malformedQuestionCount += invalidQuestions;
+    let duplicateCount = 0;
     for (const question of validQuestions) {
       const signature = questionSignature(question);
-      if (signatures.has(signature)) duplicateQuestionCount += 1;
+      if (signatures.has(signature)) duplicateCount += 1;
       else signatures.add(signature);
     }
-    return {
+    const topic = resolveTopic(validQuestions);
+    const classification = classifyRecord({
+      extension,
+      parseError,
+      validQuestions,
+      invalidQuestions,
+      duplicateCount,
+      metadata,
+      topic,
+    });
+    if (parseError || validQuestions.length === 0 || invalidQuestions > 0) malformedFileCount += 1;
+    if (!metadata.grade || !metadata.difficulty || !topic) metadataIncompleteFileCount += 1;
+    increment(gradeDistribution, metadata.grade || 'Unclassified');
+    increment(difficultyDistribution, metadata.difficulty || 'Unclassified');
+    validQuestions.forEach((question) => increment(topicDistribution, question.topic || 'Missing'));
+    increment(classificationDistribution, classification);
+    validQuestionCount += validQuestions.length;
+    malformedQuestionCount += invalidQuestions;
+    duplicateQuestionCount += duplicateCount;
+    const record = {
       path: metadata.relativePath,
+      file_name: path.basename(filePath),
+      title: path.basename(filePath, extension),
       grade: metadata.grade,
       difficulty: metadata.difficulty,
+      legacy_difficulty: metadata.legacyDifficulty,
+      topic_identifier: topic,
       format: extension.slice(1),
       valid_question_count: validQuestions.length,
       malformed_question_count: invalidQuestions,
+      duplicate_question_count: duplicateCount,
       parse_error: parseError,
+      parse_status: parseError ? 'PARSE ERROR' : (invalidQuestions > 0 ? 'PARTIALLY MALFORMED' : 'VALID'),
+      metadata_complete: Boolean(metadata.grade && metadata.difficulty && topic),
+      source_size_bytes: fs.statSync(filePath).size,
+      content_fingerprint: fingerprint({
+        grade: metadata.grade,
+        difficulty: metadata.difficulty,
+        topic,
+        questions: validQuestions.map((question) => questionSignature(question)).sort(),
+      }),
+      classification,
+      proposed_source_label: 'Client Provided',
     };
+    Object.defineProperty(record, 'questions', { value: validQuestions, enumerable: false });
+    Object.defineProperty(record, 'source_file_bytes', { value: fs.readFileSync(filePath), enumerable: false });
+    Object.defineProperty(record, 'source_file_mime_type', { value: mimeTypeForExtension(extension), enumerable: false });
+    return record;
   });
+
+  const proposedRecords = records.filter((record) => record.classification === 'READY TO IMPORT');
 
   return {
     mode: 'dry-run-only',
@@ -207,11 +284,16 @@ const auditGodotQuestionBundle = (rootPath) => {
     files_discovered: records.length,
     grade_distribution: gradeDistribution,
     difficulty_distribution: difficultyDistribution,
+    topic_distribution: topicDistribution,
+    classification_distribution: classificationDistribution,
     valid_question_count: validQuestionCount,
     duplicate_question_count: duplicateQuestionCount,
     malformed_question_count: malformedQuestionCount,
     malformed_file_count: malformedFileCount,
     metadata_incomplete_file_count: metadataIncompleteFileCount,
+    proposed_import_count: proposedRecords.length,
+    proposed_import_question_count: proposedRecords
+      .reduce((count, record) => count + record.valid_question_count, 0),
     files,
     records,
   };

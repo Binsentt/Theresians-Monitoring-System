@@ -404,6 +404,9 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS published_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS last_fetched_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS source_content_fingerprint VARCHAR(64)');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS source_file_bytes BYTEA');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS source_file_mime_type VARCHAR(100)');
     await pool.query(`UPDATE public.learning_files
       SET generation_status = CASE WHEN LOWER(file_type) = 'lesson' THEN 'ready_for_review' ELSE 'not_applicable' END
       WHERE generation_status IS NULL OR BTRIM(generation_status) = ''`);
@@ -447,6 +450,10 @@ const ensureSchema = async () => {
     await pool.query('CREATE INDEX IF NOT EXISTS idx_questions_published ON public.questions(published)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_grade_difficulty_topic ON public.learning_files(grade_level, difficulty, math_topic)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_lifecycle ON public.learning_files(generation_status, publish_status)');
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_learning_files_client_provided_fingerprint
+      ON public.learning_files (source_content_fingerprint)
+      WHERE source_content_fingerprint IS NOT NULL
+        AND source IN ('restored_import', 'client_provided')`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_questions_grade_difficulty_topic ON public.questions(grade_level, difficulty, math_topic)');
   } catch (err) {
     console.error('Schema initialization failed:', err.message);
@@ -855,11 +862,12 @@ const canonicalDifficultySql = (columnName) => (
 );
 
 const normalizeLearningFileRow = (row) => {
-  const difficulty = normalizeDifficultyValue(row?.difficulty);
+  const { source_file_bytes, ...safeRow } = row || {};
+  const difficulty = normalizeDifficultyValue(safeRow.difficulty);
   return toQuestionSetResponse({
-    ...row,
+    ...safeRow,
     difficulty,
-    folder_name: buildQuestionFolderPath(row?.grade_level, difficulty),
+    folder_name: buildQuestionFolderPath(safeRow.grade_level, difficulty),
   });
 };
 
@@ -3603,14 +3611,17 @@ app.get('/api/learning-files/:id/preview', requireLessonQuestionManagerAccess, a
     );
     if (fileResult.rows.length === 0) return res.status(404).json({ error: 'File not found' });
 
-    const file = normalizeLearningFileRow(fileResult.rows[0]);
+    const rawFile = fileResult.rows[0];
+    const file = normalizeLearningFileRow(rawFile);
     const filePath = file.file_url && !String(file.file_url).startsWith('http')
       ? path.join(__dirname, String(file.file_url).replace('/uploads/', 'uploads/'))
       : null;
     const lowerName = String(file.file_name || '').toLowerCase();
     const isTextPreview = /\.(json|csv)$/i.test(lowerName);
     let content = null;
-    if (isTextPreview && filePath && fs.existsSync(filePath)) {
+    if (isTextPreview && Buffer.isBuffer(rawFile.source_file_bytes)) {
+      content = rawFile.source_file_bytes.toString('utf8');
+    } else if (isTextPreview && filePath && fs.existsSync(filePath)) {
       content = fs.readFileSync(filePath, 'utf8');
     }
 
