@@ -41,6 +41,7 @@ describe('Student Progress summary cards', () => {
     mockNavigate.mockReset();
     localStorage.clear();
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin' }));
+    localStorage.setItem('token', 'analytics-test-token');
   });
 
   afterEach(() => {
@@ -76,5 +77,8 @@ describe('Student Progress summary cards', () => {
     expect(container.textContent).toContain('Average accuracy');
     expect(container.textContent).toContain('Average completion');
     expect(container.textContent).not.toMatch(/Grade groups/i);
+    expect(global.fetch.mock.calls.every(([, options]) => (
+      options?.headers?.Authorization === 'Bearer analytics-test-token'
+    ))).toBe(true);
   });
 });

@@ -5,6 +5,7 @@ import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } 
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
 import { buildScopedApiUrl } from './analyticsEndpoints';
+import { buildAuthHeaders } from './session.utils';
 import { normalizeActivityLogPayload } from './activityLog.utils';
 import { isParentRole, normalizeRole } from './manageUsers.utils';
 import {
@@ -48,13 +49,14 @@ export default function ParentChildProgress() {
           return;
         }
         const parentId = loggedInUser?.id;
+        const requestOptions = { headers: buildAuthHeaders() };
         setParentAccountId(parentId);
         setPortalRole(normalizeRole(loggedInUser?.role) === 'parent_teacher' ? 'parent_teacher' : 'parent');
         const [childrenResult, studentsResult, overviewResult, activityResult] = await Promise.allSettled([
-          fetch(buildScopedApiUrl('/api/parent/children', 'parent', parentId)),
-          fetch(buildScopedApiUrl('/api/students/progress', 'parent', parentId)),
-          fetch(buildScopedApiUrl('/api/analytics/overview', 'parent', parentId)),
-          fetch(buildScopedApiUrl('/api/activity-logs?limit=100', 'parent', parentId)),
+          fetch(buildScopedApiUrl('/api/parent/children', 'parent'), requestOptions),
+          fetch(buildScopedApiUrl('/api/students/progress', 'parent'), requestOptions),
+          fetch(buildScopedApiUrl('/api/analytics/overview', 'parent'), requestOptions),
+          fetch(buildScopedApiUrl('/api/activity-logs?limit=100', 'parent'), requestOptions),
         ]);
 
         if (childrenResult.status !== 'fulfilled' || !childrenResult.value.ok) {
@@ -143,10 +145,11 @@ export default function ParentChildProgress() {
       setChildDetailsLoading(true);
       setChildDetailsError('');
       try {
+        const requestOptions = { headers: buildAuthHeaders() };
         const [quizzesResult, topicsResult, analyticsResult] = await Promise.all([
-          fetch(buildScopedApiUrl(`/api/parent/children/${focusStudentId}/quizzes?limit=20`, 'parent', parentAccountId)),
-          fetch(buildScopedApiUrl(`/api/parent/children/${focusStudentId}/topics`, 'parent', parentAccountId)),
-          fetch(buildScopedApiUrl(`/api/student-progress/${focusStudentId}`, 'parent', parentAccountId)),
+          fetch(buildScopedApiUrl(`/api/parent/children/${focusStudentId}/quizzes?limit=20`, 'parent'), requestOptions),
+          fetch(buildScopedApiUrl(`/api/parent/children/${focusStudentId}/topics`, 'parent'), requestOptions),
+          fetch(buildScopedApiUrl(`/api/student-progress/${focusStudentId}`, 'parent'), requestOptions),
         ]);
 
         if (!quizzesResult.ok || !topicsResult.ok) {

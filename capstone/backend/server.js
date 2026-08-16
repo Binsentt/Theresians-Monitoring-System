@@ -594,6 +594,29 @@ const requireAuthenticatedRoles = (allowedRoles) => (req, res, next) => {
 };
 
 const requireLessonQuestionManagerAccess = requireAuthenticatedRoles(['admin', 'teacher', 'parent_teacher']);
+const requireAnalyticsAccess = requireAuthenticatedRoles(['admin', 'teacher', 'parent', 'parent_teacher']);
+const requireParentAnalyticsAccess = requireAuthenticatedRoles(['parent', 'parent_teacher']);
+
+const resolveAnalyticsScope = (req) => {
+  const accountId = Number(req.authenticatedUser?.id);
+  const role = req.authenticatedRole || normalizeAccountRole(req.authenticatedUser?.role);
+  if (!Number.isInteger(accountId) || accountId <= 0) return null;
+  if (role === 'admin') return { type: 'all' };
+  if (role === 'teacher') return { type: 'teacher', teacherId: accountId };
+  if (role === 'parent') return { type: 'parent', parentId: accountId };
+  if (role === 'parent_teacher') {
+    return String(req.query?.scope || '').trim().toLowerCase() === 'parent'
+      ? { type: 'parent', parentId: accountId }
+      : { type: 'teacher', teacherId: accountId };
+  }
+  return null;
+};
+
+const appendAnalyticsScopeFilter = ({ scope, params, studentColumn }) => {
+  if (scope?.type === 'teacher') return appendTeacherScopeFilter({ teacherId: scope.teacherId, params, studentColumn });
+  if (scope?.type === 'parent') return appendParentScopeFilter({ parentId: scope.parentId, params, studentColumn });
+  return '';
+};
 
 const requireAccountManagementAdmin = (req, res, next) => {
   if (!req.authenticatedUser) {
@@ -897,12 +920,16 @@ const normalizeTopAchieverRow = (row, index = 0) => {
 };
 
 const verifyParentChildAccess = async (req, res, next) => {
-  const parentId = await resolveParentAccountId(req.query.parent_id);
+  if (!req.authenticatedUser) {
+    return res.status(401).json({ error: 'Authentication is required.' });
+  }
+  if (!accountHasParentAccess(req.authenticatedUser.role)) {
+    return res.status(403).json({ error: 'This account cannot access child analytics.' });
+  }
+
+  const parentId = Number(req.authenticatedUser.id);
   const studentId = resolveScopeId(req.params.studentId);
 
-  if (!parentId) {
-    return res.status(400).json({ error: 'A valid parent ID is required.' });
-  }
   if (!studentId || Number.isNaN(studentId)) {
     return res.status(400).json({ error: 'A valid student ID is required.' });
   }
@@ -982,6 +1009,52 @@ const validateUploadedLearningFile = (file, fileType) => {
   }
 
   return 'Invalid file type for the selected upload type.';
+};
+
+const verifyScopedStudentAnalyticsAccess = async (req, res, next) => {
+  const scope = resolveAnalyticsScope(req);
+  const studentId = resolveScopeId(req.params.studentId ?? req.params.student_id);
+
+  if (!studentId || Number.isNaN(studentId)) {
+    return res.status(400).json({ error: 'A valid student ID is required.' });
+  }
+  if (scope?.type === 'all') return next();
+  if (!scope || !['teacher', 'parent'].includes(scope.type)) {
+    return res.status(403).json({ error: 'This account cannot access student analytics.' });
+  }
+
+  const scopeOwnerId = scope.type === 'parent' ? scope.parentId : scope.teacherId;
+  const relationshipClause = scope.type === 'parent'
+    ? "AND LOWER(tsr.relationship_type) = 'parent'"
+    : '';
+
+  try {
+    const relationResult = await pool.query(
+      `SELECT 1
+       FROM public.teacher_student_relationships tsr
+       JOIN public.accounts scope_owner
+         ON scope_owner.id = tsr.teacher_id
+        AND COALESCE(scope_owner.is_archived, false) = false
+       JOIN public.accounts child
+         ON child.id = tsr.student_id
+        AND COALESCE(child.is_archived, false) = false
+       WHERE tsr.teacher_id = $1
+         AND tsr.student_id = $2
+         ${relationshipClause}
+       LIMIT 1`,
+      [scopeOwnerId, studentId]
+    );
+
+    if (relationResult.rows.length === 0) {
+      return res.status(403).json({ error: 'This account cannot access this student.' });
+    }
+
+    req.scopedStudentAnalyticsAccess = { scope, studentId };
+    next();
+  } catch (err) {
+    console.error('Student analytics access verification failed:', err.message);
+    res.status(500).json({ error: 'Failed to verify student analytics access.' });
+  }
 };
 
 const gradeNumber = (gradeLevel) => {
@@ -4228,13 +4301,7 @@ app.put('/api/user/:id', async (req, res) => {
 // --- NEW: Get Top Achievers (game progress data) ---
 const handleTopAchieversRequest = async (req, res) => {
   try {
-    const parentId = await resolveParentAccountId(req.query.parent_id);
-    const teacherId = resolveTeacherScopeId(req.query.teacher_id);
-
-    // Validate scope IDs if provided
-    if ((req.query.parent_id && parentId === null) || (teacherId && Number.isNaN(teacherId))) {
-      return res.status(400).json({ error: 'Invalid scope ID' });
-    }
+    const scope = resolveAnalyticsScope(req);
 
     const params = [];
     let query = `
@@ -4284,13 +4351,7 @@ const handleTopAchieversRequest = async (req, res) => {
         WHERE 1=1
     `;
 
-    // Apply scope filtering only if scope IDs are provided
-    if (parentId) {
-      query += appendParentScopeFilter({ parentId, params, studentColumn: 'p.student_id' });
-    } else if (teacherId) {
-      query += appendTeacherScopeFilter({ teacherId, params, studentColumn: 'p.student_id' });
-    }
-    // If neither parentId nor teacherId is provided, show all (admin access)
+    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'p.student_id' });
 
     query += `
       ) ranked_progress
@@ -4307,17 +4368,15 @@ const handleTopAchieversRequest = async (req, res) => {
   }
 };
 
-app.get('/api/top-achievers', handleTopAchieversRequest);
-app.get('/api/leaderboard/top-achievers', handleTopAchieversRequest);
+app.get('/api/top-achievers', requireAnalyticsAccess, handleTopAchieversRequest);
+app.get('/api/leaderboard/top-achievers', requireAnalyticsAccess, handleTopAchieversRequest);
 
 // --- ENHANCED: Get Recent Activity Logs with Filtering & Role-Based Access ---
-app.get('/api/activity-logs', async (req, res) => {
+app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
   try {
     const {
       limit = 50,
       offset = 0,
-      teacher_id = null,
-      parent_id = null,
       student_id = null,
       grade_level = null,
       section = null,
@@ -4330,8 +4389,7 @@ app.get('/api/activity-logs', async (req, res) => {
     const queryLimit = Math.min(parseInt(limit) || 50, 500);
     const queryOffset = Math.max(parseInt(offset) || 0, 0);
     const searchTerm = search ? `%${search.toLowerCase()}%` : null;
-    const parentId = await resolveParentAccountId(parent_id);
-    if (parent_id && parentId === null) return res.status(400).json({ error: 'Invalid parent ID' });
+    const scope = resolveAnalyticsScope(req);
     const selectedStudentId = resolveScopeId(student_id);
     if (Number.isNaN(selectedStudentId)) return res.status(400).json({ error: 'Invalid student ID' });
 
@@ -4366,39 +4424,8 @@ app.get('/api/activity-logs', async (req, res) => {
     `;
 
     const params = [];
-    let paramIndex = 1;
-
-    // Teacher-based filtering: only show their assigned students
-    if (teacher_id) {
-      query += `
-        AND al.student_id IN (
-          SELECT tsr.student_id 
-          FROM public.teacher_student_relationships tsr
-          JOIN public.accounts scope_owner
-            ON scope_owner.id = tsr.teacher_id
-           AND COALESCE(scope_owner.is_archived, false) = false
-          WHERE tsr.teacher_id = $${paramIndex}
-        )
-      `;
-      params.push(teacher_id);
-      paramIndex++;
-    }
-
-    if (parentId) {
-      query += `
-        AND al.student_id IN (
-          SELECT tsr.student_id
-          FROM public.teacher_student_relationships tsr
-          JOIN public.accounts scope_owner
-            ON scope_owner.id = tsr.teacher_id
-           AND COALESCE(scope_owner.is_archived, false) = false
-          WHERE tsr.teacher_id = $${paramIndex}
-            AND LOWER(tsr.relationship_type) = 'parent'
-        )
-      `;
-      params.push(parentId);
-      paramIndex++;
-    }
+    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'al.student_id' });
+    let paramIndex = params.length + 1;
 
     if (selectedStudentId) {
       query += ` AND al.student_id = $${paramIndex}`;
@@ -4453,38 +4480,8 @@ app.get('/api/activity-logs', async (req, res) => {
     // Get total count for pagination metadata
     let countQuery = `SELECT COUNT(*) as total FROM public.activity_logs al WHERE 1=1`;
     let countParams = [];
-    let countParamIndex = 1;
-
-    if (teacher_id) {
-      countQuery += `
-        AND al.student_id IN (
-          SELECT tsr.student_id 
-          FROM public.teacher_student_relationships tsr
-          JOIN public.accounts scope_owner
-            ON scope_owner.id = tsr.teacher_id
-           AND COALESCE(scope_owner.is_archived, false) = false
-          WHERE tsr.teacher_id = $${countParamIndex}
-        )
-      `;
-      countParams.push(teacher_id);
-      countParamIndex++;
-    }
-
-    if (parentId) {
-      countQuery += `
-        AND al.student_id IN (
-          SELECT tsr.student_id
-          FROM public.teacher_student_relationships tsr
-          JOIN public.accounts scope_owner
-            ON scope_owner.id = tsr.teacher_id
-           AND COALESCE(scope_owner.is_archived, false) = false
-          WHERE tsr.teacher_id = $${countParamIndex}
-            AND LOWER(tsr.relationship_type) = 'parent'
-        )
-      `;
-      countParams.push(parentId);
-      countParamIndex++;
-    }
+    countQuery += appendAnalyticsScopeFilter({ scope, params: countParams, studentColumn: 'al.student_id' });
+    let countParamIndex = countParams.length + 1;
 
     if (selectedStudentId) {
       countQuery += ` AND al.student_id = $${countParamIndex}`;
@@ -4708,6 +4705,19 @@ const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
           AND LOWER(tsr.relationship_type) = 'parent'
       )`);
     }
+  }
+
+  if (scope === 'teacher') {
+    const teacherAccountId = Number(req.authenticatedUser.id);
+    const teacherAccountPlaceholder = addParam(teacherAccountId);
+    filters.push(`ps.student_id IN (
+      SELECT tsr.student_id
+      FROM public.teacher_student_relationships tsr
+      JOIN public.accounts child
+        ON child.id = tsr.student_id
+       AND COALESCE(child.is_archived, false) = false
+      WHERE tsr.teacher_id = ${teacherAccountPlaceholder}
+    )`);
   }
 
   const dateValue = String(req.query.date || req.query.date_played || '').trim();
@@ -5043,7 +5053,7 @@ app.post('/api/playtime/end', async (req, res) => {
   }
 });
 
-app.get('/api/playtime/today/:student_id', async (req, res) => {
+app.get('/api/playtime/today/:student_id', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, async (req, res) => {
   try {
     const studentId = resolvePositiveInteger(req.params.student_id);
     if (!studentId || Number.isNaN(studentId)) {
@@ -5068,7 +5078,10 @@ app.get('/api/playtime/today/:student_id', async (req, res) => {
 app.get(
   '/api/playtime',
   requireAuthenticatedRoles(['admin', 'teacher', 'parent_teacher']),
-  (req, res) => handlePlaytimeListRequest(req, res, { scope: 'all' })
+  (req, res) => {
+    const analyticsScope = resolveAnalyticsScope(req);
+    return handlePlaytimeListRequest(req, res, { scope: analyticsScope?.type === 'all' ? 'all' : 'teacher' });
+  }
 );
 
 app.get(
@@ -5077,12 +5090,9 @@ app.get(
   (req, res) => handlePlaytimeListRequest(req, res, { scope: 'children' })
 );
 
-app.get('/api/parent/children', async (req, res) => {
+app.get('/api/parent/children', requireParentAnalyticsAccess, async (req, res) => {
   try {
-    const parentId = await resolveParentAccountId(req.query.parent_id);
-    if (!parentId) {
-      return res.status(400).json({ error: 'A valid parent ID is required.' });
-    }
+    const parentId = Number(req.authenticatedUser.id);
 
     const childrenResult = await pool.query(
       `SELECT s.id,
@@ -5138,7 +5148,7 @@ app.get('/api/parent/children', async (req, res) => {
   }
 });
 
-app.get('/api/parent/children/:studentId/quizzes', verifyParentChildAccess, async (req, res) => {
+app.get('/api/parent/children/:studentId/quizzes', requireParentAnalyticsAccess, verifyParentChildAccess, async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
@@ -5179,7 +5189,7 @@ app.get('/api/parent/children/:studentId/quizzes', verifyParentChildAccess, asyn
   }
 });
 
-app.get('/api/parent/children/:studentId/topics', verifyParentChildAccess, async (req, res) => {
+app.get('/api/parent/children/:studentId/topics', requireParentAnalyticsAccess, verifyParentChildAccess, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT math_topic,
@@ -5200,16 +5210,18 @@ app.get('/api/parent/children/:studentId/topics', verifyParentChildAccess, async
   }
 });
 
-app.get('/api/students', async (req, res) => {
+app.get('/api/students', requireAuthenticatedRoles(['admin', 'teacher', 'parent_teacher']), async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT a.id, a.game_student_id, a.name, a.email, a.role, a.mobile_number, a.address, a.birthday, a.gender, a.status,
+    const scope = resolveAnalyticsScope(req);
+    const params = [];
+    let query = `SELECT a.id, a.game_student_id, a.name, a.email, a.role, a.mobile_number, a.address, a.birthday, a.gender, a.status,
               p.score, p.correct_answers, p.total_questions, p.accuracy_rate, p.progress_percentage, p.current_quest
-       FROM accounts a
-       LEFT JOIN public.student_game_progress p ON a.id = p.student_id
-      WHERE LOWER(a.role) = 'student' AND COALESCE(a.is_archived, false) = false
-       ORDER BY a.name`
-    );
+        FROM accounts a
+        LEFT JOIN public.student_game_progress p ON a.id = p.student_id
+       WHERE LOWER(a.role) = 'student' AND COALESCE(a.is_archived, false) = false`;
+    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'a.id' });
+    query += ' ORDER BY a.name';
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
     console.error('Fetch students failed:', err.message);
@@ -5217,13 +5229,9 @@ app.get('/api/students', async (req, res) => {
   }
 });
 
-app.get('/api/students/progress', async (req, res) => {
+app.get('/api/students/progress', requireAnalyticsAccess, async (req, res) => {
   try {
-    const teacherId = resolveTeacherScopeId(req.query.teacher_id);
-    if (Number.isNaN(teacherId)) return res.status(400).json({ error: 'Invalid teacher ID' });
-    const parentId = await resolveParentAccountId(req.query.parent_id);
-    if (req.query.parent_id && parentId === null) return res.status(400).json({ error: 'Invalid parent ID' });
-
+    const scope = resolveAnalyticsScope(req);
     const params = [];
     let query = `
       SELECT p.*, a.name AS student_name, a.email AS student_email, a.role AS student_role, a.game_student_id
@@ -5231,8 +5239,7 @@ app.get('/api/students/progress', async (req, res) => {
       LEFT JOIN accounts a ON a.id = p.student_id
       WHERE 1=1
     `;
-    query += appendTeacherScopeFilter({ teacherId, params, studentColumn: 'p.student_id' });
-    query += appendParentScopeFilter({ parentId, params, studentColumn: 'p.student_id' });
+    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'p.student_id' });
     query += " ORDER BY LOWER(COALESCE(NULLIF(a.name, ''), NULLIF(p.student_name, ''), '')), p.student_id ASC";
 
     const result = await pool.query(query, params);
@@ -5248,13 +5255,9 @@ app.get('/api/students/progress', async (req, res) => {
   }
 });
 
-app.get('/api/analytics/overview', async (req, res) => {
+app.get('/api/analytics/overview', requireAnalyticsAccess, async (req, res) => {
   try {
-    const teacherId = resolveTeacherScopeId(req.query.teacher_id);
-    if (Number.isNaN(teacherId)) return res.status(400).json({ error: 'Invalid teacher ID' });
-    const parentId = await resolveParentAccountId(req.query.parent_id);
-    if (req.query.parent_id && parentId === null) return res.status(400).json({ error: 'Invalid parent ID' });
-
+    const scope = resolveAnalyticsScope(req);
     const params = [];
     let query = `
       SELECT p.*, a.name AS student_name, a.email AS student_email, a.role AS student_role, a.game_student_id
@@ -5262,8 +5265,7 @@ app.get('/api/analytics/overview', async (req, res) => {
       LEFT JOIN accounts a ON a.id = p.student_id
       WHERE 1=1
     `;
-    query += appendTeacherScopeFilter({ teacherId, params, studentColumn: 'p.student_id' });
-    query += appendParentScopeFilter({ parentId, params, studentColumn: 'p.student_id' });
+    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'p.student_id' });
 
     const result = await pool.query(query, params);
     const rows = result.rows.map(normalizeStudentProgressRow).map((row) => ({
@@ -5293,13 +5295,9 @@ app.get('/api/analytics/overview', async (req, res) => {
   }
 });
 
-app.get('/api/analytics/recommendations', async (req, res) => {
+app.get('/api/analytics/recommendations', requireAnalyticsAccess, async (req, res) => {
   try {
-    const teacherId = resolveTeacherScopeId(req.query.teacher_id);
-    if (Number.isNaN(teacherId)) return res.status(400).json({ error: 'Invalid teacher ID' });
-    const parentId = await resolveParentAccountId(req.query.parent_id);
-    if (req.query.parent_id && parentId === null) return res.status(400).json({ error: 'Invalid parent ID' });
-
+    const scope = resolveAnalyticsScope(req);
     const params = [];
     let query = `
       SELECT p.*, a.name AS student_name, a.email AS student_email, a.role AS student_role, a.game_student_id
@@ -5307,8 +5305,7 @@ app.get('/api/analytics/recommendations', async (req, res) => {
       LEFT JOIN accounts a ON a.id = p.student_id
       WHERE 1=1
     `;
-    query += appendTeacherScopeFilter({ teacherId, params, studentColumn: 'p.student_id' });
-    query += appendParentScopeFilter({ parentId, params, studentColumn: 'p.student_id' });
+    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'p.student_id' });
 
     const result = await pool.query(query, params);
     const rows = result.rows.map(normalizeStudentProgressRow).map((row) => ({
@@ -5324,8 +5321,9 @@ app.get('/api/analytics/recommendations', async (req, res) => {
   }
 });
 
-app.get('/api/students/progress-analysis', async (req, res) => {
+app.get('/api/students/progress-analysis', requireAuthenticatedRoles(['admin', 'teacher', 'parent_teacher']), async (req, res) => {
   try {
+    const scope = resolveAnalyticsScope(req);
     const minScore = parseInt(req.query.minScore, 10);
     const minAccuracy = parseInt(req.query.minAccuracy, 10);
 
@@ -5345,7 +5343,10 @@ app.get('/api/students/progress-analysis', async (req, res) => {
     }
     if (filters.length > 0) {
       baseQuery += ` WHERE ${filters.join(' AND ')}`;
+    } else {
+      baseQuery += ' WHERE 1=1';
     }
+    baseQuery += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'p.student_id' });
     baseQuery += ' ORDER BY p.score DESC, p.accuracy_rate DESC';
 
     const result = await pool.query(baseQuery, params);
@@ -5382,14 +5383,11 @@ app.get('/api/students/progress-analysis', async (req, res) => {
   }
 });
 
-app.get('/api/student-progress/:studentId', async (req, res) => {
+app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
     if (Number.isNaN(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
-    const teacherId = resolveTeacherScopeId(req.query.teacher_id);
-    if (Number.isNaN(teacherId)) return res.status(400).json({ error: 'Invalid teacher ID' });
-    const parentId = await resolveParentAccountId(req.query.parent_id);
-    if (req.query.parent_id && parentId === null) return res.status(400).json({ error: 'Invalid parent ID' });
+    const scope = resolveAnalyticsScope(req);
 
     const params = [studentId];
     let query = `
@@ -5398,8 +5396,7 @@ app.get('/api/student-progress/:studentId', async (req, res) => {
       LEFT JOIN accounts a ON a.id = p.student_id
       WHERE p.student_id = $1
     `;
-    query += appendTeacherScopeFilter({ teacherId, params, studentColumn: 'p.student_id' });
-    query += appendParentScopeFilter({ parentId, params, studentColumn: 'p.student_id' });
+    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'p.student_id' });
     query += ' ORDER BY p.last_played DESC LIMIT 1';
 
     const result = await pool.query(query, params);

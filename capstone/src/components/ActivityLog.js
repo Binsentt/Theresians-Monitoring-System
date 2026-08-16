@@ -9,6 +9,7 @@ import {
   shouldShowActivityLogFilters,
 } from './activityLog.utils';
 import { buildScopedApiUrl } from './analyticsEndpoints';
+import { buildAuthHeaders } from './session.utils';
 import { sortStudentsByName } from './studentProgress.utils';
 
 const GRADE_SECTIONS = {
@@ -69,7 +70,9 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
 
       setChildrenLoaded(false);
       try {
-        const response = await fetch(buildScopedApiUrl('/api/parent/children', 'parent', userId));
+        const response = await fetch(buildScopedApiUrl('/api/parent/children', 'parent'), {
+          headers: buildAuthHeaders(),
+        });
         if (!response.ok) throw new Error('Failed to load children');
         const payload = await response.json();
         const children = sortStudentsByName(Array.isArray(payload?.children) ? payload.children : []);
@@ -126,7 +129,9 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
           selectedSection,
         });
 
-        const response = await fetch(buildScopedApiUrl(`/api/activity-logs?${queryParams.toString()}`, role, userId));
+        const response = await fetch(buildScopedApiUrl(`/api/activity-logs?${queryParams.toString()}`, role), {
+          headers: buildAuthHeaders(),
+        });
         if (!response.ok) throw new Error('Failed to load activity logs');
 
         const payload = await response.json();

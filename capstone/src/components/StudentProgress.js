@@ -4,6 +4,7 @@ import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } 
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
 import { apiUrl } from '../api';
+import { buildAuthHeaders } from './session.utils';
 import {
   filterStudentProgress,
   getDefaultSection,
@@ -37,10 +38,11 @@ export default function StudentProgress() {
           setUserRole(loggedInUser.role.toLowerCase());
         }
 
+        const requestOptions = { headers: buildAuthHeaders() };
         const [studentsResult, overviewResult, recommendationsResult] = await Promise.allSettled([
-          fetch(apiUrl('/api/students/progress')),
-          fetch(apiUrl('/api/analytics/overview')),
-          fetch(apiUrl('/api/analytics/recommendations')),
+          fetch(apiUrl('/api/students/progress'), requestOptions),
+          fetch(apiUrl('/api/analytics/overview'), requestOptions),
+          fetch(apiUrl('/api/analytics/recommendations'), requestOptions),
         ]);
 
         if (studentsResult.status !== 'fulfilled' || !studentsResult.value.ok) {

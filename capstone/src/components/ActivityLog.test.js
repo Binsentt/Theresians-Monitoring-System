@@ -16,6 +16,7 @@ describe('ActivityLog table', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
+    localStorage.setItem('token', 'activity-log-token');
   });
 
   afterEach(() => {
@@ -95,6 +96,10 @@ describe('ActivityLog table', () => {
     expect(container.textContent).toContain('Ava Santos');
     expect(requestedActivityUrls.length).toBeGreaterThan(0);
     expect(requestedActivityUrls.every((url) => url.includes('student_id=44'))).toBe(true);
-    expect(requestedActivityUrls.every((url) => url.includes('parent_id=19'))).toBe(true);
+    expect(requestedActivityUrls.every((url) => url.includes('scope=parent'))).toBe(true);
+    expect(requestedActivityUrls.every((url) => !url.includes('parent_id=19'))).toBe(true);
+    expect(global.fetch.mock.calls.every(([, options]) => (
+      options?.headers?.Authorization === 'Bearer activity-log-token'
+    ))).toBe(true);
   });
 });

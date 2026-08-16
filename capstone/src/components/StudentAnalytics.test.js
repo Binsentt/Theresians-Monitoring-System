@@ -30,6 +30,7 @@ describe('StudentAnalytics defensive rendering', () => {
     mockNavigate.mockReset();
     localStorage.clear();
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin' }));
+    localStorage.setItem('token', 'student-detail-token');
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -69,6 +70,7 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('88%');
     expect(container.textContent).toContain('Practice fractions.');
     expect(container.textContent).not.toContain('[object Object]');
+    expect(global.fetch.mock.calls[0][1]?.headers?.Authorization).toBe('Bearer student-detail-token');
   });
 
   test('renders a modern analytics dashboard with profile details and metric cards', async () => {

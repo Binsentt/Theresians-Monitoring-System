@@ -49,6 +49,7 @@ describe('ParentDashboard defensive game data rendering', () => {
     mockNavigate.mockReset();
     localStorage.clear();
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 19, role: 'parent', name: 'Parent User' }));
+    localStorage.setItem('token', 'parent-dashboard-token');
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -83,5 +84,8 @@ describe('ParentDashboard defensive game data rendering', () => {
     expect(container.textContent).toContain('No game progress data available yet.');
     expect(container.textContent).toContain('Practice fractions.');
     expect(mockNavigate).not.toHaveBeenCalledWith('/login');
+    expect(global.fetch.mock.calls.every(([, options]) => (
+      options?.headers?.Authorization === 'Bearer parent-dashboard-token'
+    ))).toBe(true);
   });
 });

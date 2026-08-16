@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { apiUrl } from '../api';
+import { buildAuthHeaders } from './session.utils';
 import '../styles/topachievers.css';
 
 export default function TopAchievers() {
@@ -10,7 +11,9 @@ export default function TopAchievers() {
   useEffect(() => {
     const fetchTopAchievers = async () => {
       try {
-        const response = await fetch(apiUrl('/api/top-achievers'));
+        const response = await fetch(apiUrl('/api/top-achievers'), {
+          headers: buildAuthHeaders(),
+        });
         if (response.ok) {
           const data = await response.json();
           setTopAchievers(data);

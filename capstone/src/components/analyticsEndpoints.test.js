@@ -1,33 +1,33 @@
 import { buildScopedApiUrl, buildStudentProgressDetailUrl } from './analyticsEndpoints';
 
 describe('analytics endpoint helpers', () => {
-  test('adds parent_id for parent-scoped analytics requests', () => {
+  test('uses a non-identity parent context selector for parent-scoped analytics requests', () => {
     expect(buildScopedApiUrl('/api/analytics/overview', 'parent', 19)).toBe(
-      '/api/analytics/overview?parent_id=19'
+      '/api/analytics/overview?scope=parent'
     );
   });
 
-  test('preserves existing query parameters when parent scoping is added', () => {
+  test('preserves existing query parameters when parent context is added', () => {
     expect(buildScopedApiUrl('/api/students/progress?limit=10', 'parent', 19)).toBe(
-      '/api/students/progress?limit=10&parent_id=19'
+      '/api/students/progress?limit=10&scope=parent'
     );
   });
 
-  test('adds teacher_id for teacher-scoped analytics requests', () => {
+  test('does not place a teacher identity in analytics requests', () => {
     expect(buildScopedApiUrl('/api/analytics/recommendations', 'teacher', 16)).toBe(
-      '/api/analytics/recommendations?teacher_id=16'
+      '/api/analytics/recommendations'
     );
   });
 
-  test('adds teacher_id for Parent/Teacher users on teacher-scoped requests', () => {
+  test('uses teacher context by default for Parent/Teacher analytics requests', () => {
     expect(buildScopedApiUrl('/api/students/progress', 'parent_teacher', 16)).toBe(
-      '/api/students/progress?teacher_id=16'
+      '/api/students/progress'
     );
   });
 
   test('builds parent-scoped student detail URLs', () => {
     expect(buildStudentProgressDetailUrl(20, 'parent', 19)).toBe(
-      '/api/student-progress/20?parent_id=19'
+      '/api/student-progress/20?scope=parent'
     );
   });
 

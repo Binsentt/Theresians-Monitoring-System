@@ -73,7 +73,7 @@ describe('normalizeActivityLogPayload', () => {
     expect(params.get('offset')).toBe('10');
   });
 
-  test('keeps teacher-specific filtering parameters intact', () => {
+  test('does not include a caller-supplied teacher identity in activity log filters', () => {
     const params = buildActivityLogQueryParams({
       role: 'teacher',
       userId: 16,
@@ -82,7 +82,7 @@ describe('normalizeActivityLogPayload', () => {
       selectedSection: 'Section B',
     });
 
-    expect(params.get('teacher_id')).toBe('16');
+    expect(params.get('teacher_id')).toBeNull();
     expect(params.get('search')).toBe('beta');
     expect(params.get('grade_level')).toBe('Grade 5');
     expect(params.get('section')).toBe('Section B');

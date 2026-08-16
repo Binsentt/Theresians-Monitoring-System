@@ -15,6 +15,7 @@ import {
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { buildStudentProgressDetailUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
+import { buildAuthHeaders } from './session.utils';
 import { clampPercent, normalizeDisplayList, safeDisplayText, toFiniteNumber } from './studentProgress.utils';
 import '../styles/studentprogress.css';
 
@@ -52,7 +53,9 @@ export default function StudentAnalytics() {
       }
 
       try {
-        const response = await fetch(buildStudentProgressDetailUrl(studentId, loggedInUser?.role, loggedInUser?.id));
+        const response = await fetch(buildStudentProgressDetailUrl(studentId, loggedInUser?.role), {
+          headers: buildAuthHeaders(),
+        });
         if (!response.ok) throw new Error('Unable to load student analytics');
         const data = await response.json();
         setProgress(data.progress || null);

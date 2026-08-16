@@ -87,6 +87,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
     mockNavigate.mockReset();
     localStorage.clear();
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 19, role: 'parent', name: 'Parent User' }));
+    localStorage.setItem('token', 'parent-analytics-token');
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -123,6 +124,9 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('No game progress data available yet.');
     expect(container.textContent).not.toContain('My Children');
     expect(mockNavigate).not.toHaveBeenCalledWith('/login');
+    expect(global.fetch.mock.calls.every(([, options]) => (
+      options?.headers?.Authorization === 'Bearer parent-analytics-token'
+    ))).toBe(true);
   });
 
   test('shows the selector first when the parent has multiple linked children', async () => {

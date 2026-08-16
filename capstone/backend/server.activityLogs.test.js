@@ -4,11 +4,17 @@ const Module = require('node:module');
 
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
+const authenticatedParent = { id: 19, role: 'parent', session_version: 0, is_archived: false };
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const mockPool = {
   query: async (sql, params = []) => {
-    return (await queryHandler(compactSql(sql), params, sql)) || emptyResult;
+    const result = (await queryHandler(compactSql(sql), params, sql)) || emptyResult;
+    if (result.rows?.length > 0) return result;
+    if (compactSql(sql).startsWith('select * from public.accounts where id = $1') && Number(params[0]) === 19) {
+      return resultRows([authenticatedParent]);
+    }
+    return result;
   },
 };
 
@@ -34,7 +40,7 @@ const serverDependencyStubs = {
   cors: () => createMiddleware(),
   jsonwebtoken: {
     sign: () => 'token',
-    verify: () => ({}),
+    verify: (token) => (token === 'parent-token' ? { userId: 19, sessionVersion: 0 } : {}),
   },
   multer: multerStub,
   'pdf-parse': async () => ({ text: '' }),
@@ -137,7 +143,9 @@ test('activity log API accepts Godot session aliases and scoped child filters', 
       return emptyResult;
     });
 
-    const response = await requestJson(baseUrl, '/api/activity-logs?parent_id=19&student_id=44&limit=10');
+    const response = await requestJson(baseUrl, '/api/activity-logs?parent_id=19&student_id=44&limit=10', {
+      headers: { Authorization: 'Bearer parent-token' },
+    });
 
     assert.equal(response.status, 200);
     assert.match(mainQuery, /al\.student_id = \$2/);

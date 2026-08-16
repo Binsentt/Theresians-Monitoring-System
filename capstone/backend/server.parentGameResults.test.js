@@ -4,12 +4,27 @@ const Module = require('node:module');
 
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
+const authenticatedAccounts = {
+  1: { id: 1, role: 'admin', session_version: 0, is_archived: false },
+  16: { id: 16, role: 'teacher', session_version: 0, is_archived: false },
+  19: { id: 19, role: 'parent', parent_id: '112832', session_version: 0, is_archived: false },
+};
+const tokenPayloads = {
+  'admin-token': { userId: 1, sessionVersion: 0 },
+  'teacher-token': { userId: 16, sessionVersion: 0 },
+  'parent-token': { userId: 19, sessionVersion: 0 },
+};
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const runQuery = async (sql, params = []) => {
   const compacted = compactSql(sql);
   const result = (await queryHandler(compacted, params, sql)) || emptyResult;
   if (result.rows?.length > 0) return result;
+
+  if (compacted.startsWith('select * from public.accounts where id = $1')) {
+    const account = authenticatedAccounts[Number(params[0])];
+    return account ? { rows: [account] } : emptyResult;
+  }
 
   // Current routes resolve either an internal parent key or the six-digit parent code before child access.
   // These tests are about the following relationship route, so supply that resolver seam by default.
@@ -52,7 +67,7 @@ const serverDependencyStubs = {
   cors: () => createMiddleware(),
   jsonwebtoken: {
     sign: () => 'token',
-    verify: () => ({}),
+    verify: (token) => tokenPayloads[token] || {},
   },
   multer: multerStub,
   'pdf-parse': async () => ({ text: '' }),
@@ -101,6 +116,8 @@ const requestJson = async (baseUrl, path, options = {}) => {
     body: await response.json(),
   };
 };
+
+const authHeaders = (token) => ({ Authorization: `Bearer ${token}` });
 
 const createResponse = () => ({
   statusCode: 200,
@@ -477,7 +494,9 @@ test('parent game results routes and access middleware', async (t) => {
       return emptyResult;
     });
 
-    const response = await requestJson(baseUrl, '/api/parent/children/44/quizzes?parent_id=19&page=1&limit=20');
+    const response = await requestJson(baseUrl, '/api/parent/children/44/quizzes?parent_id=19&page=1&limit=20', {
+      headers: authHeaders('parent-token'),
+    });
 
     assert.equal(response.status, 200);
     assert.equal(response.body.data[0].math_topic, 'Fractions');
@@ -499,7 +518,9 @@ test('parent game results routes and access middleware', async (t) => {
       return emptyResult;
     });
 
-    const response = await requestJson(baseUrl, '/api/parent/children/44/quizzes?parent_id=21');
+    const response = await requestJson(baseUrl, '/api/parent/children/44/quizzes?parent_id=21', {
+      headers: authHeaders('parent-token'),
+    });
 
     assert.equal(response.status, 403);
     assert.equal(response.body.error, 'Parent cannot access this child.');
@@ -517,7 +538,9 @@ test('parent game results routes and access middleware', async (t) => {
       return emptyResult;
     });
 
-    const response = await requestJson(baseUrl, '/api/parent/children/44/topics?parent_id=19');
+    const response = await requestJson(baseUrl, '/api/parent/children/44/topics?parent_id=19', {
+      headers: authHeaders('parent-token'),
+    });
 
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, [{ math_topic: 'Fractions', times_played: 3, best_score: 9 }]);
@@ -543,7 +566,9 @@ test('parent game results routes and access middleware', async (t) => {
       return emptyResult;
     });
 
-    const response = await requestJson(baseUrl, '/api/parent/children?parent_id=19');
+    const response = await requestJson(baseUrl, '/api/parent/children?parent_id=19', {
+      headers: authHeaders('parent-token'),
+    });
 
     assert.equal(response.status, 200);
     assert.equal(response.body.unlinked_count, 0);
@@ -554,6 +579,9 @@ test('parent game results routes and access middleware', async (t) => {
   await t.test('student analytics detail only uses the requested linked child data', async () => {
     const queriedStudentIds = [];
     setQueryHandler(async (sql, params) => {
+      if (sql.startsWith('select 1') && sql.includes('from public.teacher_student_relationships')) {
+        return resultRows([{ linked: true }]);
+      }
       if (sql.startsWith('select p.*') && sql.includes('where p.student_id = $1')) {
         queriedStudentIds.push(params[0]);
         return resultRows([{
@@ -585,7 +613,9 @@ test('parent game results routes and access middleware', async (t) => {
       return emptyResult;
     });
 
-    const response = await requestJson(baseUrl, '/api/student-progress/44?parent_id=19');
+    const response = await requestJson(baseUrl, '/api/student-progress/44?parent_id=19', {
+      headers: authHeaders('parent-token'),
+    });
 
     assert.equal(response.status, 200);
     assert.equal(response.body.progress.student_id, 44);
@@ -607,7 +637,9 @@ test('parent game results routes and access middleware', async (t) => {
       return emptyResult;
     });
 
-    const response = await requestJson(baseUrl, '/api/students/progress?teacher_id=16');
+    const response = await requestJson(baseUrl, '/api/students/progress?teacher_id=16', {
+      headers: authHeaders('teacher-token'),
+    });
 
     assert.equal(response.status, 200);
     assert.deepEqual(response.body.map((row) => row.student_id), [44, 45]);
@@ -643,7 +675,9 @@ test('parent game results routes and access middleware', async (t) => {
       return emptyResult;
     });
 
-    const response = await requestJson(baseUrl, '/api/leaderboard/top-achievers?teacher_id=16');
+    const response = await requestJson(baseUrl, '/api/leaderboard/top-achievers?teacher_id=16', {
+      headers: authHeaders('teacher-token'),
+    });
 
     assert.equal(response.status, 200);
     assert.equal(receivedSql.includes('coalesce(p.total_quests_completed'), true);
@@ -663,7 +697,9 @@ test('parent game results routes and access middleware', async (t) => {
       return emptyResult;
     });
 
-    const response = await requestJson(baseUrl, '/api/parent/children/44/topics?parent_id=21');
+    const response = await requestJson(baseUrl, '/api/parent/children/44/topics?parent_id=21', {
+      headers: authHeaders('parent-token'),
+    });
 
     assert.equal(response.status, 403);
     assert.equal(response.body.error, 'Parent cannot access this child.');
@@ -677,7 +713,7 @@ test('parent game results routes and access middleware', async (t) => {
       return emptyResult;
     });
 
-    const req = { query: { parent_id: '19' }, params: { studentId: '44' } };
+    const req = { authenticatedUser: authenticatedAccounts[19], query: { parent_id: '19' }, params: { studentId: '44' } };
     const res = createResponse();
     let nextCalled = false;
 
@@ -705,7 +741,9 @@ test('parent game results routes and access middleware', async (t) => {
       return emptyResult;
     });
 
-    const response = await requestJson(baseUrl, '/api/parent/children?parent_id=112832');
+    const response = await requestJson(baseUrl, '/api/parent/children?parent_id=112832', {
+      headers: authHeaders('parent-token'),
+    });
 
     assert.equal(response.status, 200);
     assert.equal(parentScopeParams[0], 19);
@@ -738,7 +776,9 @@ test('student monitoring keeps the external six-digit game Student ID beside the
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/students/progress');
+  const response = await requestJson(baseUrl, '/api/students/progress', {
+    headers: authHeaders('admin-token'),
+  });
 
   assert.equal(response.status, 200);
   assert.equal(response.body[0].student_id, 44);
@@ -754,6 +794,9 @@ test('student analytics reports insufficient data instead of inferring hard-ques
   });
 
   setQueryHandler(async (sql) => {
+    if (sql.startsWith('select 1') && sql.includes('from public.teacher_student_relationships')) {
+      return resultRows([{ linked: true }]);
+    }
     if (sql.startsWith('select id') && sql.includes('from public.accounts') && sql.includes('where id = $1')) {
       return emptyResult;
     }
@@ -778,7 +821,9 @@ test('student analytics reports insufficient data instead of inferring hard-ques
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/student-progress/44?parent_id=112832');
+  const response = await requestJson(baseUrl, '/api/student-progress/44?parent_id=112832', {
+    headers: authHeaders('parent-token'),
+  });
 
   assert.equal(response.status, 200);
   assert.equal(response.body.analysis.dataAvailability, 'insufficient');
@@ -796,6 +841,9 @@ test('student analytics derives difficulty recommendations from recorded questio
   });
 
   setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select 1') && sql.includes('from public.teacher_student_relationships')) {
+      return resultRows([{ linked: true }]);
+    }
     if (sql.startsWith('select p.*') && sql.includes('where p.student_id = $1')) {
       return resultRows([{
         student_id: params[0],
@@ -820,7 +868,9 @@ test('student analytics derives difficulty recommendations from recorded questio
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/student-progress/44');
+  const response = await requestJson(baseUrl, '/api/student-progress/44', {
+    headers: authHeaders('admin-token'),
+  });
 
   assert.equal(response.status, 200);
   assert.equal(response.body.analysis.dataAvailability, 'sufficient');

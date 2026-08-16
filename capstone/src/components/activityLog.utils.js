@@ -14,7 +14,6 @@ export function buildActivityLogQueryParams({
   itemsPerPage = 10,
   currentPage = 1,
   role = 'admin',
-  userId = null,
   selectedStudentId = '',
   debouncedSearch = '',
   selectedGrade = '',
@@ -23,10 +22,6 @@ export function buildActivityLogQueryParams({
   const params = new URLSearchParams();
   params.append('limit', String(Math.min(limit, itemsPerPage)));
   params.append('offset', String((currentPage - 1) * itemsPerPage));
-
-  if (normalizeRole(role) === 'teacher' && userId) {
-    params.append('teacher_id', String(userId));
-  }
 
   if (selectedStudentId) {
     params.append('student_id', String(selectedStudentId));

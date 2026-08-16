@@ -644,7 +644,11 @@ test('daily playtime limit reports remaining minutes and can_play status', async
     await close(server);
   });
 
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
   setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', session_version: 0, is_archived: false }]);
+    }
     if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
       assert.equal(params[0], 44);
       return resultRows([{ total_playtime_today: 60 }]);
@@ -652,7 +656,9 @@ test('daily playtime limit reports remaining minutes and can_play status', async
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/playtime/today/44');
+  const response = await requestJson(baseUrl, '/api/playtime/today/44', {
+    headers: { Authorization: 'Bearer admin-token' },
+  });
 
   assert.equal(response.status, 200);
   assert.deepEqual(response.body, {

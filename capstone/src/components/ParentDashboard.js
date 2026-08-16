@@ -7,6 +7,7 @@ import { MetricCard, InfoCard } from './layout/Card';
 import { ResponsiveGrid } from './layout/Grid';
 import { buildScopedApiUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
+import { buildAuthHeaders } from './session.utils';
 import { formatPercent, normalizeDisplayList, safeDisplayText, toFiniteNumber } from './studentProgress.utils';
 import { apiUrl } from '../api';
 import '../styles/parentdashboard.css';
@@ -67,7 +68,9 @@ export default function ParentDashboard() {
 
       setUser(userData);
       try {
-        const userResponse = await fetch(apiUrl(`/api/user/${userData.id}`));
+        const userResponse = await fetch(apiUrl(`/api/user/${userData.id}`), {
+          headers: buildAuthHeaders(),
+        });
         if (userResponse.ok) {
           const freshUserData = await userResponse.json();
           delete freshUserData.password;
@@ -88,12 +91,12 @@ export default function ParentDashboard() {
     setDashboardLoading(true);
     try {
       const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
-      const parentId = loggedInUser?.id;
+      const requestOptions = { headers: buildAuthHeaders() };
       const [achieversResult, overviewResult, recommendationsResult, childrenResult] = await Promise.allSettled([
-        fetch(buildScopedApiUrl('/api/top-achievers', 'parent', parentId)),
-        fetch(buildScopedApiUrl('/api/analytics/overview', 'parent', parentId)),
-        fetch(buildScopedApiUrl('/api/analytics/recommendations', 'parent', parentId)),
-        fetch(buildScopedApiUrl('/api/students/progress', 'parent', parentId)),
+        fetch(buildScopedApiUrl('/api/top-achievers', 'parent'), requestOptions),
+        fetch(buildScopedApiUrl('/api/analytics/overview', 'parent'), requestOptions),
+        fetch(buildScopedApiUrl('/api/analytics/recommendations', 'parent'), requestOptions),
+        fetch(buildScopedApiUrl('/api/students/progress', 'parent'), requestOptions),
       ]);
 
       if (achieversResult.status === 'fulfilled' && achieversResult.value.ok) {
