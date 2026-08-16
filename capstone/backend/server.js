@@ -350,8 +350,16 @@ const ensureSchema = async () => {
       admin_name VARCHAR(255) NOT NULL,
       action VARCHAR(100) NOT NULL,
       target_user VARCHAR(255) NOT NULL,
+      reason TEXT,
+      target_account_id INTEGER,
+      operation_type VARCHAR(32),
+      admin_account_id INTEGER,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );`);
+    await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS reason TEXT');
+    await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS target_account_id INTEGER');
+    await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS operation_type VARCHAR(32)');
+    await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS admin_account_id INTEGER');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created_at ON public.admin_audit_logs(created_at DESC)');
 
     await pool.query(`CREATE TABLE IF NOT EXISTS public.folders (
@@ -693,14 +701,28 @@ const formatAuditTargetUser = (account) => {
   return name || email || (id ? `Account ${id}` : 'Unknown Account');
 };
 
-const writeAdminAuditLog = async (adminAccount, action, targetAccount) => {
+const writeAdminAuditLog = async (adminAccount, action, targetAccount, options = {}) => {
   const adminName = String(adminAccount?.name || adminAccount?.email || '').trim() || 'Unknown Admin';
+  const adminAccountId = Number.isInteger(Number(adminAccount?.id)) ? Number(adminAccount.id) : null;
   const targetUser = formatAuditTargetUser(targetAccount);
+  const targetAccountId = Number.isInteger(Number(targetAccount?.id)) ? Number(targetAccount.id) : null;
+  const reason = options.reason ? String(options.reason).trim() : null;
+  const operationType = options.operationType ? String(options.operationType).trim() : null;
   await pool.query(
-    `INSERT INTO public.admin_audit_logs (admin_name, action, target_user, created_at)
-     VALUES ($1, $2, $3, NOW())`,
-    [adminName, action, targetUser]
+    `INSERT INTO public.admin_audit_logs (admin_name, action, target_user, reason, target_account_id, operation_type, admin_account_id, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+    [adminName, action, targetUser, reason, targetAccountId, operationType, adminAccountId]
   );
+};
+
+const MAX_ACCOUNT_REMOVAL_REASON_LENGTH = 1000;
+const resolveAccountRemovalReason = (value) => {
+  const reason = String(value || '').trim();
+  if (!reason) return { error: 'Reason for deletion is required.' };
+  if (reason.length > MAX_ACCOUNT_REMOVAL_REASON_LENGTH) {
+    return { error: `Reason for deletion must be ${MAX_ACCOUNT_REMOVAL_REASON_LENGTH} characters or fewer.` };
+  }
+  return { reason };
 };
 const normalizeOptionalText = (value) => {
   const normalized = String(value ?? '').trim();
@@ -4427,10 +4449,19 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
       }
     }
 
+    const reasonResult = resolveAccountRemovalReason(req.body?.reason);
+    if (reasonResult.error) {
+      return res.status(400).json({ error: reasonResult.error });
+    }
+    const auditOptions = {
+      reason: reasonResult.reason,
+      operationType: permanent ? 'permanent_delete' : 'archive',
+    };
+
     if (permanent) {
       await pool.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [id]);
       await pool.query('DELETE FROM public.accounts WHERE id = $1', [id]);
-      await writeAdminAuditLog(req.authenticatedUser, 'Delete Account', targetAccount);
+      await writeAdminAuditLog(req.authenticatedUser, 'Delete Account', targetAccount, auditOptions);
       return res.json({ success: true, message: 'Account permanently deleted' });
     }
 
@@ -4446,7 +4477,7 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
       [id]
     );
     await pool.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [id]);
-    await writeAdminAuditLog(req.authenticatedUser, 'Archive Account', archiveResult.rows[0] || targetAccount);
+    await writeAdminAuditLog(req.authenticatedUser, 'Archive Account', archiveResult.rows[0] || targetAccount, auditOptions);
     res.json({ success: true, message: 'Account archived' });
   } catch (err) {
     console.error('Delete/archive failed:', err.message);
@@ -4465,7 +4496,7 @@ app.post('/api/accounts/:id/restore', requireAccountManagementAdmin, async (req,
 
     const result = await pool.query('UPDATE public.accounts SET is_archived = false WHERE id = $1 RETURNING *', [id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
-    await writeAdminAuditLog(req.authenticatedUser, 'Restore Account', result.rows[0]);
+    await writeAdminAuditLog(req.authenticatedUser, 'Restore Account', result.rows[0], { operationType: 'restore' });
     res.json({ success: true, message: 'Account restored', user: serializeUser(result.rows[0]) });
   } catch (err) {
     console.error('Restore failed:', err.message);

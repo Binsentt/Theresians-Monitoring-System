@@ -230,6 +230,50 @@ describe('ManageUsers edit flow', () => {
     expect(otherAccountRow.querySelector('.delete-action-btn')).toBeTruthy();
   });
 
+  test('requires a reason and final confirmation before archiving an account', async () => {
+    localStorage.setItem('rememberToken', 'manage-users-token');
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    const targetRow = Array.from(container.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Maria Santos'));
+    const deleteButton = targetRow.querySelector('.delete-action-btn');
+    await act(async () => {
+      deleteButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Delete Account');
+    expect(container.textContent).toContain('Maria Santos');
+    expect(container.textContent).toContain('Teacher');
+    const continueButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Continue');
+    await act(async () => {
+      continueButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('Reason for deletion is required.');
+    expect(global.fetch.mock.calls.some(([url, options]) => String(url).includes('/api/accounts/7') && options?.method === 'DELETE')).toBe(false);
+
+    const reason = container.querySelector('textarea[name="deletion-reason"]');
+    await act(async () => {
+      setFieldValue(reason, '  Account requested deactivation.  ');
+    });
+    await act(async () => {
+      continueButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Are you sure you want to remove this account?');
+    const confirmButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Delete Account');
+    await act(async () => {
+      confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const deleteRequest = global.fetch.mock.calls.find(([url, options]) => (
+      String(url).includes('/api/accounts/7') && options?.method === 'DELETE'
+    ));
+    expect(deleteRequest).toBeTruthy();
+    expect(deleteRequest[1].headers.Authorization).toBe('Bearer manage-users-token');
+    expect(JSON.parse(deleteRequest[1].body)).toEqual({ reason: 'Account requested deactivation.' });
+  });
+
   test('Edit Parent form exposes linked children management', async () => {
     await act(async () => {
       root.render(<ManageUsers />);

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 
 jest.mock('./assets/images/STS_Logo.png', () => 'logo.png');
+jest.mock('./components/ParentDashboard', () => () => <div>Parent Dashboard</div>);
 
 describe('App public auth routes', () => {
   let container;
@@ -37,7 +38,7 @@ describe('App public auth routes', () => {
     expect(container.textContent).not.toContain('Create a New Password');
   });
 
-  test('blocks direct dashboard routes until a temporary-password user completes forced setup', async () => {
+  test('keeps a temporary-password user in the normal dashboard with the styled password prompt', async () => {
     window.history.pushState({}, '', '/parent-dashboard');
     localStorage.setItem('rememberToken', 'pending-password-token');
     localStorage.setItem('loggedInUser', JSON.stringify({
@@ -64,7 +65,8 @@ describe('App public auth routes', () => {
       root.render(<App />);
     });
 
-    expect(window.location.pathname).toBe('/initial-password-setup');
-    expect(container.textContent).toContain('Create Your Password');
+    expect(window.location.pathname).toBe('/parent-dashboard');
+    expect(container.textContent).toContain('Parent Dashboard');
+    expect(container.textContent).toContain('Change Your Temporary Password');
   });
 });

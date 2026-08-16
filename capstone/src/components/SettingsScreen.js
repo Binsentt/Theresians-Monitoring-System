@@ -55,6 +55,7 @@ export default function SettingsScreen() {
     confirm: false
   });
   const [passwordUpdating, setPasswordUpdating] = useState(false);
+  const [showInitialPasswordConfirmation, setShowInitialPasswordConfirmation] = useState(false);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return 'Not set';
@@ -372,12 +373,9 @@ export default function SettingsScreen() {
     setPasswordErrors({ ...passwordErrors, [field]: error });
   };
 
-  const handleChangePassword = async (e) => {
-    e.preventDefault();
-
-    // Validate all fields
+  const validatePasswordChange = (requiresInitialPassword) => {
     const errors = {};
-    if (!passwordForm.currentPassword) errors.currentPassword = 'Current password is required';
+    if (!requiresInitialPassword && !passwordForm.currentPassword) errors.currentPassword = 'Current password is required';
     if (!passwordForm.newPassword) errors.newPassword = 'New password is required';
     const pwError = validatePassword(passwordForm.newPassword);
     if (pwError) errors.newPassword = pwError;
@@ -385,23 +383,24 @@ export default function SettingsScreen() {
 
     if (Object.keys(errors).length > 0) {
       setPasswordErrors(errors);
-      return;
+      return false;
     }
+    return true;
+  };
 
+  const submitPasswordChange = async (requiresInitialPassword) => {
     setErrorMessage('');
-
     setPasswordUpdating(true);
     try {
-      const response = await fetch(apiUrl('/api/account/password'), {
-        method: 'PUT',
+      const response = await fetch(apiUrl(requiresInitialPassword ? '/api/account/initial-password' : '/api/account/password'), {
+        method: requiresInitialPassword ? 'POST' : 'PUT',
         headers: {
           'Content-Type': 'application/json',
           ...buildAuthHeaders(),
         },
-        body: JSON.stringify({
-          currentPassword: passwordForm.currentPassword,
-          newPassword: passwordForm.newPassword,
-        }),
+        body: JSON.stringify(requiresInitialPassword
+          ? { newPassword: passwordForm.newPassword }
+          : { currentPassword: passwordForm.currentPassword, newPassword: passwordForm.newPassword }),
       });
 
       const data = await response.json();
@@ -416,16 +415,32 @@ export default function SettingsScreen() {
 
       if (data.user) {
         localStorage.setItem('loggedInUser', JSON.stringify(data.user));
+        window.dispatchEvent(new Event('session-user-updated'));
         setUser(data.user);
       }
       if (data.rememberToken) localStorage.setItem('rememberToken', data.rememberToken);
+      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setPasswordErrors({});
       setErrorMessage('Password changed successfully!');
       setShowChangePassword(false);
+      setShowInitialPasswordConfirmation(false);
     } catch (err) {
       setErrorMessage('Cannot connect to server.');
     } finally {
       setPasswordUpdating(false);
     }
+  };
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    const requiresInitialPassword = Boolean(user?.mustChangePassword);
+    if (!validatePasswordChange(requiresInitialPassword)) return;
+    if (requiresInitialPassword) {
+      setShowInitialPasswordConfirmation(true);
+      return;
+    }
+
+    await submitPasswordChange(false);
   };
 
   // Theme handlers
@@ -438,6 +453,7 @@ export default function SettingsScreen() {
   if (loading) return <div className="loading">Loading...</div>;
 
   const role = normalizeRole(user?.role || 'parent');
+  const requiresInitialPassword = Boolean(user?.mustChangePassword);
 
   return (
     <DashboardContainer
@@ -676,7 +692,66 @@ export default function SettingsScreen() {
               <div className="section-header">
                 <h2>Change Password</h2>
               </div>
-              {!showChangePassword ? (
+              {requiresInitialPassword ? (
+                <div className="password-view temporary-password-settings-view">
+                  <div className="temporary-password-settings-warning" role="status">
+                    <strong>Your account is still using a temporary password.</strong>
+                    <span>Create your permanent password to secure your account.</span>
+                  </div>
+                  <form onSubmit={handleChangePassword} className="password-form">
+                    <div className="form-group">
+                      <label>New Password *</label>
+                      <div className="password-input-wrapper">
+                        <input
+                          type={showPasswords.new ? 'text' : 'password'}
+                          value={passwordForm.newPassword}
+                          onChange={(e) => handlePasswordFormChange('newPassword', e.target.value)}
+                          className={passwordErrors.newPassword ? 'error' : ''}
+                          placeholder="At least 12 characters"
+                        />
+                        {passwordForm.newPassword?.length > 0 && (
+                          <button
+                            type="button"
+                            className="password-toggle-button"
+                            aria-label={showPasswords.new ? 'Hide password' : 'Show password'}
+                            onClick={() => setShowPasswords({ ...showPasswords, new: !showPasswords.new })}
+                          >
+                            {showPasswords.new ? <EyeOffIcon /> : <EyeIcon />}
+                          </button>
+                        )}
+                      </div>
+                      {passwordErrors.newPassword && <span className="error-text">{passwordErrors.newPassword}</span>}
+                    </div>
+                    <div className="form-group">
+                      <label>Confirm New Password *</label>
+                      <div className="password-input-wrapper">
+                        <input
+                          type={showPasswords.confirm ? 'text' : 'password'}
+                          value={passwordForm.confirmPassword}
+                          onChange={(e) => handlePasswordFormChange('confirmPassword', e.target.value)}
+                          className={passwordErrors.confirmPassword ? 'error' : ''}
+                        />
+                        {passwordForm.confirmPassword?.length > 0 && (
+                          <button
+                            type="button"
+                            className="password-toggle-button"
+                            aria-label={showPasswords.confirm ? 'Hide password' : 'Show password'}
+                            onClick={() => setShowPasswords({ ...showPasswords, confirm: !showPasswords.confirm })}
+                          >
+                            {showPasswords.confirm ? <EyeOffIcon /> : <EyeIcon />}
+                          </button>
+                        )}
+                      </div>
+                      {passwordErrors.confirmPassword && <span className="error-text">{passwordErrors.confirmPassword}</span>}
+                    </div>
+                    <div className="form-actions">
+                      <button type="submit" className="btn btn-success" disabled={passwordUpdating}>
+                        {passwordUpdating ? 'Saving...' : 'Save Permanent Password'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              ) : !showChangePassword ? (
                 <div className="password-view">
                   <p className="info-text">Update your password to keep your account secure.</p>
                   <button className="btn btn-primary" onClick={handleChangePasswordClick}>
@@ -843,6 +918,32 @@ export default function SettingsScreen() {
             ×
           </button>
         </div>
+              )}
+              {showInitialPasswordConfirmation && requiresInitialPassword && (
+                <div className="temporary-password-overlay" role="presentation">
+                  <section className="temporary-password-modal temporary-password-confirmation" role="dialog" aria-modal="true" aria-labelledby="settings-confirm-password-title">
+                    <h2 id="settings-confirm-password-title">Confirm Password Change</h2>
+                    <p>Are you sure you want to use this as your new permanent password?</p>
+                    <div className="temporary-password-actions">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => submitPasswordChange(true)}
+                        disabled={passwordUpdating}
+                      >
+                        {passwordUpdating ? 'Saving...' : 'Confirm'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setShowInitialPasswordConfirmation(false)}
+                        disabled={passwordUpdating}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </section>
+                </div>
               )}
             </div>
           </PageContent>

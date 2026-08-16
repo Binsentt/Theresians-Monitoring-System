@@ -42,14 +42,12 @@ describe('InitialPasswordSetup', () => {
     delete global.fetch;
   });
 
-  test('shows only new-password and confirmation inputs for the forced setup flow', async () => {
+  test('redirects the legacy setup route to the normal role dashboard', async () => {
     await act(async () => {
       root.render(<InitialPasswordSetup />);
     });
 
-    expect(container.textContent).toContain('Create Your Password');
-    expect(container.textContent).toContain('New Password');
-    expect(container.textContent).toContain('Confirm New Password');
-    expect(container.textContent).not.toContain('Current Password');
+    expect(container.textContent).toBe('');
+    expect(mockNavigate).toHaveBeenCalledWith('/teacher-dashboard', { replace: true });
   });
 });

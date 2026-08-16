@@ -718,11 +718,102 @@ test('account management allows archiving another admin when another active admi
   const response = await requestJson(baseUrl, '/api/accounts/10', {
     method: 'DELETE',
     headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({ reason: 'Duplicate administrator account.' }),
   });
 
   assert.equal(response.status, 200);
   assert.match(response.body.message, /archived/i);
   assert.equal(archivedAccount, true);
+});
+
+test('account management requires a deletion reason and audits authenticated actor and operation', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const auditEntries = [];
+  let archiveMutated = false;
+  let permanentlyDeleted = false;
+
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{
+        id: Number(params[0]),
+        name: Number(params[0]) === 1 ? 'Authenticated Admin' : 'Archived Teacher',
+        email: Number(params[0]) === 1 ? 'admin@example.com' : 'teacher@example.com',
+        role: Number(params[0]) === 1 ? 'admin' : 'teacher',
+        is_archived: false,
+        session_version: 0,
+      }]);
+    }
+    if (sql.startsWith('select id, email, role, is_archived from public.accounts where id = $1')) {
+      return resultRows([{ id: Number(params[0]), email: 'teacher@example.com', role: 'teacher', is_archived: false }]);
+    }
+    if (sql.startsWith('update public.accounts set is_archived = true')) {
+      archiveMutated = true;
+      return resultRows([{ id: 42, name: 'Archived Teacher', email: 'teacher@example.com', role: 'teacher', is_archived: true }]);
+    }
+    if (sql.startsWith('delete from public.accounts where id = $1')) {
+      permanentlyDeleted = true;
+      return emptyResult;
+    }
+    if (sql.startsWith('delete from public.login_otp_device_skips')) return emptyResult;
+    if (sql.startsWith('insert into public.admin_audit_logs')) {
+      auditEntries.push({
+        adminName: params[0],
+        action: params[1],
+        targetUser: params[2],
+        reason: params[3],
+        targetAccountId: params[4],
+        operationType: params[5],
+        adminAccountId: params[6],
+      });
+      return resultRows([{ id: auditEntries.length }]);
+    }
+    return emptyResult;
+  });
+
+  const headers = { Authorization: 'Bearer admin-token' };
+  const missingReason = await requestJson(baseUrl, '/api/accounts/42', {
+    method: 'DELETE',
+    headers,
+    body: JSON.stringify({ reason: '   ', role: 'admin', deleted_by: 999 }),
+  });
+  assert.equal(missingReason.status, 400);
+  assert.match(missingReason.body.error, /reason.*required/i);
+  assert.equal(archiveMutated, false);
+  assert.equal(auditEntries.length, 0);
+
+  const archive = await requestJson(baseUrl, '/api/accounts/42', {
+    method: 'DELETE',
+    headers,
+    body: JSON.stringify({ reason: '  No longer assigned to this school.  ', role: 'admin', deleted_by: 999 }),
+  });
+  assert.equal(archive.status, 200);
+  assert.equal(archiveMutated, true);
+  assert.deepEqual(auditEntries[0], {
+    adminName: 'Authenticated Admin',
+    action: 'Archive Account',
+    targetUser: 'Archived Teacher',
+    reason: 'No longer assigned to this school.',
+    targetAccountId: 42,
+    operationType: 'archive',
+    adminAccountId: 1,
+  });
+
+  const permanent = await requestJson(baseUrl, '/api/accounts/42?permanent=true', {
+    method: 'DELETE',
+    headers,
+    body: JSON.stringify({ reason: 'Duplicate record cleanup.' }),
+  });
+  assert.equal(permanent.status, 200);
+  assert.equal(permanentlyDeleted, true);
+  assert.equal(auditEntries[1].operationType, 'permanent_delete');
+  assert.equal(auditEntries[1].reason, 'Duplicate record cleanup.');
 });
 
 test('admin account management writes audit log entries for create edit archive restore and role change', async (t) => {
@@ -844,6 +935,7 @@ test('admin account management writes audit log entries for create edit archive 
   const archiveResponse = await requestJson(baseUrl, '/api/accounts/42', {
     method: 'DELETE',
     headers: authHeaders,
+    body: JSON.stringify({ reason: 'Account no longer requires access.' }),
   });
   const restoreResponse = await requestJson(baseUrl, '/api/accounts/42/restore', {
     method: 'POST',
@@ -1131,6 +1223,7 @@ test('archiving an account invalidates sessions and OTP skip records', async (t)
   const response = await requestJson(baseUrl, '/api/accounts/42', {
     method: 'DELETE',
     headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({ reason: 'Employment ended.' }),
   });
 
   assert.equal(response.status, 200);

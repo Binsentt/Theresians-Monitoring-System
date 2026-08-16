@@ -49,12 +49,6 @@ export default function SessionMonitor() {
         const payload = await response.json();
         if (payload?.user) {
           localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload.user));
-          if (payload.user.mustChangePassword) {
-            if (location.pathname !== '/initial-password-setup') {
-              navigate('/initial-password-setup', { replace: true });
-            }
-            return;
-          }
           if (location.pathname === '/initial-password-setup') {
             navigate(getDefaultDashboardRoute(payload.user.role), { replace: true });
             return;

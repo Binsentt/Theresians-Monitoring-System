@@ -72,6 +72,10 @@ export default function ManageUsers() {
   const [relationMessage, setRelationMessage] = useState('');
   const [deletingUser, setDeletingUser] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [deleteOperation, setDeleteOperation] = useState('archive');
+  const [deletionReason, setDeletionReason] = useState('');
+  const [deletionReasonError, setDeletionReasonError] = useState('');
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [regeneratingUserId, setRegeneratingUserId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -457,69 +461,65 @@ export default function ManageUsers() {
     }
   };
 
+  const openDeleteDialog = (account, operation = 'archive') => {
+    if (isCurrentAccount(account)) {
+      showSelfDeleteWarning();
+      return;
+    }
+    setDeletingUser(account);
+    setDeleteOperation(operation);
+    setDeletionReason('');
+    setDeletionReasonError('');
+    setShowDeleteConfirmation(false);
+  };
+
+  const closeDeleteDialog = () => {
+    if (deleting) return;
+    setDeletingUser(null);
+    setDeletionReason('');
+    setDeletionReasonError('');
+    setShowDeleteConfirmation(false);
+  };
+
+  const continueDeleteDialog = () => {
+    const reason = deletionReason.trim();
+    if (!reason) {
+      setDeletionReasonError('Reason for deletion is required.');
+      return;
+    }
+    setDeletionReasonError('');
+    setShowDeleteConfirmation(true);
+  };
+
   const handleDeleteUser = async () => {
     if (!deletingUser?.id) return;
     if (isCurrentAccount(deletingUser)) {
       showSelfDeleteWarning();
-      setDeletingUser(null);
+      closeDeleteDialog();
       return;
     }
 
     setDeleting(true);
     try {
-      const response = await fetch(apiUrl(`/api/accounts/${deletingUser.id}`), {
+      const permanent = deleteOperation === 'permanent';
+      const response = await fetch(apiUrl(`/api/accounts/${deletingUser.id}${permanent ? '?permanent=true' : ''}`), {
         method: 'DELETE',
-        headers: buildAuthHeaders(),
+        headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
+        body: JSON.stringify({ reason: deletionReason.trim() }),
       });
       const data = await response.json().catch(() => ({}));
 
       if (response.ok) {
         setValidationModal({
           title: 'Success',
-          message: 'User archived successfully!'
+          message: permanent ? 'User permanently deleted.' : 'User archived successfully!'
         });
-        setDeletingUser(null);
+        closeDeleteDialog();
         loadUsers();
       } else {
         setValidationModal({
           title: 'Error',
-          message: data.error || 'Failed to archive user'
-        });
-      }
-    } catch (error) {
-      setValidationModal({
-        title: 'Connection Error',
-        message: 'Connection error'
-      });
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handlePermanentDeleteUser = async (userToDelete) => {
-    if (isCurrentAccount(userToDelete)) {
-      showSelfDeleteWarning();
-      return;
-    }
-    if (!window.confirm(`Permanently delete ${userToDelete.name}? This cannot be undone.`)) return;
-    setDeleting(true);
-    try {
-      const response = await fetch(apiUrl(`/api/accounts/${userToDelete.id}?permanent=true`), {
-        method: 'DELETE',
-        headers: buildAuthHeaders(),
-      });
-      const data = await response.json().catch(() => ({}));
-
-      if (response.ok) {
-        setValidationModal({
-          title: 'Success',
-          message: 'User permanently deleted.'
-        });
-        loadUsers();
-      } else {
-        setValidationModal({
-          title: 'Error',
-          message: data.error || 'Failed to delete user permanently'
+          message: data.error || (permanent ? 'Failed to delete user permanently' : 'Failed to archive user')
         });
       }
     } catch (error) {
@@ -898,7 +898,7 @@ export default function ManageUsers() {
                             ) : showArchived ? (
                               <>
                                 <button className="restore-action-btn" onClick={() => handleRestoreUser(u)}>Restore</button>
-                                <button className="delete-action-btn" onClick={() => handlePermanentDeleteUser(u)}>Delete</button>
+                                <button className="delete-action-btn" onClick={() => openDeleteDialog(u, 'permanent')}>Delete</button>
                               </>
                             ) : (
                               <>
@@ -911,7 +911,7 @@ export default function ManageUsers() {
                                 >
                                   {regeneratingUserId === u.id ? 'Sending...' : 'Send Temporary Password'}
                                 </button>
-                                <button className="delete-action-btn" onClick={() => setDeletingUser(u)}>Delete</button>
+                                <button className="delete-action-btn" onClick={() => openDeleteDialog(u)}>Delete</button>
                               </>
                             )}
                           </td>
@@ -977,31 +977,43 @@ export default function ManageUsers() {
             )}
 
             {deletingUser && (
-              <div className="modal-overlay" onClick={() => !deleting && setDeletingUser(null)}>
+              <div className="modal-overlay" onClick={closeDeleteDialog}>
                 <div className="modal-content delete-modal" onClick={(e) => e.stopPropagation()}>
-                  <h2>Confirm User Deletion</h2>
-                  <p>
-                    Are you sure you want to archive <strong>{deletingUser.name || deletingUser.email}</strong>?
-                    This will remove the account from the active users table but keep it available in archived users.
-                  </p>
-                  <div className="modal-actions">
-                    <button
-                      type="button"
-                      className="cancel-btn"
-                      onClick={() => setDeletingUser(null)}
-                      disabled={deleting}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      className="confirm-delete-btn"
-                      onClick={handleDeleteUser}
-                      disabled={deleting}
-                    >
-                      {deleting ? 'Deleting...' : 'Delete User'}
-                    </button>
-                  </div>
+                  {!showDeleteConfirmation ? (
+                    <>
+                      <h2>Delete Account</h2>
+                      <p>You are about to {deleteOperation === 'permanent' ? 'permanently delete' : 'archive'} <strong>{deletingUser.name || deletingUser.email}</strong>.</p>
+                      <p className="delete-account-role">Role: {formatRoleLabel(deletingUser.role)}</p>
+                      <label className="deletion-reason-label" htmlFor="deletion-reason">Reason for deleting this account:</label>
+                      <textarea
+                        id="deletion-reason"
+                        name="deletion-reason"
+                        className={deletionReasonError ? 'deletion-reason-textarea error' : 'deletion-reason-textarea'}
+                        value={deletionReason}
+                        onChange={(event) => {
+                          setDeletionReason(event.target.value.slice(0, 1000));
+                          if (deletionReasonError) setDeletionReasonError('');
+                        }}
+                        maxLength={1000}
+                        rows={4}
+                        aria-invalid={Boolean(deletionReasonError)}
+                      />
+                      {deletionReasonError && <p className="error-text" role="alert">{deletionReasonError}</p>}
+                      <div className="modal-actions">
+                        <button type="button" className="cancel-btn" onClick={closeDeleteDialog} disabled={deleting}>Cancel</button>
+                        <button type="button" className="confirm-delete-btn" onClick={continueDeleteDialog} disabled={deleting}>Continue</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <h2>Confirm Account Removal</h2>
+                      <p>Are you sure you want to remove this account?</p>
+                      <div className="modal-actions">
+                        <button type="button" className="cancel-btn" onClick={() => setShowDeleteConfirmation(false)} disabled={deleting}>No, Cancel</button>
+                        <button type="button" className="confirm-delete-btn" onClick={handleDeleteUser} disabled={deleting}>{deleting ? 'Deleting...' : 'Yes, Delete Account'}</button>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}

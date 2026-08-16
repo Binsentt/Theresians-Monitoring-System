@@ -23,6 +23,7 @@ import SettingsScreen from './components/SettingsScreen';
 import AnnouncementPage from './components/AnnouncementPage';
 import SessionMonitor from './components/SessionMonitor';
 import InitialPasswordSetup from './components/InitialPasswordSetup';
+import TemporaryPasswordExperience from './components/TemporaryPasswordExperience';
 import { apiUrl } from './api';
 import { buildAuthHeaders, clearStoredSession } from './components/session.utils';
 
@@ -57,10 +58,7 @@ function DashboardRouteGate() {
           navigate('/login', { replace: true, state: { sessionExpired: true } });
           return;
         }
-        if (payload.user.mustChangePassword) {
-          navigate('/initial-password-setup', { replace: true });
-          return;
-        }
+        localStorage.setItem('loggedInUser', JSON.stringify(payload.user));
         if (active) setAllowed(true);
       } catch (error) {
         if (active) setAllowed(false);
@@ -74,7 +72,11 @@ function DashboardRouteGate() {
     };
   }, [location.pathname, navigate]);
 
-  return allowed ? <Outlet /> : <div className="route-loading" role="status">Loading...</div>;
+  return allowed ? (
+    <TemporaryPasswordExperience>
+      <Outlet />
+    </TemporaryPasswordExperience>
+  ) : <div className="route-loading" role="status">Loading...</div>;
 }
 
 function App() {

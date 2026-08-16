@@ -123,4 +123,63 @@ describe('SettingsScreen dashboard layout', () => {
       newPassword: 'new-permanent-password-123',
     });
   });
+
+  test('shows temporary-password security warning and uses the first-login endpoint without a current password', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({
+      id: 8,
+      name: 'Parent Teacher',
+      email: 'parent-teacher@example.com',
+      role: 'parent_teacher',
+      mustChangePassword: true,
+    }));
+    global.fetch = jest.fn((url) => Promise.resolve({
+      ok: true,
+      json: async () => (String(url).includes('/api/account/initial-password')
+        ? {
+          success: true,
+          user: { id: 8, name: 'Parent Teacher', email: 'parent-teacher@example.com', role: 'parent_teacher', mustChangePassword: false },
+          rememberToken: 'permanent-settings-token',
+        }
+        : {
+          id: 8,
+          name: 'Parent Teacher',
+          email: 'parent-teacher@example.com',
+          role: 'parent_teacher',
+          mustChangePassword: true,
+        }),
+    }));
+
+    await act(async () => {
+      root.render(<SettingsScreen />);
+    });
+
+    const passwordTab = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent.includes('Change Password'));
+    await act(async () => {
+      passwordTab.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Your account is still using a temporary password.');
+    expect(container.textContent).not.toContain('Current Password *');
+    const passwordInputs = container.querySelectorAll('input[type="password"]');
+    expect(passwordInputs).toHaveLength(2);
+
+    await act(async () => {
+      setInputValue(passwordInputs[0], 'new-permanent-password-123');
+      setInputValue(passwordInputs[1], 'new-permanent-password-123');
+      container.querySelector('.password-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain('Are you sure you want to use this as your new permanent password?');
+    const confirmButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Confirm');
+    await act(async () => {
+      confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const passwordRequest = global.fetch.mock.calls.find(([url]) => String(url).includes('/api/account/initial-password'));
+    expect(passwordRequest).toBeTruthy();
+    expect(passwordRequest[1].headers.Authorization).toBe('Bearer settings-session-token');
+    expect(JSON.parse(passwordRequest[1].body)).toEqual({ newPassword: 'new-permanent-password-123' });
+    expect(container.textContent).not.toContain('Your account is still using a temporary password.');
+  });
 });
