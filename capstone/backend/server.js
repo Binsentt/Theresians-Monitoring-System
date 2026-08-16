@@ -259,10 +259,13 @@ const ensureSchema = async () => {
       total_items INTEGER NOT NULL,
       percentage DECIMAL(5, 2) NOT NULL,
       played_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      question_set_id INTEGER,
       is_unlinked BOOLEAN NOT NULL DEFAULT true
     );`);
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS question_set_id INTEGER');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_parent_id ON public.game_results(parent_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_resolved_student_id ON public.game_results(resolved_student_id)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_question_set_id ON public.game_results(question_set_id)');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.student_ai_insights (
       id SERIAL PRIMARY KEY,
       student_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
@@ -410,6 +413,21 @@ const ensureSchema = async () => {
     await pool.query("ALTER TABLE public.learning_files ALTER COLUMN generation_status SET DEFAULT 'not_applicable'");
     await pool.query("ALTER TABLE public.learning_files ALTER COLUMN publish_status SET DEFAULT 'staged'");
     await pool.query('UPDATE public.learning_files SET deleted_at = trashed_at WHERE deleted_at IS NULL AND trashed_at IS NOT NULL');
+    await pool.query(`DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'game_results_question_set_id_fkey'
+          AND conrelid = 'public.game_results'::regclass
+      ) THEN
+        ALTER TABLE public.game_results
+          ADD CONSTRAINT game_results_question_set_id_fkey
+          FOREIGN KEY (question_set_id)
+          REFERENCES public.learning_files(id)
+          ON DELETE RESTRICT;
+      END IF;
+    END $$;`);
     await pool.query(`CREATE TABLE IF NOT EXISTS public.questions (
       id SERIAL PRIMARY KEY,
       learning_file_id INTEGER REFERENCES public.learning_files(id) ON DELETE CASCADE,
@@ -915,6 +933,46 @@ const resolveScopeId = (value) => {
   if (value === undefined || value === null || value === '') return null;
   const parsed = parseInt(value, 10);
   return Number.isNaN(parsed) ? NaN : parsed;
+};
+
+const resolveGameResultQuestionSet = async ({ rawQuestionSetId, gradeLevel, difficulty, mathTopic }) => {
+  if (rawQuestionSetId === undefined || rawQuestionSetId === null || rawQuestionSetId === '') {
+    return { questionSetId: null };
+  }
+
+  // Do not let parseInt coerce values such as "77junk" into a valid question-set ID.
+  const serializedQuestionSetId = String(rawQuestionSetId).trim();
+  if (!/^[1-9]\d*$/.test(serializedQuestionSetId)) {
+    return { error: 'question_set_id must be a positive integer.' };
+  }
+  const questionSetId = Number(serializedQuestionSetId);
+  if (!Number.isSafeInteger(questionSetId)) {
+    return { error: 'question_set_id must be a positive integer.' };
+  }
+
+  const result = await pool.query(
+    `SELECT id, grade_level, difficulty, math_topic, publish_status
+     FROM public.learning_files
+     WHERE id = $1
+     LIMIT 1`,
+    [questionSetId]
+  );
+  const questionSet = result.rows[0];
+  if (!questionSet) return { error: 'Question set was not found.' };
+
+  const setStatus = String(questionSet.publish_status || '').trim().toLowerCase();
+  if (!['active', 'superseded'].includes(setStatus)) {
+    return { error: 'Question set is not an active or replaced production set.' };
+  }
+
+  const matchingScope = (
+    normalizeGameGradeLevel(questionSet.grade_level) === normalizeGameGradeLevel(gradeLevel)
+    && normalizeDifficultyValue(questionSet.difficulty) === normalizeDifficultyValue(difficulty)
+    && String(questionSet.math_topic || '').trim() === String(mathTopic || '').trim()
+  );
+  if (!matchingScope) return { error: 'Question set does not match the submitted result scope.' };
+
+  return { questionSetId };
 };
 
 const resolveParentScopeId = (value) => resolveScopeId(value);
@@ -3066,7 +3124,10 @@ app.delete('/api/folders/:id', requireLessonQuestionManagerAccess, async (req, r
       `UPDATE public.learning_files
        SET deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP),
            published = false,
-           publish_status = 'staged'
+           publish_status = CASE
+             WHEN LOWER(COALESCE(publish_status, '')) = 'superseded' THEN 'superseded'
+             ELSE 'staged'
+           END
        WHERE folder_id = $1`,
       [folderId]
     );
@@ -3117,6 +3178,20 @@ app.delete('/api/folders/:id/permanent', requireLessonQuestionManagerAccess, asy
     if (activeQuestionSetResult.rows.length > 0) {
       return res.status(409).json({
         error: 'This folder contains an Active in Game question set. Publish a replacement before permanently deleting it.',
+      });
+    }
+    const historicalResult = await pool.query(
+      `SELECT 1
+       FROM public.game_results gr
+       JOIN public.learning_files lf ON lf.id = gr.question_set_id
+       WHERE lf.folder_id = $1
+         AND lf.deleted_at IS NOT NULL
+       LIMIT 1`,
+      [folderId]
+    );
+    if (historicalResult.rows.length > 0) {
+      return res.status(409).json({
+        error: 'This folder contains question sets with historical results and cannot be permanently deleted.',
       });
     }
     const fileResult = await pool.query(
@@ -3698,6 +3773,15 @@ app.delete('/api/learning-files/:id/permanent', requireLessonQuestionManagerAcce
     if (file.published || file.publish_status === 'active') {
       return res.status(409).json({
         error: 'This question set is Active in Game. Publish a replacement before permanently deleting it.',
+      });
+    }
+    const historicalResult = await pool.query(
+      'SELECT 1 FROM public.game_results WHERE question_set_id = $1 LIMIT 1',
+      [fileId]
+    );
+    if (historicalResult.rows.length > 0) {
+      return res.status(409).json({
+        error: 'This question set has historical results and cannot be permanently deleted.',
       });
     }
     await pool.query('DELETE FROM public.questions WHERE learning_file_id = $1', [fileId]);
@@ -4412,13 +4496,23 @@ app.post('/api/game/result', async (req, res) => {
       resultStudentName = studentResult.rows[0]?.name || studentName;
     }
 
+    const questionSetResolution = await resolveGameResultQuestionSet({
+      rawQuestionSetId: req.body?.question_set_id,
+      gradeLevel: grade_level,
+      difficulty,
+      mathTopic: math_topic,
+    });
+    if (questionSetResolution.error) {
+      return res.status(400).json({ error: questionSetResolution.error });
+    }
+
     await pool.query(
       `INSERT INTO public.game_results (
          parent_id, student_name, resolved_student_id, grade_level, difficulty,
-         math_topic, score, total_items, percentage, played_at, is_unlinked
-       ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), $11
-       )`,
+          math_topic, score, total_items, percentage, played_at, question_set_id, is_unlinked
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), $11, $12
+        )`,
       [
         parentCode,
         resultStudentName,
@@ -4430,6 +4524,7 @@ app.post('/api/game/result', async (req, res) => {
         Math.round(totalItemsValue),
         percentage,
         played_at || null,
+        questionSetResolution.questionSetId,
         !resolvedStudentId,
       ]
     );

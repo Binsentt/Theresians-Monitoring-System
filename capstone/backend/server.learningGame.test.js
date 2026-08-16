@@ -721,6 +721,71 @@ test('active question sets cannot be moved to trash before a replacement is publ
   assert.equal(destructiveUpdateCalled, false);
 });
 
+test('historically referenced question sets cannot be permanently deleted', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let destructiveDeleteCalled = false;
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.learning_files where id = $1') && sql.includes('deleted_at is not null')) {
+      return resultRows([{
+        id: Number(params[0]),
+        title: 'Replaced Addition Set',
+        file_url: '/uploads/replaced-addition.json',
+        published: false,
+        publish_status: 'superseded',
+        deleted_at: '2026-08-16T00:00:00.000Z',
+      }]);
+    }
+    if (sql.startsWith('select 1 from public.game_results where question_set_id = $1')) {
+      assert.deepEqual(params, [44]);
+      return resultRows([{ referenced: 1 }]);
+    }
+    if (sql.startsWith('delete from public.questions') || sql.startsWith('delete from public.learning_files')) {
+      destructiveDeleteCalled = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/44/permanent', { method: 'DELETE' });
+
+  assert.equal(response.status, 409);
+  assert.match(response.body.error, /historical.*results/i);
+  assert.equal(destructiveDeleteCalled, false);
+});
+
+test('a folder with historically referenced trashed question sets cannot be permanently deleted', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let destructiveDeleteCalled = false;
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select 1 as active_question_set from public.learning_files')) return emptyResult;
+    if (sql.includes('from public.game_results gr') && sql.includes('question_set_id')) {
+      assert.deepEqual(params, [13]);
+      return resultRows([{ referenced: 1 }]);
+    }
+    if (sql.startsWith('delete from public.questions') || sql.startsWith('delete from public.learning_files') || sql.startsWith('delete from public.folders')) {
+      destructiveDeleteCalled = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/folders/13/permanent', { method: 'DELETE' });
+
+  assert.equal(response.status, 409);
+  assert.match(response.body.error, /historical.*results/i);
+  assert.equal(destructiveDeleteCalled, false);
+});
+
 test('legacy folder deletion cannot unpublish an active question set', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -745,6 +810,33 @@ test('legacy folder deletion cannot unpublish an active question set', async (t)
   assert.equal(response.status, 409);
   assert.match(response.body.error, /active.*replacement/i);
   assert.equal(destructiveUpdateCalled, false);
+});
+
+test('moving a folder to Trash preserves a replaced question set lifecycle for delayed result traceability', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let lifecycleUpdate = null;
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select 1 as active_question_set from public.learning_files')) return emptyResult;
+    if (sql.startsWith('update public.folders set deleted_at')) return resultRows([{ id: 13 }]);
+    if (sql.startsWith('update public.learning_files') && sql.includes('set deleted_at')) {
+      lifecycleUpdate = { sql, params };
+      return emptyResult;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/folders/13', { method: 'DELETE' });
+
+  assert.equal(response.status, 200);
+  assert.ok(lifecycleUpdate);
+  assert.match(lifecycleUpdate.sql, /when lower\(coalesce\(publish_status, ''\)\) = 'superseded' then 'superseded'/i);
+  assert.deepEqual(lifecycleUpdate.params, [13]);
 });
 
 test('Godot question responses record an active set fetch only after active questions are returned', async (t) => {

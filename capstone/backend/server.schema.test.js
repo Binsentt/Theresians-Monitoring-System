@@ -77,4 +77,16 @@ test('startup schema creates game_results for future game integration', async ()
     schemaStatements.some((sql) => sql.includes('idx_game_results_resolved_student_id')),
     'game_results resolved_student_id index should be created during startup schema initialization'
   );
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('add column if not exists question_set_id integer')),
+    'game_results should keep a nullable question_set_id for backward-compatible traceability'
+  );
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('idx_game_results_question_set_id')),
+    'game_results question_set_id index should support historical traceability queries'
+  );
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('game_results_question_set_id_fkey') && sql.includes('on delete restrict')),
+    'game_results question_set_id should use a restrictive foreign key so permanent deletion cannot race historical result insertion'
+  );
 });

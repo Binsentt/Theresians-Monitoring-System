@@ -174,7 +174,8 @@ test('parent game results routes and access middleware', async (t) => {
     assert.deepEqual(response.body, { success: true, resolved: true, student_id: 44 });
     assert.equal(insertedValues[2], 44);
     assert.equal(insertedValues[8], 80);
-    assert.equal(insertedValues[10], false);
+    assert.equal(insertedValues[10], null);
+    assert.equal(insertedValues[11], false);
   });
 
   await t.test('stores an unlinked game result session when the child name is not resolved', async () => {
@@ -209,7 +210,8 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(response.status, 201);
     assert.deepEqual(response.body, { success: true, resolved: false, student_id: null });
     assert.equal(insertedValues[2], null);
-    assert.equal(insertedValues[10], true);
+    assert.equal(insertedValues[10], null);
+    assert.equal(insertedValues[11], true);
   });
 
   await t.test('stores a game result with a submitted linked student_id from Godot', async () => {
@@ -250,7 +252,8 @@ test('parent game results routes and access middleware', async (t) => {
     assert.deepEqual(response.body, { success: true, resolved: true, student_id: 44 });
     assert.equal(insertedValues[1], 'Ava Santos');
     assert.equal(insertedValues[2], 44);
-    assert.equal(insertedValues[10], false);
+    assert.equal(insertedValues[10], null);
+    assert.equal(insertedValues[11], false);
   });
 
   await t.test('resolves a six-digit game Student ID before persisting a question result', async () => {
@@ -288,6 +291,249 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(response.body.student_id, 44);
     assert.equal(insertedValues[2], 44);
     assert.equal(insertedValues[4], 'Hard');
+  });
+
+  await t.test('stores a matching active question set with the individual Godot result', async () => {
+    let insertedValues = null;
+    let questionSetChecked = false;
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+      }
+      if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
+        questionSetChecked = true;
+        assert.deepEqual(params, [77]);
+        return resultRows([{
+          id: 77,
+          grade_level: 'Grade 3',
+          difficulty: 'Medium',
+          math_topic: 'Fractions',
+          publish_status: 'active',
+          deleted_at: null,
+        }]);
+      }
+      if (sql.startsWith('insert into public.game_results')) {
+        insertedValues = params;
+        return emptyResult;
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: '001234',
+        student_name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        difficulty: 'Normal',
+        math_topic: 'Fractions',
+        question_set_id: 77,
+        score: 1,
+        total_items: 1,
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(questionSetChecked, true);
+    assert.equal(insertedValues[10], 77);
+    assert.equal(insertedValues[11], false);
+  });
+
+  await t.test('rejects a question set that does not match the submitted result scope', async () => {
+    let insertedGameResult = false;
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+      }
+      if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
+        return resultRows([{
+          id: 77,
+          grade_level: 'Grade 2',
+          difficulty: 'Medium',
+          math_topic: 'Fractions',
+          publish_status: 'active',
+          deleted_at: null,
+        }]);
+      }
+      if (sql.startsWith('insert into public.game_results')) insertedGameResult = true;
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: '001234',
+        grade_level: 'Grade 3',
+        difficulty: 'Medium',
+        math_topic: 'Fractions',
+        question_set_id: 77,
+        score: 1,
+        total_items: 1,
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.equal(insertedGameResult, false);
+  });
+
+  await t.test('rejects a malformed question-set ID instead of coercing it to an existing set', async () => {
+    let insertedGameResult = false;
+    let questionSetLookup = false;
+    setQueryHandler(async (sql) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+      }
+      if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
+        questionSetLookup = true;
+      }
+      if (sql.startsWith('insert into public.game_results')) insertedGameResult = true;
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: '001234',
+        grade_level: 'Grade 3',
+        difficulty: 'Medium',
+        math_topic: 'Fractions',
+        question_set_id: '77junk',
+        score: 1,
+        total_items: 1,
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.equal(insertedGameResult, false);
+    assert.equal(questionSetLookup, false);
+  });
+
+  await t.test('rejects a nonexistent question set without recording a result', async () => {
+    let insertedGameResult = false;
+    setQueryHandler(async (sql) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+      }
+      if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) return emptyResult;
+      if (sql.startsWith('insert into public.game_results')) insertedGameResult = true;
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: '001234',
+        grade_level: 'Grade 3',
+        difficulty: 'Medium',
+        math_topic: 'Fractions',
+        question_set_id: 999,
+        score: 1,
+        total_items: 1,
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.equal(insertedGameResult, false);
+  });
+
+  await t.test('rejects a staged question set without recording a result', async () => {
+    let insertedGameResult = false;
+    setQueryHandler(async (sql) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+      }
+      if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
+        return resultRows([{
+          id: 77,
+          grade_level: 'Grade 3',
+          difficulty: 'Medium',
+          math_topic: 'Fractions',
+          publish_status: 'staged',
+        }]);
+      }
+      if (sql.startsWith('insert into public.game_results')) insertedGameResult = true;
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: '001234',
+        grade_level: 'Grade 3',
+        difficulty: 'Medium',
+        math_topic: 'Fractions',
+        question_set_id: 77,
+        score: 1,
+        total_items: 1,
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.equal(insertedGameResult, false);
+  });
+
+  await t.test('accepts a matching superseded set after a player has already fetched its question, including when it is in Trash', async () => {
+    let insertedValues = null;
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+      }
+      if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
+        assert.doesNotMatch(sql, /deleted_at\s+is\s+null/i);
+        return resultRows([{
+          id: 77,
+          grade_level: 'Grade 3',
+          difficulty: 'Medium',
+          math_topic: 'Fractions',
+          publish_status: 'superseded',
+          deleted_at: '2026-08-16T00:00:00.000Z',
+        }]);
+      }
+      if (sql.startsWith('insert into public.game_results')) {
+        insertedValues = params;
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: '001234',
+        grade_level: 'Grade 3',
+        difficulty: 'Medium',
+        math_topic: 'Fractions',
+        question_set_id: 77,
+        score: 1,
+        total_items: 1,
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(insertedValues[10], 77);
   });
 
   await t.test('resolves a Godot activity log public Student ID through its parent link', async () => {
