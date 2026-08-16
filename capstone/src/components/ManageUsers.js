@@ -72,6 +72,7 @@ export default function ManageUsers() {
   const [relationMessage, setRelationMessage] = useState('');
   const [deletingUser, setDeletingUser] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [regeneratingUserId, setRegeneratingUserId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
 
   const filteredUsers = filterUsers(users, searchTerm, roleFilter);
@@ -209,7 +210,14 @@ export default function ManageUsers() {
 
   const loadUsers = async () => {
     try {
-      const response = await fetch(apiUrl(`/api/accounts?archived=${showArchived}`));
+      const response = await fetch(apiUrl(`/api/accounts?archived=${showArchived}`), {
+        headers: buildAuthHeaders(),
+      });
+      if (response.status === 401 || response.status === 403) {
+        clearStoredSession();
+        navigate('/login', { replace: true, state: { sessionExpired: true } });
+        return;
+      }
       const data = await response.json();
       setUsers(Array.isArray(data) ? data.filter((account) => isWebsiteManagedRole(account.role)) : []);
     } catch (error) {
@@ -551,6 +559,44 @@ export default function ManageUsers() {
     }
   };
 
+  const handleRegenerateTemporaryPassword = async (account) => {
+    if (!account?.id || isCurrentAccount(account)) return;
+    const confirmed = window.confirm(
+      `Send a new temporary password to ${account.email}? Their previous password will stop working and the new temporary password will expire in 30 minutes.`
+    );
+    if (!confirmed) return;
+
+    setRegeneratingUserId(account.id);
+    try {
+      const response = await fetch(apiUrl(`/api/accounts/${account.id}/temporary-password`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
+      });
+      const data = await response.json();
+      if (response.status === 401 || response.status === 403) {
+        clearStoredSession();
+        navigate('/login', { replace: true, state: { sessionExpired: true } });
+        return;
+      }
+      setValidationModal({
+        title: response.ok ? 'Temporary Password Issued' : 'Unable to Issue Temporary Password',
+        message: response.ok
+          ? (data.emailSent
+            ? 'A new temporary password was emailed to the account. It expires in 30 minutes and must be changed after login.'
+            : (data.warning || 'Credential delivery requires another administrator-issued temporary password after email is available.'))
+          : (data.error || 'Unable to issue a temporary password.'),
+      });
+      if (response.ok) await loadUsers();
+    } catch (error) {
+      setValidationModal({
+        title: 'Connection Error',
+        message: 'Unable to issue a temporary password. Please try again.',
+      });
+    } finally {
+      setRegeneratingUserId(null);
+    }
+  };
+
   useEffect(() => {
     if (!user) return;
     loadUsers();
@@ -857,6 +903,14 @@ export default function ManageUsers() {
                             ) : (
                               <>
                                 <button className="edit-action-btn" onClick={() => handleEditClick(u)}>Edit</button>
+                                <button
+                                  type="button"
+                                  className="restore-action-btn"
+                                  onClick={() => handleRegenerateTemporaryPassword(u)}
+                                  disabled={regeneratingUserId === u.id}
+                                >
+                                  {regeneratingUserId === u.id ? 'Sending...' : 'Send Temporary Password'}
+                                </button>
                                 <button className="delete-action-btn" onClick={() => setDeletingUser(u)}>Delete</button>
                               </>
                             )}
@@ -907,13 +961,6 @@ export default function ManageUsers() {
                     <div className="generated-credential-panel">
                       <span className="generated-credential-label">Parent ID</span>
                       <strong className="generated-credential-value">{validationModal.parentId}</strong>
-                    </div>
-                  )}
-                  {validationModal.tempPassword && (
-                    <div className="generated-credential-panel">
-                      <span className="generated-credential-label">Temporary Password</span>
-                      <strong className="generated-credential-value">{validationModal.tempPassword}</strong>
-                      <span className="generated-credential-status">Copy this now. It will not be shown again.</span>
                     </div>
                   )}
                   <div className="modal-actions">

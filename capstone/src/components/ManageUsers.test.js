@@ -139,6 +139,51 @@ describe('ManageUsers edit flow', () => {
     expect(container.textContent).toContain('482915');
   });
 
+  test('loads managed accounts with the existing authenticated session header', async () => {
+    localStorage.setItem('rememberToken', 'manage-users-token');
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    const accountListCall = global.fetch.mock.calls.find(([url]) => String(url).includes('/api/accounts?archived=false'));
+    expect(accountListCall).toBeTruthy();
+    expect(accountListCall[1].headers.Authorization).toBe('Bearer manage-users-token');
+  });
+
+  test('admin can issue a replacement temporary password without receiving it in the UI', async () => {
+    localStorage.setItem('rememberToken', 'manage-users-token');
+    window.confirm = jest.fn(() => true);
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).includes('/api/accounts/7/temporary-password')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ emailSent: true, tempPassword: 'must-not-render' }),
+        });
+      }
+      if (String(url).includes('/api/accounts')) {
+        return Promise.resolve({ ok: true, json: async () => accountsPayload });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+    const resendButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Send Temporary Password'
+    );
+    await act(async () => {
+      resendButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const request = global.fetch.mock.calls.find(([url]) => String(url).includes('/api/accounts/7/temporary-password'));
+    expect(request[1].method).toBe('POST');
+    expect(request[1].headers.Authorization).toBe('Bearer manage-users-token');
+    expect(container.textContent).toContain('Temporary Password Issued');
+    expect(container.textContent).not.toContain('must-not-render');
+  });
+
   test('Manage Users shows website accounts and hides Godot student accounts from search and table counts', async () => {
     await act(async () => {
       root.render(<ManageUsers />);

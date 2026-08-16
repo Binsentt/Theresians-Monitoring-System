@@ -37,6 +37,11 @@ const {
   resolveGeneratedAccountPassword,
 } = require('./accountCreation.utils');
 const {
+  createTemporaryPassword,
+  getTemporaryPasswordExpiry,
+  isTemporaryPasswordExpired,
+} = require('./temporaryPassword.utils');
+const {
   buildLoginDeviceSkipLookup,
   buildLoginDeviceSkipUpsert,
   buildLoginAccountLookup,
@@ -193,6 +198,8 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS employee_id VARCHAR(50)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT false');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS temporary_password_issued_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS temporary_password_expires_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS parent_id VARCHAR(6)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS game_student_id VARCHAR(6)');
@@ -383,6 +390,7 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_error_code VARCHAR(100)');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS published_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS last_fetched_at TIMESTAMPTZ');
     await pool.query(`UPDATE public.learning_files
       SET generation_status = CASE WHEN LOWER(file_type) = 'lesson' THEN 'ready_for_review' ELSE 'not_applicable' END
       WHERE generation_status IS NULL OR BTRIM(generation_status) = ''`);
@@ -419,21 +427,7 @@ const ensureSchema = async () => {
 
 ensureSchema();
 
-const generateRandomPassword = () => {
-  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
-  const digits = '0123456789';
-  const symbols = '!@#$%^&*()_+-=[]{}|;:,.<>?';
-  let value = '';
-  value += letters[Math.floor(Math.random() * letters.length)];
-  value += letters.toLowerCase()[Math.floor(Math.random() * letters.length)];
-  value += digits[Math.floor(Math.random() * digits.length)];
-  value += symbols[Math.floor(Math.random() * symbols.length)];
-  const poolChars = letters + letters.toLowerCase() + digits + symbols;
-  while (value.length < 14) {
-    value += poolChars[Math.floor(Math.random() * poolChars.length)];
-  }
-  return value;
-};
+const generateRandomPassword = () => createTemporaryPassword();
 
 const THIRTY_DAY_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -815,6 +809,70 @@ const normalizeLearningFileRow = (row) => {
     difficulty,
     folder_name: buildQuestionFolderPath(row?.grade_level, difficulty),
   });
+};
+
+const requireWebsiteManagedAccount = requireAuthenticatedRoles(WEBSITE_MANAGED_ACCOUNT_ROLES);
+
+const validateWebsitePassword = (value) => {
+  const password = String(value || '');
+  if (password.trim().length < 12) {
+    return 'Password must be at least 12 characters.';
+  }
+  return null;
+};
+
+const replaceAccountPassword = async ({ account, newPassword, requireTemporaryPassword }) => {
+  const passwordError = validateWebsitePassword(newPassword);
+  if (passwordError) {
+    const error = new Error(passwordError);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (requireTemporaryPassword) {
+    if (!account.must_change_password) {
+      const error = new Error('Password setup is not required for this account.');
+      error.statusCode = 400;
+      throw error;
+    }
+    if (isTemporaryPasswordExpired(account.temporary_password_expires_at)) {
+      const error = new Error('Temporary password expired. Contact an administrator to issue a new temporary password.');
+      error.statusCode = 401;
+      throw error;
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const hashedPassword = await hashPassword(newPassword);
+    const updateResult = await client.query(
+      `UPDATE public.accounts
+       SET password = $1,
+           must_change_password = false,
+           temporary_password_issued_at = NULL,
+           temporary_password_expires_at = NULL,
+           otp_code = NULL,
+           otp_expires_at = NULL,
+           session_version = COALESCE(session_version, 0) + 1
+       WHERE id = $2
+       RETURNING *`,
+      [hashedPassword, account.id]
+    );
+    if (updateResult.rows.length === 0) {
+      const error = new Error('User not found.');
+      error.statusCode = 404;
+      throw error;
+    }
+    await client.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [account.id]);
+    await client.query('COMMIT');
+    return updateResult.rows[0];
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 };
 
 const resolveScopeId = (value) => {
@@ -2298,6 +2356,26 @@ const buildStudentAnalyticsReadiness = ({ progress, quizSessions = [], activityL
   };
 };
 
+const markLearningFilesFetchedByGame = async (questions) => {
+  const fileIds = Array.from(new Set(
+    (Array.isArray(questions) ? questions : [])
+      .map((question) => Number(question?.learning_file_id))
+      .filter((id) => Number.isInteger(id) && id > 0)
+  ));
+  if (fileIds.length === 0) return;
+
+  await pool.query(
+    `UPDATE public.learning_files
+     SET last_fetched_at = CURRENT_TIMESTAMP
+     WHERE id = ANY($1::INTEGER[])
+       AND published = true
+       AND publish_status = 'active'
+       AND deleted_at IS NULL
+       AND (last_fetched_at IS NULL OR last_fetched_at < CURRENT_TIMESTAMP - INTERVAL '5 minutes')`,
+    [fileIds]
+  );
+};
+
 const MIN_GROUNDED_INSIGHT_RESULTS = 5;
 
 const buildAiInsightState = ({ metrics, cachedInsight, inputFingerprint }) => {
@@ -2379,6 +2457,9 @@ app.post('/api/login', async (req, res) => {
     if (user.is_archived) return res.status(403).json({ error: 'Account archived. Restore before signing in.' });
     const passwordMatches = await comparePassword(password, user.password);
     if (!passwordMatches) return res.status(401).json({ error: 'Incorrect password' });
+    if (user.must_change_password && isTemporaryPasswordExpired(user.temporary_password_expires_at)) {
+      return res.status(401).json({ error: 'Temporary password expired. Contact an administrator to issue a new temporary password.' });
+    }
 
     const normalizedDeviceId = normalizeLoginDeviceId(deviceId);
     if (normalizedDeviceId) {
@@ -2497,7 +2578,53 @@ app.post('/api/logout-status', async (req, res) => {
   }
 });
 
-app.post('/api/accounts', async (req, res) => {
+app.post('/api/account/initial-password', requireWebsiteManagedAccount, async (req, res) => {
+  try {
+    const updatedAccount = await replaceAccountPassword({
+      account: req.authenticatedUser,
+      newPassword: req.body?.newPassword,
+      requireTemporaryPassword: true,
+    });
+    const user = serializeUser(updatedAccount);
+    return res.json({
+      success: true,
+      message: 'Initial password setup completed.',
+      user,
+      rememberToken: createRememberToken(updatedAccount),
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Unable to complete initial password setup.',
+    });
+  }
+});
+
+app.put('/api/account/password', requireWebsiteManagedAccount, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!await comparePassword(currentPassword, req.authenticatedUser.password)) {
+      return res.status(401).json({ error: 'Current password is incorrect.' });
+    }
+    const updatedAccount = await replaceAccountPassword({
+      account: req.authenticatedUser,
+      newPassword,
+      requireTemporaryPassword: false,
+    });
+    const user = serializeUser(updatedAccount);
+    return res.json({
+      success: true,
+      message: 'Password changed successfully.',
+      user,
+      rememberToken: createRememberToken(updatedAccount),
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Unable to change password.',
+    });
+  }
+});
+
+app.post('/api/accounts', requireAccountManagementAdmin, async (req, res) => {
   const { name, email, role, mobile_number, address, birthday, gender, employee_id } = req.body;
   try {
     const finalName = (name || '').trim();
@@ -2524,10 +2651,12 @@ app.post('/api/accounts', async (req, res) => {
     const { password: generatedPassword, mustChangePassword } = resolveGeneratedAccountPassword(null, generateRandomPassword);
     const hashedPassword = await hashPassword(generatedPassword);
     const parentCode = accountHasParentAccess(finalRole) ? await generateUniqueParentCode() : null;
+    const temporaryPasswordIssuedAt = new Date();
+    const temporaryPasswordExpiresAt = getTemporaryPasswordExpiry(temporaryPasswordIssuedAt);
 
     const result = await pool.query(
-      `INSERT INTO public.accounts (name, email, password, role, mobile_number, address, birthday, gender, employee_id, status, is_archived, must_change_password, parent_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11, $12)
+      `INSERT INTO public.accounts (name, email, password, role, mobile_number, address, birthday, gender, employee_id, status, is_archived, must_change_password, parent_id, temporary_password_issued_at, temporary_password_expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11, $12, $13, $14)
        RETURNING *`,
       [
         finalName,
@@ -2542,11 +2671,13 @@ app.post('/api/accounts', async (req, res) => {
         'Offline',
         mustChangePassword,
         parentCode,
+        temporaryPasswordIssuedAt,
+        temporaryPasswordExpiresAt,
       ]
     );
 
     const created = serializeUser(result.rows[0]);
-    const shouldSendCredentialEmail = ['parent', 'teacher', 'parent_teacher'].includes(finalRole);
+    const shouldSendCredentialEmail = isWebsiteManagedAccountRole(finalRole);
     const emailSent = shouldSendCredentialEmail
       ? await resolveCredentialEmailDelivery(
         () => generateCredentialsEmail(normalizedEmail, generatedPassword, finalRole, finalName),
@@ -2555,7 +2686,6 @@ app.post('/api/accounts', async (req, res) => {
       : true;
     const responsePayload = buildAccountCreationResponse({
       createdUser: created,
-      generatedPassword,
       emailSent,
       role: finalRole,
     });
@@ -2574,7 +2704,63 @@ app.post('/api/accounts', async (req, res) => {
   }
 });
 
-app.get('/api/accounts', async (req, res) => {
+app.post('/api/accounts/:id/temporary-password', requireAccountManagementAdmin, async (req, res) => {
+  try {
+    const accountId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(accountId) || accountId <= 0) {
+      return res.status(400).json({ error: 'Invalid account ID.' });
+    }
+    const accountResult = await pool.query('SELECT * FROM public.accounts WHERE id = $1', [accountId]);
+    const account = accountResult.rows[0];
+    if (!account) return res.status(404).json({ error: 'Account not found.' });
+    if (!isWebsiteManagedAccountRole(account.role)) {
+      return res.status(403).json({ error: 'Temporary credentials are only available for website accounts.' });
+    }
+    if (account.is_archived) {
+      return res.status(409).json({ error: 'Restore the account before issuing a temporary password.' });
+    }
+
+    const generatedPassword = generateRandomPassword();
+    const issuedAt = new Date();
+    const expiresAt = getTemporaryPasswordExpiry(issuedAt);
+    const hashedPassword = await hashPassword(generatedPassword);
+    const updateResult = await pool.query(
+      `UPDATE public.accounts
+       SET password = $1,
+           must_change_password = true,
+           temporary_password_issued_at = $2,
+           temporary_password_expires_at = $3,
+           otp_code = NULL,
+           otp_expires_at = NULL,
+           session_version = COALESCE(session_version, 0) + 1
+       WHERE id = $4
+       RETURNING *`,
+      [hashedPassword, issuedAt, expiresAt, account.id]
+    );
+    const updatedAccount = updateResult.rows[0];
+    const emailSent = await resolveCredentialEmailDelivery(
+      () => generateCredentialsEmail(updatedAccount.email, generatedPassword, updatedAccount.role, updatedAccount.name),
+      getCredentialEmailTimeoutMs()
+    );
+    await writeAdminAuditLog(req.authenticatedUser, 'Regenerate Temporary Password', updatedAccount);
+
+    if (!emailSent) {
+      return res.status(202).json({
+        user: serializeUser(updatedAccount),
+        emailSent: false,
+        credentialDelivery: 'requires_regeneration',
+        warning: 'Credential email could not be sent. Issue a new temporary password after email delivery is available.',
+      });
+    }
+
+    return res.json({ user: serializeUser(updatedAccount), emailSent: true });
+  } catch (error) {
+    console.error('Temporary password regeneration failed:', error.message);
+    return res.status(500).json({ error: 'Unable to issue a temporary password.' });
+  }
+});
+
+app.get('/api/accounts', requireAccountManagementAdmin, async (req, res) => {
   try {
     const archived = String(req.query.archived).toLowerCase() === 'true';
     const roleFilter = req.query.role ? normalizeAccountRole(req.query.role) : null;
@@ -2817,6 +3003,20 @@ app.delete('/api/folders/:id', requireLessonQuestionManagerAccess, async (req, r
   try {
     const folderId = parseInt(req.params.id, 10);
     if (Number.isNaN(folderId)) return res.status(400).json({ error: 'Invalid folder ID' });
+    const activeQuestionSetResult = await pool.query(
+      `SELECT 1 AS active_question_set
+       FROM public.learning_files
+       WHERE folder_id = $1
+         AND deleted_at IS NULL
+         AND (published = true OR publish_status = 'active')
+       LIMIT 1`,
+      [folderId]
+    );
+    if (activeQuestionSetResult.rows.length > 0) {
+      return res.status(409).json({
+        error: 'This folder contains an Active in Game question set. Publish a replacement before moving it to Trash.',
+      });
+    }
     const result = await pool.query(
       'UPDATE public.folders SET deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP) WHERE id = $1 RETURNING *',
       [folderId]
@@ -2866,6 +3066,19 @@ app.delete('/api/folders/:id/permanent', requireLessonQuestionManagerAccess, asy
   try {
     const folderId = parseInt(req.params.id, 10);
     if (Number.isNaN(folderId)) return res.status(400).json({ error: 'Invalid folder ID' });
+    const activeQuestionSetResult = await pool.query(
+      `SELECT 1 AS active_question_set
+       FROM public.learning_files
+       WHERE folder_id = $1
+         AND (published = true OR publish_status = 'active')
+       LIMIT 1`,
+      [folderId]
+    );
+    if (activeQuestionSetResult.rows.length > 0) {
+      return res.status(409).json({
+        error: 'This folder contains an Active in Game question set. Publish a replacement before permanently deleting it.',
+      });
+    }
     const fileResult = await pool.query(
       'SELECT id, file_url FROM public.learning_files WHERE folder_id = $1 AND deleted_at IS NOT NULL',
       [folderId]
@@ -3199,6 +3412,44 @@ app.get('/api/learning-files', requireLessonQuestionManagerAccess, async (req, r
   }
 });
 
+app.get('/api/learning-files/storage-summary', requireLessonQuestionManagerAccess, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         COALESCE(SUM(GREATEST(COALESCE(lf.file_size, 0), 0)), 0)::BIGINT AS source_file_bytes,
+         COALESCE((
+           SELECT SUM(
+             octet_length(
+               jsonb_build_object(
+                 'question', q.question,
+                 'options', q.options,
+                 'correct_answer', q.correct_answer,
+                 'grade_level', q.grade_level,
+                 'difficulty', q.difficulty,
+                 'math_topic', q.math_topic,
+                 'source', q.source
+               )::text
+             )
+           )::BIGINT
+           FROM public.questions q
+           INNER JOIN public.learning_files qlf ON qlf.id = q.learning_file_id
+         ), 0)::BIGINT AS question_content_bytes
+       FROM public.learning_files lf`
+    );
+    const row = result.rows[0] || {};
+    const sourceFileBytes = Number(row.source_file_bytes || 0);
+    const questionContentBytes = Number(row.question_content_bytes || 0);
+    return res.json({
+      used_bytes: Math.max(0, sourceFileBytes) + Math.max(0, questionContentBytes),
+      source_file_bytes: Math.max(0, sourceFileBytes),
+      question_content_bytes: Math.max(0, questionContentBytes),
+    });
+  } catch (err) {
+    console.error('Fetch learning storage summary failed:', err.message);
+    return res.status(500).json({ error: 'Failed to calculate managed-content storage.' });
+  }
+});
+
 app.get('/api/learning-files/:id/questions', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
@@ -3350,6 +3601,17 @@ app.delete('/api/learning-files/:id', requireLessonQuestionManagerAccess, async 
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
+    const currentFileResult = await pool.query(
+      'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL',
+      [fileId]
+    );
+    const currentFile = currentFileResult.rows[0];
+    if (!currentFile) return res.status(404).json({ error: 'File not found' });
+    if (currentFile.published || currentFile.publish_status === 'active') {
+      return res.status(409).json({
+        error: 'This question set is Active in Game. Publish a replacement before moving it to Trash.',
+      });
+    }
     const fileResult = await pool.query(
       `UPDATE public.learning_files
        SET deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP),
@@ -3393,6 +3655,11 @@ app.delete('/api/learning-files/:id/permanent', requireLessonQuestionManagerAcce
     );
     if (fileResult.rows.length === 0) return res.status(404).json({ error: 'Trashed file not found' });
     const file = fileResult.rows[0];
+    if (file.published || file.publish_status === 'active') {
+      return res.status(409).json({
+        error: 'This question set is Active in Game. Publish a replacement before permanently deleting it.',
+      });
+    }
     await pool.query('DELETE FROM public.questions WHERE learning_file_id = $1', [fileId]);
     await pool.query('DELETE FROM public.learning_files WHERE id = $1', [fileId]);
     removeFileFromDisk(file.file_url);
@@ -3434,6 +3701,9 @@ app.get('/api/game/questions', async (req, res) => {
     const math_topic = req.query.math_topic || req.query.topic || null;
     const learningFiles = await getGameFiles({ grade_level, difficulty, math_topic });
     const gameQuestions = await getGameQuestions({ grade_level, difficulty, math_topic });
+    if (gameQuestions.length > 0) {
+      await markLearningFilesFetchedByGame(gameQuestions);
+    }
     res.json({ learning_files: learningFiles, questions: gameQuestions });
   } catch (err) {
     console.error('Fetch game questions failed:', err.message);
@@ -4239,18 +4509,16 @@ app.post('/api/reset-password/verify', async (req, res) => {
 });
 
 // --- NEW: Change Password with OTP (Step 1: Request OTP) ---
-app.post('/api/request-password-change-otp', async (req, res) => {
-  const { userId, email } = req.body;
+app.post('/api/request-password-change-otp', requireWebsiteManagedAccount, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM accounts WHERE id=$1', [userId]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    const account = req.authenticatedUser;
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    await pool.query('UPDATE accounts SET otp_code=$1, otp_expires_at=$2 WHERE id=$3', [otp, expiresAt, userId]);
+    await pool.query('UPDATE accounts SET otp_code=$1, otp_expires_at=$2 WHERE id=$3', [otp, expiresAt, account.id]);
 
     const emailSent = await sendSystemEmail({
-      to: email,
+      to: account.email,
       subject: 'Password Change Verification Code',
       html: `<div style="font-family: Arial; border: 1px solid #ddd; padding: 20px;">
                 <h2>Password Change Verification</h2>
@@ -4268,59 +4536,34 @@ app.post('/api/request-password-change-otp', async (req, res) => {
 });
 
 // --- NEW: Change Password with OTP (Step 2: Verify OTP and Update Password) ---
-app.post('/api/verify-password-change-otp', async (req, res) => {
-  const { userId, otp, newPassword, firstLogin } = req.body;
+app.post('/api/verify-password-change-otp', requireWebsiteManagedAccount, async (req, res) => {
+  const { userId, newPassword, firstLogin } = req.body;
   try {
     if (firstLogin) {
-      // First-login changes use the login-issued token because no OTP screen is shown.
-      const authHeader = String(req.headers.authorization || '');
-      const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-      const verified = verifyRememberToken(token);
-      if (!verified || Number(verified.userId) !== Number(userId)) {
+      if (!req.authenticatedUser || Number(req.authenticatedUser.id) !== Number(userId)) {
         return res.status(403).json({ error: 'Password change is not authorized' });
       }
-
-      const result = await pool.query('SELECT * FROM public.accounts WHERE id=$1', [userId]);
-      if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-
-      const user = result.rows[0];
-      if (!user.must_change_password) {
-        return res.status(400).json({ error: 'Password change is not required' });
-      }
-
-      const hashedPassword = await hashPassword(newPassword);
-      await pool.query(
-        'UPDATE public.accounts SET password=$1, otp_code=NULL, otp_expires_at=NULL, must_change_password=false WHERE id=$2',
-        [hashedPassword, userId]
-      );
-
+      const updatedAccount = await replaceAccountPassword({
+        account: req.authenticatedUser,
+        newPassword,
+        requireTemporaryPassword: true,
+      });
       return res.json({
         success: true,
-        message: 'Password changed successfully!'
+        message: 'Password changed successfully!',
+        user: serializeUser(updatedAccount),
+        rememberToken: createRememberToken(updatedAccount),
       });
     }
 
-    const result = await pool.query('SELECT * FROM public.accounts WHERE id=$1 AND otp_code=$2', [userId, otp]);
-    if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid or expired OTP' });
-
-    const user = result.rows[0];
-    if (user.otp_expires_at && new Date(user.otp_expires_at) < new Date()) {
-      return res.status(401).json({ error: 'OTP expired' });
-    }
-
-    const hashedPassword = await hashPassword(newPassword);
-    await pool.query(
-      'UPDATE public.accounts SET password=$1, otp_code=NULL, otp_expires_at=NULL, must_change_password=false WHERE id=$2',
-      [hashedPassword, userId]
-    );
-
-    res.json({
-      success: true,
-      message: 'Password changed successfully!'
+    return res.status(410).json({
+      error: 'Password changes require your current password in Settings.',
     });
   } catch (err) {
     console.error('Password change OTP verification failed:', err.message);
-    return res.status(500).json({ error: 'Verification failed' });
+    return res.status(err.statusCode || 500).json({
+      error: err.statusCode ? err.message : 'Verification failed',
+    });
   }
 });
 

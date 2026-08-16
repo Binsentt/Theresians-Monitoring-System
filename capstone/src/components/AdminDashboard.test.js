@@ -86,4 +86,17 @@ describe('AdminDashboard route protection', () => {
     expect(mockNavigate).not.toHaveBeenCalledWith('/login');
     expect(container.textContent).toContain('Admin Dashboard');
   });
+
+  test('loads the secured account summary with the existing session header', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
+    localStorage.setItem('rememberToken', 'admin-dashboard-token');
+
+    await act(async () => {
+      root.render(<AdminDashboard />);
+    });
+
+    const accountsRequest = global.fetch.mock.calls.find(([url]) => String(url).endsWith('/api/accounts'));
+    expect(accountsRequest).toBeTruthy();
+    expect(accountsRequest[1].headers.Authorization).toBe('Bearer admin-dashboard-token');
+  });
 });

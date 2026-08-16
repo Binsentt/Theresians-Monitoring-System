@@ -49,9 +49,6 @@ export default function SettingsScreen() {
     confirmPassword: ''
   });
   const [passwordErrors, setPasswordErrors] = useState({});
-  const [passwordStep, setPasswordStep] = useState(1); // 1: form, 2: otp
-  const [otpCode, setOtpCode] = useState('');
-  const [pendingUserId, setPendingUserId] = useState(null);
   const [showPasswords, setShowPasswords] = useState({
     current: false,
     new: false,
@@ -357,8 +354,6 @@ export default function SettingsScreen() {
       confirmPassword: ''
     });
     setPasswordErrors({});
-    setPasswordStep(1);
-    setOtpCode('');
     setShowChangePassword(true);
   };
 
@@ -377,7 +372,7 @@ export default function SettingsScreen() {
     setPasswordErrors({ ...passwordErrors, [field]: error });
   };
 
-  const handleRequestChangePassword = async (e) => {
+  const handleChangePassword = async (e) => {
     e.preventDefault();
 
     // Validate all fields
@@ -393,73 +388,39 @@ export default function SettingsScreen() {
       return;
     }
 
-    // Verify current password
-    if (passwordForm.currentPassword !== user.password) {
-      setErrorMessage('Current password is incorrect.');
-      return;
-    }
     setErrorMessage('');
 
     setPasswordUpdating(true);
     try {
-      // Request OTP for password change
-      const response = await fetch(apiUrl('/api/request-password-change-otp'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, email: user.email }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        setErrorMessage(data.error || 'Failed to send OTP.');
-        return;
-      }
-
-      setPendingUserId(user.id);
-      setPasswordStep(2);
-      alert('OTP sent to your email. Please check your inbox.');
-    } catch (err) {
-      setErrorMessage('Cannot connect to server.');
-    } finally {
-      setPasswordUpdating(false);
-    }
-  };
-
-  const handleVerifyAndChangePassword = async (e) => {
-    e.preventDefault();
-
-    if (!otpCode) {
-      setErrorMessage('Please enter the OTP code.');
-      return;
-    }
-    setErrorMessage('');
-
-    setPasswordUpdating(true);
-    try {
-      // Verify OTP and update password
-      const response = await fetch(apiUrl('/api/verify-password-change-otp'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch(apiUrl('/api/account/password'), {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...buildAuthHeaders(),
+        },
         body: JSON.stringify({
-          userId: pendingUserId,
-          otp: otpCode,
-          newPassword: passwordForm.newPassword
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword,
         }),
       });
 
       const data = await response.json();
       if (!response.ok) {
-        setErrorMessage(data.error || 'OTP verification failed.');
+        setErrorMessage(data.error || 'Unable to change password.');
+        if (response.status === 401 || response.status === 403) {
+          clearStoredSession();
+          navigate('/login', { replace: true, state: { sessionExpired: true } });
+        }
         return;
       }
 
+      if (data.user) {
+        localStorage.setItem('loggedInUser', JSON.stringify(data.user));
+        setUser(data.user);
+      }
+      if (data.rememberToken) localStorage.setItem('rememberToken', data.rememberToken);
       setErrorMessage('Password changed successfully!');
       setShowChangePassword(false);
-      
-      // Update local user with new password
-      const updatedUser = { ...user, password: passwordForm.newPassword };
-      localStorage.setItem('loggedInUser', JSON.stringify(updatedUser));
-      setUser(updatedUser);
     } catch (err) {
       setErrorMessage('Cannot connect to server.');
     } finally {
@@ -717,13 +678,13 @@ export default function SettingsScreen() {
               </div>
               {!showChangePassword ? (
                 <div className="password-view">
-                  <p className="info-text">Update your password to keep your account secure. You'll need to verify with OTP.</p>
+                  <p className="info-text">Update your password to keep your account secure.</p>
                   <button className="btn btn-primary" onClick={handleChangePasswordClick}>
                     Change Password
                   </button>
                 </div>
-              ) : passwordStep === 1 ? (
-                <form onSubmit={handleRequestChangePassword} className="password-form">
+              ) : (
+                <form onSubmit={handleChangePassword} className="password-form">
                   <div className="form-group">
                     <label>Current Password *</label>
                     <div className="password-input-wrapper">
@@ -800,7 +761,7 @@ export default function SettingsScreen() {
                       className="btn btn-success"
                       disabled={passwordUpdating}
                     >
-                      {passwordUpdating ? ' Sending OTP...' : 'Send OTP'}
+                      {passwordUpdating ? ' Saving...' : 'Change Password'}
                     </button>
                     <button
                       type="button"
@@ -809,40 +770,6 @@ export default function SettingsScreen() {
                       disabled={passwordUpdating}
                     >
                       Cancel
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <form onSubmit={handleVerifyAndChangePassword} className="otp-form">
-                  <p className="info-text">An OTP has been sent to your email. Please enter it below.</p>
-                  
-                  <div className="form-group">
-                    <label>OTP Code *</label>
-                    <input
-                      type="text"
-                      placeholder="Enter 6-digit code"
-                      maxLength="6"
-                      value={otpCode}
-                      onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
-                      className="otp-input"
-                    />
-                  </div>
-
-                  <div className="form-actions">
-                    <button
-                      type="submit"
-                      className="btn btn-success"
-                      disabled={passwordUpdating || !otpCode}
-                    >
-                      {passwordUpdating ? ' Verifying...' : ' Verify & Change Password'}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={() => setPasswordStep(1)}
-                      disabled={passwordUpdating}
-                    >
-                      Back
                     </button>
                   </div>
                 </form>

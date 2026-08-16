@@ -16,7 +16,7 @@ test('reports ready lesson sets as ready for review while they remain staged', (
 
   assert.equal(lifecycle.code, 'ready_for_review');
   assert.equal(lifecycle.label, 'Ready for Review');
-  assert.equal(lifecycle.publishLabel, 'Staged');
+  assert.equal(lifecycle.publishLabel, 'Pending');
 });
 
 test('uses the persisted active, superseded, generating, and failed states', () => {
@@ -26,7 +26,7 @@ test('uses the persisted active, superseded, generating, and failed states', () 
   );
   assert.equal(
     deriveQuestionSetLifecycle({ publish_status: 'superseded', published: false }).label,
-    'Superseded/Replaced'
+    'Replaced'
   );
   assert.equal(
     deriveQuestionSetLifecycle({ generation_status: 'generating', publish_status: 'staged' }).label,
@@ -60,5 +60,8 @@ test('adds source traceability labels without fabricating a lifecycle', () => {
   assert.equal(lesson.status, 'Ready for Review');
   assert.equal(fixed.source_lesson, null);
   assert.equal(fixed.generated_question_set_name, 'Prepared Fractions');
-  assert.equal(fixed.status, 'Staged');
+  assert.equal(fixed.status, 'Pending');
+  assert.equal(toQuestionSetResponse({ source: 'restored_import' }).source_label, 'Client Provided');
+  assert.equal(toQuestionSetResponse({ source: 'fixed' }).source_label, 'Fixed Question File');
+  assert.equal(toQuestionSetResponse({ source: 'lesson' }).source_label, 'AI Generated');
 });

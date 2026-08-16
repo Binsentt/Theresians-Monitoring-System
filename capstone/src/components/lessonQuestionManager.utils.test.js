@@ -1,6 +1,5 @@
 import {
   filterLearningFiles,
-  calculateLearningStorage,
   countFixedQuestionRecords,
   DIFFICULTY_LEVELS,
   getLargestLearningFiles,
@@ -226,6 +225,7 @@ describe('lesson question manager helpers', () => {
     expect(inferLearningFileUploadType('quiz.json')).toBe('fixed_questions');
     expect(inferLearningFileUploadType('notes.txt')).toBe('');
     expect(formatLearningFileSize(1536)).toBe('1.5 KB');
+    expect(formatLearningFileSize(1.3 * 1024 * 1024 * 1024)).toBe('1.3 GB');
     expect(formatLearningFileSize(null)).toBe('-');
   });
 
@@ -250,18 +250,13 @@ describe('lesson question manager helpers', () => {
     ].join('\n'), 'addition.csv')).toBe(2);
   });
 
-  test('summarizes drive storage and returns the largest files', () => {
+  test('returns the largest uploaded source files without assuming a storage quota', () => {
     const files = [
       { id: 1, title: 'Small', file_size: 512 },
       { id: 2, title: 'Largest', file_size: 4096 },
       { id: 3, title: 'Unknown', file_size: null },
     ];
 
-    expect(calculateLearningStorage(files)).toEqual({
-      usedBytes: 4608,
-      limitBytes: 10 * 1024 * 1024 * 1024,
-      percentage: expect.any(Number),
-    });
     expect(getLargestLearningFiles(files, 2)).toEqual([files[1], files[0]]);
   });
 });

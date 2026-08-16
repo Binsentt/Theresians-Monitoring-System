@@ -25,8 +25,14 @@ function normalizePublishStatus(row = {}) {
 
 function publishLabel(publishStatus) {
   if (publishStatus === 'active') return 'Active in Game';
-  if (publishStatus === 'superseded') return 'Superseded/Replaced';
-  return 'Staged';
+  if (publishStatus === 'superseded') return 'Replaced';
+  return 'Pending';
+}
+
+function sourceLabel(source) {
+  if (source === 'restored_import' || source === 'client_provided') return 'Client Provided';
+  if (source === 'lesson' || source === 'ai') return 'AI Generated';
+  return 'Fixed Question File';
 }
 
 function deriveQuestionSetLifecycle(row = {}) {
@@ -69,11 +75,11 @@ function deriveQuestionSetLifecycle(row = {}) {
   if (normalizedPublishStatus === 'superseded') {
     return {
       code: 'superseded',
-      label: 'Superseded/Replaced',
+      label: 'Replaced',
       tone: 'superseded',
       generationStatus,
       publishStatus: normalizedPublishStatus,
-      publishLabel: 'Superseded/Replaced',
+      publishLabel: 'Replaced',
     };
   }
 
@@ -84,17 +90,17 @@ function deriveQuestionSetLifecycle(row = {}) {
       tone: 'review',
       generationStatus,
       publishStatus: normalizedPublishStatus,
-      publishLabel: 'Staged',
+      publishLabel: 'Pending',
     };
   }
 
   return {
     code: 'staged',
-    label: 'Staged',
+    label: 'Pending',
     tone: 'staged',
     generationStatus,
     publishStatus: normalizedPublishStatus,
-    publishLabel: 'Staged',
+    publishLabel: 'Pending',
   };
 }
 
@@ -108,6 +114,7 @@ function toQuestionSetResponse(row = {}) {
     publish_status: lifecycle.publishStatus,
     lifecycle,
     status: lifecycle.label,
+    source_label: sourceLabel(row.source),
     source_lesson: isLesson ? (row.file_name || row.title || null) : null,
     generated_question_set_name: isLesson && row.title
       ? `${row.title} — Generated Questions`
@@ -119,5 +126,6 @@ module.exports = {
   deriveQuestionSetLifecycle,
   normalizeGenerationStatus,
   normalizePublishStatus,
+  sourceLabel,
   toQuestionSetResponse,
 };

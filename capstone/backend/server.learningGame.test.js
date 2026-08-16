@@ -661,3 +661,157 @@ test('Lesson and Question Manager receives restored-import learning files throug
   assert.equal(response.body[0].folder_name, 'Questions/Grade 1/Easy');
   assert.equal(response.body[0].difficulty, 'Easy');
 });
+
+test('Lesson and Question Manager storage summary uses backend-managed bytes without inventing a quota', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let storageSql = '';
+  setQueryHandler(async (sql) => {
+    if (sql.includes('source_file_bytes') && sql.includes('question_content_bytes')) {
+      storageSql = sql;
+      return resultRows([{ source_file_bytes: '480', question_content_bytes: '121' }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/storage-summary');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.used_bytes, 601);
+  assert.equal(response.body.source_file_bytes, 480);
+  assert.equal(response.body.question_content_bytes, 121);
+  assert.equal(response.body.quota_bytes, undefined);
+  assert.match(storageSql, /jsonb_build_object/);
+});
+
+test('active question sets cannot be moved to trash before a replacement is published', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let destructiveUpdateCalled = false;
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.learning_files where id = $1')) {
+      return resultRows([{
+        id: Number(params[0]),
+        title: 'Active Addition Set',
+        published: true,
+        publish_status: 'active',
+        deleted_at: null,
+      }]);
+    }
+    if (sql.startsWith('update public.learning_files') && sql.includes('deleted_at')) {
+      destructiveUpdateCalled = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/44', { method: 'DELETE' });
+
+  assert.equal(response.status, 409);
+  assert.match(response.body.error, /active.*replacement/i);
+  assert.equal(destructiveUpdateCalled, false);
+});
+
+test('legacy folder deletion cannot unpublish an active question set', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let destructiveUpdateCalled = false;
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select 1 as active_question_set from public.learning_files') && sql.includes('folder_id = $1')) {
+      return resultRows([{ active_question_set: 1 }]);
+    }
+    if (sql.startsWith('update public.folders') || sql.startsWith('update public.learning_files')) {
+      destructiveUpdateCalled = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/folders/13', { method: 'DELETE' });
+
+  assert.equal(response.status, 409);
+  assert.match(response.body.error, /active.*replacement/i);
+  assert.equal(destructiveUpdateCalled, false);
+});
+
+test('Godot question responses record an active set fetch only after active questions are returned', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let fetchMetadataUpdate = null;
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select lf.*') && sql.includes('from public.learning_files')) {
+      return resultRows([{
+        id: 71,
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Addition',
+        file_type: 'fixed_questions',
+        source: 'fixed',
+        published: true,
+      }]);
+    }
+    if (sql.startsWith('select q.*') && sql.includes('from public.questions q')) {
+      return resultRows([{
+        id: 901,
+        learning_file_id: 71,
+        question: 'What is 1 + 1?',
+        options: ['1', '2', '3'],
+        correct_answer: '2',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Addition',
+        source: 'fixed',
+      }]);
+    }
+    if (sql.startsWith('update public.learning_files set last_fetched_at')) {
+      fetchMetadataUpdate = { sql, params };
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=1&difficulty=Easy&topic=Addition');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.questions.length, 1);
+  assert.deepEqual(fetchMetadataUpdate.params, [[71]]);
+});
+
+test('empty Godot question responses do not mark a question set as fetched', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let fetchMetadataUpdate = false;
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select lf.*') || sql.startsWith('select q.*')) return emptyResult;
+    if (sql.startsWith('update public.learning_files set last_fetched_at')) fetchMetadataUpdate = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=1&difficulty=Easy');
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.questions, []);
+  assert.equal(fetchMetadataUpdate, false);
+});

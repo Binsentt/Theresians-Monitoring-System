@@ -173,22 +173,6 @@
   font-size: 0.88rem;
 }
 
-.drive-storage-track {
-  width: 100%;
-  height: 8px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--bg-secondary, #f1f5f9);
-}
-
-.drive-storage-track span {
-  display: block;
-  min-height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #0f766e, var(--accent-color, #2563eb));
-  transition: width 0.22s ease;
-}
-
 .drive-manager-surface {
   display: grid;
   align-content: start;
@@ -314,11 +298,6 @@ button.drive-folder-card {
   min-width: 0;
 }
 
-.drive-folder-card-main strong,
-.file-name-title {
-  overflow-wrap: anywhere;
-}
-
 .drive-folder-card-main strong {
   overflow-wrap: normal;
   white-space: nowrap;
@@ -400,6 +379,19 @@ button.drive-folder-card {
   font-weight: 800;
   display: block;
   max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-topic-cell {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.manager-topic-cell > span:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

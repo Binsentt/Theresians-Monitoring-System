@@ -55,7 +55,7 @@ const sanitizeCreatedUser = (createdUser = {}) => {
   return safeUser;
 };
 
-const buildAccountCreationResponse = ({ createdUser, generatedPassword, emailSent, role, roleLabel }) => {
+const buildAccountCreationResponse = ({ createdUser, emailSent, role, roleLabel }) => {
   const safeUser = sanitizeCreatedUser(createdUser);
 
   if (emailSent) {
@@ -69,8 +69,8 @@ const buildAccountCreationResponse = ({ createdUser, generatedPassword, emailSen
   return {
     user: safeUser,
     emailSent: false,
-    tempPassword: generatedPassword,
-    warning: `${label} account was created, but the credential email could not be sent. Copy the temporary password now and share it securely with the user.`,
+    credentialDelivery: 'requires_regeneration',
+    warning: `${label} account was created, but the credential email could not be sent. An administrator must issue a new temporary password.`,
   };
 };
 
@@ -120,7 +120,7 @@ const buildCredentialsEmail = ({ email, password, role, name, appUrl = 'https://
                     <td style="padding: 0; color: #0f172a; font-size: 18px; font-weight: 800; word-break: break-word;">${safePassword}</td>
                   </tr>
                 </table>
-                <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.7;">Please login using the temporary password above. After logging in, kindly go to your Settings/Profile page and change your password for security.</p>
+                <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.7;">Please login using the temporary password above. This temporary password expires in 30 minutes. You must change your password after logging in; kindly go to your Settings/Profile page and change your password for security.</p>
                 <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.7;">Login here: <a href="${safeAppUrl}" style="color: #0b5ed7;">${safeAppUrl}</a></p>
                 <p style="margin: 0 0 22px; font-size: 15px; line-height: 1.7;">Please keep your account credentials private and do not share them with others.</p>
                 <p style="margin: 0; font-size: 15px; line-height: 1.7;">Thank you,<br/>Saint Therese School</p>

@@ -10,13 +10,23 @@ let emailSendResult = { sent: true, provider: 'test' };
 let verifiedTokenPayload = {};
 let signedTokenPayloads = [];
 let signedTokenOptions = [];
+let authenticatedTestAccount = null;
+let hashedPasswordInputs = [];
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const mockPool = {
   query: async (sql, params = []) => {
     const rawSql = sql && typeof sql === 'object' && sql.text ? sql.text : sql;
     const rawParams = sql && typeof sql === 'object' && Array.isArray(sql.values) ? sql.values : params;
-    return (await queryHandler(compactSql(rawSql), rawParams, rawSql)) || emptyResult;
+    const normalizedSql = compactSql(rawSql);
+    if (
+      authenticatedTestAccount
+      && normalizedSql.startsWith('select * from public.accounts where id = $1')
+      && Number(rawParams[0]) === Number(authenticatedTestAccount.id)
+    ) {
+      return resultRows([authenticatedTestAccount]);
+    }
+    return (await queryHandler(normalizedSql, rawParams, rawSql)) || emptyResult;
   },
 };
 
@@ -36,8 +46,11 @@ const multerStub = () => ({
 });
 const serverDependencyStubs = {
   bcrypt: {
-    compare: async () => passwordMatches,
-    hash: async (value) => `hashed:${value}`,
+    compare: async (value, storedHash) => passwordMatches || storedHash === `hashed:${value}`,
+    hash: async (value) => {
+      hashedPasswordInputs.push(value);
+      return `hashed:${value}`;
+    },
   },
   cors: () => createMiddleware(),
   jsonwebtoken: {
@@ -101,7 +114,22 @@ const resetTestState = () => {
   verifiedTokenPayload = {};
   signedTokenPayloads = [];
   signedTokenOptions = [];
+  authenticatedTestAccount = null;
+  hashedPasswordInputs = [];
   setQueryHandler(async () => emptyResult);
+};
+
+const authenticateAsAdmin = () => {
+  authenticatedTestAccount = {
+    id: 1,
+    name: 'Ada Admin',
+    email: 'ada@example.com',
+    role: 'admin',
+    is_archived: false,
+    session_version: 0,
+  };
+  verifiedTokenPayload = { userId: authenticatedTestAccount.id, sessionVersion: 0 };
+  return { Authorization: 'Bearer admin-token' };
 };
 
 const listen = () => new Promise((resolve) => {
@@ -129,6 +157,7 @@ const requestJson = async (baseUrl, path, options = {}) => {
 test('admin account creation accepts optional profile fields and emails entered address', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const authHeaders = authenticateAsAdmin();
   t.after(async () => {
     resetTestState();
     await close(server);
@@ -160,6 +189,7 @@ test('admin account creation accepts optional profile fields and emails entered 
 
   const response = await requestJson(baseUrl, '/api/accounts', {
     method: 'POST',
+    headers: authHeaders,
     body: JSON.stringify({
       name: 'Paula Parent',
       email: 'paula.parent@gmail.com',
@@ -170,8 +200,19 @@ test('admin account creation accepts optional profile fields and emails entered 
   assert.equal(response.status, 201);
   assert.equal(insertParams[6], null);
   assert.equal(insertParams[7], null);
+  assert.match(insertParams[2], /^hashed:/);
+  assert.ok(insertParams[12] instanceof Date);
+  assert.ok(insertParams[13] instanceof Date);
+  assert.equal(await serverDependencyStubs.bcrypt.compare(hashedPasswordInputs.at(-1), insertParams[2]), true);
+  const escapedGeneratedPassword = hashedPasswordInputs.at(-1)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
   assert.equal(sentMessages.length, 1);
   assert.equal(sentMessages[0].to, 'paula.parent@gmail.com');
+  assert.ok(sentMessages[0].html.includes(escapedGeneratedPassword));
   assert.match(sentMessages[0].html, /Account Role:/);
   assert.match(sentMessages[0].html, /Parent/);
   assert.equal(response.body.emailSent, true);
@@ -180,6 +221,7 @@ test('admin account creation accepts optional profile fields and emails entered 
 test('teacher account creation emails the entered address with the account role', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const authHeaders = authenticateAsAdmin();
   t.after(async () => {
     resetTestState();
     await close(server);
@@ -203,6 +245,7 @@ test('teacher account creation emails the entered address with the account role'
 
   const response = await requestJson(baseUrl, '/api/accounts', {
     method: 'POST',
+    headers: authHeaders,
     body: JSON.stringify({
       name: 'Tessa Teacher',
       email: '  Tessa.Teacher@Example.COM  ',
@@ -223,6 +266,7 @@ test('teacher account creation emails the entered address with the account role'
 test('account management list excludes Godot student accounts', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const authHeaders = authenticateAsAdmin();
   let accountListSql = '';
   t.after(async () => {
     resetTestState();
@@ -242,7 +286,7 @@ test('account management list excludes Godot student accounts', async (t) => {
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/accounts');
+  const response = await requestJson(baseUrl, '/api/accounts', { headers: authHeaders });
 
   assert.equal(response.status, 200);
   assert.match(accountListSql, /lower\(role\) = any\(\$1::text\[\]\)/);
@@ -253,6 +297,7 @@ test('account management list excludes Godot student accounts', async (t) => {
 test('account management rejects creating student accounts', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const authHeaders = authenticateAsAdmin();
   let insertedAccount = false;
   t.after(async () => {
     resetTestState();
@@ -266,6 +311,7 @@ test('account management rejects creating student accounts', async (t) => {
 
   const response = await requestJson(baseUrl, '/api/accounts', {
     method: 'POST',
+    headers: authHeaders,
     body: JSON.stringify({
       name: 'Sam Student',
       email: 'sam.student@gmail.com',
@@ -832,6 +878,7 @@ test('admin account management writes audit log entries for create edit archive 
 test('credential email failure logs safe production diagnostics', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const authHeaders = authenticateAsAdmin();
   const originalInfo = console.info;
   const originalWarn = console.warn;
   const logEntries = [];
@@ -867,6 +914,7 @@ test('credential email failure logs safe production diagnostics', async (t) => {
 
   const response = await requestJson(baseUrl, '/api/accounts', {
     method: 'POST',
+    headers: authHeaders,
     body: JSON.stringify({
       name: 'Failed Mail Teacher',
       email: 'failed.teacher@example.com',
@@ -1008,6 +1056,7 @@ test('teacher login OTP success logs safe production diagnostics', async (t) => 
 test('teacher account creation rejects non-digit employee IDs', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const authHeaders = authenticateAsAdmin();
   t.after(async () => {
     setQueryHandler(async () => emptyResult);
     await close(server);
@@ -1015,6 +1064,7 @@ test('teacher account creation rejects non-digit employee IDs', async (t) => {
 
   const response = await requestJson(baseUrl, '/api/accounts', {
     method: 'POST',
+    headers: authHeaders,
     body: JSON.stringify({
       name: 'Tom Teacher',
       email: 'tom.teacher@gmail.com',
@@ -1030,6 +1080,7 @@ test('teacher account creation rejects non-digit employee IDs', async (t) => {
 test('teacher account creation rejects employee IDs longer than 10 digits', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const authHeaders = authenticateAsAdmin();
   t.after(async () => {
     setQueryHandler(async () => emptyResult);
     await close(server);
@@ -1037,6 +1088,7 @@ test('teacher account creation rejects employee IDs longer than 10 digits', asyn
 
   const response = await requestJson(baseUrl, '/api/accounts', {
     method: 'POST',
+    headers: authHeaders,
     body: JSON.stringify({
       name: 'Tina Teacher',
       email: 'tina.teacher@gmail.com',
@@ -1228,6 +1280,7 @@ test('remember tokens include 30-day session metadata and the account session ve
 test('active Parent/Teacher accounts receive a canonical Parent ID and pass Godot validation', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const authHeaders = authenticateAsAdmin();
   let insertParams = null;
   t.after(async () => {
     resetTestState();
@@ -1262,6 +1315,7 @@ test('active Parent/Teacher accounts receive a canonical Parent ID and pass Godo
 
   const created = await requestJson(baseUrl, '/api/accounts', {
     method: 'POST',
+    headers: authHeaders,
     body: JSON.stringify({
       name: 'Pat Combined',
       email: 'pat.combined@example.com',
@@ -1318,6 +1372,7 @@ test('archived Parent/Teacher accounts are rejected by Godot Parent ID validatio
 test('Parent ID generation retries a duplicate code before creating a Parent account', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const authHeaders = authenticateAsAdmin();
   const codeChecks = [];
   let insertedParentId = null;
   t.after(async () => {
@@ -1346,6 +1401,7 @@ test('Parent ID generation retries a duplicate code before creating a Parent acc
 
   const response = await requestJson(baseUrl, '/api/accounts', {
     method: 'POST',
+    headers: authHeaders,
     body: JSON.stringify({
       name: 'Retry Parent',
       email: 'retry.parent@example.com',

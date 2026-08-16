@@ -20,6 +20,12 @@ jest.mock('./layout/AnalyticsSidebar', () => (props) => (
 ));
 jest.mock('../assets/images/STS_Logo.png', () => 'logo.png');
 
+const setInputValue = (input, value) => {
+  const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+  valueSetter.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+};
+
 describe('SettingsScreen dashboard layout', () => {
   let container;
   let root;
@@ -37,6 +43,7 @@ describe('SettingsScreen dashboard layout', () => {
       email: 'parent-teacher@example.com',
       role: 'parent_teacher',
     }));
+    localStorage.setItem('rememberToken', 'settings-session-token');
     global.fetch = jest.fn(() => Promise.resolve({
       ok: true,
       json: async () => ({
@@ -66,5 +73,54 @@ describe('SettingsScreen dashboard layout', () => {
     expect(sidebar.dataset.activeItem).toBe('settings');
     expect(container.textContent).toContain('Settings');
     expect(container.querySelector('.back-btn')).toBeNull();
+  });
+
+  test('submits normal password changes with the current password to the authenticated server route', async () => {
+    global.fetch = jest.fn((url) => Promise.resolve({
+      ok: true,
+      json: async () => (String(url).includes('/api/account/password')
+        ? {
+          success: true,
+          user: { id: 8, name: 'Parent Teacher', email: 'parent-teacher@example.com', role: 'parent_teacher' },
+          rememberToken: 'refreshed-settings-token',
+        }
+        : {
+          id: 8,
+          name: 'Parent Teacher',
+          email: 'parent-teacher@example.com',
+          role: 'parent_teacher',
+        }),
+    }));
+
+    await act(async () => {
+      root.render(<SettingsScreen />);
+    });
+
+    const passwordTab = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent.includes('Change Password'));
+    await act(async () => {
+      passwordTab.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const changeButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Change Password');
+    await act(async () => {
+      changeButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const passwordInputs = container.querySelectorAll('input[type="password"]');
+    await act(async () => {
+      setInputValue(passwordInputs[0], 'current-password');
+      setInputValue(passwordInputs[1], 'new-permanent-password-123');
+      setInputValue(passwordInputs[2], 'new-permanent-password-123');
+      container.querySelector('.password-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    const passwordRequest = global.fetch.mock.calls.find(([url]) => String(url).includes('/api/account/password'));
+    expect(passwordRequest).toBeTruthy();
+    expect(passwordRequest[1].headers.Authorization).toBe('Bearer settings-session-token');
+    expect(JSON.parse(passwordRequest[1].body)).toEqual({
+      currentPassword: 'current-password',
+      newPassword: 'new-permanent-password-123',
+    });
   });
 });

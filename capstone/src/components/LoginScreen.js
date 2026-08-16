@@ -148,7 +148,7 @@ export default function LoginScreen() {
     const role = normalizeRole(sessionUser.role);
     alert(`Welcome back, ${sessionUser.name}!`);
 
-    navigate(getDefaultDashboardRoute(role));
+    navigate(sessionUser.mustChangePassword ? '/initial-password-setup' : getDefaultDashboardRoute(role));
   };
 
   const handleLogin = async () => {

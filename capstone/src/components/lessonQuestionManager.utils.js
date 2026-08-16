@@ -90,7 +90,8 @@ export const formatLearningFileSize = (value) => {
   if (!Number.isFinite(size) || size < 0) return '-';
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 };
 
 const normalizeStorageSize = (value) => {
@@ -124,16 +125,6 @@ export const countFixedQuestionRecords = (content, fileName) => {
   if (normalizedName.endsWith('.json')) return countFixedQuestionJson(content);
   if (normalizedName.endsWith('.csv')) return countFixedQuestionCsv(content);
   return 0;
-};
-
-export const calculateLearningStorage = (files, limitBytes = 10 * 1024 * 1024 * 1024) => {
-  const list = Array.isArray(files) ? files : [];
-  const usedBytes = list.reduce((total, file) => total + normalizeStorageSize(file?.file_size), 0);
-  return {
-    usedBytes,
-    limitBytes,
-    percentage: limitBytes > 0 ? Math.min(100, (usedBytes / limitBytes) * 100) : 0,
-  };
 };
 
 export const getLargestLearningFiles = (files, limit = 5) => {

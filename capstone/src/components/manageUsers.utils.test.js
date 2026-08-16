@@ -95,23 +95,21 @@ describe('manageUsers role helpers', () => {
     expect(buildAccountCreationSuccessModal('Parent', { tempPassword: 'A1strong!temp', user: { parent_id: '482915' } })).toEqual({
       title: 'Success',
       message: "Parent added successfully! Account credentials were sent to the user's email.",
-      tempPassword: '',
       parentId: '482915',
       emailSent: true,
     });
   });
 
-  test('buildAccountCreationSuccessModal shows one-time temporary password only when email delivery fails', () => {
+  test('buildAccountCreationSuccessModal never exposes a temporary password when email delivery fails', () => {
     expect(
       buildAccountCreationSuccessModal('Teacher', {
-        warning: 'Teacher account was created, but the credential email could not be sent. Copy the temporary password now and share it securely with the user.',
+        warning: 'Teacher account was created, but the credential email could not be sent. An administrator must issue a new temporary password.',
         tempPassword: 'Generated!2345',
         user: {},
       })
     ).toEqual({
       title: 'Account Created - Email Issue',
-      message: 'Teacher account was created, but the credential email could not be sent. Copy the temporary password now and share it securely with the user.',
-      tempPassword: 'Generated!2345',
+      message: 'Teacher account was created, but the credential email could not be sent. An administrator must issue a new temporary password.',
       parentId: '',
       emailSent: false,
     });

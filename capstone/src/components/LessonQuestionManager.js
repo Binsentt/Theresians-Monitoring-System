@@ -8,7 +8,6 @@ import { DataTable } from './layout/Table';
 import { canAccessRole, normalizeRole } from './manageUsers.utils';
 import { buildAuthHeaders } from './session.utils';
 import {
-  calculateLearningStorage,
   DIFFICULTY_LEVELS,
   formatLearningPreviewText,
   formatLearningFileSize,
@@ -62,6 +61,15 @@ function formatUploadDate(dateString) {
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+function formatGameFetchDate(dateString) {
+  if (!dateString) return null;
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
+
 function getPublicUrl(path) {
   if (!path) return null;
   return path.startsWith('http') ? path : apiUrl(path);
@@ -73,6 +81,12 @@ function deriveUploadTitle(file) {
 
 function formatDifficultyLabel(gradeLevel, difficulty) {
   return difficulty;
+}
+
+function formatQuestionSetStatus(value) {
+  if (value === 'Staged') return 'Pending';
+  if (value === 'Superseded/Replaced') return 'Replaced';
+  return value;
 }
 
 function buildNextTopicValue(gradeLevel, difficulty, currentTopic) {
@@ -87,6 +101,7 @@ export default function LessonQuestionManager() {
   const [notification, setNotification] = useState(null);
   const [files, setFiles] = useState([]);
   const [trashFiles, setTrashFiles] = useState([]);
+  const [storageSummary, setStorageSummary] = useState({ used_bytes: 0, source_file_bytes: 0, question_content_bytes: 0 });
   const [form, setForm] = useState(initialFormState);
   const [editingFile, setEditingFile] = useState(null);
   const [showUploadForm, setShowUploadForm] = useState(false);
@@ -111,14 +126,17 @@ export default function LessonQuestionManager() {
   const loadFilesAndFolders = async () => {
     try {
       setLoading(true);
-      const [filesRes, trashFilesRes] = await Promise.all([
+      const [filesRes, trashFilesRes, storageRes] = await Promise.all([
         fetchLessonManagerApi(apiUrl('/api/learning-files')),
         fetchLessonManagerApi(apiUrl('/api/learning-files/trash')),
+        fetchLessonManagerApi(apiUrl('/api/learning-files/storage-summary')),
       ]);
       if (!filesRes.ok) throw new Error('Failed to load files');
       if (!trashFilesRes.ok) throw new Error('Failed to load trashed files');
+      if (!storageRes.ok) throw new Error('Failed to load storage usage');
       setFiles(await filesRes.json());
       setTrashFiles(await trashFilesRes.json());
+      setStorageSummary(await storageRes.json());
     } catch (error) {
       console.error(error);
       showNotification('Unable to load lesson manager data.', 'error');
@@ -170,7 +188,7 @@ export default function LessonQuestionManager() {
   const tableEmptyMessage = selectedFolder.grade_level
     ? `No files available in ${selectedFolder.grade_level}${selectedFolder.difficulty ? ` - ${selectedFolder.difficulty}` : ''}.`
     : 'No question files available yet.';
-  const storageSummary = useMemo(() => calculateLearningStorage(files), [files]);
+  const managedStorageBytes = Number(storageSummary?.used_bytes) || 0;
   const largestFiles = useMemo(() => getLargestLearningFiles(files), [files]);
   const trashRows = useMemo(() => [
     ...trashFiles.map((file) => ({
@@ -276,7 +294,8 @@ export default function LessonQuestionManager() {
       };
       setFiles((current) => [uploadedFile, ...current.filter((file) => file.id !== uploadedFile.id)]);
       setSelectedFolder({ grade_level: uploadedFile.grade_level || form.grade_level, difficulty: uploadedFile.difficulty || form.difficulty });
-      showNotification(uploadType === 'lesson' ? 'Lesson questions generated and staged for review.' : 'File uploaded successfully');
+      await loadFilesAndFolders();
+      showNotification(uploadType === 'lesson' ? 'Lesson questions are Ready for Review.' : 'File uploaded successfully');
       resetForm();
       setShowUploadForm(false);
     } catch (error) {
@@ -288,15 +307,18 @@ export default function LessonQuestionManager() {
   };
 
   const moveFileToTrash = async (file) => {
-    const confirmMessage = file.published
-      ? `Delete "${file.title}"? This file is active in the game and will be removed from the website storage.`
-      : `Delete "${file.title}" from staged uploads?`;
+    if (file.published || file.publish_status === 'active') {
+      showNotification('This question set is Active in Game. Publish a replacement before moving it to Trash.', 'error');
+      return;
+    }
+    const confirmMessage = `Delete "${file.title}" from Pending question sets?`;
     if (!window.confirm(confirmMessage)) return;
     try {
       const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}`), { method: 'DELETE' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Delete failed');
       setFiles((current) => current.filter((item) => item.id !== file.id));
+      await loadFilesAndFolders();
       showNotification('File deleted.');
     } catch (error) {
       console.error(error);
@@ -316,6 +338,7 @@ export default function LessonQuestionManager() {
         deleted_at: null,
         folder_name: restoredFile.folder_name || getQuestionFolderPath(restoredFile.grade_level, restoredFile.difficulty),
       }, ...current.filter((item) => item.id !== file.id)]);
+      await loadFilesAndFolders();
       showNotification('File restored successfully');
     } catch (error) {
       console.error(error);
@@ -563,7 +586,17 @@ export default function LessonQuestionManager() {
         </div>
       ),
     },
-    { key: 'math_topic', header: 'Topic Identifier', className: 'drive-topic-column', render: (value) => value || 'Unknown topic' },
+    {
+      key: 'math_topic',
+      header: 'Topic Identifier',
+      className: 'drive-topic-column',
+      render: (value, row) => (
+        <div className="manager-topic-cell">
+          <span>{value || 'Unknown topic'}</span>
+          <span className="file-meta">{row.source_label || 'Fixed Question File'}</span>
+        </div>
+      ),
+    },
     {
       key: 'file_type',
       header: 'File Type',
@@ -582,14 +615,17 @@ export default function LessonQuestionManager() {
       className: 'drive-status-column',
       render: (_, row) => {
         const lifecycle = row.lifecycle || {};
-        const label = lifecycle.label || row.status || (row.published ? 'Active in Game' : 'Staged');
+        const label = formatQuestionSetStatus(lifecycle.label || row.status || (row.published ? 'Active in Game' : 'Pending'));
         const tone = lifecycle.tone || (row.published ? 'active' : 'staged');
-        const publishLabel = lifecycle.publishLabel
-          || (row.publish_status === 'superseded' ? 'Superseded/Replaced' : null);
+        const publishLabel = formatQuestionSetStatus(
+          lifecycle.publishLabel || (row.publish_status === 'superseded' ? 'Replaced' : null)
+        );
+        const lastGameFetch = formatGameFetchDate(row.last_fetched_at);
         return (
           <div className="manager-status-stack">
             <span className={`manager-status-pill ${tone}`}>{label}</span>
             {publishLabel && publishLabel !== label && <span className="manager-status-detail">{publishLabel}</span>}
+            {lastGameFetch && <span className="manager-status-detail">Last Game Fetch: {lastGameFetch}</span>}
           </div>
         );
       },
@@ -705,10 +741,7 @@ export default function LessonQuestionManager() {
                 <div className="drive-sidebar-storage">
                   <div className="drive-storage-label">
                     <HardDrive size={16} />
-                    <span>{formatLearningFileSize(storageSummary.usedBytes)} of 10 GB used</span>
-                  </div>
-                  <div className="drive-storage-track" aria-hidden="true">
-                    <span style={{ width: `${Math.max(storageSummary.percentage, storageSummary.usedBytes ? 1 : 0)}%` }} />
+                    <span>{formatLearningFileSize(managedStorageBytes)} used</span>
                   </div>
                 </div>
               </aside>
@@ -776,7 +809,7 @@ export default function LessonQuestionManager() {
                     <div className="question-folder-table-header">
                       <div>
                         <h3>Currently Viewing: {currentlyViewing}</h3>
-                        <p className="empty-text">Uploaded files stay staged until Push to Game is clicked.</p>
+                        <p className="empty-text">Uploaded files remain Pending until Push to Game is clicked.</p>
                       </div>
                     </div>
 
@@ -842,17 +875,19 @@ export default function LessonQuestionManager() {
                     <div className="drive-panel-header">
                       <div>
                         <h2>Storage</h2>
-                        <p className="empty-text">{formatLearningFileSize(storageSummary.usedBytes)} used of 10 GB maximum.</p>
+                        <p className="empty-text">{formatLearningFileSize(managedStorageBytes)} used by managed question content.</p>
                       </div>
                     </div>
                     <div className="storage-summary">
-                      <div className="drive-storage-track" aria-label={`${storageSummary.percentage.toFixed(1)} percent of storage used`}>
-                        <span style={{ width: `${Math.max(storageSummary.percentage, storageSummary.usedBytes ? 1 : 0)}%` }} />
+                      <div>
+                        <strong>{formatLearningFileSize(managedStorageBytes)}</strong>
+                        <p className="empty-text">
+                          {formatLearningFileSize(storageSummary?.source_file_bytes || 0)} source files + {formatLearningFileSize(storageSummary?.question_content_bytes || 0)} question content
+                        </p>
                       </div>
-                      <strong>{storageSummary.percentage.toFixed(1)}%</strong>
                     </div>
                     <div className="storage-file-list">
-                      <h3>Largest files</h3>
+                      <h3>Largest uploaded source files</h3>
                       {largestFiles.length === 0 ? (
                         <p className="empty-text">No files are using storage yet.</p>
                       ) : largestFiles.map((file) => (

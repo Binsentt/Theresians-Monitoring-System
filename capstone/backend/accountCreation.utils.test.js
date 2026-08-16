@@ -37,6 +37,8 @@ test('credential email builder uses the approved Saint Therese account letter', 
   assert.match(parentEmail.html, /Email:/);
   assert.match(parentEmail.html, /Temporary Password:/);
   assert.match(parentEmail.html, /Please login using the temporary password above\./);
+  assert.match(parentEmail.html, /expires in 30 minutes/i);
+  assert.match(parentEmail.html, /must change your password/i);
   assert.match(parentEmail.html, /Settings\/Profile page and change your password for security\./);
   assert.match(parentEmail.html, /Login here:.*http:\/\/localhost:3000\/login/);
   assert.match(parentEmail.html, /Please keep your account credentials private and do not share them with others\./);
@@ -57,7 +59,7 @@ test('credential email builder includes account role for generated-password reci
   assert.match(email.html, /Teacher/);
 });
 
-test('account creation response exposes temporary password only when credential email fails', () => {
+test('account creation response never exposes a temporary password when credential email fails', () => {
   const createdUser = {
     id: 42,
     name: 'Maria Santos',
@@ -88,8 +90,8 @@ test('account creation response exposes temporary password only when credential 
     {
       user: createdUser,
       emailSent: false,
-      tempPassword: 'Generated!2345',
-      warning: 'Teacher account was created, but the credential email could not be sent. Copy the temporary password now and share it securely with the user.',
+      credentialDelivery: 'requires_regeneration',
+      warning: 'Teacher account was created, but the credential email could not be sent. An administrator must issue a new temporary password.',
     }
   );
 });
@@ -111,7 +113,7 @@ test('account creation response never includes stored password fields', () => {
 
   assert.equal(response.user.password, undefined);
   assert.equal(response.user.otp_code, undefined);
-  assert.equal(response.tempPassword, 'Generated!2345');
+  assert.equal(response.tempPassword, undefined);
 });
 
 test('credential email delivery resolves false when sending stalls past the timeout', async () => {

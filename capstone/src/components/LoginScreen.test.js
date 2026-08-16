@@ -138,7 +138,7 @@ describe('LoginScreen OTP device controls', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/teacher-dashboard');
   });
 
-  test('routes successful login to the role dashboard even when mustChangePassword is true', async () => {
+  test('routes successful temporary-password login to forced initial password setup', async () => {
     global.fetch = jest.fn(() => Promise.resolve({
       ok: true,
       json: async () => ({
@@ -169,8 +169,8 @@ describe('LoginScreen OTP device controls', () => {
       loginButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(mockNavigate).toHaveBeenCalledWith('/parent-dashboard');
-    expect(mockNavigate).not.toHaveBeenCalledWith('/change-password', { replace: true });
+    expect(mockNavigate).toHaveBeenCalledWith('/initial-password-setup');
+    expect(mockNavigate).not.toHaveBeenCalledWith('/parent-dashboard');
   });
 
   test('shows the required session expired message when routed from an expired session', async () => {

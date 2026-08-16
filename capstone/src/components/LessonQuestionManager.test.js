@@ -57,6 +57,9 @@ describe('LessonQuestionManager upload and trash controls', () => {
     };
     global.fetch = jest.fn((url, options = {}) => {
       const value = String(url);
+      if (value.endsWith('/api/learning-files/storage-summary')) {
+        return okJson({ used_bytes: 601, source_file_bytes: 480, question_content_bytes: 121 });
+      }
       if (value.endsWith('/api/learning-files')) return okJson(fixtures.files);
       if (value.endsWith('/api/folders')) return okJson(fixtures.folders);
       if (value.endsWith('/api/learning-files/trash')) return okJson(fixtures.trashFiles);
@@ -164,6 +167,9 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/trash', {
       headers: { Authorization: 'Bearer lesson-manager-token' },
     });
+    expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/storage-summary', {
+      headers: { Authorization: 'Bearer lesson-manager-token' },
+    });
   });
 
   test('Question Count is required only for Lesson PDF File uploads and is hidden for fixed question files', async () => {
@@ -254,7 +260,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('File uploaded successfully');
     expect(container.textContent).toContain('addition-quiz');
     expect(container.textContent).toContain('Medium');
-    expect(container.textContent).toContain('Staged');
+    expect(container.textContent).toContain('Pending');
     expect(container.querySelector('.drive-upload-modal')).toBeNull();
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/questions/publish/77'), expect.anything());
   });
@@ -284,6 +290,31 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('Preview');
     expect(container.textContent).toContain('Delete');
     expect(container.textContent).toContain('Push to Game');
+  });
+
+  test('shows authoritative source and game-fetch metadata for an active question set', async () => {
+    fixtures.files = [{
+      id: 77,
+      title: 'addition-quiz',
+      file_name: 'addition-quiz.json',
+      grade_level: 'Grade 1',
+      difficulty: 'Medium',
+      math_topic: 'Addition',
+      file_type: 'fixed_questions',
+      published: true,
+      lifecycle: { label: 'Active in Game', tone: 'active', publishLabel: 'Active in Game' },
+      source_label: 'Client Provided',
+      last_fetched_at: '2026-08-16T02:51:00.000Z',
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Medium');
+
+    expect(container.textContent).toContain('Active in Game');
+    expect(container.textContent).toContain('Client Provided');
+    expect(container.textContent).toContain('Last Game Fetch:');
   });
 
   test('Lesson PDF Preview shows staged generated questions before Push to Game', async () => {
@@ -337,7 +368,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     await openQuestionFolder(container, 'Grade 1', 'Medium');
 
-    expect(container.textContent).toContain('Staged');
+    expect(container.textContent).toContain('Pending');
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/questions/publish/77'), expect.anything());
 
     await act(async () => {
@@ -384,7 +415,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
 
     expect(container.textContent).toContain('Ready for Review');
-    expect(container.textContent).toContain('Staged');
+    expect(container.textContent).toContain('Pending');
+    expect(container.textContent).not.toContain('Staged');
     expect(container.textContent).toContain('Source Lesson: fractions.pdf');
     expect(container.textContent).not.toContain('Active in Game');
   });
@@ -488,7 +520,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('addition-quiz');
     expect(container.textContent).toContain('Basic Addition');
     expect(container.textContent).toContain('Fixed Question File');
-    expect(container.textContent).toContain('Staged');
+    expect(container.textContent).toContain('Pending');
     expect(container.textContent).not.toContain('medium-quiz');
     expect(container.textContent).not.toContain('grade-two-easy');
     expect(container.textContent).toContain('Rename');

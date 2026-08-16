@@ -21,6 +21,7 @@ describe('App public auth routes', () => {
       root.unmount();
     });
     container.remove();
+    delete global.fetch;
     window.history.pushState({}, '', '/');
   });
 
@@ -34,5 +35,36 @@ describe('App public auth routes', () => {
     expect(window.location.pathname).toBe('/login');
     expect(container.textContent).toContain('Enter your Credentials');
     expect(container.textContent).not.toContain('Create a New Password');
+  });
+
+  test('blocks direct dashboard routes until a temporary-password user completes forced setup', async () => {
+    window.history.pushState({}, '', '/parent-dashboard');
+    localStorage.setItem('rememberToken', 'pending-password-token');
+    localStorage.setItem('loggedInUser', JSON.stringify({
+      id: 12,
+      name: 'Pending Parent',
+      role: 'parent',
+      mustChangePassword: true,
+    }));
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        valid: true,
+        user: {
+          id: 12,
+          name: 'Pending Parent',
+          role: 'parent',
+          mustChangePassword: true,
+        },
+      }),
+    }));
+
+    await act(async () => {
+      root.render(<App />);
+    });
+
+    expect(window.location.pathname).toBe('/initial-password-setup');
+    expect(container.textContent).toContain('Create Your Password');
   });
 });

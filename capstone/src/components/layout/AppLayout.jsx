@@ -28,7 +28,7 @@ export function MainContent({ children, className = '' }) {
 
 export function PageContent({ children, className = '' }) {
   return (
-    <div className={`page-content ${className}`}>
+    <div className={`page-content page-content-transition ${className}`}>
       {children}
     </div>
   );
