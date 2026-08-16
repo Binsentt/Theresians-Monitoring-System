@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import { Card, MetricCard, InfoCard } from './layout/Card';
 import { ResponsiveGrid } from './layout/Grid';
 import logoImage from '../assets/images/STS_Logo.png';
 import { normalizeRole } from './manageUsers.utils';
-import { resolveAuthorizedSession } from './session.utils';
+import { getStoredUserSession, resolveAuthorizedSession } from './session.utils';
 
 export default function TeacherDashboard() {
   const navigate = useNavigate();
@@ -34,7 +35,19 @@ export default function TeacherDashboard() {
     loadData();
   }, [navigate]);
 
-  if (loading) return <div className="loading-container"><div className="spinner"></div><p>Loading Teacher Portal...</p></div>;
+  if (loading) {
+    const loadingRole = normalizeRole(getStoredUserSession()?.role);
+    return (
+      <DashboardLoadingShell
+        role={loadingRole === 'parent_teacher' ? 'parent_teacher' : 'teacher'}
+        activeItem="dashboard"
+        logoSrc={logoImage}
+        portalLabel="Teacher Portal"
+        heading="Teacher Dashboard"
+        subheading="Your classroom overview is loading."
+      />
+    );
+  }
   if (!user) return null;
 
   return (

@@ -150,6 +150,30 @@ describe('ManageUsers edit flow', () => {
     expect(accountListCall[1].headers.Authorization).toBe('Bearer manage-users-token');
   });
 
+  test('keeps the dashboard shell visible while the managed-user list is loading', async () => {
+    let resolveAccounts;
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/accounts')) {
+        return new Promise((resolve) => {
+          resolveAccounts = resolve;
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    expect(container.textContent).toContain('Manage Users');
+    expect(container.querySelector('[data-testid="dashboard"]')).toBeTruthy();
+    expect(container.querySelector('.sts-loader-container')).toBeNull();
+
+    await act(async () => {
+      resolveAccounts({ ok: true, json: async () => accountsPayload });
+    });
+  });
+
   test('admin can issue a replacement temporary password without receiving it in the UI', async () => {
     localStorage.setItem('rememberToken', 'manage-users-token');
     window.confirm = jest.fn(() => true);

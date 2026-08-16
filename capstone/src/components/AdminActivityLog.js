@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import ActivityLog from './ActivityLog';
 import logoImage from '../assets/images/STS_Logo.png';
 import { normalizeRole } from './manageUsers.utils';
@@ -60,10 +61,15 @@ export default function AdminActivityLog() {
 
   if (loading) {
     return (
-      <div className="sts-loader-container">
-        <div className="sts-spinner"></div>
-        <p>Loading Activity Log...</p>
-      </div>
+      <DashboardLoadingShell
+        role="admin"
+        activeItem="activity-log"
+        onSelect={handleSidebarSelection}
+        logoSrc={logoImage}
+        portalLabel="Admin Portal"
+        heading="Activity Log"
+        subheading="Review recent account and system activity."
+      />
     );
   }
 

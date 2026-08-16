@@ -2,12 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import logoImage from '../assets/images/STS_Logo.png';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import { MetricCard, InfoCard } from './layout/Card';
 import { ResponsiveGrid } from './layout/Grid';
 import { buildScopedApiUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
-import { buildAuthHeaders } from './session.utils';
+import { buildAuthHeaders, getStoredUserSession } from './session.utils';
 import { formatPercent, normalizeDisplayList, safeDisplayText, toFiniteNumber } from './studentProgress.utils';
 import { apiUrl } from '../api';
 import '../styles/parentdashboard.css';
@@ -147,11 +148,16 @@ export default function ParentDashboard() {
   };
 
   if (loading) {
+    const loadingRole = normalizeRole(getStoredUserSession()?.role);
     return (
-      <div className="loading-container">
-        <div className="spinner"></div>
-        <p>Loading Parent Portal...</p>
-      </div>
+      <DashboardLoadingShell
+        role={loadingRole === 'parent_teacher' ? 'parent_teacher' : 'parent'}
+        activeItem="dashboard"
+        logoSrc={logoImage}
+        portalLabel="Parent Portal"
+        heading="Parent Dashboard"
+        subheading="Your child's learning overview is loading."
+      />
     );
   }
 

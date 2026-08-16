@@ -2,11 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Download, FilePenLine, FileText, Folder, HardDrive, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import logoImage from '../assets/images/STS_Logo.png';
 import { DashboardContainer, MainContent, TopBar, PageContent } from './layout/AppLayout';
 import { DataTable } from './layout/Table';
 import { canAccessRole, normalizeRole } from './manageUsers.utils';
-import { buildAuthHeaders } from './session.utils';
+import { buildAuthHeaders, getStoredUserSession } from './session.utils';
 import {
   DIFFICULTY_LEVELS,
   formatLearningPreviewText,
@@ -678,11 +679,16 @@ export default function LessonQuestionManager() {
   ];
 
   if (loading) {
+    const loadingRole = normalizeRole(getStoredUserSession()?.role);
     return (
-      <div className="loading-container">
-        <div className="spinner"></div>
-        <p>Loading Lesson & Question Manager...</p>
-      </div>
+      <DashboardLoadingShell
+        role={loadingRole === 'admin' ? 'admin' : loadingRole === 'parent_teacher' ? 'parent_teacher' : 'teacher'}
+        activeItem="lesson-question-manager"
+        logoSrc={logoImage}
+        portalLabel={loadingRole === 'admin' ? 'Admin Portal' : 'Teacher Portal'}
+        heading="Lesson & Question Manager"
+        subheading="Organize uploaded Mathematics content for lessons and fixed questions."
+      />
     );
   }
 

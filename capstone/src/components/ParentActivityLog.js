@@ -2,9 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import ActivityLog from './ActivityLog';
 import logoImage from '../assets/images/STS_Logo.png';
 import { normalizeRole } from './manageUsers.utils';
+import { getStoredUserSession } from './session.utils';
 import '../styles/activitylog.css';
 
 export default function ParentActivityLog() {
@@ -53,11 +55,17 @@ export default function ParentActivityLog() {
   };
 
   if (loading) {
+    const loadingRole = normalizeRole(getStoredUserSession()?.role);
     return (
-      <div className="sts-loader-container">
-        <div className="sts-spinner"></div>
-        <p>Loading Activity Log...</p>
-      </div>
+      <DashboardLoadingShell
+        role={loadingRole === 'parent_teacher' ? 'parent_teacher' : 'parent'}
+        activeItem="activity-log"
+        onSelect={handleSidebarSelection}
+        logoSrc={logoImage}
+        portalLabel="Parent Portal"
+        heading="Activity Log"
+        subheading="Review recent activity for your account and children."
+      />
     );
   }
 

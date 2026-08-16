@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import logoImage from '../assets/images/STS_Logo.png';
 import { AnnouncementCard, AnnouncementEmptyState } from './AnnouncementCard';
@@ -13,6 +14,7 @@ import {
 } from './announcementDashboard.utils';
 import { canAccessRole, normalizeRole } from './manageUsers.utils';
 import { apiUrl } from '../api';
+import { getStoredUserSession } from './session.utils';
 
 const API_BASE = apiUrl('').replace(/\/$/, '');
 
@@ -138,7 +140,7 @@ export default function AnnouncementPage({ mode = 'parent' }) {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
 
-  const sessionRole = normalizeRole(user?.role);
+  const sessionRole = normalizeRole(user?.role || getStoredUserSession()?.role);
   const sidebarRole = sessionRole === 'parent_teacher' ? 'parent_teacher' : config.sidebarRole;
   const statusType = isAnnouncementStatusError(status) ? 'error' : 'success';
 
@@ -294,10 +296,14 @@ export default function AnnouncementPage({ mode = 'parent' }) {
 
   if (loading) {
     return (
-      <div className="sts-loader-container">
-        <div className="sts-spinner"></div>
-        <p>Loading announcements...</p>
-      </div>
+      <DashboardLoadingShell
+        role={sidebarRole}
+        activeItem={config.activeItem}
+        logoSrc={logoImage}
+        portalLabel={config.portalLabel}
+        heading={config.heading}
+        subheading={config.subheading}
+      />
     );
   }
 

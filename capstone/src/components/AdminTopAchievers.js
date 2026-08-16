@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import logoImage from '../assets/images/STS_Logo.png';
 import { normalizeRole } from './manageUsers.utils';
 import { apiUrl } from '../api';
@@ -89,25 +90,13 @@ export default function AdminTopAchievers() {
 
   if (loading) {
     return (
-      <DashboardContainer
-        sidebar={
-          <AnalyticsSidebar
-            role="admin"
-            activeItem="top-achievers"
-            logoSrc={logoImage}
-            portalLabel="Admin Portal"
-          />
-        }
-        main={
-          <MainContent>
-            <TopBar>
-              <h1>Loading...</h1>
-            </TopBar>
-            <PageContent>
-              <div className="loading-state">Loading Top Achievers...</div>
-            </PageContent>
-          </MainContent>
-        }
+      <DashboardLoadingShell
+        role="admin"
+        activeItem="top-achievers"
+        logoSrc={logoImage}
+        portalLabel="Admin Portal"
+        heading="Top Achievers"
+        subheading="View student achievements and learning progress."
       />
     );
   }

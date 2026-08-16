@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import logoImage from '../assets/images/STS_Logo.png';
 import {
   buildAccountCreationSuccessModal,
@@ -619,10 +620,13 @@ export default function ManageUsers() {
 
   if (loading) {
     return (
-      <div className="sts-loader-container">
-        <div className="sts-spinner"></div>
-        <p>Loading...</p>
-      </div>
+      <DashboardLoadingShell
+        role="admin"
+        activeItem="manage-users"
+        portalLabel="Admin Portal"
+        heading="Manage Users"
+        subheading="Manage website accounts, roles, and access."
+      />
     );
   }
 

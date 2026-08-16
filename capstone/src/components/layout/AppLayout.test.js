@@ -26,4 +26,5 @@ test('shared content transition honors reduced-motion preferences', () => {
   const stylesheet = fs.readFileSync(path.resolve(__dirname, '../../styles/layout.css'), 'utf8');
 
   expect(stylesheet).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.page-content-transition\s*\{\s*animation:\s*none;/);
+  expect(stylesheet).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.dashboard-inline-skeleton\s*\{\s*animation:\s*none;/);
 });

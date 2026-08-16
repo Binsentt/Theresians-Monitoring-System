@@ -2,10 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import logoImage from '../assets/images/STS_Logo.png';
 import { isTeacherRole, normalizeRole } from './manageUsers.utils';
 import { buildScopedApiUrl } from './analyticsEndpoints';
-import { buildAuthHeaders } from './session.utils';
+import { buildAuthHeaders, getStoredUserSession } from './session.utils';
 import '../styles/topachievers.css';
 
 export default function TeacherTopAchievers() {
@@ -89,26 +90,15 @@ export default function TeacherTopAchievers() {
 
 
   if (loading) {
+    const loadingRole = normalizeRole(getStoredUserSession()?.role);
     return (
-      <DashboardContainer
-        sidebar={
-          <AnalyticsSidebar
-            role={normalizeRole(user?.role) === 'parent_teacher' ? 'parent_teacher' : 'teacher'}
-            activeItem="top-achievers"
-            logoSrc={logoImage}
-            portalLabel="Teacher Portal"
-          />
-        }
-        main={
-          <MainContent>
-            <TopBar>
-              <h1>Loading...</h1>
-            </TopBar>
-            <PageContent>
-              <div className="loading-state">Loading Top Achievers...</div>
-            </PageContent>
-          </MainContent>
-        }
+      <DashboardLoadingShell
+        role={loadingRole === 'parent_teacher' ? 'parent_teacher' : 'teacher'}
+        activeItem="top-achievers"
+        logoSrc={logoImage}
+        portalLabel="Teacher Portal"
+        heading="Top Achievers"
+        subheading="View student achievements and learning progress."
       />
     );
   }

@@ -10,6 +10,7 @@ jest.mock('react-router-dom', () => ({
 }));
 
 jest.mock('./session.utils', () => ({
+  getStoredUserSession: () => null,
   resolveAuthorizedSession: (...args) => mockResolveAuthorizedSession(...args),
 }));
 

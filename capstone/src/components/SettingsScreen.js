@@ -10,9 +10,10 @@ import {
   validateOptionalAdultBirthday,
 } from './manageUsers.utils';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import { DashboardContainer, MainContent, PageContent, TopBar } from './layout/AppLayout';
 import { apiUrl } from '../api';
-import { buildAuthHeaders, clearStoredSession } from './session.utils';
+import { buildAuthHeaders, clearStoredSession, getStoredUserSession } from './session.utils';
 import '../styles/settings.css';
 
 export default function SettingsScreen() {
@@ -450,7 +451,19 @@ export default function SettingsScreen() {
     document.documentElement.setAttribute('data-theme', newTheme);
   };
 
-  if (loading) return <div className="loading">Loading...</div>;
+  if (loading) {
+    const loadingRole = normalizeRole(getStoredUserSession()?.role || 'parent');
+    return (
+      <DashboardLoadingShell
+        role={loadingRole}
+        activeItem="settings"
+        logoSrc={logoImage}
+        portalLabel={`${formatRoleLabel(loadingRole)} Portal`}
+        heading="Settings"
+        subheading="Manage your profile, security, and preferences."
+      />
+    );
+  }
 
   const role = normalizeRole(user?.role || 'parent');
   const requiresInitialPassword = user?.requiresInitialPasswordSetup === true;

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Users, UserCheck, GraduationCap } from 'lucide-react';
 import logoImage from '../assets/images/STS_Logo.png';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import { ResponsiveGrid } from './layout/Grid';
 import { DataTable } from './layout/Table';
@@ -89,10 +90,15 @@ export default function AdminDashboard() {
 
   if (loading) {
     return (
-      <div className="sts-loader-container">
-        <div className="sts-spinner"></div>
-        <p>Loading Admin Portal...</p>
-      </div>
+      <DashboardLoadingShell
+        role="admin"
+        activeItem="dashboard"
+        onSelect={handleSidebarSelection}
+        logoSrc={logoImage}
+        portalLabel="Admin Portal"
+        heading="Admin Dashboard"
+        subheading="Your school management overview is loading."
+      />
     );
   }
 

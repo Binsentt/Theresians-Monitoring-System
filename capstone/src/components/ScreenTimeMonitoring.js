@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import logoImage from '../assets/images/STS_Logo.png';
 import { apiUrl } from '../api';
 import { buildAuthHeaders, getStoredUserSession } from './session.utils';
@@ -202,11 +203,25 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   };
 
   if (loading && !user) {
+    const loadingRole = normalizeRole(getStoredUserSession()?.role);
+    const loadingIsChildView = mode === 'children';
+    const loadingPortalLabel = loadingIsChildView
+      ? 'Parent Portal'
+      : loadingRole === 'admin'
+        ? 'Admin Portal'
+        : 'Teacher Portal';
+    const loadingSidebarRole = loadingIsChildView
+      ? (loadingRole === 'parent_teacher' ? 'parent_teacher' : 'parent')
+      : (loadingRole === 'admin' ? 'admin' : 'teacher');
     return (
-      <div className="sts-loader-container">
-        <div className="sts-spinner"></div>
-        <p>Loading Screen Time...</p>
-      </div>
+      <DashboardLoadingShell
+        role={loadingSidebarRole}
+        activeItem={loadingIsChildView ? 'my-child-screen-time' : 'screen-time'}
+        logoSrc={logoImage}
+        portalLabel={loadingPortalLabel}
+        heading={loadingIsChildView ? 'My Child Screen Time' : 'Screen Time Monitoring'}
+        subheading="Review recorded gameplay time and session activity."
+      />
     );
   }
 
