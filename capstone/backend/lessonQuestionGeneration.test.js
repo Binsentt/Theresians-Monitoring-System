@@ -91,3 +91,45 @@ test('lesson generation rejects a provider response that does not produce exactl
     (error) => error instanceof QuestionGenerationError && error.code === 'QUESTION_AI_INVALID_RESPONSE'
   );
 });
+
+test('lesson generation captures only safe OpenAI failure metadata for quota diagnostics', async () => {
+  const sensitiveProviderMessage = 'Never log this uploaded lesson text or API credential.';
+
+  await assert.rejects(
+    generateLessonQuestions({
+      lessonText: 'A lesson about addition.',
+      title: 'Addition lesson',
+      gradeLevel: 'Grade 1',
+      difficulty: 'Easy',
+      mathTopic: 'Basic Addition',
+      questionCount: 2,
+      apiKey: 'test-key',
+      fetchImpl: async () => ({
+        ok: false,
+        status: 429,
+        headers: {
+          get: (name) => (name === 'x-request-id' ? 'req_safe-123' : null),
+        },
+        json: async () => ({
+          error: {
+            type: 'insufficient_quota',
+            code: 'insufficient_quota',
+            message: sensitiveProviderMessage,
+          },
+        }),
+      }),
+    }),
+    (error) => {
+      assert.equal(error.code, 'QUESTION_AI_GENERATION_FAILED');
+      assert.deepEqual(error.providerDiagnostics, {
+        http_status: 429,
+        category: 'quota_or_rate_limit',
+        provider_type: 'insufficient_quota',
+        provider_code: 'insufficient_quota',
+        request_id: 'req_safe-123',
+      });
+      assert.doesNotMatch(JSON.stringify(error.providerDiagnostics), /Never log|credential|lesson text/i);
+      return true;
+    }
+  );
+});

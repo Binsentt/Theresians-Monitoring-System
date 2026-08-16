@@ -3,14 +3,57 @@ const QUESTION_GENERATION_MODEL = 'gpt-5-mini';
 const MAX_LESSON_TEXT_CHARS = 24000;
 
 class QuestionGenerationError extends Error {
-  constructor(code, message) {
+  constructor(code, message, providerDiagnostics = null) {
     super(message);
     this.name = 'QuestionGenerationError';
     this.code = code;
+    this.providerDiagnostics = providerDiagnostics;
   }
 }
 
 const asTrimmedString = (value) => String(value || '').trim();
+const SAFE_PROVIDER_DIAGNOSTIC_VALUE = /^[A-Za-z0-9._:-]{1,160}$/;
+
+const toSafeProviderDiagnosticValue = (value) => {
+  const normalized = asTrimmedString(value);
+  return SAFE_PROVIDER_DIAGNOSTIC_VALUE.test(normalized) ? normalized : null;
+};
+
+const getResponseHeader = (response, name) => {
+  try {
+    return toSafeProviderDiagnosticValue(response?.headers?.get?.(name));
+  } catch {
+    return null;
+  }
+};
+
+const classifyProviderFailure = ({ httpStatus, providerType, providerCode }) => {
+  const details = `${providerType || ''} ${providerCode || ''}`.toLowerCase();
+  if (httpStatus === 401 || details.includes('invalid_api_key') || details.includes('authentication')) return 'authentication';
+  if (details.includes('model') || details.includes('unsupported_model')) return 'model_access';
+  if (httpStatus === 403 || details.includes('permission') || details.includes('access_denied')) return 'authorization';
+  if (httpStatus === 429 || details.includes('quota') || details.includes('rate_limit')) return 'quota_or_rate_limit';
+  if (httpStatus >= 500) return 'provider_server';
+  if (httpStatus >= 400) return 'invalid_request';
+  return 'provider_error';
+};
+
+const buildProviderDiagnostics = (response, responseBody, fallbackCategory = null) => {
+  const status = Number(response?.status);
+  const httpStatus = Number.isInteger(status) && status >= 100 && status <= 599 ? status : null;
+  const providerType = toSafeProviderDiagnosticValue(responseBody?.error?.type);
+  const providerCode = toSafeProviderDiagnosticValue(responseBody?.error?.code);
+  const requestId = getResponseHeader(response, 'x-request-id');
+  const category = fallbackCategory || classifyProviderFailure({ httpStatus, providerType, providerCode });
+
+  return {
+    ...(httpStatus ? { http_status: httpStatus } : {}),
+    category,
+    ...(providerType ? { provider_type: providerType } : {}),
+    ...(providerCode ? { provider_code: providerCode } : {}),
+    ...(requestId ? { request_id: requestId } : {}),
+  };
+};
 
 const buildQuestionSchema = (questionCount) => ({
   type: 'object',
@@ -166,7 +209,11 @@ const generateLessonQuestions = async ({
       }),
     });
   } catch {
-    throw new QuestionGenerationError('QUESTION_AI_GENERATION_FAILED', 'Question AI could not generate questions right now.');
+    throw new QuestionGenerationError(
+      'QUESTION_AI_GENERATION_FAILED',
+      'Question AI could not generate questions right now.',
+      { category: 'network_error' }
+    );
   }
 
   let responseBody = null;
@@ -177,14 +224,29 @@ const generateLessonQuestions = async ({
   }
 
   if (!response.ok) {
-    throw new QuestionGenerationError('QUESTION_AI_GENERATION_FAILED', 'Question AI could not generate questions right now.');
+    throw new QuestionGenerationError(
+      'QUESTION_AI_GENERATION_FAILED',
+      'Question AI could not generate questions right now.',
+      buildProviderDiagnostics(response, responseBody)
+    );
   }
 
   const outputText = extractOutputText(responseBody);
   if (!outputText) {
-    throw new QuestionGenerationError('QUESTION_AI_INVALID_RESPONSE', 'Question generation returned no structured output.');
+    throw new QuestionGenerationError(
+      'QUESTION_AI_INVALID_RESPONSE',
+      'Question generation returned no structured output.',
+      buildProviderDiagnostics(response, responseBody, 'invalid_provider_response')
+    );
   }
-  return parseGeneratedQuestions(outputText, questionCount);
+  try {
+    return parseGeneratedQuestions(outputText, questionCount);
+  } catch (error) {
+    if (error instanceof QuestionGenerationError && !error.providerDiagnostics) {
+      error.providerDiagnostics = buildProviderDiagnostics(response, responseBody, 'invalid_provider_response');
+    }
+    throw error;
+  }
 };
 
 module.exports = {
@@ -192,5 +254,6 @@ module.exports = {
   OPENAI_RESPONSES_URL,
   QUESTION_GENERATION_MODEL,
   QuestionGenerationError,
+  buildProviderDiagnostics,
   generateLessonQuestions,
 };

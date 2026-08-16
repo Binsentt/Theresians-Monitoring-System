@@ -2945,6 +2945,9 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
 
     res.status(201).json({ success: true, learningFile: { ...learningFile, question_count: questions.length } });
   } catch (err) {
+    if (err instanceof QuestionGenerationError && err.providerDiagnostics) {
+      console.error('Question AI provider diagnostics:', err.providerDiagnostics);
+    }
     console.error('Upload failed:', err.message);
     cleanTemporaryUpload(storedFilePath || req.file?.path);
     if (err instanceof QuestionGenerationError) {
