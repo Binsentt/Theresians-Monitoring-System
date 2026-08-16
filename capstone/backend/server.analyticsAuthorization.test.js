@@ -331,6 +331,50 @@ test('grounded insight endpoint returns a current cache without another provider
   assert.deepEqual(response.body.insight, cachedInsight);
 });
 
+test('grounded insight requires five valid results before contacting OpenAI', async (t) => {
+  reset();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const originalFetch = global.fetch;
+  t.after(async () => { global.fetch = originalFetch; reset(); await close(server); });
+
+  queryHandler = async (sql) => {
+    if (sql.startsWith('select p.*') && sql.includes('from public.student_game_progress p')) {
+      return resultRows([{
+        student_id: 44,
+        grade_level: 'Grade 3',
+        correct_answers: 2,
+        total_questions: 4,
+        progress_percentage: 40,
+      }]);
+    }
+    if (sql.includes('from public.game_results')) {
+      return resultRows(Array.from({ length: 4 }, (_, index) => ({
+        score: index < 2 ? 1 : 0,
+        total_items: 1,
+        difficulty: 'Medium',
+        math_topic: 'Fractions',
+      })));
+    }
+    if (sql.includes('from public.playtime_sessions') || sql.includes('from public.student_ai_insights')) return resultRows([]);
+    return emptyResult;
+  };
+  global.fetch = async (url, options) => {
+    if (String(url).startsWith(baseUrl)) return originalFetch(url, options);
+    throw new Error('provider must not be called below the five-result threshold');
+  };
+
+  const response = await requestJson(baseUrl, '/api/student-progress/44/ai-insight', {
+    method: 'POST',
+    headers: authHeaders('admin'),
+  });
+
+  assert.equal(response.status, 422);
+  assert.equal(response.body.status, 'insufficient_data');
+  assert.equal(response.body.valid_result_count, 4);
+  assert.equal(response.body.required_result_count, 5);
+});
+
 test('Parent/Teacher may use separate authenticated teacher and parent contexts', async (t) => {
   reset();
   const server = await listen();
