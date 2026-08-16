@@ -8,14 +8,25 @@ const path = require('node:path');
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
 let parsedPdfText = '';
+const authenticatedTeacher = { id: 1, role: 'teacher', is_archived: false, session_version: 0 };
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const mockPool = {
   query: async (sql, params = []) => {
-    return (await queryHandler(compactSql(sql), params, sql)) || emptyResult;
+    const normalizedSql = compactSql(sql);
+    if (normalizedSql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([authenticatedTeacher]);
+    }
+    return (await queryHandler(normalizedSql, params, sql)) || emptyResult;
   },
   connect: async () => ({
-    query: async (sql, params = []) => (await queryHandler(compactSql(sql), params, sql)) || emptyResult,
+    query: async (sql, params = []) => {
+      const normalizedSql = compactSql(sql);
+      if (normalizedSql.startsWith('select * from public.accounts where id = $1')) {
+        return resultRows([authenticatedTeacher]);
+      }
+      return (await queryHandler(normalizedSql, params, sql)) || emptyResult;
+    },
     release: () => {},
   }),
 };
@@ -46,7 +57,7 @@ const serverDependencyStubs = {
   cors: () => createMiddleware(),
   jsonwebtoken: {
     sign: () => 'token',
-    verify: () => ({}),
+    verify: () => ({ userId: 1, sessionVersion: 0 }),
   },
   multer: multerStub,
   'pdf-parse': async () => ({ text: parsedPdfText }),
@@ -88,6 +99,7 @@ const requestJson = async (baseUrl, path, options = {}) => {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      Authorization: 'Bearer teacher-token',
       ...(options.headers || {}),
     },
   });
@@ -333,6 +345,7 @@ test('lesson upload generates exactly the requested staged questions through the
 
   let openAiRequest = null;
   let storedQuestions = 0;
+  let learningFileInsertParams = null;
   global.fetch = async (url, options) => {
     if (url === 'https://api.openai.com/v1/responses') {
       openAiRequest = JSON.parse(options.body);
@@ -348,9 +361,10 @@ test('lesson upload generates exactly the requested staged questions through the
     }
     return originalFetch(url, options);
   };
-  setQueryHandler(async (sql) => {
+  setQueryHandler(async (sql, params) => {
     if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return emptyResult;
     if (sql.startsWith('insert into public.learning_files')) {
+      learningFileInsertParams = params;
       return resultRows([{
         id: 202,
         title: 'Addition lesson',
@@ -377,6 +391,7 @@ test('lesson upload generates exactly the requested staged questions through the
       math_topic: 'Basic Addition',
       file_type: 'lesson',
       expected_question_count: '2',
+      uploaded_by: '999',
     }),
   });
 
@@ -386,6 +401,7 @@ test('lesson upload generates exactly the requested staged questions through the
   assert.equal(response.body.learningFile.question_count, 2);
   assert.equal(response.body.learningFile.published, false);
   assert.equal(storedQuestions, 2);
+  assert.equal(learningFileInsertParams[9], 1);
 });
 
 test('relationship lookup returns the authoritative game Student ID for linked students', async (t) => {
@@ -474,6 +490,20 @@ test('Godot question endpoint accepts grade and topic query aliases', async (t) 
   assert.equal(response.status, 200);
   assert.deepEqual(queryCalls[0], ['Mathematics', 'Grade 1', 'Easy', 'Basic Addition']);
   assert.deepEqual(queryCalls[1], ['Mathematics', 'Grade 1', 'Easy', 'Basic Addition']);
+});
+
+test('Godot question endpoint remains available without a Lesson Manager session', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async () => emptyResult);
+  const response = await fetch(`${baseUrl}/api/game/questions?grade_level=Grade%201&difficulty=Easy&math_topic=Basic%20Addition`);
+
+  assert.equal(response.status, 200);
 });
 
 test('Godot question endpoint maps Medium and Hard to legacy Normal and Difficult rows', async (t) => {

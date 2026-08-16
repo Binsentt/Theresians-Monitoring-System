@@ -6,6 +6,7 @@ import logoImage from '../assets/images/STS_Logo.png';
 import { DashboardContainer, MainContent, TopBar, PageContent } from './layout/AppLayout';
 import { DataTable } from './layout/Table';
 import { canAccessRole, normalizeRole } from './manageUsers.utils';
+import { buildAuthHeaders } from './session.utils';
 import {
   calculateLearningStorage,
   DIFFICULTY_LEVELS,
@@ -46,6 +47,14 @@ const initialFilterState = {
 };
 
 const MAX_LESSON_QUESTION_COUNT = 50;
+
+const fetchLessonManagerApi = (url, options = {}) => fetch(url, {
+  ...options,
+  headers: {
+    ...buildAuthHeaders(),
+    ...(options.headers || {}),
+  },
+});
 
 function formatUploadDate(dateString) {
   if (!dateString) return '-';
@@ -103,8 +112,8 @@ export default function LessonQuestionManager() {
     try {
       setLoading(true);
       const [filesRes, trashFilesRes] = await Promise.all([
-        fetch(apiUrl('/api/learning-files')),
-        fetch(apiUrl('/api/learning-files/trash')),
+        fetchLessonManagerApi(apiUrl('/api/learning-files')),
+        fetchLessonManagerApi(apiUrl('/api/learning-files/trash')),
       ]);
       if (!filesRes.ok) throw new Error('Failed to load files');
       if (!trashFilesRes.ok) throw new Error('Failed to load trashed files');
@@ -252,7 +261,7 @@ export default function LessonQuestionManager() {
 
     try {
       setUploading(true);
-      const response = await fetch(apiUrl('/api/learning-files/upload'), {
+      const response = await fetchLessonManagerApi(apiUrl('/api/learning-files/upload'), {
         method: 'POST',
         body: payload,
       });
@@ -284,7 +293,7 @@ export default function LessonQuestionManager() {
       : `Delete "${file.title}" from staged uploads?`;
     if (!window.confirm(confirmMessage)) return;
     try {
-      const response = await fetch(apiUrl(`/api/learning-files/${file.id}`), { method: 'DELETE' });
+      const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}`), { method: 'DELETE' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Delete failed');
       setFiles((current) => current.filter((item) => item.id !== file.id));
@@ -297,7 +306,7 @@ export default function LessonQuestionManager() {
 
   const restoreFile = async (file) => {
     try {
-      const response = await fetch(apiUrl(`/api/learning-files/${file.id}/restore`), { method: 'POST' });
+      const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}/restore`), { method: 'POST' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Restore failed');
       const restoredFile = data.learningFile || file;
@@ -317,7 +326,7 @@ export default function LessonQuestionManager() {
   const permanentDeleteFile = async (file) => {
     if (!window.confirm(`Permanently delete "${file.title}"?`)) return;
     try {
-      const response = await fetch(apiUrl(`/api/learning-files/${file.id}/permanent`), { method: 'DELETE' });
+      const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}/permanent`), { method: 'DELETE' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Permanent delete failed');
       showNotification('File permanently deleted.');
@@ -361,7 +370,7 @@ export default function LessonQuestionManager() {
     setPreviewQuestions([]);
     setPreviewQuestionsLoading(true);
     try {
-      const response = await fetch(apiUrl(`/api/learning-files/${file.id}/questions`));
+      const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}/questions`));
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to preview generated questions.');
       setPreviewQuestions(Array.isArray(data.questions) ? data.questions : []);
@@ -382,7 +391,7 @@ export default function LessonQuestionManager() {
 
     try {
       setPreviewLoading(true);
-      const previewResponse = file.id ? await fetch(apiUrl(`/api/learning-files/${file.id}/preview`)) : null;
+      const previewResponse = file.id ? await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}/preview`)) : null;
       if (previewResponse?.ok) {
         const previewData = await previewResponse.json();
         setPreviewContent(formatLearningPreviewText(previewData.content || '', file));
@@ -415,7 +424,7 @@ export default function LessonQuestionManager() {
       return;
     }
     try {
-      const response = await fetch(apiUrl(`/api/learning-files/${editingFile.id}`), {
+      const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${editingFile.id}`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -444,7 +453,7 @@ export default function LessonQuestionManager() {
     try {
       await Promise.all(
         trashFiles.map(async (file) => {
-          const response = await fetch(apiUrl(`/api/learning-files/${file.id}/permanent`), { method: 'DELETE' });
+          const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}/permanent`), { method: 'DELETE' });
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || 'Permanent file delete failed');
         })
@@ -477,7 +486,7 @@ export default function LessonQuestionManager() {
 
   const pushFileToGame = async (file) => {
     try {
-      const response = await fetch(apiUrl(`/api/questions/publish/${file.id}`), { method: 'POST' });
+      const response = await fetchLessonManagerApi(apiUrl(`/api/questions/publish/${file.id}`), { method: 'POST' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Push to Game failed');
 
@@ -519,7 +528,7 @@ export default function LessonQuestionManager() {
     }
 
     try {
-      const response = await fetch(apiUrl(`/api/learning-files/${renamingFile.id}/rename`), {
+      const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${renamingFile.id}/rename`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title }),

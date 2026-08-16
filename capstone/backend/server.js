@@ -593,6 +593,8 @@ const requireAuthenticatedRoles = (allowedRoles) => (req, res, next) => {
   next();
 };
 
+const requireLessonQuestionManagerAccess = requireAuthenticatedRoles(['admin', 'teacher', 'parent_teacher']);
+
 const requireAccountManagementAdmin = (req, res, next) => {
   if (!req.authenticatedUser) {
     return res.status(401).json({ error: 'Authentication is required.' });
@@ -2689,7 +2691,7 @@ app.delete('/api/teacher-student-relationships/:id', async (req, res) => {
   }
 });
 
-app.get('/api/folders', async (req, res) => {
+app.get('/api/folders', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM public.folders WHERE deleted_at IS NULL ORDER BY name ASC');
     res.json(result.rows);
@@ -2699,7 +2701,7 @@ app.get('/api/folders', async (req, res) => {
   }
 });
 
-app.get('/api/folders/trash', async (req, res) => {
+app.get('/api/folders/trash', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM public.folders WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC, name ASC');
     res.json(result.rows);
@@ -2709,13 +2711,13 @@ app.get('/api/folders/trash', async (req, res) => {
   }
 });
 
-app.post('/api/folders/create', async (req, res) => {
+app.post('/api/folders/create', requireLessonQuestionManagerAccess, async (req, res) => {
   res.status(410).json({
     error: 'Folder creation is disabled. Use the fixed Questions/Grade/Difficulty structure.',
   });
 });
 
-app.put('/api/folders/:id', async (req, res) => {
+app.put('/api/folders/:id', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const folderId = parseInt(req.params.id, 10);
     const { name } = req.body;
@@ -2734,7 +2736,7 @@ app.put('/api/folders/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/folders/:id', async (req, res) => {
+app.delete('/api/folders/:id', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const folderId = parseInt(req.params.id, 10);
     if (Number.isNaN(folderId)) return res.status(400).json({ error: 'Invalid folder ID' });
@@ -2765,7 +2767,7 @@ app.delete('/api/folders/:id', async (req, res) => {
   }
 });
 
-app.post('/api/folders/:id/restore', async (req, res) => {
+app.post('/api/folders/:id/restore', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const folderId = parseInt(req.params.id, 10);
     if (Number.isNaN(folderId)) return res.status(400).json({ error: 'Invalid folder ID' });
@@ -2782,7 +2784,7 @@ app.post('/api/folders/:id/restore', async (req, res) => {
   }
 });
 
-app.delete('/api/folders/:id/permanent', async (req, res) => {
+app.delete('/api/folders/:id/permanent', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const folderId = parseInt(req.params.id, 10);
     if (Number.isNaN(folderId)) return res.status(400).json({ error: 'Invalid folder ID' });
@@ -2824,10 +2826,10 @@ const resolveLearningFolderId = async (rawFolderId) => {
   return { folderId };
 };
 
-app.post('/api/learning-files/upload', upload.single('file'), async (req, res) => {
+app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, upload.single('file'), async (req, res) => {
   let storedFilePath = null;
   try {
-    const { title, grade_level, difficulty, math_topic, file_type, folder_id, uploaded_by, expected_question_count } = req.body;
+    const { title, grade_level, difficulty, math_topic, file_type, folder_id, expected_question_count } = req.body;
     if (!req.file) return res.status(400).json({ error: 'File is required' });
     if (!title || !grade_level || !difficulty || !math_topic || !file_type) {
       return res.status(400).json({ error: 'Missing required metadata' });
@@ -2921,7 +2923,7 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
           normalizedType,
           folderResolution.folderId,
           normalizedType === 'lesson' ? 'lesson' : 'fixed',
-          uploaded_by ? parseInt(uploaded_by, 10) : null,
+          req.authenticatedUser.id,
           req.file.size || null,
           requestedQuestionCount,
         ]
@@ -2963,11 +2965,11 @@ app.post('/api/learning-files/upload', upload.single('file'), async (req, res) =
   }
 });
 
-app.get('/api/question-folders', async (req, res) => {
+app.get('/api/question-folders', requireLessonQuestionManagerAccess, async (req, res) => {
   res.json(buildQuestionFolderStructure());
 });
 
-app.get('/api/learning-files/folder', async (req, res) => {
+app.get('/api/learning-files/folder', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const gradeLevel = normalizeGameGradeLevel(req.query.grade_level || req.query.grade);
     const difficulty = normalizeDifficultyValue(req.query.difficulty);
@@ -3008,7 +3010,7 @@ app.get('/api/learning-files/folder', async (req, res) => {
   }
 });
 
-app.get('/api/learning-files', async (req, res) => {
+app.get('/api/learning-files', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT lf.*,
@@ -3034,7 +3036,7 @@ app.get('/api/learning-files', async (req, res) => {
   }
 });
 
-app.get('/api/learning-files/:id/questions', async (req, res) => {
+app.get('/api/learning-files/:id/questions', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
@@ -3062,7 +3064,7 @@ app.get('/api/learning-files/:id/questions', async (req, res) => {
   }
 });
 
-app.get('/api/learning-files/:id/preview', async (req, res) => {
+app.get('/api/learning-files/:id/preview', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
@@ -3094,7 +3096,7 @@ app.get('/api/learning-files/:id/preview', async (req, res) => {
   }
 });
 
-app.put('/api/learning-files/:id/rename', async (req, res) => {
+app.put('/api/learning-files/:id/rename', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
@@ -3117,7 +3119,7 @@ app.put('/api/learning-files/:id/rename', async (req, res) => {
   }
 });
 
-app.put('/api/learning-files/:id', async (req, res) => {
+app.put('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
@@ -3177,7 +3179,7 @@ app.put('/api/learning-files/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/learning-files/:id', async (req, res) => {
+app.delete('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
@@ -3198,7 +3200,7 @@ app.delete('/api/learning-files/:id', async (req, res) => {
   }
 });
 
-app.post('/api/learning-files/:id/restore', async (req, res) => {
+app.post('/api/learning-files/:id/restore', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
@@ -3214,7 +3216,7 @@ app.post('/api/learning-files/:id/restore', async (req, res) => {
   }
 });
 
-app.delete('/api/learning-files/:id/permanent', async (req, res) => {
+app.delete('/api/learning-files/:id/permanent', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
@@ -3234,7 +3236,7 @@ app.delete('/api/learning-files/:id/permanent', async (req, res) => {
   }
 });
 
-app.post('/api/questions/publish/:id', async (req, res) => {
+app.post('/api/questions/publish/:id', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
@@ -3246,7 +3248,7 @@ app.post('/api/questions/publish/:id', async (req, res) => {
   }
 });
 
-app.post('/api/questions/unpublish/:id', async (req, res) => {
+app.post('/api/questions/unpublish/:id', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
@@ -3272,7 +3274,7 @@ app.get('/api/game/questions', async (req, res) => {
   }
 });
 
-app.get('/api/learning-files/trash', async (req, res) => {
+app.get('/api/learning-files/trash', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT lf.*,

@@ -48,6 +48,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     mockNavigate.mockReset();
     localStorage.clear();
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 8, role: 'teacher', name: 'Teacher User' }));
+    localStorage.setItem('rememberToken', 'lesson-manager-token');
     fixtures = {
       files: [],
       folders: [],
@@ -150,6 +151,19 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).not.toContain('New Folder');
     expect(container.textContent).toContain('Lesson PDF File');
     expect(container.textContent).toContain('Fixed Question File');
+  });
+
+  test('uses the existing session token for Lesson and Question Manager API requests', async () => {
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/learning-files', {
+      headers: { Authorization: 'Bearer lesson-manager-token' },
+    });
+    expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/trash', {
+      headers: { Authorization: 'Bearer lesson-manager-token' },
+    });
   });
 
   test('Question Count is required only for Lesson PDF File uploads and is hidden for fixed question files', async () => {
@@ -295,7 +309,9 @@ describe('LessonQuestionManager upload and trash controls', () => {
       clickByText(container, 'Preview');
     });
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/77/questions');
+    expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/77/questions', {
+      headers: { Authorization: 'Bearer lesson-manager-token' },
+    });
     expect(container.textContent).toContain('Generated Questions');
     expect(container.textContent).toContain('What is 2 + 3?');
     expect(container.textContent).toContain('5 (Correct)');
@@ -328,7 +344,10 @@ describe('LessonQuestionManager upload and trash controls', () => {
       clickByText(container, 'Push to Game');
     });
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/questions/publish/77', { method: 'POST' });
+    expect(global.fetch).toHaveBeenCalledWith('/api/questions/publish/77', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer lesson-manager-token' },
+    });
     expect(container.textContent).toContain('Active in Game');
   });
 
