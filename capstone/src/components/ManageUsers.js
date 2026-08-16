@@ -879,8 +879,8 @@ export default function ManageUsers() {
                       const currentAccount = isCurrentAccount(u);
                       return (
                         <tr key={u.id}>
-                          <td>{u.name || 'No name set'}</td>
-                          <td className="email-cell">{u.email}</td>
+                          <td className="user-name-cell" title={u.name || 'No name set'}>{u.name || 'No name set'}</td>
+                          <td className="email-cell" title={u.email || ''}>{u.email}</td>
                           <td>
                             <span className="role-badge-group">
                               <span className={`role-badge role-${normalizeRole(u.role)}`}>
@@ -892,26 +892,26 @@ export default function ManageUsers() {
                           <td>{isParentRole(u.role) ? (u.parent_id || 'Not generated') : '-'}</td>
                           <td>{u.mobile_number || '-'}</td>
                           <td>{u.birthday ? new Date(u.birthday).toLocaleDateString() : 'Not set'}</td>
-                          <td className="actions-cell">
+                          <td className="actions-cell manage-user-actions">
                             {currentAccount ? (
                               <span className="current-account-badge">Current Account</span>
                             ) : showArchived ? (
                               <>
-                                <button className="restore-action-btn" onClick={() => handleRestoreUser(u)}>Restore</button>
-                                <button className="delete-action-btn" onClick={() => openDeleteDialog(u, 'permanent')}>Delete</button>
+                                <button type="button" className="restore-action-btn manage-user-action-btn" onClick={() => handleRestoreUser(u)}>Restore</button>
+                                <button type="button" className="delete-action-btn manage-user-action-btn" onClick={() => openDeleteDialog(u, 'permanent')}>Delete</button>
                               </>
                             ) : (
                               <>
-                                <button className="edit-action-btn" onClick={() => handleEditClick(u)}>Edit</button>
+                                <button type="button" className="edit-action-btn manage-user-action-btn" onClick={() => handleEditClick(u)}>Edit</button>
                                 <button
                                   type="button"
-                                  className="restore-action-btn"
+                                  className="restore-action-btn manage-user-action-btn"
                                   onClick={() => handleRegenerateTemporaryPassword(u)}
                                   disabled={regeneratingUserId === u.id}
                                 >
                                   {regeneratingUserId === u.id ? 'Sending...' : 'Send Temporary Password'}
                                 </button>
-                                <button className="delete-action-btn" onClick={() => openDeleteDialog(u)}>Delete</button>
+                                <button type="button" className="delete-action-btn manage-user-action-btn" onClick={() => openDeleteDialog(u)}>Delete</button>
                               </>
                             )}
                           </td>

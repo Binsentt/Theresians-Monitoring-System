@@ -1,5 +1,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import fs from 'fs';
+import path from 'path';
 import { PageContent } from './AppLayout';
 
 test('PageContent uses the shared content-transition wrapper', async () => {
@@ -18,4 +20,10 @@ test('PageContent uses the shared content-transition wrapper', async () => {
     root.unmount();
   });
   delete global.IS_REACT_ACT_ENVIRONMENT;
+});
+
+test('shared content transition honors reduced-motion preferences', () => {
+  const stylesheet = fs.readFileSync(path.resolve(__dirname, '../../styles/layout.css'), 'utf8');
+
+  expect(stylesheet).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.page-content-transition\s*\{\s*animation:\s*none;/);
 });

@@ -184,6 +184,69 @@ describe('ManageUsers edit flow', () => {
     expect(container.textContent).not.toContain('must-not-render');
   });
 
+  test('uses the compact shared action-button treatment for active users', async () => {
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    const targetRow = Array.from(container.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Maria Santos'));
+    const actions = targetRow.querySelector('.actions-cell');
+    const actionButtons = Array.from(actions.querySelectorAll('button'));
+
+    expect(actions.classList.contains('manage-user-actions')).toBe(true);
+    expect(actionButtons.map((button) => button.textContent)).toEqual(['Edit', 'Send Temporary Password', 'Delete']);
+    actionButtons.forEach((button) => {
+      expect(button.classList.contains('manage-user-action-btn')).toBe(true);
+    });
+  });
+
+  test('uses the compact shared action-button treatment for archived-user restore', async () => {
+    const archivedAccount = {
+      ...accountsPayload[0],
+      id: 77,
+      name: 'Archived Teacher',
+      email: 'archived.teacher@example.com',
+    };
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/accounts?archived=true')) {
+        return Promise.resolve({ ok: true, json: async () => [archivedAccount] });
+      }
+      if (String(url).includes('/api/accounts')) {
+        return Promise.resolve({ ok: true, json: async () => accountsPayload });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+    const showArchivedButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Show Archived');
+    await act(async () => {
+      showArchivedButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const archivedRow = Array.from(container.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Archived Teacher'));
+    const actions = archivedRow.querySelector('.actions-cell');
+    const restoreButton = Array.from(actions.querySelectorAll('button')).find((button) => button.textContent === 'Restore');
+
+    expect(actions.classList.contains('manage-user-actions')).toBe(true);
+    expect(restoreButton.classList.contains('manage-user-action-btn')).toBe(true);
+  });
+
+  test('marks long user identity cells for contained ellipsis instead of character wrapping', async () => {
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    const targetRow = Array.from(container.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Maria Santos'));
+    const nameCell = targetRow.querySelector('.user-name-cell');
+    const emailCell = targetRow.querySelector('.email-cell');
+
+    expect(nameCell).toBeTruthy();
+    expect(nameCell.getAttribute('title')).toBe('Maria Santos');
+    expect(emailCell.getAttribute('title')).toBe('maria@gmail.com');
+  });
+
   test('Manage Users shows website accounts and hides Godot student accounts from search and table counts', async () => {
     await act(async () => {
       root.render(<ManageUsers />);

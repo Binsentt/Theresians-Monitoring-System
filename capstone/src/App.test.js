@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 
 jest.mock('./assets/images/STS_Logo.png', () => 'logo.png');
+jest.mock('./components/AdminDashboard', () => () => <div>Admin Dashboard</div>);
+jest.mock('./components/ManageUsers', () => () => <div>Manage Users</div>);
 jest.mock('./components/ParentDashboard', () => () => <div>Parent Dashboard</div>);
 
 describe('App public auth routes', () => {
@@ -102,5 +104,63 @@ describe('App public auth routes', () => {
 
     expect(window.location.pathname).toBe('/admin-dashboard');
     expect(container.textContent).not.toContain('Change Your Temporary Password');
+  });
+
+  test('keeps the dashboard content mounted while revalidating a sidebar route change', async () => {
+    window.history.pushState({}, '', '/admin-dashboard');
+    localStorage.setItem('rememberToken', 'established-admin-token');
+    localStorage.setItem('loggedInUser', JSON.stringify({
+      id: 1,
+      name: 'Established Admin',
+      role: 'admin',
+      requiresInitialPasswordSetup: false,
+    }));
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        valid: true,
+        user: {
+          id: 1,
+          name: 'Established Admin',
+          role: 'admin',
+          requiresInitialPasswordSetup: false,
+        },
+      }),
+    }));
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    expect(container.textContent).toContain('Admin Dashboard');
+
+    let resolveRevalidation;
+    global.fetch.mockImplementation(() => new Promise((resolve) => {
+      resolveRevalidation = resolve;
+    }));
+
+    await act(async () => {
+      window.history.pushState({}, '', '/manage-users');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.textContent).toContain('Manage Users');
+
+    await act(async () => {
+      resolveRevalidation({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          valid: true,
+          user: {
+            id: 1,
+            name: 'Established Admin',
+            role: 'admin',
+            requiresInitialPasswordSetup: false,
+          },
+        }),
+      });
+    });
   });
 });

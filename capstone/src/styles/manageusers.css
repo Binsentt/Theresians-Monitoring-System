@@ -557,6 +557,8 @@
 }
 .table-container {
     overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
     border: 1px solid rgba(15, 23, 42, 0.08);
     border-radius: 18px;
     max-width: 100%;
@@ -566,7 +568,8 @@
     width: 100%;
     border-collapse: collapse;
     margin-top: 15px;
-    min-width: 860px;
+    min-width: 1000px;
+    table-layout: fixed;
 }
 
 .sts-data-table th {
@@ -590,6 +593,41 @@
     border-bottom: 1px solid rgba(15, 23, 42, 0.06);
     color: var(--text-muted);
     vertical-align: middle;
+}
+
+.sts-data-table th:nth-child(1),
+.sts-data-table td:nth-child(1) {
+    width: 16%;
+}
+
+.sts-data-table th:nth-child(2),
+.sts-data-table td:nth-child(2) {
+    width: 21%;
+}
+
+.sts-data-table th:nth-child(3),
+.sts-data-table td:nth-child(3) {
+    width: 14%;
+}
+
+.sts-data-table th:nth-child(4),
+.sts-data-table td:nth-child(4) {
+    width: 10%;
+}
+
+.sts-data-table th:nth-child(5),
+.sts-data-table td:nth-child(5) {
+    width: 13%;
+}
+
+.sts-data-table th:nth-child(6),
+.sts-data-table td:nth-child(6) {
+    width: 11%;
+}
+
+.sts-data-table th:nth-child(7),
+.sts-data-table td:nth-child(7) {
+    width: 15%;
 }
 
 .sts-data-table tbody tr:hover {
@@ -621,10 +659,18 @@
     color: var(--text-primary);
 }
 
+.user-name-cell,
 .email-cell {
     color: var(--text-muted);
     font-size: 13px;
-    word-break: break-word;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.user-name-cell {
+    color: var(--text-primary);
+    font-weight: 600;
 }
 
 .role-badge {
@@ -758,33 +804,47 @@
     color: #d1d5db;
 }
 
-.actions-cell {
+.actions-cell.manage-user-actions {
     display: flex;
-    gap: 8px;
-    justify-content: flex-start;
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    min-width: 156px;
 }
 
 .edit-action-btn,
-.delete-action-btn {
+.delete-action-btn,
+.restore-action-btn {
     display: flex;
     align-items: center;
-    gap: 5px;
-    padding: 6px 12px;
+    justify-content: center;
+    min-height: 32px;
+    padding: 6px 10px;
     border: 1px solid #ddd;
-    border-radius: 4px;
+    border-radius: 6px;
     background-color: #f8f9fa;
     cursor: pointer;
-    font-size: 13px;
-    transition: all 0.2s ease;
+    font-size: 12px;
+    line-height: 1.2;
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
-.edit-action-btn:hover {
+.manage-user-action-btn {
+    box-sizing: border-box;
+    max-width: 148px;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: normal;
+}
+
+.edit-action-btn:hover,
+.restore-action-btn:hover {
     background-color: #e2e6ea;
     border-color: #adb5bd;
 }
 
-[data-theme='dark'] .edit-action-btn {
+[data-theme='dark'] .edit-action-btn,
+[data-theme='dark'] .restore-action-btn {
   color: white !important;
   background-color: #444 !important;
   border-color: #666 !important;
@@ -803,9 +863,15 @@
 }
 
 .edit-action-btn:disabled,
-.delete-action-btn:disabled {
+.delete-action-btn:disabled,
+.restore-action-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+.manage-user-action-btn:focus-visible {
+    outline: 2px solid rgba(37, 99, 235, 0.55);
+    outline-offset: 2px;
 }
 
 .empty-table-msg {
@@ -1217,7 +1283,7 @@
     }
 
     .sts-data-table {
-        min-width: 600px; /* Ensure minimum width for scrolling */
+        min-width: 900px; /* Preserve readable cells inside the table scroller. */
         font-size: 14px;
     }
 
@@ -1232,21 +1298,22 @@
         padding: 10px 6px;
     }
 
-    .email-cell {
-        max-width: 120px;
-        overflow: hidden;
-        text-overflow: ellipsis;
+    .sts-data-table td.user-name-cell,
+    .sts-data-table td.email-cell {
+        max-width: 160px;
+        white-space: nowrap;
     }
 
-    .actions-cell {
-        min-width: 100px;
+    .actions-cell.manage-user-actions {
+        min-width: 148px;
     }
 
     .edit-action-btn,
-    .delete-action-btn {
+    .delete-action-btn,
+    .restore-action-btn {
         padding: 4px 8px;
         font-size: 12px;
-        margin-right: 4px;
+        min-height: 30px;
     }
 
     .manage-users-pagination {
