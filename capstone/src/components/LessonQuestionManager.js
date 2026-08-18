@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Download, FilePenLine, FileText, Folder, HardDrive, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
@@ -908,7 +909,7 @@ export default function LessonQuestionManager() {
               </div>
             </div>
 
-            {showUploadForm && (
+            {showUploadForm && createPortal(
               <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setShowUploadForm(false)}>
                 <form className="manager-modal drive-upload-modal" onSubmit={handleUpload} role="dialog" aria-modal="true" aria-labelledby="upload-file-title" onMouseDown={(event) => event.stopPropagation()}>
                   <div className="manager-modal-header">
@@ -1003,7 +1004,8 @@ export default function LessonQuestionManager() {
                     <button type="button" className="btn btn-secondary" onClick={() => { resetForm(); setShowUploadForm(false); }} disabled={uploading}>Cancel</button>
                   </div>
                 </form>
-              </div>
+              </div>,
+              document.body,
             )}
 
             {questionPreviewFile && (

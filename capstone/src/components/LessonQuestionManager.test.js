@@ -26,6 +26,9 @@ const setSelectValue = (field, value) => {
   field.dispatchEvent(new Event('change', { bubbles: true }));
 };
 
+const getUploadModal = () => document.body.querySelector('.drive-upload-modal');
+const getUploadModalSelects = () => document.body.querySelectorAll('.drive-upload-modal select');
+
 const openQuestionFolder = async (container, gradeLevel, difficulty) => {
   await act(async () => {
     clickByText(container, gradeLevel);
@@ -127,15 +130,15 @@ describe('LessonQuestionManager upload and trash controls', () => {
       clickByText(container, 'Upload File');
     });
 
-    const selects = container.querySelectorAll('.drive-upload-modal select');
+    const selects = getUploadModalSelects();
     const topicSelect = selects[2];
 
-    expect(container.textContent).toContain('Grade 1');
-    expect(container.textContent).toContain('Grade 2');
-    expect(container.textContent).toContain('Grade 6');
-    expect(container.textContent).not.toContain('Grade 1-2');
-    expect(container.textContent).toContain('Difficulty');
-    expect(container.textContent).toContain('Topic Identifier');
+    expect(document.body.textContent).toContain('Grade 1');
+    expect(document.body.textContent).toContain('Grade 2');
+    expect(document.body.textContent).toContain('Grade 6');
+    expect(document.body.textContent).not.toContain('Grade 1-2');
+    expect(document.body.textContent).toContain('Difficulty');
+    expect(document.body.textContent).toContain('Topic Identifier');
     expect(topicSelect.disabled).toBe(true);
     expect(topicSelect.textContent).toContain('Select grade and difficulty first');
 
@@ -148,12 +151,39 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(topicSelect.textContent).toContain('Multiplication');
     expect(topicSelect.textContent).toContain('Division');
     expect(topicSelect.textContent).toContain('Fractions');
-    expect(container.textContent).toContain('Medium');
-    expect(container.querySelector('.fixed-destination-display').textContent.trim()).toBe('Questions/Grade 3/Medium');
-    expect(container.textContent).not.toContain('Select Folder');
-    expect(container.textContent).not.toContain('New Folder');
-    expect(container.textContent).toContain('Lesson PDF File');
-    expect(container.textContent).toContain('Fixed Question File');
+    expect(document.body.textContent).toContain('Medium');
+    expect(getUploadModal().querySelector('.fixed-destination-display').textContent.trim()).toBe('Questions/Grade 3/Medium');
+    expect(document.body.textContent).not.toContain('Select Folder');
+    expect(document.body.textContent).not.toContain('New Folder');
+    expect(document.body.textContent).toContain('Lesson PDF File');
+    expect(document.body.textContent).toContain('Fixed Question File');
+  });
+
+  test('renders the upload dialog in a viewport portal and removes it when cancelled', async () => {
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+
+    await act(async () => {
+      clickByText(container, 'New');
+    });
+    await act(async () => {
+      clickByText(container, 'Upload File');
+    });
+
+    const backdrop = Array.from(document.body.children).find((element) => (
+      element.classList.contains('manager-modal-backdrop')
+    ));
+    expect(backdrop).toBeTruthy();
+    expect(backdrop.parentElement).toBe(document.body);
+    expect(backdrop.querySelector('.drive-upload-modal')).toBeTruthy();
+
+    await act(async () => {
+      const cancelButton = Array.from(backdrop.querySelectorAll('button')).find((button) => button.textContent === 'Cancel');
+      cancelButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(document.body.querySelector('.manager-modal-backdrop')).toBeNull();
   });
 
   test('uses the existing session token for Lesson and Question Manager API requests', async () => {
@@ -184,14 +214,14 @@ describe('LessonQuestionManager upload and trash controls', () => {
       clickByText(container, 'Upload File');
     });
 
-    expect(container.querySelector('.drive-upload-modal').textContent).not.toContain('Question Count');
-    const selects = container.querySelectorAll('.drive-upload-modal select');
+    expect(getUploadModal().textContent).not.toContain('Question Count');
+    const selects = getUploadModalSelects();
     await act(async () => {
       setSelectValue(selects[3], 'lesson');
     });
 
-    const countField = container.querySelector('input[name="expected_question_count"]');
-    expect(container.textContent).toContain('Question Count');
+    const countField = document.body.querySelector('input[name="expected_question_count"]');
+    expect(document.body.textContent).toContain('Question Count');
     expect(countField).toBeTruthy();
     expect(countField.required).toBe(true);
     expect(countField.min).toBe('1');
@@ -200,14 +230,14 @@ describe('LessonQuestionManager upload and trash controls', () => {
     await act(async () => {
       setSelectValue(selects[0], 'Grade 1');
       setSelectValue(selects[1], 'Easy');
-      const fileInput = container.querySelector('input[type="file"]');
+      const fileInput = document.body.querySelector('input[type="file"]');
       const file = new File(['%PDF-1.4 lesson'], 'addition-lesson.pdf', { type: 'application/pdf' });
       Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
       fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-      container.querySelector('.drive-upload-modal').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      getUploadModal().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
 
-    expect(container.textContent).toContain('Question Count is required for Lesson PDF files.');
+    expect(document.body.textContent).toContain('Question Count is required for Lesson PDF files.');
     expect(global.fetch).not.toHaveBeenCalledWith('/api/learning-files/upload', expect.anything());
   });
 
@@ -240,8 +270,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
       clickByText(container, 'Upload File');
     });
 
-    const selects = container.querySelectorAll('.drive-upload-modal select');
-    const fileInput = container.querySelector('input[type="file"]');
+    const selects = getUploadModalSelects();
+    const fileInput = document.body.querySelector('input[type="file"]');
     const file = new File([JSON.stringify([{ question: '1 + 1?', correct_answer: '2' }])], 'addition-quiz.json', {
       type: 'application/json',
     });
@@ -254,14 +284,14 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
 
     await act(async () => {
-      container.querySelector('.drive-upload-modal').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      getUploadModal().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
 
     expect(container.textContent).toContain('File uploaded successfully');
     expect(container.textContent).toContain('addition-quiz');
     expect(container.textContent).toContain('Medium');
     expect(container.textContent).toContain('Pending');
-    expect(container.querySelector('.drive-upload-modal')).toBeNull();
+    expect(getUploadModal()).toBeNull();
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/questions/publish/77'), expect.anything());
   });
 
