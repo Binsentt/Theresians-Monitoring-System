@@ -23,6 +23,8 @@ import { apiUrl } from '../api';
 import { buildAuthHeaders, clearStoredSession } from './session.utils';
 import { validateEmail as validateEmailFormat, validatePhilippineMobile } from '../utils/validation.utils';
 import { TablePrintButton } from './TablePrintButton';
+import { PrintableTableReport } from './PrintableTableReport';
+import { formatReportContext } from './tableReporting.utils';
 import '../styles/manageusers.css';
 
 export default function ManageUsers() {
@@ -614,6 +616,16 @@ export default function ManageUsers() {
     );
   }
 
+  const reportScope = [showArchived ? 'Archived accounts' : 'Active accounts', roleFilter !== 'All' ? roleFilter : '', searchTerm ? `Search: ${searchTerm}` : '']
+    .filter(Boolean)
+    .join(' / ');
+  const reportColumns = [
+    { header: 'User Name', value: (row) => row.name },
+    { header: 'Email', value: (row) => row.email },
+    { header: 'Role', value: (row) => formatRoleLabel(row.role) },
+    { header: 'Account Status', value: (row) => row.is_archived ? 'Archived' : 'Active' },
+  ];
+
   return (
     <DashboardContainer
       sidebar={
@@ -674,8 +686,11 @@ export default function ManageUsers() {
                   </button>
                   </div>
                   <TablePrintButton
-                    reportTitle="Manage Users"
-                    reportContext={`${paginatedUsers.totalItems} ${showArchived ? 'archived' : 'active'} authorised accounts`}
+                    reportTitle="User List"
+                    reportContext={formatReportContext({ scope: reportScope, recordCount: filteredUsers.length })}
+                    label="Print User List"
+                    showPrintHeading={false}
+                    disabled={!filteredUsers.length}
                   />
                 </>
               }
@@ -930,6 +945,12 @@ export default function ManageUsers() {
                 </tbody>
               </table>
             </div>
+            <PrintableTableReport
+              title="User List"
+              context={reportScope}
+              rows={filteredUsers}
+              columns={reportColumns}
+            />
 
             {filteredUsers.length > 0 && paginatedUsers.totalPages > 1 && (
               <div className="manage-users-pagination no-print">

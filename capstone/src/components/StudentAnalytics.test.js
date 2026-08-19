@@ -153,4 +153,27 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('Medium');
     expect(container.textContent).toContain('Hard');
   });
+
+  test('offers a dedicated selected-student analytics print report without dashboard controls', async () => {
+    global.fetch = jest.fn(() => jsonResponse({
+      progress: { student_id: 44, game_student_id: '001234', student_name: 'Ava Santos', grade_level: 'Grade 3', section: 'Section A' },
+      metrics: { accuracy: null, correctAnswers: null, incorrectAnswers: null, totalQuestions: null },
+      aiInsight: { status: 'insufficient_data', message: 'Not enough gameplay data yet to generate a reliable analysis.' },
+    }));
+
+    await act(async () => {
+      root.render(<StudentAnalytics />);
+    });
+
+    expect(container.querySelector('button[aria-label="Print Student Analytics"]')).toBeTruthy();
+    const report = container.querySelector('.student-analytics-print-report');
+    expect(report).toBeTruthy();
+    expect(report.textContent).toContain('Ava Santos');
+    expect(report.textContent).toContain('001234');
+    expect(report.textContent).toContain('Records: 1');
+    expect(report.textContent).toContain('Not available');
+    expect(report.textContent).not.toContain('0%');
+    expect(report.textContent).toContain('Not enough gameplay data yet to generate a reliable analysis.');
+    expect(report.querySelector('.student-analytics-back')).toBeFalsy();
+  });
 });

@@ -93,7 +93,11 @@ describe('ScreenTimeMonitoring', () => {
     expect(container.textContent).toContain('Ava Santos');
     expect(container.textContent).toContain('30 min');
     expect(container.textContent).toContain('Completed');
-    expect(container.querySelector('button[aria-label="Print Screen Time Monitoring"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Print Filtered Report"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Print Student Record"]')).not.toBeNull();
+    const report = container.querySelector('.printable-table-report');
+    expect(report.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(Array.from(report.querySelectorAll('th')).map((header) => header.textContent)).not.toContain('Parent ID');
   });
 
   test('paginates the authorised Screen Time records after server filtering', async () => {
@@ -114,8 +118,45 @@ describe('ScreenTimeMonitoring', () => {
     });
     await waitForContent(container, 'Student 1');
 
-    expect(container.querySelectorAll('tbody tr')).toHaveLength(10);
+    expect(container.querySelectorAll('.screen-time-table tbody tr')).toHaveLength(10);
     expect(container.textContent).toContain('Page 1 of 2');
+  });
+
+  test('prepares the full authorised filtered dataset without changing the visible page', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
+    localStorage.setItem('rememberToken', 'remember-token');
+    const allRecords = Array.from({ length: 11 }, (_, index) => ({
+      ...playtimePayload.data[0],
+      id: index + 1,
+      student_name: `Student ${index + 1}`,
+      game_student_id: String(100000 + index),
+    }));
+    global.fetch = jest.fn((url) => jsonResponse({
+      data: String(url).includes('limit=200') ? allRecords : allRecords.slice(0, 10),
+      pagination: String(url).includes('limit=200')
+        ? { page: 1, limit: 200, total: 11, pages: 1 }
+        : { page: 1, limit: 10, total: 11, pages: 2 },
+    }));
+    const printSpy = jest.spyOn(window, 'print').mockImplementation(() => {});
+
+    act(() => {
+      root.render(<ScreenTimeMonitoring mode="all" />);
+    });
+    await waitForContent(container, 'Student 1');
+
+    await act(async () => {
+      container.querySelector('button[aria-label="Print Filtered Report"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitForContent(container, 'Student 11');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.querySelectorAll('.screen-time-table tbody tr')).toHaveLength(10);
+    expect(container.querySelectorAll('.printable-table-report tbody tr')).toHaveLength(11);
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes('limit=200'))).toBe(true);
+    expect(printSpy).toHaveBeenCalledTimes(1);
   });
 
   test('parent child-only view fetches My Child Screen Time without exposing parent ID column', async () => {
@@ -171,7 +212,7 @@ describe('ScreenTimeMonitoring', () => {
     expect(container.textContent).not.toContain('Order');
     expect(container.textContent).not.toContain('Ascending');
     expect(container.textContent).not.toContain('Descending');
-    const dataRows = Array.from(container.querySelectorAll('tbody tr'));
+    const dataRows = Array.from(container.querySelectorAll('.screen-time-table tbody tr'));
     expect(dataRows.map((row) => row.children[1]?.textContent)).toEqual(['Ava Santos', 'Noah Santos']);
     expect(container.textContent).not.toContain('Auto Saved');
     expect(container.textContent).not.toContain('Auto Save');

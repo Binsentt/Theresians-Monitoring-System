@@ -137,7 +137,15 @@ describe('ManageUsers edit flow', () => {
 
     expect(container.textContent).toContain('PARENT ID');
     expect(container.textContent).toContain('482915');
-    expect(container.querySelector('button[aria-label="Print Manage Users"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Print User List"]')).not.toBeNull();
+    const report = container.querySelector('.printable-table-report');
+    expect(report.querySelectorAll('tbody tr')).toHaveLength(3);
+    expect(Array.from(report.querySelectorAll('th')).map((header) => header.textContent)).toEqual([
+      'User Name', 'Email', 'Role', 'Account Status',
+    ]);
+    expect(report.textContent).not.toContain('Parent ID');
+    expect(report.textContent).not.toContain('Mobile Number');
+    expect(report.textContent).not.toContain('Birthday');
   });
 
   test('loads managed accounts with the existing authenticated session header', async () => {

@@ -84,6 +84,7 @@ describe('Top Achievers authenticated analytics requests', () => {
     expect(container.textContent).toContain('Page 1 of 2');
     expect(container.textContent).toContain('001234');
     expect(container.querySelector('button[aria-label="Print Top Achievers"]')).not.toBeNull();
+    expect(container.querySelectorAll('.printable-table-report tbody tr')).toHaveLength(11);
   });
 
   test('teacher leaderboard applies the same controls only to its authorised response', async () => {

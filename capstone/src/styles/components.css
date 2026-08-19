@@ -1152,6 +1152,10 @@ label {
 }
 
 .table-print-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
   min-height: 38px;
   padding: 0.55rem 0.9rem;
   border: 1px solid var(--border-color, #cbd5e1);
@@ -1160,6 +1164,8 @@ label {
   color: var(--text-primary, #1f2937);
   cursor: pointer;
   font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .table-print-button:hover,
@@ -1168,15 +1174,122 @@ label {
   outline: none;
 }
 
+.table-print-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .table-report-controls {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   margin: 0 0 0.75rem;
 }
 
+.student-profile-report-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 1rem;
+}
+
+.printable-table-report,
+.student-analytics-print-report {
+  color: #111827;
+  background: #fff;
+}
+
+.printable-report-header {
+  display: grid;
+  gap: 0.22rem;
+  margin: 0 0 0.85rem;
+}
+
+.printable-report-header p,
+.printable-report-header h1,
+.printable-report-header span {
+  margin: 0;
+}
+
+.printable-report-header p {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.printable-report-header h1 {
+  font-size: 1.42rem;
+  line-height: 1.2;
+}
+
+@media (max-width: 640px) {
+  .table-report-controls,
+  .student-profile-report-actions {
+    justify-content: stretch;
+  }
+
+  .table-print-button {
+    width: 100%;
+  }
+}
+
+@page {
+  size: A4 portrait;
+  margin: 14mm;
+}
+
+@page landscape-report {
+  size: A4 landscape;
+  margin: 12mm;
+}
+
+@page portrait-report {
+  size: A4 portrait;
+  margin: 14mm;
+}
+
 @media print {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
   .print-only {
     display: block !important;
+    visibility: visible !important;
+  }
+
+  .print-only * {
+    visibility: visible !important;
+  }
+
+  .printable-table-report,
+  .student-analytics-print-report {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    padding: 0;
+    overflow: visible !important;
+    color: #111 !important;
+    background: #fff !important;
+    box-shadow: none !important;
+  }
+
+  .printable-report-landscape {
+    page: landscape-report;
+  }
+
+  .student-analytics-print-report {
+    page: portrait-report;
   }
 
   .no-print,
@@ -1185,13 +1298,13 @@ label {
   .pagination-row,
   .manage-users-pagination,
   .al-pagination,
-  .screen-time-pagination,
-  .analytics-sidebar,
-  .sidebar,
-  nav,
-  header {
-    display: none !important;
-  }
+      .screen-time-pagination,
+      .analytics-sidebar,
+      .sidebar,
+      nav,
+      body > header {
+        display: none !important;
+      }
 
   .table-print-heading {
     margin: 0 0 1rem;
@@ -1206,6 +1319,91 @@ label {
   .table-print-heading p {
     margin: 0.25rem 0 0;
     color: #4b5563;
+  }
+
+  .printable-table-report table,
+  .student-analytics-print-report table {
+    width: 100%;
+    border-collapse: collapse;
+    color: #111 !important;
+    font-size: 9pt;
+  }
+
+  .printable-table-report thead,
+  .student-analytics-print-report thead {
+    display: table-header-group;
+  }
+
+  .printable-table-report tr,
+  .student-analytics-print-report tr,
+  .student-analytics-print-report section,
+  .student-analytics-print-report article {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .printable-table-report th,
+  .printable-table-report td,
+  .student-analytics-print-report th,
+  .student-analytics-print-report td {
+    padding: 0.38rem 0.42rem;
+    border: 1px solid #6b7280 !important;
+    background: #fff !important;
+    color: #111 !important;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .printable-table-report th,
+  .student-analytics-print-report th {
+    font-weight: 700;
+    background: #e5e7eb !important;
+  }
+
+  .printable-report-header {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .student-analytics-print-report .student-analytics-print-header,
+  .student-analytics-print-report .student-analytics-print-section {
+    display: block !important;
+    margin: 0 0 0.95rem;
+  }
+
+  .student-analytics-print-report .student-analytics-print-header p,
+  .student-analytics-print-report .student-analytics-print-header h1,
+  .student-analytics-print-report .student-analytics-print-header span {
+    display: block;
+    margin: 0 0 0.22rem;
+  }
+
+  .student-analytics-print-report .student-analytics-print-section h2 {
+    margin: 0 0 0.45rem;
+    font-size: 11pt;
+  }
+
+  .student-analytics-print-report dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem 0.75rem;
+    margin: 0;
+  }
+
+  .student-analytics-print-report dl > div {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+    gap: 0.4rem;
+    padding: 0.28rem 0.35rem;
+    border: 1px solid #9ca3af;
+  }
+
+  .student-analytics-print-report dt {
+    font-weight: 700;
+  }
+
+  .student-analytics-print-report dd {
+    margin: 0;
   }
 
   .data-table-wrapper,

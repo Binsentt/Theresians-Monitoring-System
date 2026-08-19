@@ -8,7 +8,8 @@ import { normalizeRole } from './manageUsers.utils';
 import { apiUrl } from '../api';
 import { buildAuthHeaders } from './session.utils';
 import { TablePrintButton } from './TablePrintButton';
-import { formatTableRange, matchesTableSearch, paginateTableRows } from './tableReporting.utils';
+import { PrintableTableReport } from './PrintableTableReport';
+import { formatReportContext, matchesTableSearch, paginateTableRows } from './tableReporting.utils';
 import '../styles/topachievers.css';
 
 export default function AdminTopAchievers() {
@@ -109,6 +110,21 @@ export default function AdminTopAchievers() {
     const remainingMinutes = minutes % 60;
     return hours > 0 ? `${hours}h ${remainingMinutes}m` : `${Math.max(1, minutes)}m`;
   };
+  const reportScope = [selectedGrade, selectedSection, searchQuery ? `Search: ${searchQuery}` : '']
+    .filter(Boolean)
+    .join(' / ') || 'All authorised students';
+  const reportColumns = [
+    { header: '#', value: (_, index) => index + 1 },
+    { header: 'Student ID', value: (row) => row.game_student_id },
+    { header: 'Student Name', value: (row) => row.student_name },
+    { header: 'Grade', value: (row) => row.grade_level },
+    { header: 'Section', value: (row) => row.section },
+    { header: 'Progress', value: (row) => formatPercent(row.completion_percentage ?? row.progress_percentage) },
+    { header: 'Accuracy', value: (row) => formatPercent(row.accuracy ?? row.accuracy_rate) },
+    { header: 'Correct / Total', value: (row) => `${formatMetric(row.total_correct_answers ?? row.correct_answers)}/${formatMetric(row.total_questions_answered ?? row.total_questions)}` },
+    { header: 'Completed Quests', value: (row) => formatMetric(row.quests_completed ?? row.total_quests_completed) },
+    { header: 'Playtime', value: (row) => formatPlaytime(row.total_play_time ?? row.duration_seconds) },
+  ];
 
   if (loading) {
     return (
@@ -213,8 +229,11 @@ export default function AdminTopAchievers() {
             <ContentSection title={`Top Achievers (${filteredAchievers.length} found)`}>
               <div className="table-report-controls">
                 <TablePrintButton
-                  reportTitle="Top Achievers"
-                  reportContext={formatTableRange(paginatedAchievers)}
+                  reportTitle="Top Achievers Report"
+                  reportContext={formatReportContext({ scope: reportScope, recordCount: filteredAchievers.length })}
+                  label="Print Top Achievers"
+                  showPrintHeading={false}
+                  disabled={!filteredAchievers.length}
                 />
               </div>
               {error ? (
@@ -292,6 +311,12 @@ export default function AdminTopAchievers() {
                   )}
                 </>
               )}
+              <PrintableTableReport
+                title="Top Achievers Report"
+                context={reportScope}
+                rows={filteredAchievers}
+                columns={reportColumns}
+              />
             </ContentSection>
           </PageContent>
         </MainContent>

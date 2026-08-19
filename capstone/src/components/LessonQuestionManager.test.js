@@ -586,10 +586,11 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     expect(container.querySelectorAll('.drive-table tbody tr')).toHaveLength(10);
     expect(container.textContent).toContain('Page 1 of 2');
-    expect(container.querySelector('button[aria-label="Print Question Library"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Print Report"]')).not.toBeNull();
+    expect(container.querySelectorAll('.printable-table-report tbody tr')).toHaveLength(11);
   });
 
-  test('paginates the Trash Bin and keeps destructive actions out of its print report', async () => {
+  test('paginates the Trash Bin without exposing a separate destructive-item print flow', async () => {
     fixtures.trashFiles = Array.from({ length: 11 }, (_, index) => ({
       id: index + 300,
       title: `deleted-question-set-${index + 1}`,
@@ -605,6 +606,6 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     expect(container.querySelectorAll('.drive-table tbody tr')).toHaveLength(10);
     expect(container.textContent).toContain('Page 1 of 2');
-    expect(container.querySelector('button[aria-label="Print Question Library Trash"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Print Question Library Trash"]')).toBeNull();
   });
 });
