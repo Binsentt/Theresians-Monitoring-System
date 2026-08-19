@@ -7,6 +7,16 @@ const jsonResponse = (payload) => Promise.resolve({
   json: async () => payload,
 });
 
+const waitForActivityText = async (container, text) => {
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    if (container.textContent.includes(text)) return;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+  throw new Error(`Timed out waiting for ${text}`);
+};
+
 describe('ActivityLog table', () => {
   let container;
   let root;
@@ -48,13 +58,17 @@ describe('ActivityLog table', () => {
       root.render(<ActivityLog role="admin" limit={10} />);
     });
 
-    const headers = Array.from(container.querySelectorAll('th')).map((header) => header.textContent.trim());
+    const headers = Array.from(container.querySelectorAll('.al-table th')).map((header) => header.textContent.trim());
     expect(headers).toEqual(['Student Name', 'Student ID', 'Grade', 'Time', 'Activity', 'Duration']);
     expect(container.textContent).toContain('Ava Santos');
     expect(container.textContent).toContain('001234');
     expect(container.textContent).toContain('Fractions Gate');
     expect(container.textContent).toContain('2m 5s');
-    expect(container.querySelector('button[aria-label="Print Student Activity Log"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Print Filtered Activity Log"]')).not.toBeNull();
+    const report = container.querySelector('.printable-table-report');
+    expect(report.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(report.textContent).toContain('May 27, 2026');
+    expect(report.querySelector('tbody tr td').textContent).toMatch(/^May 27, 2026\s+.+/);
     expect(headers).not.toContain('Section');
     expect(headers).not.toContain('Save Status');
     expect(headers).not.toContain('Progress');
@@ -102,5 +116,45 @@ describe('ActivityLog table', () => {
     expect(global.fetch.mock.calls.every(([, options]) => (
       options?.headers?.Authorization === 'Bearer activity-log-token'
     ))).toBe(true);
+  });
+
+  test('prints the complete authorised filtered activity dataset without changing the current page', async () => {
+    const allRecords = Array.from({ length: 11 }, (_, index) => ({
+      id: index + 1,
+      student_id: 100 + index,
+      game_student_id: String(100000 + index),
+      student_name: `Student ${index + 1}`,
+      grade_level: 'Grade 3',
+      section: 'Section A',
+      current_quest: 'Fractions Gate',
+      activity_timestamp: `2026-05-${String(index + 1).padStart(2, '0')}T08:30:00.000Z`,
+      duration_seconds: 60,
+    }));
+    global.fetch = jest.fn((url) => jsonResponse({
+      data: String(url).includes('limit=200') ? allRecords : allRecords.slice(0, 10),
+      pagination: String(url).includes('limit=200')
+        ? { total: 11, pages: 1, current_page: 1 }
+        : { total: 11, pages: 2, current_page: 1 },
+    }));
+    const printSpy = jest.spyOn(window, 'print').mockImplementation(() => {});
+
+    await act(async () => {
+      root.render(<ActivityLog role="admin" limit={10} />);
+    });
+    await waitForActivityText(container, 'Student 1');
+
+    await act(async () => {
+      container.querySelector('button[aria-label="Print Filtered Activity Log"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitForActivityText(container, 'Student 11');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.querySelectorAll('.al-table tbody tr')).toHaveLength(10);
+    expect(container.querySelectorAll('.printable-table-report tbody tr')).toHaveLength(11);
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes('limit=200'))).toBe(true);
+    expect(printSpy).toHaveBeenCalledTimes(1);
   });
 });

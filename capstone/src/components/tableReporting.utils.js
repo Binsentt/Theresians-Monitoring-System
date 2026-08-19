@@ -40,3 +40,33 @@ export function formatTableRange({ totalItems = 0, start = 0, end = 0 } = {}) {
   if (!totalItems) return '0 records';
   return `Showing ${start}–${end} of ${totalItems} records`;
 }
+
+export function formatReportContext({ scope = '', recordCount = 0 } = {}) {
+  const normalizedScope = String(scope || '').trim();
+  const count = Math.max(0, Number(recordCount) || 0);
+  return `${normalizedScope ? `${normalizedScope} · ` : ''}Records: ${count}`;
+}
+
+export async function collectAuthorizedReportRows({ loadPage, pageSize = 100 }) {
+  if (typeof loadPage !== 'function') return [];
+
+  const limit = Math.min(Math.max(1, Number(pageSize) || 100), 200);
+  const rows = [];
+  let page = 1;
+  let totalPages = 1;
+
+  do {
+    const payload = await loadPage({ page, limit });
+    const pageRows = Array.isArray(payload?.rows) ? payload.rows : [];
+    rows.push(...pageRows);
+    const reportedPages = Number(payload?.pagination?.pages);
+    totalPages = Number.isFinite(reportedPages) && reportedPages > 0
+      ? reportedPages
+      : pageRows.length === limit
+        ? page + 1
+        : page;
+    page += 1;
+  } while (page <= totalPages);
+
+  return rows;
+}

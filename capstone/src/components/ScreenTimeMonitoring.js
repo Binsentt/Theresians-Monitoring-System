@@ -9,7 +9,9 @@ import { buildAuthHeaders, getStoredUserSession } from './session.utils';
 import { normalizeRole } from './manageUsers.utils';
 import { sortStudentsByName } from './studentProgress.utils';
 import { TablePrintButton } from './TablePrintButton';
-import { formatTableRange } from './tableReporting.utils';
+import { PrintableTableReport } from './PrintableTableReport';
+import { collectAuthorizedReportRows, formatReportContext } from './tableReporting.utils';
+import { usePreparedReportPrint } from './usePreparedReportPrint';
 import '../styles/screenTime.css';
 
 const GRADES = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
@@ -118,6 +120,10 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [reportError, setReportError] = useState('');
+  const [reportTitle, setReportTitle] = useState('Screen Time Report');
+  const [reportScope, setReportScope] = useState('All authorised records');
+  const { preparedRows, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
   const isChildView = mode === 'children';
   const pageSize = 10;
   const visibleRange = {
@@ -125,6 +131,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     start: records.length ? (page - 1) * pageSize + 1 : 0,
     end: records.length ? (page - 1) * pageSize + records.length : 0,
   };
+  const reportRows = preparedRows.length ? preparedRows : records;
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') || 'light';
@@ -185,6 +192,27 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     ? (normalizeRole(user?.role) === 'parent_teacher' ? 'parent_teacher' : 'parent')
     : (normalizeRole(user?.role) === 'admin' ? 'admin' : 'teacher');
   const activeItem = isChildView ? 'my-child-screen-time' : 'screen-time';
+  const activeReportScope = [
+    filters.grade_level,
+    filters.section,
+    filters.date,
+    filters.student_id ? `Student ID: ${filters.student_id}` : '',
+    filters.student_name ? `Student: ${filters.student_name}` : '',
+    filters.search ? `Search: ${filters.search}` : '',
+    filters.status,
+  ].filter(Boolean).join(' / ') || (isChildView ? 'Linked children' : 'All authorised records');
+  const reportColumns = [
+    { header: 'No.', value: (_, index) => index + 1 },
+    { header: isChildView ? 'Child Name' : 'Student Name', value: (row) => row.student_name || row.child_name },
+    { header: 'Student ID', value: (row) => row.game_student_id },
+    { header: 'Grade', value: (row) => row.grade_level },
+    { header: 'Section', value: (row) => row.section },
+    { header: 'Date Played', value: (row) => formatDate(row.date_played) },
+    { header: 'Start Time', value: (row) => formatTime(row.start_time) },
+    { header: 'End Time', value: (row) => formatTime(row.end_time) },
+    { header: 'Total Playtime', value: (row) => formatDuration(row.total_playtime_minutes) },
+    { header: 'Status', value: (row) => row.status },
+  ];
 
   const summaryCards = useMemo(() => {
     const totalMinutes = records.reduce((sum, record) => sum + (Number(record.total_playtime_minutes) || 0), 0);
@@ -205,6 +233,41 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     setFilters(initialFilters);
     setPage(1);
   };
+
+  const prepareScreenTimeReport = async (loadRows, nextTitle, nextScope) => {
+    setReportError('');
+    setReportTitle(nextTitle);
+    setReportScope(nextScope);
+    const printed = await prepareAndPrint(async () => {
+      try {
+        return await loadRows();
+      } catch (err) {
+        setReportError('Unable to prepare the screen time report right now.');
+        return [];
+      }
+    });
+    if (!printed) setReportError('No screen time records are available to print.');
+  };
+
+  const prepareFilteredScreenTimeReport = () => prepareScreenTimeReport(
+    () => collectAuthorizedReportRows({
+      pageSize: 200,
+      loadPage: async ({ page: reportPage, limit }) => {
+        const endpoint = isChildView ? '/api/playtime/my-children' : '/api/playtime';
+        const response = await fetch(apiUrl(`${endpoint}?${buildQueryString(filters, mode, reportPage, limit)}`), {
+          headers: buildAuthHeaders(),
+        });
+        if (!response.ok) throw new Error('Unable to load filtered screen time records');
+        const payload = await response.json();
+        return {
+          rows: normalizePlaytimeRecords(payload.data, filters),
+          pagination: payload.pagination,
+        };
+      },
+    }),
+    'Screen Time Report',
+    activeReportScope
+  );
 
   const handleSidebarSelection = (key) => {
     if (key === 'dashboard') {
@@ -381,9 +444,18 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                 <div className="screen-time-results">
                   <span>{pagination.total || records.length} records</span>
                   <div className="table-report-controls">
-                    <TablePrintButton reportTitle={title} reportContext={formatTableRange(visibleRange)} />
+                    <TablePrintButton
+                      reportTitle="Screen Time Report"
+                      reportContext={formatReportContext({ scope: activeReportScope, recordCount: pagination.total || records.length })}
+                      label="Print Filtered Report"
+                      showPrintHeading={false}
+                      disabled={!records.length}
+                      preparing={reportPreparing}
+                      onPrint={prepareFilteredScreenTimeReport}
+                    />
                   </div>
                 </div>
+                {reportError && <p className="screen-time-error no-print">{reportError}</p>}
 
                 <div className="screen-time-table-wrap">
                   <table className="screen-time-table">
@@ -400,12 +472,13 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                         <th>End Time</th>
                         <th>Total Playtime</th>
                         <th>Status</th>
+                        <th className="no-print">Report</th>
                       </tr>
                     </thead>
                     <tbody>
                       {records.length === 0 ? (
                         <tr>
-                          <td colSpan={isChildView ? 10 : 11} className="screen-time-empty">
+                          <td colSpan={isChildView ? 11 : 12} className="screen-time-empty">
                             No playtime records available yet.
                           </td>
                         </tr>
@@ -422,6 +495,18 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                           <td>{formatTime(record.end_time)}</td>
                           <td>{formatDuration(record.total_playtime_minutes)}</td>
                           <td><span className={`screen-time-status ${String(record.status || '').toLowerCase().replace(/\s+/g, '-')}`}>{record.status || 'Unknown'}</span></td>
+                          <td className="no-print">
+                            <TablePrintButton
+                              reportTitle="Student Screen Time Record"
+                              label="Print Student Record"
+                              showPrintHeading={false}
+                              onPrint={() => prepareScreenTimeReport(
+                                async () => [record],
+                                'Student Screen Time Record',
+                                `Student: ${record.student_name || record.child_name || record.game_student_id || 'Selected student'}`
+                              )}
+                            />
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -434,6 +519,12 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                     <button type="button" onClick={() => setPage((current) => Math.min(pagination.pages, current + 1))} disabled={page === pagination.pages}>Next</button>
                   </div>
                 )}
+                <PrintableTableReport
+                  title={reportTitle}
+                  context={reportScope}
+                  rows={reportRows}
+                  columns={reportColumns}
+                />
               </div>
             </ContentSection>
           </PageContent>

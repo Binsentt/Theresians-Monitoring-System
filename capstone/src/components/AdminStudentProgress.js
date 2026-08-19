@@ -13,7 +13,22 @@ import {
   normalizeStudentProgressPayload,
 } from './studentProgress.utils';
 import { TablePrintButton } from './TablePrintButton';
+import { PrintableTableReport } from './PrintableTableReport';
+import { formatReportContext } from './tableReporting.utils';
 import '../styles/studentprogress.css';
+
+const studentReportColumns = [
+  { header: 'No.', value: (_, index) => index + 1 },
+  { header: 'Student Name', value: (row) => row.student_name },
+  { header: 'Student ID', value: (row) => row.game_student_id },
+  { header: 'Grade', value: (row) => row.grade_level },
+  { header: 'Section', value: (row) => row.section },
+  { header: 'Current Quest', value: (row) => row.current_quest },
+  { header: 'Correct', value: (row) => row.correct_answers },
+  { header: 'Incorrect', value: (row) => row.incorrect_answers },
+  { header: 'Accuracy', value: (row) => formatPercent(row.performance_percentage, 'Not available') },
+  { header: 'Difficulty', value: (row) => row.difficulty_level || row.difficulty },
+];
 
 export default function AdminStudentProgress() {
   const navigate = useNavigate();
@@ -96,6 +111,7 @@ export default function AdminStudentProgress() {
   const paginatedStudents = filteredStudents.slice((page - 1) * pageSize, page * pageSize);
   const pageCount = Math.max(1, Math.ceil(filteredStudents.length / pageSize));
   const hasActiveStudentFilters = Boolean(searchQuery || selectedGrade || selectedSection);
+  const reportScope = [selectedGrade, selectedSection, searchQuery ? `Search: ${searchQuery}` : ''].filter(Boolean).join(' / ') || 'All authorised students';
 
   return (
     <DashboardContainer
@@ -194,7 +210,13 @@ export default function AdminStudentProgress() {
               contentClassName="student-progress-table-shell"
             >
               <div className="table-report-controls">
-                <TablePrintButton reportTitle="Student Progress" reportContext={`${filteredStudents.length} authorised records`} />
+                <TablePrintButton
+                  reportTitle="Student Progress List"
+                  reportContext={formatReportContext({ scope: reportScope, recordCount: filteredStudents.length })}
+                  label="Print Student List"
+                  showPrintHeading={false}
+                  disabled={!filteredStudents.length}
+                />
               </div>
               <div className="table-wrapper">
                 {loading ? (
@@ -265,6 +287,12 @@ export default function AdminStudentProgress() {
                 <span>Page {page} of {pageCount}</span>
                 <button disabled={page >= pageCount} onClick={() => setPage((prev) => Math.min(prev + 1, pageCount))}>Next</button>
               </div>
+              <PrintableTableReport
+                title="Student Progress List"
+                context={reportScope}
+                rows={filteredStudents}
+                columns={studentReportColumns}
+              />
             </ContentSection>
           </PageContent>
         </MainContent>

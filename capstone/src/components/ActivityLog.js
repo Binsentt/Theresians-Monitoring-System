@@ -12,6 +12,9 @@ import { buildScopedApiUrl } from './analyticsEndpoints';
 import { buildAuthHeaders } from './session.utils';
 import { sortStudentsByName } from './studentProgress.utils';
 import { TablePrintButton } from './TablePrintButton';
+import { PrintableTableReport } from './PrintableTableReport';
+import { collectAuthorizedReportRows, formatReportContext } from './tableReporting.utils';
+import { usePreparedReportPrint } from './usePreparedReportPrint';
 
 const GRADE_SECTIONS = {
   'Grade 1': ['Section A', 'Section B'],
@@ -38,6 +41,8 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
   const [parentChildren, setParentChildren] = useState([]);
   const [childrenLoaded, setChildrenLoaded] = useState(role !== 'parent');
   const [selectedChildId, setSelectedChildId] = useState('');
+  const [reportError, setReportError] = useState('');
+  const { preparedRows, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
   const requiresScopedUser = role === 'teacher' || role === 'parent';
   const scopedUserReady = !requiresScopedUser || Boolean(userId);
   const showFilters = shouldShowActivityLogFilters(role);
@@ -166,6 +171,65 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
   const availableSections = selectedGrade ? GRADE_SECTIONS[selectedGrade] || [] : [];
   const totalPages = Math.max(1, pagination.pages || 1);
   const latestActivity = activities[0] || null;
+  const reportRows = preparedRows.length ? preparedRows : activities;
+  const reportScope = [selectedGrade, selectedSection, debouncedSearch ? `Search: ${debouncedSearch}` : '']
+    .filter(Boolean)
+    .join(' / ') || (isParentView ? 'Selected child' : 'All authorised activity records');
+  const reportLabel = isParentView || /^\d{6}$/.test(debouncedSearch)
+    ? 'Print Student Activity'
+    : selectedSection
+      ? 'Print Section Activity'
+      : 'Print Filtered Activity Log';
+  const reportColumns = [
+    {
+      header: 'Date / Time',
+      value: (row) => {
+        const timestamp = row.activity_timestamp || row.created_at || row.last_played;
+        return timestamp ? `${formatDate(timestamp)} ${formatTime(timestamp)}` : null;
+      },
+    },
+    { header: 'Student ID', value: (row) => row.game_student_id },
+    { header: 'Student Name', value: (row) => row.student_name },
+    { header: 'Grade', value: (row) => getActivityLogGrade(row) },
+    { header: 'Section', value: (row) => row.section },
+    { header: 'Activity', value: (row) => getActivityLogActivity(row) },
+    { header: 'Duration', value: (row) => formatActivityLogDuration(row) },
+  ];
+
+  const prepareActivityReport = async () => {
+    setReportError('');
+    const printed = await prepareAndPrint(async () => {
+      try {
+        return await collectAuthorizedReportRows({
+          pageSize: 200,
+          loadPage: async ({ page, limit: reportLimit }) => {
+            const queryParams = buildActivityLogQueryParams({
+              limit: reportLimit,
+              itemsPerPage: reportLimit,
+              currentPage: page,
+              role,
+              userId,
+              selectedStudentId: isParentView ? selectedChildId : '',
+              debouncedSearch,
+              selectedGrade,
+              selectedSection,
+            });
+            const response = await fetch(buildScopedApiUrl(`/api/activity-logs?${queryParams.toString()}`, role), {
+              headers: buildAuthHeaders(),
+            });
+            if (!response.ok) throw new Error('Unable to prepare the activity report');
+            const payload = await response.json();
+            const normalized = normalizeActivityLogPayload(payload);
+            return { rows: normalized.records, pagination: normalized.pagination };
+          },
+        });
+      } catch (err) {
+        setReportError('Unable to prepare the activity report right now.');
+        return [];
+      }
+    });
+    if (!printed && !reportError) setReportError('No activity records are available to print.');
+  };
 
   const summaryCards = useMemo(() => ([
     { label: 'Total records', value: pagination.total || activities.length || 0 },
@@ -297,14 +361,20 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
       <div className="al-results-info">
         <div className="table-report-controls">
           <TablePrintButton
-            reportTitle={role === 'parent' ? 'Child Activity Log' : 'Student Activity Log'}
-            reportContext={`${pagination.total || activities.length} authorised records`}
+            reportTitle={role === 'parent' ? 'Child Activity Log' : 'Activity Log'}
+            reportContext={formatReportContext({ scope: reportScope, recordCount: pagination.total || activities.length })}
+            label={reportLabel}
+            showPrintHeading={false}
+            disabled={!activities.length}
+            preparing={reportPreparing}
+            onPrint={prepareActivityReport}
           />
         </div>
         <span className="results-count">
           Showing {activities.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} - {Math.min((currentPage - 1) * itemsPerPage + activities.length, pagination.total || activities.length)} of {pagination.total || activities.length} records
         </span>
       </div>
+      {reportError && <p className="fallback-note no-print">{reportError}</p>}
 
       {activities.length === 0 ? (
         <div className="al-empty">
@@ -376,6 +446,12 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
           )}
         </>
       )}
+      <PrintableTableReport
+        title={reportLabel.replace(/^Print /, '')}
+        context={reportScope}
+        rows={reportRows}
+        columns={reportColumns}
+      />
     </div>
   );
 }

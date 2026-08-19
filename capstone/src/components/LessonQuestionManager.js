@@ -28,7 +28,8 @@ import {
 } from './lessonQuestionManager.utils';
 import { apiUrl } from '../api';
 import { TablePrintButton } from './TablePrintButton';
-import { formatTableRange, paginateTableRows } from './tableReporting.utils';
+import { PrintableTableReport } from './PrintableTableReport';
+import { formatReportContext, paginateTableRows } from './tableReporting.utils';
 import '../styles/lessonQuestionManager.css';
 
 const initialFormState = {
@@ -202,6 +203,18 @@ export default function LessonQuestionManager() {
   )), [filters.status, folderView.files]);
   const paginatedFiles = paginateTableRows(displayedFiles, page, pageSize);
   const statusOptions = useMemo(() => Array.from(new Set(folderView.files.map(getQuestionSetStatus).filter(Boolean))).sort(), [folderView.files]);
+  const reportColumns = [
+    { header: 'No.', value: (_, index) => index + 1 },
+    { header: 'File / Question Set Name', value: (row) => row.generated_question_set_name || row.title || row.file_name },
+    { header: 'Grade', value: (row) => row.grade_level },
+    { header: 'Difficulty', value: (row) => row.difficulty },
+    { header: 'Topic Identifier', value: (row) => row.math_topic },
+    { header: 'File Type / Source', value: (row) => row.source_label || (row.file_type === 'lesson' ? 'Lesson PDF File' : 'Fixed Question File') },
+    { header: 'Question Count', value: (row) => Number.isInteger(Number(row.question_count)) ? Number(row.question_count) : (row.file_type === 'lesson' ? row.requested_question_count : null) },
+    { header: 'Status', value: (row) => getQuestionSetStatus(row) },
+    { header: 'Date Modified', value: (row) => formatUploadDate(row.published_at || row.generated_at || row.uploaded_at) },
+    { header: 'File Size', value: (row) => formatLearningFileSize(row.file_size) },
+  ];
 
   useEffect(() => {
     if (page !== paginatedFiles.currentPage) setPage(paginatedFiles.currentPage);
@@ -904,7 +917,13 @@ export default function LessonQuestionManager() {
                       )}
                     </div>
                     <div className="table-report-controls">
-                      <TablePrintButton reportTitle="Question Library" reportContext={`${selectedFolderPath} · ${formatTableRange(paginatedFiles)}`} />
+                      <TablePrintButton
+                        reportTitle="Lesson & Question Files Report"
+                        reportContext={formatReportContext({ scope: selectedFolderPath, recordCount: displayedFiles.length })}
+                        label="Print Report"
+                        showPrintHeading={false}
+                        disabled={!displayedFiles.length}
+                      />
                     </div>
                     <DataTable columns={tableColumns} data={paginatedFiles.rows} emptyMessage={tableEmptyMessage} className="drive-table" />
                     {paginatedFiles.totalPages > 1 && (
@@ -914,6 +933,12 @@ export default function LessonQuestionManager() {
                         <button type="button" onClick={() => setPage((current) => Math.min(paginatedFiles.totalPages, current + 1))} disabled={paginatedFiles.currentPage === paginatedFiles.totalPages}>Next</button>
                       </div>
                     )}
+                    <PrintableTableReport
+                      title="Lesson & Question Files Report"
+                      context={selectedFolderPath}
+                      rows={displayedFiles}
+                      columns={reportColumns}
+                    />
                   </section>
                 )}
 
@@ -927,9 +952,6 @@ export default function LessonQuestionManager() {
                       <button type="button" className="btn btn-secondary" onClick={handleEmptyTrash} disabled={trashRows.length === 0}>
                         <Trash2 size={16} />Empty Trash
                       </button>
-                    </div>
-                    <div className="table-report-controls">
-                      <TablePrintButton reportTitle="Question Library Trash" reportContext={formatTableRange(paginatedTrashRows)} />
                     </div>
                     <DataTable columns={trashColumns} data={paginatedTrashRows.rows} emptyMessage="Trash is empty." className="drive-table" />
                     {paginatedTrashRows.totalPages > 1 && (

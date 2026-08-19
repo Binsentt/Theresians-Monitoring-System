@@ -17,9 +17,11 @@ import { buildStudentProgressDetailUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
 import { buildAuthHeaders } from './session.utils';
 import { normalizeDisplayList, safeDisplayText } from './studentProgress.utils';
+import { TablePrintButton } from './TablePrintButton';
 import '../styles/studentprogress.css';
 
 const toNullableNumber = (value) => {
+  if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
@@ -167,9 +169,29 @@ export default function StudentAnalytics() {
   ];
   const insightMessage = insightError || aiInsight?.message || 'Generate an insight only when you want an interpretation of the recorded metrics.';
   const canGenerateInsight = aiInsight?.status !== 'insufficient_data';
+  const topicRows = useMemo(() => Object.entries(metrics?.topicPerformance || metrics?.topic_breakdown || {})
+    .map(([topic, value]) => ({
+      topic: safeDisplayText(topic, ''),
+      accuracy: toNullableNumber(value?.accuracy ?? value),
+    }))
+    .filter((row) => row.topic), [metrics]);
+  const reportSummary = [
+    { label: 'Correct Answers', value: formatCount(metrics?.correctAnswers) },
+    { label: 'Incorrect Answers', value: formatCount(metrics?.incorrectAnswers) },
+    { label: 'Total Questions', value: formatCount(metrics?.totalQuestions) },
+    { label: 'Accuracy', value: formatPercent(metrics?.accuracy) },
+    { label: 'Game Score', value: formatCount(metrics?.gameScore) },
+    { label: 'Total Progress', value: formatPercent(metrics?.totalProgress) },
+    { label: 'Completed Quests', value: formatCount(metrics?.completedQuests) },
+  ];
+  const printedAt = new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date());
 
   return (
-    <div className="student-analytics-page">
+    <>
+    <div className="student-analytics-page no-print">
       <button className="back-action student-analytics-back" onClick={() => navigate(getBackRoute())}>
         <ChevronLeft size={18} aria-hidden="true" />
         Back to Table
@@ -189,6 +211,14 @@ export default function StudentAnalytics() {
                 <h1>{studentName}</h1>
                 <p className="subtitle">Server-calculated gameplay metrics and optional grounded interpretation.</p>
               </div>
+            </div>
+            <div className="student-profile-report-actions">
+              <TablePrintButton
+                reportTitle="Student Analytics"
+                label="Print Student Analytics"
+                showPrintHeading={false}
+                disabled={!progress}
+              />
             </div>
             <div className="student-profile-meta">
               <div><span>Student ID</span><strong>{resolvedStudentId}</strong></div>
@@ -290,5 +320,63 @@ export default function StudentAnalytics() {
         </>
       )}
     </div>
+    {!loading && !error && progress && (
+      <section className="print-only student-analytics-print-report" aria-label="Student Analytics Report">
+        <header className="student-analytics-print-header">
+          <p>Theresian's Quest</p>
+          <h1>Student Analytics Report</h1>
+          <span>Records: 1</span>
+          <span>Printed: {printedAt}</span>
+        </header>
+
+        <section className="student-analytics-print-section">
+          <h2>Student Information</h2>
+          <dl>
+            <div><dt>Student Name</dt><dd>{studentName}</dd></div>
+            <div><dt>Student ID</dt><dd>{resolvedStudentId}</dd></div>
+            <div><dt>Grade</dt><dd>{grade}</dd></div>
+            <div><dt>Section</dt><dd>{section}</dd></div>
+            <div><dt>Current Quest</dt><dd>{currentQuest}</dd></div>
+            <div><dt>Current Difficulty</dt><dd>{currentDifficulty}</dd></div>
+          </dl>
+        </section>
+
+        <section className="student-analytics-print-section">
+          <h2>Performance Summary</h2>
+          <dl>
+            {reportSummary.map((metric) => <div key={metric.label}><dt>{metric.label}</dt><dd>{metric.value}</dd></div>)}
+          </dl>
+        </section>
+
+        <section className="student-analytics-print-section">
+          <h2>Difficulty Performance</h2>
+          <dl>
+            {difficultyRows.map((row) => <div key={row.label}><dt>{row.label}</dt><dd>{formatPercent(row.value)}</dd></div>)}
+          </dl>
+          {difficultyRows.every((row) => row.value === null) && <p>No recorded difficulty results.</p>}
+        </section>
+
+        <section className="student-analytics-print-section">
+          <h2>Topic Performance</h2>
+          {topicRows.length > 0 ? (
+            <table>
+              <thead><tr><th>Topic</th><th>Accuracy</th></tr></thead>
+              <tbody>{topicRows.map((row) => <tr key={row.topic}><td>{row.topic}</td><td>{formatPercent(row.accuracy)}</td></tr>)}</tbody>
+            </table>
+          ) : <p>No recorded topic performance.</p>}
+        </section>
+
+        <section className="student-analytics-print-section">
+          <h2>Analysis</h2>
+          <dl>
+            <div><dt>Performance Insight</dt><dd>{insight?.performance_insight || insightMessage}</dd></div>
+            <div><dt>Strengths</dt><dd>{strengths.length ? strengths.join('; ') : 'Analysis not available.'}</dd></div>
+            <div><dt>Weaknesses</dt><dd>{weaknesses.length ? weaknesses.join('; ') : 'Analysis not available.'}</dd></div>
+            <div><dt>Recommendations</dt><dd>{recommendations.length ? recommendations.join('; ') : 'Analysis not available.'}</dd></div>
+          </dl>
+        </section>
+      </section>
+    )}
+    </>
   );
 }

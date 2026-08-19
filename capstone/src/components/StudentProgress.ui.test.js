@@ -77,7 +77,8 @@ describe('Student Progress summary cards', () => {
     expect(container.textContent).toContain('Average accuracy');
     expect(container.textContent).toContain('Average completion');
     expect(container.textContent).not.toMatch(/Grade groups/i);
-    expect(container.querySelector('button[aria-label="Print Student Progress"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Print Student List"]')).not.toBeNull();
+    expect(container.querySelectorAll('.printable-table-report tbody tr')).toHaveLength(1);
     expect(container.querySelector('.student-progress-table thead th')?.textContent).toBe('No.');
     expect(global.fetch.mock.calls.every(([, options]) => (
       options?.headers?.Authorization === 'Bearer analytics-test-token'

@@ -35,4 +35,26 @@ describe('TablePrintButton', () => {
 
     printSpy.mockRestore();
   });
+
+  test('uses an explicit accessible label and blocks empty or preparing reports', () => {
+    const printSpy = jest.spyOn(window, 'print').mockImplementation(() => {});
+
+    act(() => {
+      root.render(<TablePrintButton reportTitle="Student Progress" label="Print Student List" disabled />);
+    });
+
+    const button = container.querySelector('button');
+    expect(button.getAttribute('aria-label')).toBe('Print Student List');
+    expect(button.disabled).toBe(true);
+    act(() => button.click());
+    expect(printSpy).not.toHaveBeenCalled();
+
+    act(() => {
+      root.render(<TablePrintButton reportTitle="Student Progress" label="Print Student List" preparing />);
+    });
+    expect(container.textContent).toContain('Preparing report...');
+    expect(container.querySelector('button').disabled).toBe(true);
+
+    printSpy.mockRestore();
+  });
 });

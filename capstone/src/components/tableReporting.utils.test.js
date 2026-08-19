@@ -1,4 +1,6 @@
 import {
+  collectAuthorizedReportRows,
+  formatReportContext,
   matchesTableSearch,
   paginateTableRows,
   formatTableRange,
@@ -31,5 +33,25 @@ describe('table reporting utilities', () => {
   test('formats empty and populated result ranges truthfully', () => {
     expect(formatTableRange({ totalItems: 0, start: 0, end: 0 })).toBe('0 records');
     expect(formatTableRange({ totalItems: 12, start: 6, end: 10 })).toBe('Showing 6–10 of 12 records');
+  });
+
+  test('collects every bounded authorized page without mutating the visible page state', async () => {
+    const loadPage = jest.fn(async ({ page, limit }) => ({
+      rows: page === 1 ? [{ id: 1 }, { id: 2 }] : [{ id: 3 }],
+      pagination: { page, pages: 2, limit, total: 3 },
+    }));
+
+    await expect(collectAuthorizedReportRows({ loadPage, pageSize: 2 })).resolves.toEqual([
+      { id: 1 },
+      { id: 2 },
+      { id: 3 },
+    ]);
+    expect(loadPage).toHaveBeenNthCalledWith(1, { page: 1, limit: 2 });
+    expect(loadPage).toHaveBeenNthCalledWith(2, { page: 2, limit: 2 });
+  });
+
+  test('formats report context from the actual printed row count and active scope', () => {
+    expect(formatReportContext({ scope: 'Grade 3 / Section A', recordCount: 12 })).toBe('Grade 3 / Section A · Records: 12');
+    expect(formatReportContext({ scope: '', recordCount: 0 })).toBe('Records: 0');
   });
 });
