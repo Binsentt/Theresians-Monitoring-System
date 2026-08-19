@@ -99,10 +99,17 @@
 
 .screen-time-results {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 20px;
   color: var(--text-muted, #64748b);
   font-weight: 700;
+}
+
+.screen-time-results .table-report-controls {
+  margin: 0;
 }
 
 .screen-time-error {
@@ -202,5 +209,14 @@
   .screen-time-filters,
   .screen-time-summary {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .screen-time-results {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
   }
 }

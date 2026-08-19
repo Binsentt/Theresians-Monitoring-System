@@ -436,8 +436,8 @@
 
 .student-profile-card {
   display: grid;
-  grid-template-columns: minmax(260px, 0.95fr) minmax(0, 1.35fr);
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 18px;
   border-radius: 12px;
   padding: 18px;
@@ -505,9 +505,15 @@
 
 .student-profile-meta {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(120px, 0.85fr) minmax(175px, 1.3fr) minmax(130px, 0.85fr) minmax(220px, 1.7fr);
+  gap: 12px;
   min-width: 0;
+}
+
+.student-profile-card .student-profile-report-actions {
+  align-self: start;
+  margin: 0;
 }
 
 .student-profile-meta div,
@@ -536,7 +542,9 @@
   color: var(--text-primary, #0b2447);
   font-size: 0.9rem;
   font-weight: 800;
-  overflow-wrap: anywhere;
+  line-height: 1.4;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .student-metrics-grid {
@@ -638,8 +646,8 @@
 
 .student-performance-meta {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: minmax(180px, 1.55fr) repeat(3, minmax(110px, 0.9fr));
+  gap: 12px;
   margin-bottom: 16px;
 }
 
@@ -1088,7 +1096,7 @@
 }
 
 @media (max-width: 1199px) and (min-width: 981px) {
-  .student-profile-card {
+  .student-analytics-grid {
     grid-template-columns: 1fr;
   }
 

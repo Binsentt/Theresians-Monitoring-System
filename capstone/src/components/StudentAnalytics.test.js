@@ -136,11 +136,14 @@ describe('StudentAnalytics defensive rendering', () => {
 
     expect(container.querySelector('.student-profile-card')).toBeTruthy();
     expect(container.querySelector('.student-profile-logo')).toBeFalsy();
+    expect(container.querySelectorAll('.student-profile-meta > div')).toHaveLength(4);
+    expect(container.querySelectorAll('.student-performance-meta > div')).toHaveLength(4);
     expect(container.querySelectorAll('.student-metric-card')).toHaveLength(6);
     expect(container.textContent).toContain('Student ID');
     expect(container.textContent).toContain('001234');
     expect(container.textContent).toContain('Grade & Section');
     expect(container.textContent).toContain('Grade 3 - Section A');
+    expect(container.querySelector('.student-profile-meta > div:last-child').textContent).toContain('Oak Leaf Village Quest');
     expect(container.textContent).toContain('Current Scene');
     expect(container.textContent).toContain('oak_leaf_village.tscn');
     expect(container.textContent).toContain('Game Score');
@@ -166,6 +169,8 @@ describe('StudentAnalytics defensive rendering', () => {
     });
 
     expect(container.querySelector('button[aria-label="Print Student Analytics"]')).toBeTruthy();
+    expect(container.querySelectorAll('.student-profile-meta > div')).toHaveLength(4);
+    expect(container.querySelectorAll('.student-performance-meta > div')).toHaveLength(4);
     const report = container.querySelector('.student-analytics-print-report');
     expect(report).toBeTruthy();
     expect(report.textContent).toContain('Ava Santos');

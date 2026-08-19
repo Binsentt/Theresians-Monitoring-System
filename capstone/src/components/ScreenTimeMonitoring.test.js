@@ -95,6 +95,12 @@ describe('ScreenTimeMonitoring', () => {
     expect(container.textContent).toContain('Completed');
     expect(container.querySelector('button[aria-label="Print Filtered Report"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="Print Student Record"]')).not.toBeNull();
+    const reportToolbar = container.querySelector('.screen-time-results');
+    const tableWrapper = container.querySelector('.screen-time-table-wrap');
+    expect(reportToolbar).not.toBeNull();
+    expect(tableWrapper).not.toBeNull();
+    expect(reportToolbar).not.toBe(tableWrapper);
+    expect(reportToolbar.querySelector('button[aria-label="Print Filtered Report"]')).not.toBeNull();
     const report = container.querySelector('.printable-table-report');
     expect(report.querySelectorAll('tbody tr')).toHaveLength(1);
     expect(Array.from(report.querySelectorAll('th')).map((header) => header.textContent)).not.toContain('Parent ID');
