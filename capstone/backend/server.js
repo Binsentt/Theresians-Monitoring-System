@@ -205,6 +205,11 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS parent_id VARCHAR(6)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS game_student_id VARCHAR(6)');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS first_name VARCHAR(100)');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS last_name VARCHAR(100)');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS middle_initial VARCHAR(5)');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS grade_level VARCHAR(20)');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS section VARCHAR(50)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS session_version INTEGER DEFAULT 0');
     await pool.query('UPDATE public.accounts SET is_archived = false WHERE is_archived IS NULL');
     await pool.query('UPDATE public.accounts SET session_version = 0 WHERE session_version IS NULL');
@@ -764,6 +769,76 @@ const resolveAccountRemovalReason = (value) => {
 const normalizeOptionalText = (value) => {
   const normalized = String(value ?? '').trim();
   return normalized || null;
+};
+
+const normalizePhilippineMobile = (value) => {
+  const normalized = normalizeOptionalText(value);
+  if (!normalized) return { mobileNumber: null };
+  if (!/^09\d{9}$/.test(normalized)) {
+    return { error: 'Mobile number must be in the format 09XXXXXXXXX.' };
+  }
+  return { mobileNumber: normalized };
+};
+
+const PARENT_CHILD_GRADE_LEVELS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
+const PARENT_CHILD_SECTIONS_BY_GRADE = {
+  'Grade 1': ['Section A', 'Section B'],
+  'Grade 2': ['Section A', 'Section B', 'Section C'],
+  'Grade 3': ['Section A', 'Section B', 'Section C'],
+  'Grade 4': ['Section A', 'Section B', 'Section C'],
+  'Grade 5': ['Section A', 'Section B', 'Section C'],
+  'Grade 6': ['Section A', 'Section B', 'Section C'],
+};
+
+const normalizeChildNamePart = (value, label, { required = false, initial = false } = {}) => {
+  const normalized = String(value ?? '').trim().replace(/\s+/g, ' ');
+  if (!normalized) return required ? { error: `${label} is required.` } : { value: null };
+  const initialValue = initial ? normalized.replace(/\.$/, '') : normalized;
+  if (initial && !/^[A-Za-z]$/.test(initialValue)) {
+    return { error: 'Middle initial must be one letter.' };
+  }
+  if (!initial && (!/^[A-Za-z][A-Za-z' -]*$/.test(initialValue) || initialValue.length > 100)) {
+    return { error: `${label} may only contain letters, spaces, apostrophes, or hyphens.` };
+  }
+  return { value: initialValue };
+};
+
+const resolveParentChildProfile = (payload = {}) => {
+  const firstName = normalizeChildNamePart(payload.first_name ?? payload.firstName, 'First name', { required: true });
+  if (firstName.error) return firstName;
+  const lastName = normalizeChildNamePart(payload.last_name ?? payload.lastName, 'Last name', { required: true });
+  if (lastName.error) return lastName;
+  const middleInitial = normalizeChildNamePart(payload.middle_initial ?? payload.middleInitial, 'Middle initial', { initial: true });
+  if (middleInitial.error) return middleInitial;
+
+  const gradeLevel = String(payload.grade_level ?? payload.gradeLevel ?? '').trim();
+  if (!gradeLevel) return { error: 'Grade is required.' };
+  if (!PARENT_CHILD_GRADE_LEVELS.includes(gradeLevel)) return { error: 'Grade must be between Grade 1 and Grade 6.' };
+
+  const section = normalizeOptionalText(payload.section);
+  if (section && !PARENT_CHILD_SECTIONS_BY_GRADE[gradeLevel].includes(section)) {
+    return { error: 'Section must be one of the available sections.' };
+  }
+
+  const studentId = normalizeStudentCode(payload.student_id ?? payload.studentId ?? payload.game_student_id);
+  if (!studentId) {
+    return { error: String(payload.student_id ?? payload.studentId ?? payload.game_student_id ?? '').trim()
+      ? 'Student ID must be exactly 6 digits.'
+      : 'Student ID is required.' };
+  }
+
+  const fullName = [firstName.value, middleInitial.value, lastName.value].filter(Boolean).join(' ');
+  if (fullName.length > 100) return { error: 'Child name must be 100 characters or fewer.' };
+
+  return {
+    firstName: firstName.value,
+    lastName: lastName.value,
+    middleInitial: middleInitial.value,
+    gradeLevel,
+    section,
+    studentId,
+    fullName,
+  };
 };
 
 const resolveOptionalBirthday = (birthday) => {
@@ -2739,6 +2814,9 @@ app.post('/api/accounts', requireAccountManagementAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Name and email are required' });
     }
 
+    const mobileResult = normalizePhilippineMobile(mobile_number);
+    if (mobileResult.error) return res.status(400).json({ error: mobileResult.error });
+
     const finalRole = normalizeAccountRole(role || 'Parent');
     if (!isWebsiteManagedAccountRole(finalRole)) {
       return res.status(400).json({ error: 'Manage Users can only create website accounts.' });
@@ -2769,7 +2847,7 @@ app.post('/api/accounts', requireAccountManagementAdmin, async (req, res) => {
         normalizedEmail,
         hashedPassword,
         finalRole,
-        normalizeOptionalText(mobile_number),
+        mobileResult.mobileNumber,
         normalizeOptionalText(address),
         birthdayResult.birthday,
         normalizeOptionalText(gender),
@@ -2936,6 +3014,8 @@ app.put('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) => 
       return res.status(400).json({ error: birthdayResult.error });
     }
     const finalBirthday = birthdayResult.birthday;
+    const mobileResult = normalizePhilippineMobile(mobile_number !== undefined ? mobile_number : old.mobile_number);
+    if (mobileResult.error) return res.status(400).json({ error: mobileResult.error });
     const employeeIdResult = resolveEmployeeIdForRole(finalRole, employee_id !== undefined ? employee_id : old.employee_id);
     if (employeeIdResult.error) {
       return res.status(400).json({ error: employeeIdResult.error });
@@ -2961,7 +3041,7 @@ app.put('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) => 
         finalEmail,
         finalRole,
         hashedPassword,
-        mobile_number !== undefined ? mobile_number : old.mobile_number,
+        mobileResult.mobileNumber,
         address !== undefined ? address : old.address,
         finalBirthday,
         gender !== undefined ? gender : old.gender,
@@ -4761,6 +4841,10 @@ app.put('/api/user/:id', async (req, res) => {
     if (birthdayResult.error) {
       return res.status(400).json({ error: birthdayResult.error });
     }
+    const mobileResult = normalizePhilippineMobile(
+      req.body.mobile_number !== undefined ? req.body.mobile_number : old.mobile_number
+    );
+    if (mobileResult.error) return res.status(400).json({ error: mobileResult.error });
 
     const finalEmail = req.body.email && req.body.email.trim() !== ''
       ? req.body.email.toLowerCase().trim()
@@ -4773,7 +4857,7 @@ app.put('/api/user/:id', async (req, res) => {
       [
         req.body.name || old.name,
         finalEmail,
-        req.body.mobile_number !== undefined ? req.body.mobile_number : old.mobile_number,
+        mobileResult.mobileNumber,
         req.body.address !== undefined ? req.body.address : old.address,
         birthdayResult.birthday,
         req.body.gender !== undefined ? req.body.gender : old.gender,
@@ -5585,6 +5669,110 @@ app.get(
   (req, res) => handlePlaytimeListRequest(req, res, { scope: 'children' })
 );
 
+app.post('/api/parent/children', requireParentAnalyticsAccess, async (req, res) => {
+  const childProfile = resolveParentChildProfile(req.body);
+  if (childProfile.error) return res.status(400).json({ error: childProfile.error });
+
+  const parentId = Number(req.authenticatedUser?.id);
+  if (!Number.isInteger(parentId) || parentId <= 0) {
+    return res.status(401).json({ error: 'Authentication is required.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existingStudentResult = await client.query(
+      `SELECT s.id,
+              s.game_student_id,
+              EXISTS (
+                SELECT 1
+                FROM public.teacher_student_relationships own_link
+                WHERE own_link.student_id = s.id
+                  AND own_link.teacher_id = $2
+                  AND LOWER(own_link.relationship_type) = 'parent'
+              ) AS linked_to_authenticated_parent,
+              EXISTS (
+                SELECT 1
+                FROM public.teacher_student_relationships other_link
+                WHERE other_link.student_id = s.id
+                  AND other_link.teacher_id <> $2
+                  AND LOWER(other_link.relationship_type) = 'parent'
+              ) AS linked_to_another_parent
+       FROM public.accounts s
+       WHERE s.game_student_id = $1
+       FOR UPDATE`,
+      [childProfile.studentId, parentId]
+    );
+    const existingStudent = existingStudentResult.rows[0];
+    if (existingStudent) {
+      await client.query('ROLLBACK');
+      if (existingStudent.linked_to_authenticated_parent) {
+        return res.status(409).json({ error: 'This Student ID is already linked to your account.' });
+      }
+      return res.status(409).json({ error: 'This Student ID is already linked to another parent or needs administrator resolution.' });
+    }
+
+    const studentPassword = await hashPassword(generateRandomPassword());
+    const studentEmail = buildGameStudentEmail(parentId, `${childProfile.fullName}-${childProfile.studentId}`);
+    const studentResult = await client.query(
+      `INSERT INTO public.accounts (
+         name, first_name, last_name, middle_initial, grade_level, section,
+         email, password, role, status, is_archived, must_change_password, game_student_id
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'student', 'Offline', false, false, $9)
+       RETURNING id, name, first_name, last_name, middle_initial, grade_level, section, game_student_id`,
+      [
+        childProfile.fullName,
+        childProfile.firstName,
+        childProfile.lastName,
+        childProfile.middleInitial,
+        childProfile.gradeLevel,
+        childProfile.section,
+        studentEmail,
+        studentPassword,
+        childProfile.studentId,
+      ]
+    );
+    const child = studentResult.rows[0];
+    if (!child?.id) throw new Error('Unable to create the child game profile.');
+
+    await ensureParentStudentRelationship(client, {
+      teacherId: parentId,
+      studentId: child.id,
+      relationshipType: 'parent',
+    });
+    await client.query(
+      `INSERT INTO public.activity_logs (student_id, student_name, grade_level, section, activity_description, role, status)
+       VALUES ($1, $2, $3, $4, 'Child Added', 'parent', 'Active')`,
+      [child.id, child.name, child.grade_level, child.section]
+    );
+    await client.query('COMMIT');
+    return res.status(201).json({
+      success: true,
+      child: {
+        id: child.id,
+        student_id: child.id,
+        student_name: child.name,
+        first_name: child.first_name,
+        last_name: child.last_name,
+        middle_initial: child.middle_initial,
+        grade_level: child.grade_level,
+        section: child.section,
+        game_student_id: child.game_student_id,
+      },
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Parent child creation failed:', error.message);
+    if (error.code === '23505') {
+      return res.status(409).json({ error: 'This Student ID is already in use. Contact an administrator if you need help.' });
+    }
+    return res.status(500).json({ error: 'Unable to add child at this time.' });
+  } finally {
+    client.release();
+  }
+});
+
 app.get('/api/parent/children', requireParentAnalyticsAccess, async (req, res) => {
   try {
     const parentId = Number(req.authenticatedUser.id);
@@ -5596,8 +5784,16 @@ app.get('/api/parent/children', requireParentAnalyticsAccess, async (req, res) =
               s.name,
               s.name AS student_name,
               s.email,
-              p.grade_level,
-              COALESCE(p.section, $2) AS section,
+              COALESCE(p.grade_level, s.grade_level) AS grade_level,
+              COALESCE(p.section, s.section) AS section,
+              p.current_quest,
+              p.score,
+              CASE WHEN p.id IS NULL THEN NULL ELSE p.progress_percentage END AS completion_percentage,
+              CASE
+                WHEN COALESCE(SUM(gr.total_items), 0) > 0
+                  THEN ROUND((SUM(gr.score)::NUMERIC / NULLIF(SUM(gr.total_items), 0)) * 100, 2)
+                ELSE NULL
+              END AS accuracy,
               COUNT(gr.id)::INTEGER AS total_quizzes,
               MAX(gr.played_at) AS last_quiz_date
        FROM public.teacher_student_relationships tsr
@@ -5606,7 +5802,8 @@ app.get('/api/parent/children', requireParentAnalyticsAccess, async (req, res) =
         AND COALESCE(parent.is_archived, false) = false
        JOIN public.accounts s ON s.id = tsr.student_id
        LEFT JOIN LATERAL (
-         SELECT progress.grade_level, progress.section
+         SELECT progress.id, progress.grade_level, progress.section, progress.current_quest,
+                progress.score, progress.progress_percentage
          FROM public.student_game_progress progress
          WHERE progress.student_id = s.id
          ORDER BY progress.updated_at DESC NULLS LAST, progress.id DESC
@@ -5616,9 +5813,9 @@ app.get('/api/parent/children', requireParentAnalyticsAccess, async (req, res) =
        WHERE tsr.teacher_id = $1
          AND LOWER(tsr.relationship_type) = 'parent'
          AND COALESCE(s.is_archived, false) = false
-       GROUP BY s.id, s.name, s.email, p.grade_level, p.section
+       GROUP BY s.id, p.id, p.grade_level, p.section, p.current_quest, p.score, p.progress_percentage
        ORDER BY s.name`,
-      [parentId, 'Section A']
+      [parentId]
     );
 
     // Unlinked sessions only have the six-digit parent code until a student profile match is made.

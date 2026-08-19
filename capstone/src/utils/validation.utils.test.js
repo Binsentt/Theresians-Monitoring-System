@@ -1,4 +1,14 @@
-import { validateEmail, validatePassword, validateOtp } from './validation.utils';
+import {
+  getPasswordStrength,
+  PARENT_CHILD_GRADE_OPTIONS,
+  PARENT_CHILD_SECTION_OPTIONS_BY_GRADE,
+  validateChildProfile,
+  validateEmail,
+  validateGameStudentId,
+  validatePhilippineMobile,
+  validatePassword,
+  validateOtp,
+} from './validation.utils';
 
 describe('validation.utils', () => {
   describe('validateEmail', () => {
@@ -110,6 +120,124 @@ describe('validation.utils', () => {
       const result = validatePassword('MyVeryLongPasswordWith123SpecialCharacters!@#$%');
       expect(result.isValid).toBe(true);
       expect(result.error).toBeNull();
+    });
+  });
+
+  describe('validatePhilippineMobile', () => {
+    test('accepts a blank optional mobile number as null', () => {
+      expect(validatePhilippineMobile('   ')).toEqual({
+        isValid: true,
+        value: null,
+        error: null,
+      });
+    });
+
+    test('accepts a local eleven-digit Philippine mobile number', () => {
+      expect(validatePhilippineMobile('09171234567')).toEqual({
+        isValid: true,
+        value: '09171234567',
+        error: null,
+      });
+    });
+
+    test.each(['9171234567', '08171234567', '0917123456', '091712345678', '0917-123-4567', '+639171234567'])(
+      'rejects unsupported mobile input %s',
+      (value) => {
+        expect(validatePhilippineMobile(value)).toEqual({
+          isValid: false,
+          value: null,
+          error: 'Mobile number must be in the format 09XXXXXXXXX.',
+        });
+      }
+    );
+  });
+
+  describe('validateGameStudentId', () => {
+    test('keeps a six-digit Game Student ID as a string with leading zeroes', () => {
+      expect(validateGameStudentId('001234')).toEqual({
+        isValid: true,
+        value: '001234',
+        error: null,
+      });
+    });
+
+    test.each(['', '12345', '1234567', 'ABC123', '123.456'])('rejects invalid Student ID %s', (value) => {
+      expect(validateGameStudentId(value)).toEqual({
+        isValid: false,
+        value: null,
+        error: value === '' ? 'Student ID is required.' : 'Student ID must be exactly 6 digits.',
+      });
+    });
+  });
+
+  describe('getPasswordStrength', () => {
+    test('never marks a password below the backend minimum as acceptable', () => {
+      expect(getPasswordStrength('short')).toMatchObject({ label: 'Weak', meetsPolicy: false });
+    });
+
+    test('labels a policy-valid baseline password as Medium', () => {
+      expect(getPasswordStrength('twelvechars!')).toMatchObject({ label: 'Medium', meetsPolicy: true });
+    });
+
+    test('labels a longer, varied policy-valid password as Strong', () => {
+      expect(getPasswordStrength('LongerSecurePassword42!')).toMatchObject({ label: 'Strong', meetsPolicy: true });
+    });
+  });
+
+  describe('validateChildProfile', () => {
+    test('requires first name, last name, Grade, and Student ID while keeping Section optional', () => {
+      expect(validateChildProfile({
+        firstName: ' ',
+        lastName: '',
+        middleInitial: '',
+        gradeLevel: '',
+        section: '',
+        studentId: '',
+      })).toEqual({
+        firstName: 'First name is required.',
+        lastName: 'Last name is required.',
+        gradeLevel: 'Grade is required.',
+        studentId: 'Student ID is required.',
+      });
+    });
+
+    test('accepts a controlled Grade/Section and preserves a leading-zero Student ID', () => {
+      expect(validateChildProfile({
+        firstName: 'Ava',
+        lastName: 'Santos',
+        middleInitial: 'M',
+        gradeLevel: 'Grade 3',
+        section: 'Section B',
+        studentId: '001234',
+      })).toEqual({});
+      expect(PARENT_CHILD_GRADE_OPTIONS).toEqual(['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6']);
+      expect(PARENT_CHILD_SECTION_OPTIONS_BY_GRADE['Grade 1']).toEqual(['Section A', 'Section B']);
+      expect(PARENT_CHILD_SECTION_OPTIONS_BY_GRADE['Grade 3']).toEqual(['Section A', 'Section B', 'Section C']);
+    });
+
+    test('rejects an invalid middle initial, unavailable section, and malformed Student ID', () => {
+      expect(validateChildProfile({
+        firstName: 'Ava',
+        lastName: 'Santos',
+        middleInitial: 'MM',
+        gradeLevel: 'Grade 3',
+        section: 'Section Z',
+        studentId: '12345',
+      })).toEqual({
+        middleInitial: 'Middle initial must be one letter.',
+        section: 'Section must be one of the available sections.',
+        studentId: 'Student ID must be exactly 6 digits.',
+      });
+    });
+
+    test('uses the existing grade-specific Section options', () => {
+      expect(validateChildProfile({
+        firstName: 'Ava',
+        lastName: 'Santos',
+        gradeLevel: 'Grade 1',
+        section: 'Section C',
+        studentId: '001234',
+      })).toEqual({ section: 'Section must be one of the available sections.' });
     });
   });
 

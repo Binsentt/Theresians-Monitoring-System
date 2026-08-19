@@ -14,6 +14,8 @@ import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import { DashboardContainer, MainContent, PageContent, TopBar } from './layout/AppLayout';
 import { apiUrl } from '../api';
 import { buildAuthHeaders, clearStoredSession, getStoredUserSession } from './session.utils';
+import PasswordStrengthFeedback from './PasswordStrengthFeedback';
+import { getPasswordStrength, validatePhilippineMobile } from '../utils/validation.utils';
 import '../styles/settings.css';
 
 export default function SettingsScreen() {
@@ -157,11 +159,9 @@ export default function SettingsScreen() {
   };
   const validateEmail = (email) => !email ? 'Email is required' : (!email.endsWith('@gmail.com') ? 'Use @gmail.com' : '');
   const validatePhone = (phone) => {
-    if (!phone) return '';
-    if (!phone.startsWith('09') || phone.length !== 11) return 'Must be 11 digits (09...)';
-    return '';
+    return validatePhilippineMobile(phone).error || '';
   };
-  const validatePassword = (pw) => (pw && pw.length < 12) ? 'At least 12 characters' : '';
+  const validatePassword = (pw) => (pw && !getPasswordStrength(pw).meetsPolicy) ? 'Password must be at least 12 characters.' : '';
   const validateBirthday = (date) => {
     return validateOptionalAdultBirthday(date);
   };
@@ -221,7 +221,6 @@ export default function SettingsScreen() {
   const handleProfileFormChange = (field, value) => {
     let finalValue = value;
     if (field === 'firstName' || field === 'middleName' || field === 'lastName') finalValue = value.replace(/[0-9]/g, '');
-    if (field === 'mobile_number') finalValue = value.replace(/[^0-9]/g, '').slice(0, 11);
 
     setEditForm({ ...editForm, [field]: finalValue });
 
@@ -254,8 +253,8 @@ export default function SettingsScreen() {
     if (!editForm.email) validationErrors.email = 'Email is required';
     else if (!editForm.email.endsWith('@gmail.com')) validationErrors.email = 'Use @gmail.com';
     
-    if (editForm.mobile_number && (!editForm.mobile_number.startsWith('09') || editForm.mobile_number.length !== 11))
-      validationErrors.mobile_number = 'Must be 11 digits (09...)';
+    const mobileError = validatePhone(editForm.mobile_number);
+    if (mobileError) validationErrors.mobile_number = mobileError;
     
     const birthdayError = validateBirthday(editForm.birthday);
     if (birthdayError) validationErrors.birthday = birthdayError;
@@ -281,7 +280,7 @@ export default function SettingsScreen() {
         name: fullName.trim(),
         email: editForm.email.toLowerCase().trim(),
         role: user.role || 'User',
-        mobile_number: editForm.mobile_number || '',
+        mobile_number: validatePhilippineMobile(editForm.mobile_number).value,
         address: combineAddressFields(editForm),
         birthday: editForm.birthday || '', // Send empty string, backend converts to NULL
         gender: editForm.gender || '',
@@ -733,6 +732,7 @@ export default function SettingsScreen() {
                           </button>
                         )}
                       </div>
+                      <PasswordStrengthFeedback password={passwordForm.newPassword} />
                       {passwordErrors.newPassword && <span className="error-text">{passwordErrors.newPassword}</span>}
                     </div>
                     <div className="form-group">
@@ -817,6 +817,7 @@ export default function SettingsScreen() {
                         </button>
                       )}
                     </div>
+                    <PasswordStrengthFeedback password={passwordForm.newPassword} />
                     {passwordErrors.newPassword && <span className="error-text">{passwordErrors.newPassword}</span>}
                   </div>
 

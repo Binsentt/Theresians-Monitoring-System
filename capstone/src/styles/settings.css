@@ -556,6 +556,34 @@
   gap: 18px;
 }
 
+.password-strength {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.password-strength-weak strong {
+  color: var(--error-color, #b91c1c);
+}
+
+.password-strength-medium strong {
+  color: #a16207;
+}
+
+.password-strength-strong strong {
+  color: var(--success-color, #15803d);
+}
+
+.password-requirement-met {
+  color: var(--success-color, #15803d);
+}
+
+.password-requirement-unmet {
+  color: var(--text-muted, #64748b);
+}
+
 .temporary-password-actions {
   display: flex;
   justify-content: flex-end;

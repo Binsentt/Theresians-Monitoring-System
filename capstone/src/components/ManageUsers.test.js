@@ -481,6 +481,44 @@ describe('ManageUsers edit flow', () => {
     expect(container.textContent).not.toContain('Please fill in all required fields (First Name, Last Name, Email, Gender)');
   });
 
+  test('shows inline Philippine mobile and email validation and blocks an invalid Add Account request', async () => {
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    const addButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Add');
+    await act(async () => {
+      addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const email = container.querySelector('input[placeholder="user@gmail.com"]');
+    const mobile = container.querySelector('input[placeholder="09123456789"]');
+    await act(async () => {
+      setFieldValue(email, 'not-an-email');
+      email.dispatchEvent(new Event('blur', { bubbles: true }));
+      setFieldValue(mobile, '0917-123-4567');
+      mobile.dispatchEvent(new Event('blur', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Please enter a valid email address.');
+    expect(container.textContent).toContain('Mobile number must be in the format 09XXXXXXXXX.');
+
+    await act(async () => {
+      container.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(global.fetch.mock.calls.some(([url, options]) => (
+      String(url) === '/api/accounts' && options?.method === 'POST'
+    ))).toBe(false);
+
+    await act(async () => {
+      setFieldValue(email, 'parent@example.edu');
+      setFieldValue(mobile, '09171234567');
+    });
+    expect(container.textContent).not.toContain('Please enter a valid email address.');
+    expect(container.textContent).not.toContain('Mobile number must be in the format 09XXXXXXXXX.');
+  });
+
   test('Teacher Employee ID input strips non-digits and stops at 10 digits', async () => {
     await act(async () => {
       root.render(<ManageUsers />);

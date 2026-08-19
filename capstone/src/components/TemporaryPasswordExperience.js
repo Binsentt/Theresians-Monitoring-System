@@ -7,10 +7,12 @@ import {
   REMEMBER_TOKEN_STORAGE_KEY,
   SESSION_STORAGE_KEY,
 } from './session.utils';
+import PasswordStrengthFeedback from './PasswordStrengthFeedback';
+import { getPasswordStrength } from '../utils/validation.utils';
 import '../styles/settings.css';
 
 const validatePassword = (value) => (
-  String(value || '').trim().length >= 12 ? '' : 'Password must be at least 12 characters.'
+  getPasswordStrength(value).meetsPolicy ? '' : 'Password must be at least 12 characters.'
 );
 
 const updateStoredSession = (payload) => {
@@ -174,6 +176,7 @@ export default function TemporaryPasswordExperience({ children }) {
                   onChange={(event) => handlePasswordChange('newPassword', event.target.value)}
                   aria-invalid={Boolean(errors.newPassword)}
                 />
+                <PasswordStrengthFeedback password={newPassword} />
                 {errors.newPassword && <span className="error-text" role="alert">{errors.newPassword}</span>}
               </div>
               <div className="form-group">

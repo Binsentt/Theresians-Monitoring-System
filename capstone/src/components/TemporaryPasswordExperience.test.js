@@ -162,4 +162,21 @@ describe('TemporaryPasswordExperience', () => {
     expect(container.textContent).not.toContain('Change Your Temporary Password');
     expect(container.textContent).not.toContain('Your account is still using a temporary password.');
   });
+
+  test('shows first-login password strength guidance without changing the required confirmation flow', async () => {
+    await act(async () => {
+      root.render(<TemporaryPasswordExperience><div>Dashboard</div></TemporaryPasswordExperience>);
+    });
+    const changeNow = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Change Password Now');
+    await act(async () => {
+      changeNow.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const passwordInput = container.querySelector('#dashboard-new-password');
+    await setInputValue(passwordInput, 'short');
+    expect(container.textContent).toContain('Password Strength: Weak');
+    expect(container.textContent).toContain('Password must be at least 12 characters.');
+
+    await setInputValue(passwordInput, 'LongerSecurePassword42!');
+    expect(container.textContent).toContain('Password Strength: Strong');
+  });
 });

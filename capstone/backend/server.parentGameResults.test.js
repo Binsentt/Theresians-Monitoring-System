@@ -822,6 +822,55 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(response.body.children[0].total_quizzes, 0);
   });
 
+  await t.test('parent children uses profile Grade/Section and truthful per-child summary metrics', async () => {
+    let childrenSql = '';
+    setQueryHandler(async (sql) => {
+      if (sql.includes('from public.teacher_student_relationships tsr') && sql.includes('left join public.game_results gr on gr.resolved_student_id = s.id')) {
+        childrenSql = sql;
+        return resultRows([
+          {
+            id: 44,
+            student_id: 44,
+            game_student_id: '001234',
+            student_name: 'Ava Santos',
+            grade_level: 'Grade 3',
+            section: 'Section B',
+            total_quizzes: 3,
+            accuracy: '80.00',
+            completion_percentage: '42.00',
+          },
+          {
+            id: 45,
+            student_id: 45,
+            game_student_id: '001245',
+            student_name: 'Noah Santos',
+            grade_level: 'Grade 1',
+            section: 'Section A',
+            total_quizzes: 0,
+            accuracy: null,
+            completion_percentage: null,
+          },
+        ]);
+      }
+      if (sql.includes('count(gr.id)::integer as unlinked_count')) return resultRows([{ unlinked_count: 0 }]);
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/parent/children', {
+      headers: authHeaders('parent-token'),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.children[0].accuracy, '80.00');
+    assert.equal(response.body.children[0].completion_percentage, '42.00');
+    assert.equal(response.body.children[1].accuracy, null);
+    assert.equal(response.body.children[1].completion_percentage, null);
+    assert.match(childrenSql, /coalesce\(p\.grade_level, s\.grade_level\) as grade_level/);
+    assert.match(childrenSql, /coalesce\(p\.section, s\.section\) as section/);
+    assert.match(childrenSql, /as accuracy/);
+    assert.match(childrenSql, /as completion_percentage/);
+  });
+
   await t.test('student analytics detail only uses the requested linked child data', async () => {
     const queriedStudentIds = [];
     setQueryHandler(async (sql, params) => {

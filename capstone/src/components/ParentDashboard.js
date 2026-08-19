@@ -9,7 +9,8 @@ import { ResponsiveGrid } from './layout/Grid';
 import { buildScopedApiUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
 import { buildAuthHeaders, getStoredUserSession } from './session.utils';
-import { formatPercent, normalizeDisplayList, safeDisplayText, toFiniteNumber } from './studentProgress.utils';
+import { formatPercent, normalizeDisplayList, safeDisplayText } from './studentProgress.utils';
+import ParentAddChildModal from './ParentAddChildModal';
 import { apiUrl } from '../api';
 import '../styles/parentdashboard.css';
 
@@ -47,6 +48,7 @@ export default function ParentDashboard() {
   const [analyticsSummary, setAnalyticsSummary] = useState(null);
   const [analyticsRecommendations, setAnalyticsRecommendations] = useState([]);
   const [error, setError] = useState('');
+  const [showAddChild, setShowAddChild] = useState(false);
 
   useEffect(() => {
     loadUser();
@@ -91,13 +93,12 @@ export default function ParentDashboard() {
   const loadDashboardData = async () => {
     setDashboardLoading(true);
     try {
-      const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
       const requestOptions = { headers: buildAuthHeaders() };
       const [achieversResult, overviewResult, recommendationsResult, childrenResult] = await Promise.allSettled([
         fetch(buildScopedApiUrl('/api/top-achievers', 'parent'), requestOptions),
         fetch(buildScopedApiUrl('/api/analytics/overview', 'parent'), requestOptions),
         fetch(buildScopedApiUrl('/api/analytics/recommendations', 'parent'), requestOptions),
-        fetch(buildScopedApiUrl('/api/students/progress', 'parent'), requestOptions),
+        fetch(buildScopedApiUrl('/api/parent/children', 'parent'), requestOptions),
       ]);
 
       if (achieversResult.status === 'fulfilled' && achieversResult.value.ok) {
@@ -130,7 +131,7 @@ export default function ParentDashboard() {
             : Array.isArray(childrenData?.data)
               ? childrenData.data
               : [];
-        setConnectedChildren(children.slice(0, 6));
+        setConnectedChildren(children);
       } else {
         setConnectedChildren([]);
       }
@@ -145,6 +146,11 @@ export default function ParentDashboard() {
 
   const handleViewChildProgress = () => {
     navigate('/parent/child-progress');
+  };
+
+  const handleChildCreated = () => {
+    setShowAddChild(false);
+    loadDashboardData();
   };
 
   if (loading) {
@@ -178,9 +184,14 @@ export default function ParentDashboard() {
               <h1>Parent Dashboard</h1>
               <p>Welcome back, {user?.name || 'Parent'}.</p>
             </div>
-            <button type="button" className="btn-primary" onClick={handleViewChildProgress}>
-              View Child Progress
-            </button>
+            <div className="parent-dashboard-actions">
+              <button type="button" className="btn-secondary" onClick={() => setShowAddChild(true)}>
+                Add Child
+              </button>
+              <button type="button" className="btn-primary" onClick={handleViewChildProgress}>
+                View Child Progress
+              </button>
+            </div>
           </TopBar>
 
           <PageContent>
@@ -208,14 +219,17 @@ export default function ParentDashboard() {
               {dashboardLoading ? (
                 <div className="fallback-note">Loading connected children...</div>
               ) : connectedChildren.length === 0 ? (
-                <div className="fallback-note">No game progress data available yet.</div>
+                <div className="fallback-note">No children are linked yet. Add a child to connect their Game Student ID.</div>
               ) : (
                 <ResponsiveGrid minWidth="260px">
                   {connectedChildren.map((child) => (
                     <InfoCard key={child.id || child.student_id || safeDisplayText(child.student_name, 'student')} title={safeDisplayText(child.student_name || child.name, 'Student')}>
-                      <p>Current quest: {safeDisplayText(child.current_quest, 'N/A')}</p>
-                      <p>Score: {toFiniteNumber(child.score, 0)}</p>
-                      <p>Progress: {formatPercent(child.progress_percentage ?? child.performance_percentage, '0%')}</p>
+                      <p>Grade: {safeDisplayText(child.grade_level || child.grade, 'Not set')}</p>
+                      <p>Section: {safeDisplayText(child.section, 'Not set')}</p>
+                      <p>Student ID: {safeDisplayText(child.game_student_id, 'Not set')}</p>
+                      <p>Accuracy: {formatPercent(child.accuracy, 'No Data')}</p>
+                      <p>Completion: {formatPercent(child.completion_percentage, 'No Data')}</p>
+                      <p>Current quest: {safeDisplayText(child.current_quest, 'No Data')}</p>
                       <p>Latest update: {child.last_played ? new Date(child.last_played).toLocaleString() : 'Not available'}</p>
                     </InfoCard>
                   ))}
@@ -270,6 +284,12 @@ export default function ParentDashboard() {
               </ContentSection>
             )}
           </PageContent>
+          {showAddChild && (
+            <ParentAddChildModal
+              onClose={() => setShowAddChild(false)}
+              onCreated={handleChildCreated}
+            />
+          )}
         </MainContent>
       }
     />

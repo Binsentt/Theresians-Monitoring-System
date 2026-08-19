@@ -72,7 +72,7 @@ describe('ParentDashboard defensive game data rendering', () => {
       }
       if (url.startsWith('/api/analytics/overview')) return jsonResponse({ studentCount: '1', averageAccuracy: '82.4', averageProgress: null });
       if (url.startsWith('/api/analytics/recommendations')) return jsonResponse({ recommendations: [{ message: 'Practice fractions.' }, null] });
-      if (url.startsWith('/api/students/progress')) return jsonResponse({ data: null });
+      if (url.startsWith('/api/parent/children')) return jsonResponse({ children: [] });
       throw new Error(`Unexpected URL: ${url}`);
     });
 
@@ -81,11 +81,43 @@ describe('ParentDashboard defensive game data rendering', () => {
     });
 
     expect(container.textContent).toContain('Parent Dashboard');
-    expect(container.textContent).toContain('No game progress data available yet.');
+    expect(container.textContent).toContain('No children are linked yet.');
     expect(container.textContent).toContain('Practice fractions.');
     expect(mockNavigate).not.toHaveBeenCalledWith('/login');
     expect(global.fetch.mock.calls.every(([, options]) => (
       options?.headers?.Authorization === 'Bearer parent-dashboard-token'
     ))).toBe(true);
+  });
+
+  test('shows each linked child with the authoritative Student ID and truthful no-data metrics', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url.startsWith('/api/user/19')) return jsonResponse({ id: 19, role: 'parent', name: 'Parent User' });
+      if (url.startsWith('/api/top-achievers')) return jsonResponse([]);
+      if (url.startsWith('/api/analytics/overview')) return jsonResponse({ studentCount: 2, averageAccuracy: null, averageProgress: null });
+      if (url.startsWith('/api/analytics/recommendations')) return jsonResponse({ recommendations: [] });
+      if (url.startsWith('/api/parent/children')) {
+        return jsonResponse({
+          children: [
+            { id: 44, student_name: 'Ava Santos', game_student_id: '001234', grade_level: 'Grade 3', section: 'Section A', accuracy: null, completion_percentage: null },
+            { id: 45, student_name: 'Noah Santos', game_student_id: '001245', grade_level: 'Grade 1', section: 'Section B', accuracy: '80', completion_percentage: '42' },
+          ],
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    await act(async () => {
+      root.render(<ParentDashboard />);
+    });
+
+    expect(container.textContent).toContain('Add Child');
+    expect(container.textContent).toContain('Ava Santos');
+    expect(container.textContent).toContain('001234');
+    expect(container.textContent).toContain('Accuracy: No Data');
+    expect(container.textContent).toContain('Completion: No Data');
+    expect(container.textContent).toContain('Noah Santos');
+    expect(container.textContent).toContain('001245');
+    expect(container.textContent).toContain('Accuracy: 80%');
+    expect(container.textContent).toContain('Completion: 42%');
   });
 });

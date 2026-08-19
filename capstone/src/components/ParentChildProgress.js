@@ -25,7 +25,6 @@ export default function ParentChildProgress() {
   const [activityLogs, setActivityLogs] = useState([]);
   const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [portalRole, setPortalRole] = useState('parent');
-  const [overview, setOverview] = useState(null);
   const [parentAccountId, setParentAccountId] = useState(null);
   const [quizSessions, setQuizSessions] = useState([]);
   const [topicCoverage, setTopicCoverage] = useState([]);
@@ -55,10 +54,9 @@ export default function ParentChildProgress() {
         const requestOptions = { headers: buildAuthHeaders() };
         setParentAccountId(parentId);
         setPortalRole(normalizeRole(loggedInUser?.role) === 'parent_teacher' ? 'parent_teacher' : 'parent');
-        const [childrenResult, studentsResult, overviewResult, activityResult] = await Promise.allSettled([
+        const [childrenResult, studentsResult, activityResult] = await Promise.allSettled([
           fetch(buildScopedApiUrl('/api/parent/children', 'parent'), requestOptions),
           fetch(buildScopedApiUrl('/api/students/progress', 'parent'), requestOptions),
-          fetch(buildScopedApiUrl('/api/analytics/overview', 'parent'), requestOptions),
           fetch(buildScopedApiUrl('/api/activity-logs?limit=100', 'parent'), requestOptions),
         ]);
 
@@ -99,13 +97,6 @@ export default function ParentChildProgress() {
             ? current
             : null;
         });
-
-        if (overviewResult.status === 'fulfilled' && overviewResult.value.ok) {
-          const overviewData = await overviewResult.value.json();
-          setOverview(overviewData);
-        } else {
-          setOverview(null);
-        }
 
         if (activityResult.status === 'fulfilled' && activityResult.value.ok) {
           const activityData = await activityResult.value.json();
@@ -320,24 +311,24 @@ export default function ParentChildProgress() {
             )}
 
             <ContentSection
-              title="Performance Overview"
+              title="Selected Child Overview"
               contentClassName="student-progress-summary-grid"
             >
               <div className="analytics-card">
-                <span>Total quests</span>
-                <strong>{overview?.studentCount ?? students.length}</strong>
+                <span>Total questions</span>
+                <strong>{selectedChildMetrics?.totalQuestions ?? 'No Data'}</strong>
               </div>
               <div className="analytics-card">
                 <span>Average accuracy</span>
-                <strong>{formatPercent(overview?.averageAccuracy)}</strong>
+                <strong>{formatPercent(selectedChildMetrics?.accuracy, 'No Data')}</strong>
               </div>
               <div className="analytics-card">
-                <span>Progress</span>
-                <strong>{formatPercent(overview?.averageProgress)}</strong>
+                <span>Total progress</span>
+                <strong>{formatPercent(selectedChildMetrics?.totalProgress, 'No Data')}</strong>
               </div>
               <div className="analytics-card">
-                <span>Math activities</span>
-                <strong>{selectedChildMetrics?.totalQuestions ?? 'Not available'}</strong>
+                <span>Game score</span>
+                <strong>{selectedChildMetrics?.gameScore ?? 'No Data'}</strong>
               </div>
             </ContentSection>
 

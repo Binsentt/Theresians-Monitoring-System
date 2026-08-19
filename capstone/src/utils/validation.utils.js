@@ -2,6 +2,101 @@
  * Validation utilities for form fields
  */
 
+export const WEBSITE_PASSWORD_MIN_LENGTH = 12;
+export const PARENT_CHILD_GRADE_OPTIONS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
+export const PARENT_CHILD_SECTION_OPTIONS_BY_GRADE = {
+  'Grade 1': ['Section A', 'Section B'],
+  'Grade 2': ['Section A', 'Section B', 'Section C'],
+  'Grade 3': ['Section A', 'Section B', 'Section C'],
+  'Grade 4': ['Section A', 'Section B', 'Section C'],
+  'Grade 5': ['Section A', 'Section B', 'Section C'],
+  'Grade 6': ['Section A', 'Section B', 'Section C'],
+};
+export const getParentChildSectionOptions = (gradeLevel) => PARENT_CHILD_SECTION_OPTIONS_BY_GRADE[gradeLevel] || [];
+
+export const validatePhilippineMobile = (value) => {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) {
+    return { isValid: true, value: null, error: null };
+  }
+  if (!/^09\d{9}$/.test(normalized)) {
+    return {
+      isValid: false,
+      value: null,
+      error: 'Mobile number must be in the format 09XXXXXXXXX.',
+    };
+  }
+  return { isValid: true, value: normalized, error: null };
+};
+
+export const validateGameStudentId = (value) => {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) {
+    return { isValid: false, value: null, error: 'Student ID is required.' };
+  }
+  if (!/^\d{6}$/.test(normalized)) {
+    return { isValid: false, value: null, error: 'Student ID must be exactly 6 digits.' };
+  }
+  return { isValid: true, value: normalized, error: null };
+};
+
+export const getPasswordStrength = (value) => {
+  const password = String(value || '');
+  const requirements = {
+    minimumLength: password.length >= WEBSITE_PASSWORD_MIN_LENGTH,
+    lowercase: /[a-z]/.test(password),
+    uppercase: /[A-Z]/.test(password),
+    number: /\d/.test(password),
+    symbol: /[^A-Za-z0-9]/.test(password),
+  };
+  const variety = [requirements.lowercase, requirements.uppercase, requirements.number, requirements.symbol]
+    .filter(Boolean)
+    .length;
+  const meetsPolicy = requirements.minimumLength;
+  const label = !meetsPolicy
+    ? 'Weak'
+    : (password.length >= 16 && variety >= 3 ? 'Strong' : 'Medium');
+  return { label, meetsPolicy, requirements };
+};
+
+const validateChildName = (value, label, { required = false, initial = false } = {}) => {
+  const normalized = String(value ?? '').trim().replace(/\s+/g, ' ');
+  if (!normalized) return required ? `${label} is required.` : null;
+  const initialValue = initial ? normalized.replace(/\.$/, '') : normalized;
+  if (initial && !/^[A-Za-z]$/.test(initialValue)) return 'Middle initial must be one letter.';
+  if (!initial && !/^[A-Za-z][A-Za-z' -]*$/.test(initialValue)) {
+    return `${label} may only contain letters, spaces, apostrophes, or hyphens.`;
+  }
+  return null;
+};
+
+export const validateChildProfile = ({
+  firstName,
+  lastName,
+  middleInitial,
+  gradeLevel,
+  section,
+  studentId,
+} = {}) => {
+  const errors = {};
+  const firstNameError = validateChildName(firstName, 'First name', { required: true });
+  const lastNameError = validateChildName(lastName, 'Last name', { required: true });
+  const middleInitialError = validateChildName(middleInitial, 'Middle initial', { initial: true });
+  if (firstNameError) errors.firstName = firstNameError;
+  if (lastNameError) errors.lastName = lastNameError;
+  if (middleInitialError) errors.middleInitial = middleInitialError;
+
+  if (!String(gradeLevel || '').trim()) errors.gradeLevel = 'Grade is required.';
+  else if (!PARENT_CHILD_GRADE_OPTIONS.includes(gradeLevel)) errors.gradeLevel = 'Select an available Grade.';
+  if (String(section || '').trim() && !getParentChildSectionOptions(gradeLevel).includes(section)) {
+    errors.section = 'Section must be one of the available sections.';
+  }
+
+  const studentIdResult = validateGameStudentId(studentId);
+  if (!studentIdResult.isValid) errors.studentId = studentIdResult.error;
+  return errors;
+};
+
 /**
  * Validate email format
  * @param {string} email - Email to validate

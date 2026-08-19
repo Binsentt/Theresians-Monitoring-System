@@ -233,4 +233,52 @@ describe('SettingsScreen dashboard layout', () => {
     expect(container.textContent).toContain('Current Password *');
     expect(container.querySelectorAll('input[type="password"]')).toHaveLength(3);
   });
+
+  test('shows inline password strength guidance for the normal settings password flow', async () => {
+    await act(async () => {
+      root.render(<SettingsScreen />);
+    });
+    const passwordTab = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent.includes('Change Password'));
+    await act(async () => {
+      passwordTab.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const openFormButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Change Password');
+    await act(async () => {
+      openFormButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const passwordInputs = container.querySelectorAll('input[type="password"]');
+    await act(async () => {
+      setInputValue(passwordInputs[1], 'short');
+    });
+    expect(container.textContent).toContain('Password Strength: Weak');
+    expect(container.textContent).toContain('At least 12 characters required');
+
+    await act(async () => {
+      setInputValue(passwordInputs[1], 'LongerSecurePassword42!');
+    });
+    expect(container.textContent).toContain('Password Strength: Strong');
+  });
+
+  test('keeps optional profile mobile blank and rejects a supplied non-local Philippine format inline', async () => {
+    await act(async () => {
+      root.render(<SettingsScreen />);
+    });
+    const editProfileButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Edit Profile');
+    await act(async () => {
+      editProfileButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const mobile = container.querySelector('input[placeholder="09XXXXXXXXX"]');
+    await act(async () => {
+      setInputValue(mobile, '0917-123-4567');
+    });
+    expect(container.textContent).toContain('Mobile number must be in the format 09XXXXXXXXX.');
+    await act(async () => {
+      setInputValue(mobile, '');
+    });
+    expect(container.textContent).not.toContain('Mobile number must be in the format 09XXXXXXXXX.');
+  });
 });

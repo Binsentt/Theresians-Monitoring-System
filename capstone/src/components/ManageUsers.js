@@ -21,6 +21,7 @@ import {
 } from './manageUsers.utils';
 import { apiUrl } from '../api';
 import { buildAuthHeaders, clearStoredSession } from './session.utils';
+import { validateEmail as validateEmailFormat, validatePhilippineMobile } from '../utils/validation.utils';
 import '../styles/manageusers.css';
 
 export default function ManageUsers() {
@@ -50,6 +51,7 @@ export default function ManageUsers() {
   });
   const [adding, setAdding] = useState(false);
   const [addErrors, setAddErrors] = useState({});
+  const [addTouched, setAddTouched] = useState({});
   const [validationModal, setValidationModal] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
   const [editForm, setEditForm] = useState({
@@ -68,6 +70,7 @@ export default function ManageUsers() {
   });
   const [updating, setUpdating] = useState(false);
   const [editErrors, setEditErrors] = useState({});
+  const [editTouched, setEditTouched] = useState({});
   const [teacherRelations, setTeacherRelations] = useState([]);
   const [relationEmail, setRelationEmail] = useState('');
   const [relationMessage, setRelationMessage] = useState('');
@@ -113,23 +116,18 @@ export default function ManageUsers() {
     return validateOptionalAdultBirthday(date);
   };
 
-  const validateNameField = (name) => {
-    if (!name) return 'This field is required';
+  const validateNameField = (name, { required = true } = {}) => {
+    if (!String(name || '').trim()) return required ? 'This field is required.' : '';
     if (/[0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(name)) return 'No numbers or symbols allowed';
     return '';
   };
 
   const validateEmail = (email) => {
-    if (!email) return 'Email is required';
-    if (!email.endsWith('@gmail.com')) return 'Email must be a Gmail address (@gmail.com)';
-    return '';
+    return validateEmailFormat(email).error || '';
   };
 
   const validatePhone = (phone) => {
-    if (!phone) return '';
-    if (!phone.startsWith('09')) return 'Mobile number must start with 09';
-    if (phone.length !== 11) return 'Mobile number must be exactly 11 digits';
-    return '';
+    return validatePhilippineMobile(phone).error || '';
   };
 
   const restrictInput = (field, value) => {
@@ -137,48 +135,53 @@ export default function ManageUsers() {
     if (field === 'firstName' || field === 'middleName' || field === 'lastName') {
       cleanedValue = value.replace(/[0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/g, '');
     }
-    if (field === 'mobile_number') {
-      cleanedValue = value.replace(/[^0-9]/g, '').slice(0, 11);
-    }
     if (field === 'employee_id') {
       cleanedValue = normalizeEmployeeIdInput(value);
     }
     return cleanedValue;
   };
 
+  const validateUserField = (field, value, role) => {
+    if (field === 'firstName' || field === 'lastName') return validateNameField(value);
+    if (field === 'middleName') return validateNameField(value, { required: false });
+    if (field === 'email') return validateEmail(value);
+    if (field === 'mobile_number') return validatePhone(value);
+    if (field === 'birthday') return validateBirthday(value);
+    if (field === 'employee_id') return validateEmployeeId(value, { required: isTeacherRole(role) });
+    return '';
+  };
+
+  const validateUserForm = (form, role) => {
+    const fields = ['firstName', 'middleName', 'lastName', 'email', 'mobile_number', 'birthday', 'employee_id'];
+    return fields.reduce((errors, field) => {
+      const error = validateUserField(field, form[field], role);
+      if (error) errors[field] = error;
+      return errors;
+    }, {});
+  };
+
   const handleAddFormChange = (field, value) => {
     const finalValue = restrictInput(field, value);
-    setNewUser({ ...newUser, [field]: finalValue });
-    
-    let error = '';
-    if (field === 'firstName' || field === 'middleName' || field === 'lastName') error = validateNameField(finalValue);
-    else if (field === 'email') error = validateEmail(finalValue);
-    else if (field === 'mobile_number') error = validatePhone(finalValue);
-    else if (field === 'birthday') error = validateBirthday(finalValue);
-    else if (field === 'employee_id') error = validateEmployeeId(finalValue, { required: isTeacherRole(selectedRole) });
-    else if (field === 'gender') {
-      if ((selectedRole || '').toLowerCase() !== 'admin' && finalValue === '') error = 'Gender is required';
-    }
+    const nextForm = { ...newUser, [field]: finalValue };
+    setNewUser(nextForm);
+    setAddErrors((current) => ({ ...current, [field]: validateUserField(field, finalValue, selectedRole) }));
+  };
 
-    setAddErrors({ ...addErrors, [field]: error });
+  const handleAddFormBlur = (field) => {
+    setAddTouched((current) => ({ ...current, [field]: true }));
+    setAddErrors((current) => ({ ...current, [field]: validateUserField(field, newUser[field], selectedRole) }));
   };
 
   const handleEditFormChange = (field, value) => {
     const finalValue = restrictInput(field, value);
-    setEditForm({ ...editForm, [field]: finalValue });
+    const nextForm = { ...editForm, [field]: finalValue };
+    setEditForm(nextForm);
+    setEditErrors((current) => ({ ...current, [field]: validateUserField(field, finalValue, editingUser?.role || editForm.role) }));
+  };
 
-    let error = '';
-    if (field === 'firstName' || field === 'middleName' || field === 'lastName') error = validateNameField(finalValue);
-    else if (field === 'email') error = validateEmail(finalValue);
-    else if (field === 'mobile_number') error = validatePhone(finalValue);
-    else if (field === 'birthday') error = validateBirthday(finalValue);
-    else if (field === 'employee_id') error = validateEmployeeId(finalValue, { required: isTeacherRole(editingUser?.role || editForm.role) });
-    else if (field === 'gender') {
-      const roleToCheck = normalizeRole(editingUser?.role || editForm.role);
-      if (roleToCheck !== 'admin' && finalValue === '') error = 'Gender is required';
-    }
-
-    setEditErrors({ ...editErrors, [field]: error });
+  const handleEditFormBlur = (field) => {
+    setEditTouched((current) => ({ ...current, [field]: true }));
+    setEditErrors((current) => ({ ...current, [field]: validateUserField(field, editForm[field], editingUser?.role || editForm.role) }));
   };
 
   useEffect(() => {
@@ -234,27 +237,10 @@ export default function ManageUsers() {
     e.preventDefault();
     const selectedRoleValue = normalizeRole(selectedRole);
     const roleIsTeacher = isTeacherRole(selectedRoleValue);
-    if (!newUser.firstName || !newUser.lastName || !newUser.email) {
-      setValidationModal({
-        title: 'Missing Required Fields',
-        message: 'Please fill in all required fields (First Name, Last Name, Email)'
-      });
-      return;
-    }
-    const employeeIdError = validateEmployeeId(newUser.employee_id, { required: roleIsTeacher });
-    if (employeeIdError) {
-      setAddErrors((prev) => ({ ...prev, employee_id: employeeIdError }));
-      setValidationModal({
-        title: roleIsTeacher && !newUser.employee_id ? 'Missing Employee ID' : 'Invalid Employee ID',
-        message: employeeIdError
-      });
-      return;
-    }
-    if (Object.values(addErrors).some(err => err !== '')) {
-      setValidationModal({
-        title: 'Form Errors',
-        message: 'Please fix the errors in the form before submitting'
-      });
+    const errors = validateUserForm(newUser, selectedRoleValue);
+    setAddTouched({ firstName: true, middleName: true, lastName: true, email: true, mobile_number: true, birthday: true, employee_id: true });
+    setAddErrors(errors);
+    if (Object.keys(errors).length > 0) {
       return;
     }
 
@@ -281,6 +267,8 @@ export default function ManageUsers() {
       if (response.ok) {
         setValidationModal(buildAccountCreationSuccessModal(selectedRole, data));
         setNewUser({ firstName: '', middleName: '', lastName: '', email: '', mobile_number: '', street: '', city: '', province: '', birthday: '', gender: '', employee_id: '' });
+        setAddErrors({});
+        setAddTouched({});
         setShowAddForm(false);
         setSelectedRole('Parent');
         loadUsers();
@@ -308,6 +296,7 @@ export default function ManageUsers() {
 
     setEditingUser(u);
     setEditErrors({});
+    setEditTouched({});
     setRelationEmail('');
     setRelationMessage('');
     const nameParts = String(u.name || '').trim().split(/\s+/).filter(Boolean);
@@ -395,27 +384,21 @@ export default function ManageUsers() {
   const handleUpdateUser = async (e) => {
     e.preventDefault();
     const selectedRole = normalizeRole(editingUser.role);
-    if (!editForm.firstName || !editForm.lastName || !editForm.email) {
-      setValidationModal({
-        title: 'Missing Required Fields',
-        message: 'Please fill in all required fields (First Name, Last Name, Email)'
-      });
-      return;
+    const errors = ['firstName', 'lastName', 'email'].reduce((nextErrors, field) => {
+      const error = validateUserField(field, editForm[field], selectedRole);
+      if (error) nextErrors[field] = error;
+      return nextErrors;
+    }, {});
+    Object.keys(editTouched).forEach((field) => {
+      const error = validateUserField(field, editForm[field], selectedRole);
+      if (error) errors[field] = error;
+    });
+    if (isTeacherRole(selectedRole) && !String(editForm.employee_id || '').trim()) {
+      errors.employee_id = validateEmployeeId(editForm.employee_id, { required: true });
     }
-    if (isTeacherRole(selectedRole) && !editForm.employee_id) {
-      const employeeIdError = validateEmployeeId(editForm.employee_id, { required: true });
-      setEditErrors((prev) => ({ ...prev, employee_id: employeeIdError }));
-      setValidationModal({
-        title: 'Missing Employee ID',
-        message: employeeIdError
-      });
-      return;
-    }
-    if (Object.values(editErrors).some(err => err !== '')) {
-      setValidationModal({
-        title: 'Form Errors',
-        message: 'Please fix the errors before updating'
-      });
+    setEditTouched({ firstName: true, middleName: true, lastName: true, email: true, mobile_number: true, birthday: true, employee_id: true });
+    setEditErrors(errors);
+    if (Object.keys(errors).length > 0) {
       return;
     }
 
@@ -700,6 +683,12 @@ export default function ManageUsers() {
                     value={selectedRole}
                     onChange={(e) => {
                       setSelectedRole(e.target.value);
+                      if (addTouched.employee_id) {
+                        setAddErrors((current) => ({
+                          ...current,
+                          employee_id: validateEmployeeId(newUser.employee_id, { required: isTeacherRole(e.target.value) }),
+                        }));
+                      }
                     }}
                     className="sts-input"
                   >
@@ -717,6 +706,7 @@ export default function ManageUsers() {
                       placeholder="John"
                       value={newUser.firstName}
                       onChange={(e) => handleAddFormChange('firstName', e.target.value)}
+                      onBlur={() => handleAddFormBlur('firstName')}
                       className="sts-input"
                     />
                     {addErrors.firstName && <p className="error-text">{addErrors.firstName}</p>}
@@ -729,6 +719,7 @@ export default function ManageUsers() {
                       placeholder="M. or Michael"
                       value={newUser.middleName}
                       onChange={(e) => handleAddFormChange('middleName', e.target.value)}
+                      onBlur={() => handleAddFormBlur('middleName')}
                       className="sts-input"
                     />
                     {addErrors.middleName && <p className="error-text">{addErrors.middleName}</p>}
@@ -741,6 +732,7 @@ export default function ManageUsers() {
                       placeholder="Doe"
                       value={newUser.lastName}
                       onChange={(e) => handleAddFormChange('lastName', e.target.value)}
+                      onBlur={() => handleAddFormBlur('lastName')}
                       className="sts-input"
                     />
                     {addErrors.lastName && <p className="error-text">{addErrors.lastName}</p>}
@@ -753,6 +745,7 @@ export default function ManageUsers() {
                       placeholder="user@gmail.com"
                       value={newUser.email}
                       onChange={(e) => handleAddFormChange('email', e.target.value)}
+                      onBlur={() => handleAddFormBlur('email')}
                       className="sts-input"
                     />
                     {addErrors.email && <p className="error-text">{addErrors.email}</p>}
@@ -772,6 +765,8 @@ export default function ManageUsers() {
                       placeholder="09123456789"
                       value={newUser.mobile_number}
                       onChange={(e) => handleAddFormChange('mobile_number', e.target.value)}
+                      onBlur={() => handleAddFormBlur('mobile_number')}
+                      inputMode="numeric"
                       className="sts-input"
                     />
                     {addErrors.mobile_number && <p className="error-text">{addErrors.mobile_number}</p>}
@@ -816,6 +811,7 @@ export default function ManageUsers() {
                       type="date"
                       value={newUser.birthday}
                       onChange={(e) => handleAddFormChange('birthday', e.target.value)}
+                      onBlur={() => handleAddFormBlur('birthday')}
                       className="sts-input"
                     />
                     {addErrors.birthday && <p className="error-text">{addErrors.birthday}</p>}
@@ -843,6 +839,7 @@ export default function ManageUsers() {
                         placeholder="1234567890"
                         value={newUser.employee_id}
                         onChange={(e) => handleAddFormChange('employee_id', e.target.value)}
+                        onBlur={() => handleAddFormBlur('employee_id')}
                         className="sts-input"
                         inputMode="numeric"
                         maxLength={10}
@@ -1033,6 +1030,7 @@ export default function ManageUsers() {
                         type="text"
                         value={editForm.firstName}
                         onChange={(e) => handleEditFormChange('firstName', e.target.value)}
+                        onBlur={() => handleEditFormBlur('firstName')}
                         className="sts-input"
                       />
                       {editErrors.firstName && <p className="error-text">{editErrors.firstName}</p>}
@@ -1044,6 +1042,7 @@ export default function ManageUsers() {
                         type="text"
                         value={editForm.middleName}
                         onChange={(e) => handleEditFormChange('middleName', e.target.value)}
+                        onBlur={() => handleEditFormBlur('middleName')}
                         className="sts-input"
                       />
                       {editErrors.middleName && <p className="error-text">{editErrors.middleName}</p>}
@@ -1055,6 +1054,7 @@ export default function ManageUsers() {
                         type="text"
                         value={editForm.lastName}
                         onChange={(e) => handleEditFormChange('lastName', e.target.value)}
+                        onBlur={() => handleEditFormBlur('lastName')}
                         className="sts-input"
                       />
                       {editErrors.lastName && <p className="error-text">{editErrors.lastName}</p>}
@@ -1066,6 +1066,7 @@ export default function ManageUsers() {
                         type="email"
                         value={editForm.email}
                         onChange={(e) => handleEditFormChange('email', e.target.value)}
+                        onBlur={() => handleEditFormBlur('email')}
                         className="sts-input"
                       />
                       {editErrors.email && <p className="error-text">{editErrors.email}</p>}
@@ -1085,6 +1086,7 @@ export default function ManageUsers() {
                           type="text"
                           value={editForm.employee_id}
                           onChange={(e) => handleEditFormChange('employee_id', e.target.value)}
+                          onBlur={() => handleEditFormBlur('employee_id')}
                           className="sts-input"
                           inputMode="numeric"
                           maxLength={10}
@@ -1108,6 +1110,8 @@ export default function ManageUsers() {
                         type="text"
                         value={editForm.mobile_number}
                         onChange={(e) => handleEditFormChange('mobile_number', e.target.value)}
+                        onBlur={() => handleEditFormBlur('mobile_number')}
+                        inputMode="numeric"
                         className="sts-input"
                       />
                       {editErrors.mobile_number && <p className="error-text">{editErrors.mobile_number}</p>}
@@ -1149,6 +1153,7 @@ export default function ManageUsers() {
                         type="date"
                         value={editForm.birthday}
                         onChange={(e) => handleEditFormChange('birthday', e.target.value)}
+                        onBlur={() => handleEditFormBlur('birthday')}
                         className="sts-input"
                       />
                       {editErrors.birthday && <p className="error-text">{editErrors.birthday}</p>}
