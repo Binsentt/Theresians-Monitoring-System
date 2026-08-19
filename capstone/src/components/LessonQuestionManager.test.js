@@ -565,4 +565,46 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('Selected Folder: Questions / Grade 1 / Hard');
     expect(container.textContent).toContain('No files available in Grade 1 - Hard.');
   });
+
+  test('paginates the filtered Question Library and offers a print-safe report', async () => {
+    fixtures.files = Array.from({ length: 11 }, (_, index) => ({
+      id: index + 100,
+      title: `grade-one-easy-${index + 1}`,
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      file_type: 'fixed_questions',
+      question_count: 5,
+      published: false,
+    }));
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+
+    expect(container.querySelectorAll('.drive-table tbody tr')).toHaveLength(10);
+    expect(container.textContent).toContain('Page 1 of 2');
+    expect(container.querySelector('button[aria-label="Print Question Library"]')).not.toBeNull();
+  });
+
+  test('paginates the Trash Bin and keeps destructive actions out of its print report', async () => {
+    fixtures.trashFiles = Array.from({ length: 11 }, (_, index) => ({
+      id: index + 300,
+      title: `deleted-question-set-${index + 1}`,
+      deleted_at: '2026-05-20T00:00:00.000Z',
+    }));
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await act(async () => {
+      clickByText(container, 'Trash Bin');
+    });
+
+    expect(container.querySelectorAll('.drive-table tbody tr')).toHaveLength(10);
+    expect(container.textContent).toContain('Page 1 of 2');
+    expect(container.querySelector('button[aria-label="Print Question Library Trash"]')).not.toBeNull();
+  });
 });

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
@@ -7,6 +7,8 @@ import logoImage from '../assets/images/STS_Logo.png';
 import { normalizeRole } from './manageUsers.utils';
 import { apiUrl } from '../api';
 import { buildAuthHeaders } from './session.utils';
+import { TablePrintButton } from './TablePrintButton';
+import { formatTableRange, matchesTableSearch, paginateTableRows } from './tableReporting.utils';
 import '../styles/topachievers.css';
 
 export default function AdminTopAchievers() {
@@ -18,6 +20,8 @@ export default function AdminTopAchievers() {
   const [selectedGrade, setSelectedGrade] = useState('');
   const [selectedSection, setSelectedSection] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   useEffect(() => {
     const initializeComponent = async () => {
@@ -62,23 +66,41 @@ export default function AdminTopAchievers() {
     : [...new Set(topAchievers.map(a => a.section).filter(Boolean))].sort();
 
   // Filter achievers based on selected filters
-  const filteredAchievers = topAchievers.filter(achiever => {
+  const filteredAchievers = useMemo(() => topAchievers.filter(achiever => {
     const matchesGrade = !selectedGrade || achiever.grade_level === selectedGrade;
     const matchesSection = !selectedSection || achiever.section === selectedSection;
-    const matchesSearch = !searchQuery || achiever.student_name?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = matchesTableSearch(achiever, searchQuery, ['student_name', 'game_student_id']);
     return matchesGrade && matchesSection && matchesSearch;
-  });
+  }), [searchQuery, selectedGrade, selectedSection, topAchievers]);
+  const paginatedAchievers = paginateTableRows(filteredAchievers, page, pageSize);
+
+  useEffect(() => {
+    if (page !== paginatedAchievers.currentPage) {
+      setPage(paginatedAchievers.currentPage);
+    }
+  }, [page, paginatedAchievers.currentPage]);
 
   // Reset all filters
   const resetFilters = () => {
     setSelectedGrade('');
     setSelectedSection('');
     setSearchQuery('');
+    setPage(1);
   };
 
   // Check if any filters are active
   const hasActiveFilters = selectedGrade || selectedSection || searchQuery;
-  const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
+  const formatPercent = (value) => {
+    if (value === null || value === undefined || value === '') return 'No Data';
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? `${numericValue.toFixed(1)}%` : 'No Data';
+  };
+  const metricPercentWidth = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? Math.min(100, Math.max(0, numericValue)) : null;
+  };
+  const formatMetric = (value) => (value === null || value === undefined || value === '' ? '—' : value);
   const formatPlaytime = (seconds) => {
     const totalSeconds = Number(seconds || 0);
     if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return 'N/A';
@@ -131,6 +153,7 @@ export default function AdminTopAchievers() {
                       onChange={(e) => {
                         setSelectedGrade(e.target.value);
                         setSelectedSection(''); // Reset section when grade changes
+                        setPage(1);
                       }}
                     >
                       <option value="">All Grades</option>
@@ -144,7 +167,10 @@ export default function AdminTopAchievers() {
                     <label>Section</label>
                     <select
                       value={selectedSection}
-                      onChange={(e) => setSelectedSection(e.target.value)}
+                      onChange={(e) => {
+                        setSelectedSection(e.target.value);
+                        setPage(1);
+                      }}
                       disabled={!selectedGrade && sections.length === 0}
                     >
                       <option value="">
@@ -160,9 +186,12 @@ export default function AdminTopAchievers() {
                     <label>Search Students</label>
                     <input
                       type="search"
-                      placeholder="Search by student name..."
+                      placeholder="Search by student name or Student ID..."
                       value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onChange={(e) => {
+                        setSearchQuery(e.target.value);
+                        setPage(1);
+                      }}
                     />
                   </div>
 
@@ -182,12 +211,19 @@ export default function AdminTopAchievers() {
             </ContentSection>
 
             <ContentSection title={`Top Achievers (${filteredAchievers.length} found)`}>
+              <div className="table-report-controls">
+                <TablePrintButton
+                  reportTitle="Top Achievers"
+                  reportContext={formatTableRange(paginatedAchievers)}
+                />
+              </div>
               {error ? (
                 <div className="error-message">{error}</div>
               ) : filteredAchievers.length === 0 ? (
                 <div className="empty-message">No leaderboard data available yet.</div>
               ) : (
-                <div className="top-achievers-container">
+                <>
+                  <div className="top-achievers-container">
                   <table className="ta-table">
                     <thead>
                       <tr>
@@ -204,13 +240,19 @@ export default function AdminTopAchievers() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredAchievers.map((achiever, index) => (
-                        <tr key={achiever.id || `achiever-${index}`} className={index < 3 ? 'top-three' : ''}>
+                      {paginatedAchievers.rows.map((achiever, index) => {
+                        const rank = paginatedAchievers.start + index;
+                        const completion = achiever.completion_percentage ?? achiever.progress_percentage;
+                        const accuracy = achiever.accuracy ?? achiever.accuracy_rate;
+                        const completionWidth = metricPercentWidth(completion);
+                        const accuracyWidth = metricPercentWidth(accuracy);
+                        return (
+                        <tr key={achiever.id || `achiever-${rank}`} className={rank <= 3 ? 'top-three' : ''}>
                           <td className="rank-cell">
-                            <span className="rank-num">#{index + 1}</span>
-                            {index === 0 && <span className="rank-badge gold">Gold</span>}
-                            {index === 1 && <span className="rank-badge silver">Silver</span>}
-                            {index === 2 && <span className="rank-badge bronze">Bronze</span>}
+                            <span className="rank-num">#{rank}</span>
+                            {rank === 1 && <span className="rank-badge gold">Gold</span>}
+                            {rank === 2 && <span className="rank-badge silver">Silver</span>}
+                            {rank === 3 && <span className="rank-badge bronze">Bronze</span>}
                           </td>
                           <td className="name-cell">{achiever.student_name || 'Unknown'}</td>
                           <td>{achiever.game_student_id || 'Not linked'}</td>
@@ -218,30 +260,37 @@ export default function AdminTopAchievers() {
                           <td>{achiever.section || 'N/A'}</td>
                           <td className="progress-cell">
                             <div className="progress-bar">
-                              <div
-                                className="progress-fill"
-                                style={{ width: `${Number(achiever.completion_percentage ?? achiever.progress_percentage ?? 0)}%` }}
-                              />
+                              {completionWidth !== null && (
+                                <div className="progress-fill" style={{ width: `${completionWidth}%` }} />
+                              )}
                             </div>
-                            <span className="progress-text">{formatPercent(achiever.completion_percentage ?? achiever.progress_percentage)}</span>
+                            <span className="progress-text">{formatPercent(completion)}</span>
                           </td>
                           <td className="accuracy-cell">
                             <div className="accuracy-bar">
-                              <div
-                                className="accuracy-fill"
-                                style={{ width: `${Number(achiever.accuracy ?? achiever.accuracy_rate ?? 0)}%` }}
-                              />
+                              {accuracyWidth !== null && (
+                                <div className="accuracy-fill" style={{ width: `${accuracyWidth}%` }} />
+                              )}
                             </div>
-                            <span className="accuracy-text">{formatPercent(achiever.accuracy ?? achiever.accuracy_rate)}</span>
+                            <span className="accuracy-text">{formatPercent(accuracy)}</span>
                           </td>
-                          <td>{achiever.total_correct_answers ?? achiever.correct_answers ?? 0}/{achiever.total_questions_answered ?? achiever.total_questions ?? 0}</td>
-                          <td>{achiever.quests_completed ?? achiever.total_quests_completed ?? 0}</td>
+                          <td>{formatMetric(achiever.total_correct_answers ?? achiever.correct_answers)}/{formatMetric(achiever.total_questions_answered ?? achiever.total_questions)}</td>
+                          <td>{formatMetric(achiever.quests_completed ?? achiever.total_quests_completed)}</td>
                           <td>{formatPlaytime(achiever.total_play_time ?? achiever.duration_seconds)}</td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
-                </div>
+                  </div>
+                  {paginatedAchievers.totalPages > 1 && (
+                    <div className="pagination-row no-print">
+                      <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={paginatedAchievers.currentPage === 1}>Previous</button>
+                      <span>Page {paginatedAchievers.currentPage} of {paginatedAchievers.totalPages}</span>
+                      <button type="button" onClick={() => setPage((current) => Math.min(paginatedAchievers.totalPages, current + 1))} disabled={paginatedAchievers.currentPage === paginatedAchievers.totalPages}>Next</button>
+                    </div>
+                  )}
+                </>
               )}
             </ContentSection>
           </PageContent>

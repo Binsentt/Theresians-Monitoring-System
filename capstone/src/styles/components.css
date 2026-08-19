@@ -1146,3 +1146,73 @@ label {
   background: rgba(239, 68, 68, 0.14);
   border-color: rgba(239, 68, 68, 0.22);
 }
+
+.print-only {
+  display: none;
+}
+
+.table-print-button {
+  min-height: 38px;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 0.45rem;
+  background: var(--surface-color, #fff);
+  color: var(--text-primary, #1f2937);
+  cursor: pointer;
+  font: inherit;
+}
+
+.table-print-button:hover,
+.table-print-button:focus-visible {
+  border-color: var(--primary-color, #2563eb);
+  outline: none;
+}
+
+.table-report-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 0.75rem;
+}
+
+@media print {
+  .print-only {
+    display: block !important;
+  }
+
+  .no-print,
+  .table-actions,
+  .drive-row-actions,
+  .pagination-row,
+  .manage-users-pagination,
+  .al-pagination,
+  .screen-time-pagination,
+  .analytics-sidebar,
+  .sidebar,
+  nav,
+  header {
+    display: none !important;
+  }
+
+  .table-print-heading {
+    margin: 0 0 1rem;
+    color: #111827;
+  }
+
+  .table-print-heading h1 {
+    margin: 0;
+    font-size: 1.25rem;
+  }
+
+  .table-print-heading p {
+    margin: 0.25rem 0 0;
+    color: #4b5563;
+  }
+
+  .data-table-wrapper,
+  .top-achievers-container,
+  .student-progress-table-wrapper,
+  .screen-time-table-wrapper,
+  .activity-table-wrapper {
+    overflow: visible !important;
+  }
+}

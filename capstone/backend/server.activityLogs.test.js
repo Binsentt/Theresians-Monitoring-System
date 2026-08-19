@@ -151,4 +151,29 @@ test('activity log API accepts Godot session aliases and scoped child filters', 
     assert.match(mainQuery, /al\.student_id = \$2/);
     assert.deepEqual(mainParams.slice(0, 2), [19, 44]);
   });
+
+  await t.test('searches canonical game Student IDs without removing the authenticated scope', async () => {
+    let mainQuery = '';
+    let countQuery = '';
+    setQueryHandler(async (sql) => {
+      if (sql.startsWith('select al.id')) {
+        mainQuery = sql;
+        return resultRows([]);
+      }
+      if (sql.startsWith('select count(*) as total')) {
+        countQuery = sql;
+        return resultRows([{ total: 0 }]);
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/activity-logs?search=001234', {
+      headers: { Authorization: 'Bearer parent-token' },
+    });
+
+    assert.equal(response.status, 200);
+    assert.match(mainQuery, /lower\(coalesce\(account\.game_student_id, ''\)\) like/);
+    assert.match(countQuery, /left join public\.accounts account on account\.id = al\.student_id/);
+    assert.match(mainQuery, /al\.student_id in \(/);
+  });
 });

@@ -22,6 +22,7 @@ import {
 import { apiUrl } from '../api';
 import { buildAuthHeaders, clearStoredSession } from './session.utils';
 import { validateEmail as validateEmailFormat, validatePhilippineMobile } from '../utils/validation.utils';
+import { TablePrintButton } from './TablePrintButton';
 import '../styles/manageusers.css';
 
 export default function ManageUsers() {
@@ -636,7 +637,8 @@ export default function ManageUsers() {
             <ContentSection
               title={`Users List (${filteredUsers.length})`}
               actions={
-                <div className="controls-wrapper">
+                <>
+                  <div className="controls-wrapper no-print">
                   <input
                     type="text"
                     placeholder="Search users..."
@@ -670,7 +672,12 @@ export default function ManageUsers() {
                   >
                     {showAddForm ? 'Cancel' : 'Add'}
                   </button>
-                </div>
+                  </div>
+                  <TablePrintButton
+                    reportTitle="Manage Users"
+                    reportContext={`${paginatedUsers.totalItems} ${showArchived ? 'archived' : 'active'} authorised accounts`}
+                  />
+                </>
               }
             >
 
@@ -865,7 +872,7 @@ export default function ManageUsers() {
                     <th>PARENT ID</th>
                     <th>MOBILE NUMBER</th>
                     <th>BIRTHDAY</th>
-                    <th>ACTIONS</th>
+                    <th className="no-print">ACTIONS</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -893,7 +900,7 @@ export default function ManageUsers() {
                           <td>{isParentRole(u.role) ? (u.parent_id || 'Not generated') : '-'}</td>
                           <td>{u.mobile_number || '-'}</td>
                           <td>{u.birthday ? new Date(u.birthday).toLocaleDateString() : 'Not set'}</td>
-                          <td className="actions-cell manage-user-actions">
+                          <td className="actions-cell manage-user-actions no-print">
                             {currentAccount ? (
                               <span className="current-account-badge">Current Account</span>
                             ) : showArchived ? (
@@ -925,7 +932,7 @@ export default function ManageUsers() {
             </div>
 
             {filteredUsers.length > 0 && paginatedUsers.totalPages > 1 && (
-              <div className="manage-users-pagination">
+              <div className="manage-users-pagination no-print">
                 <span className="manage-users-pagination-summary">
                   Showing {paginatedUsers.startIndex + 1} - {paginatedUsers.endIndex} of {paginatedUsers.totalItems} users
                 </span>

@@ -54,6 +54,7 @@ describe('ActivityLog table', () => {
     expect(container.textContent).toContain('001234');
     expect(container.textContent).toContain('Fractions Gate');
     expect(container.textContent).toContain('2m 5s');
+    expect(container.querySelector('button[aria-label="Print Student Activity Log"]')).not.toBeNull();
     expect(headers).not.toContain('Section');
     expect(headers).not.toContain('Save Status');
     expect(headers).not.toContain('Progress');

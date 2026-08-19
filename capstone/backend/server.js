@@ -5026,9 +5026,9 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
       paramIndex++;
     }
 
-    // Search by student name
+    // Search visible student identity fields without changing the authenticated scope.
     if (searchTerm) {
-      query += ` AND LOWER(al.student_name) LIKE $${paramIndex}`;
+      query += ` AND (LOWER(al.student_name) LIKE $${paramIndex} OR LOWER(COALESCE(account.game_student_id, '')) LIKE $${paramIndex})`;
       params.push(searchTerm);
       paramIndex++;
     }
@@ -5057,7 +5057,10 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
     const result = await pool.query(query, params);
 
     // Get total count for pagination metadata
-    let countQuery = `SELECT COUNT(*) as total FROM public.activity_logs al WHERE 1=1`;
+    let countQuery = `SELECT COUNT(*) as total
+      FROM public.activity_logs al
+      LEFT JOIN public.accounts account ON account.id = al.student_id
+      WHERE 1=1`;
     let countParams = [];
     countQuery += appendAnalyticsScopeFilter({ scope, params: countParams, studentColumn: 'al.student_id' });
     let countParamIndex = countParams.length + 1;
@@ -5081,7 +5084,7 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
     }
 
     if (searchTerm) {
-      countQuery += ` AND LOWER(al.student_name) LIKE $${countParamIndex}`;
+      countQuery += ` AND (LOWER(al.student_name) LIKE $${countParamIndex} OR LOWER(COALESCE(account.game_student_id, '')) LIKE $${countParamIndex})`;
       countParams.push(searchTerm);
     }
 

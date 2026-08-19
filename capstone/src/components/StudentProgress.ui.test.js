@@ -77,6 +77,8 @@ describe('Student Progress summary cards', () => {
     expect(container.textContent).toContain('Average accuracy');
     expect(container.textContent).toContain('Average completion');
     expect(container.textContent).not.toMatch(/Grade groups/i);
+    expect(container.querySelector('button[aria-label="Print Student Progress"]')).not.toBeNull();
+    expect(container.querySelector('.student-progress-table thead th')?.textContent).toBe('No.');
     expect(global.fetch.mock.calls.every(([, options]) => (
       options?.headers?.Authorization === 'Bearer analytics-test-token'
     ))).toBe(true);
@@ -105,5 +107,21 @@ describe('Student Progress summary cards', () => {
 
     expect(container.textContent).toContain('Not available');
     expect(container.textContent).not.toContain('0%');
+  });
+
+  test('uses a dataset-ready empty state when no authorised student records exist', async () => {
+    global.fetch = jest.fn((url) => {
+      const value = String(url);
+      if (value.startsWith('/api/students/progress')) return jsonResponse([]);
+      if (value.startsWith('/api/analytics/overview')) return jsonResponse({ studentCount: 0, averageAccuracy: null, averageProgress: null });
+      if (value.startsWith('/api/analytics/recommendations')) return jsonResponse({ recommendations: [] });
+      return jsonResponse({});
+    });
+
+    await act(async () => {
+      root.render(<AdminStudentProgress />);
+    });
+
+    expect(container.textContent).toContain('No student records are available yet.');
   });
 });

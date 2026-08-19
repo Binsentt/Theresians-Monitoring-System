@@ -27,6 +27,8 @@ import {
   QUESTION_FOLDER_STRUCTURE,
 } from './lessonQuestionManager.utils';
 import { apiUrl } from '../api';
+import { TablePrintButton } from './TablePrintButton';
+import { formatTableRange, paginateTableRows } from './tableReporting.utils';
 import '../styles/lessonQuestionManager.css';
 
 const initialFormState = {
@@ -45,6 +47,7 @@ const initialFilterState = {
   difficulty: '',
   math_topic: '',
   file_type: '',
+  status: '',
 };
 
 const MAX_LESSON_QUESTION_COUNT = 50;
@@ -91,6 +94,11 @@ function formatQuestionSetStatus(value) {
   return value;
 }
 
+function getQuestionSetStatus(row) {
+  const lifecycle = row?.lifecycle || {};
+  return formatQuestionSetStatus(lifecycle.label || row?.status || (row?.published ? 'Active in Game' : 'Pending'));
+}
+
 function buildNextTopicValue(gradeLevel, difficulty, currentTopic) {
   return normalizeMathTopicForGradeDifficulty(gradeLevel, difficulty, currentTopic);
 }
@@ -118,7 +126,10 @@ export default function LessonQuestionManager() {
   const [selectedFolder, setSelectedFolder] = useState({ grade_level: '', difficulty: '' });
   const [renamingFile, setRenamingFile] = useState(null);
   const [filters, setFilters] = useState(initialFilterState);
+  const [page, setPage] = useState(1);
+  const [trashPage, setTrashPage] = useState(1);
   const [formErrors, setFormErrors] = useState({});
+  const pageSize = 10;
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
@@ -186,7 +197,15 @@ export default function LessonQuestionManager() {
   const currentlyViewing = selectedFolder.grade_level
     ? `${selectedFolder.grade_level}${selectedFolder.difficulty ? ` - ${selectedFolder.difficulty}` : ''}`
     : 'All Question Files';
-  const displayedFiles = folderView.files;
+  const displayedFiles = useMemo(() => folderView.files.filter((file) => (
+    !filters.status || getQuestionSetStatus(file) === filters.status
+  )), [filters.status, folderView.files]);
+  const paginatedFiles = paginateTableRows(displayedFiles, page, pageSize);
+  const statusOptions = useMemo(() => Array.from(new Set(folderView.files.map(getQuestionSetStatus).filter(Boolean))).sort(), [folderView.files]);
+
+  useEffect(() => {
+    if (page !== paginatedFiles.currentPage) setPage(paginatedFiles.currentPage);
+  }, [page, paginatedFiles.currentPage]);
   const tableEmptyMessage = selectedFolder.grade_level
     ? `No files available in ${selectedFolder.grade_level}${selectedFolder.difficulty ? ` - ${selectedFolder.difficulty}` : ''}.`
     : 'No question files available yet.';
@@ -199,6 +218,11 @@ export default function LessonQuestionManager() {
       trashName: file.title,
     })),
   ].sort((left, right) => new Date(right.deleted_at || 0) - new Date(left.deleted_at || 0)), [trashFiles]);
+  const paginatedTrashRows = paginateTableRows(trashRows, trashPage, pageSize);
+
+  useEffect(() => {
+    if (trashPage !== paginatedTrashRows.currentPage) setTrashPage(paginatedTrashRows.currentPage);
+  }, [paginatedTrashRows.currentPage, trashPage]);
 
   const handleFormChange = (field, value) => {
     setFormErrors((current) => ({ ...current, [field]: '' }));
@@ -218,6 +242,7 @@ export default function LessonQuestionManager() {
   };
 
   const handleFilterChange = (field, value) => {
+    setPage(1);
     setFilters((prev) => {
       if (field === 'grade_level' || field === 'difficulty') {
         const gradeLevel = field === 'grade_level' ? value : prev.grade_level;
@@ -525,17 +550,20 @@ export default function LessonQuestionManager() {
 
   const selectGradeFolder = (gradeLevel) => {
     setSelectedFolder({ grade_level: gradeLevel, difficulty: '' });
-    setFilters((prev) => ({ ...prev, math_topic: '', file_type: '' }));
+    setFilters((prev) => ({ ...prev, math_topic: '', file_type: '', status: '' }));
+    setPage(1);
   };
 
   const selectDifficultyFolder = (gradeLevel, difficulty) => {
     setSelectedFolder({ grade_level: gradeLevel, difficulty });
-    setFilters((prev) => ({ ...prev, math_topic: '', file_type: '' }));
+    setFilters((prev) => ({ ...prev, math_topic: '', file_type: '', status: '' }));
+    setPage(1);
   };
 
   const clearSelectedFolder = () => {
     setSelectedFolder({ grade_level: '', difficulty: '' });
-    setFilters((prev) => ({ ...prev, math_topic: '', file_type: '' }));
+    setFilters((prev) => ({ ...prev, math_topic: '', file_type: '', status: '' }));
+    setPage(1);
   };
 
   const saveRenamedFile = async () => {
@@ -637,7 +665,7 @@ export default function LessonQuestionManager() {
     {
       key: 'actions',
       header: 'Actions',
-      className: 'drive-actions-cell',
+      className: 'drive-actions-cell no-print',
       render: (_, row) => (
         <div className="drive-row-actions">
           <button type="button" className="drive-action-button" onClick={() => setRenamingFile(row)}><FilePenLine size={16} />Rename</button>
@@ -665,7 +693,7 @@ export default function LessonQuestionManager() {
     {
       key: 'actions',
       header: '',
-      className: 'drive-actions-cell',
+      className: 'drive-actions-cell no-print',
       render: (_, row) => (
         <div className="drive-row-actions">
           <button type="button" className="drive-action-button" onClick={() => restoreFile(row)}>
@@ -857,8 +885,35 @@ export default function LessonQuestionManager() {
                           <option value="fixed_questions">Fixed Question File</option>
                         </select>
                       </div>
+                      <div className="form-group">
+                        <label className="form-label">Status</label>
+                        <select className="select-field" value={filters.status} onChange={(event) => handleFilterChange('status', event.target.value)}>
+                          <option value="">All statuses</option>
+                          {statusOptions.map((status) => <option key={status} value={status}>{status}</option>)}
+                        </select>
+                      </div>
+                      {(filters.search || filters.math_topic || filters.file_type || filters.status) && (
+                        <div className="form-group folder-filter-action">
+                          <button type="button" className="btn btn-secondary" onClick={() => {
+                            setFilters((current) => ({ ...current, search: '', math_topic: '', file_type: '', status: '' }));
+                            setPage(1);
+                          }}>
+                            Clear Filters
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <DataTable columns={tableColumns} data={displayedFiles} emptyMessage={tableEmptyMessage} className="drive-table" />
+                    <div className="table-report-controls">
+                      <TablePrintButton reportTitle="Question Library" reportContext={`${selectedFolderPath} · ${formatTableRange(paginatedFiles)}`} />
+                    </div>
+                    <DataTable columns={tableColumns} data={paginatedFiles.rows} emptyMessage={tableEmptyMessage} className="drive-table" />
+                    {paginatedFiles.totalPages > 1 && (
+                      <div className="pagination-row no-print">
+                        <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={paginatedFiles.currentPage === 1}>Previous</button>
+                        <span>Page {paginatedFiles.currentPage} of {paginatedFiles.totalPages}</span>
+                        <button type="button" onClick={() => setPage((current) => Math.min(paginatedFiles.totalPages, current + 1))} disabled={paginatedFiles.currentPage === paginatedFiles.totalPages}>Next</button>
+                      </div>
+                    )}
                   </section>
                 )}
 
@@ -873,7 +928,17 @@ export default function LessonQuestionManager() {
                         <Trash2 size={16} />Empty Trash
                       </button>
                     </div>
-                    <DataTable columns={trashColumns} data={trashRows} emptyMessage="Trash is empty." className="drive-table" />
+                    <div className="table-report-controls">
+                      <TablePrintButton reportTitle="Question Library Trash" reportContext={formatTableRange(paginatedTrashRows)} />
+                    </div>
+                    <DataTable columns={trashColumns} data={paginatedTrashRows.rows} emptyMessage="Trash is empty." className="drive-table" />
+                    {paginatedTrashRows.totalPages > 1 && (
+                      <div className="pagination-row no-print">
+                        <button type="button" onClick={() => setTrashPage((current) => Math.max(1, current - 1))} disabled={paginatedTrashRows.currentPage === 1}>Previous</button>
+                        <span>Page {paginatedTrashRows.currentPage} of {paginatedTrashRows.totalPages}</span>
+                        <button type="button" onClick={() => setTrashPage((current) => Math.min(paginatedTrashRows.totalPages, current + 1))} disabled={paginatedTrashRows.currentPage === paginatedTrashRows.totalPages}>Next</button>
+                      </div>
+                    )}
                   </section>
                 )}
 
