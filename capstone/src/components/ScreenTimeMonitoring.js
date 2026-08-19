@@ -8,6 +8,8 @@ import { apiUrl } from '../api';
 import { buildAuthHeaders, getStoredUserSession } from './session.utils';
 import { normalizeRole } from './manageUsers.utils';
 import { sortStudentsByName } from './studentProgress.utils';
+import { TablePrintButton } from './TablePrintButton';
+import { formatTableRange } from './tableReporting.utils';
 import '../styles/screenTime.css';
 
 const GRADES = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
@@ -85,9 +87,10 @@ const formatDuration = (minutes) => {
   return remaining ? `${hours} hr ${remaining} min` : `${hours} hr`;
 };
 
-const buildQueryString = (filters, mode) => {
+const buildQueryString = (filters, mode, page, limit) => {
   const params = new URLSearchParams();
-  params.set('limit', '50');
+  params.set('limit', String(limit));
+  params.set('page', String(page));
   params.set('sort_by', filters.sort_by || 'student_name');
 
   Object.entries(filters).forEach(([key, value]) => {
@@ -112,9 +115,16 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   const [filters, setFilters] = useState(initialFilters);
   const [records, setRecords] = useState([]);
   const [pagination, setPagination] = useState({ total: 0, pages: 1, page: 1 });
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const isChildView = mode === 'children';
+  const pageSize = 10;
+  const visibleRange = {
+    totalItems: pagination.total || records.length,
+    start: records.length ? (page - 1) * pageSize + 1 : 0,
+    end: records.length ? (page - 1) * pageSize + records.length : 0,
+  };
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') || 'light';
@@ -143,7 +153,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
       setLoading(true);
       setError('');
       try {
-        const response = await fetch(apiUrl(`${endpoint}?${buildQueryString(filters, mode)}`), {
+        const response = await fetch(apiUrl(`${endpoint}?${buildQueryString(filters, mode, page, pageSize)}`), {
           headers: buildAuthHeaders(),
         });
         if (!response.ok) throw new Error('Failed to load playtime sessions');
@@ -167,7 +177,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     return () => {
       cancelled = true;
     };
-  }, [authReady, filters, isChildView, mode, user]);
+  }, [authReady, filters, isChildView, mode, page, pageSize, user]);
 
   const title = isChildView ? 'My Child Screen Time' : 'Screen Time Monitoring';
   const portalLabel = isChildView ? 'Parent Portal' : normalizeRole(user?.role) === 'admin' ? 'Admin Portal' : 'Teacher Portal';
@@ -188,10 +198,12 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
 
   const setFilter = (name, value) => {
     setFilters((current) => ({ ...current, [name]: value }));
+    setPage(1);
   };
 
   const clearFilters = () => {
     setFilters(initialFilters);
+    setPage(1);
   };
 
   const handleSidebarSelection = (key) => {
@@ -368,6 +380,9 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
 
                 <div className="screen-time-results">
                   <span>{pagination.total || records.length} records</span>
+                  <div className="table-report-controls">
+                    <TablePrintButton reportTitle={title} reportContext={formatTableRange(visibleRange)} />
+                  </div>
                 </div>
 
                 <div className="screen-time-table-wrap">
@@ -396,7 +411,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                         </tr>
                       ) : records.map((record, index) => (
                         <tr key={record.id || `${record.student_id}-${index}`}>
-                          <td>{index + 1}</td>
+                          <td>{visibleRange.start + index}</td>
                           <td>{record.student_name || record.child_name || 'Unknown'}</td>
                           <td>{record.game_student_id || 'Not linked'}</td>
                           {!isChildView && <td>{record.parent_id || '-'}</td>}
@@ -412,6 +427,13 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                     </tbody>
                   </table>
                 </div>
+                {pagination.pages > 1 && (
+                  <div className="pagination-row no-print">
+                    <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}>Previous</button>
+                    <span>Page {page} of {pagination.pages}</span>
+                    <button type="button" onClick={() => setPage((current) => Math.min(pagination.pages, current + 1))} disabled={page === pagination.pages}>Next</button>
+                  </div>
+                )}
               </div>
             </ContentSection>
           </PageContent>

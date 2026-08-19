@@ -150,7 +150,10 @@ export const filterStudentProgress = (
     const matchesGrade = selectedGrade ? student.grade_level === selectedGrade : true;
     const matchesSection = selectedSection ? student.section === selectedSection : true;
     const searchableName = String(student?.student_name || '').toLowerCase();
-    const matchesSearch = normalizedQuery ? searchableName.includes(normalizedQuery) : true;
+    const gameStudentId = String(student?.game_student_id || '').trim().toLowerCase();
+    const matchesSearch = normalizedQuery
+      ? searchableName.includes(normalizedQuery) || gameStudentId === normalizedQuery
+      : true;
 
     return matchesGrade && matchesSection && matchesSearch;
   });

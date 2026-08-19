@@ -93,6 +93,29 @@ describe('ScreenTimeMonitoring', () => {
     expect(container.textContent).toContain('Ava Santos');
     expect(container.textContent).toContain('30 min');
     expect(container.textContent).toContain('Completed');
+    expect(container.querySelector('button[aria-label="Print Screen Time Monitoring"]')).not.toBeNull();
+  });
+
+  test('paginates the authorised Screen Time records after server filtering', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
+    localStorage.setItem('rememberToken', 'remember-token');
+    global.fetch = jest.fn(() => jsonResponse({
+      data: Array.from({ length: 10 }, (_, index) => ({
+        ...playtimePayload.data[0],
+        id: index + 10,
+        student_name: `Student ${index + 1}`,
+        game_student_id: index === 0 ? '001234' : String(100000 + index),
+      })),
+      pagination: { page: 1, limit: 10, total: 11, pages: 2 },
+    }));
+
+    act(() => {
+      root.render(<ScreenTimeMonitoring mode="all" />);
+    });
+    await waitForContent(container, 'Student 1');
+
+    expect(container.querySelectorAll('tbody tr')).toHaveLength(10);
+    expect(container.textContent).toContain('Page 1 of 2');
   });
 
   test('parent child-only view fetches My Child Screen Time without exposing parent ID column', async () => {

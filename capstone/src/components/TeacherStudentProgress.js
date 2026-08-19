@@ -13,6 +13,7 @@ import {
   normalizeDisplayList,
   normalizeStudentProgressPayload,
 } from './studentProgress.utils';
+import { TablePrintButton } from './TablePrintButton';
 import '../styles/studentprogress.css';
 
 export default function TeacherStudentProgress() {
@@ -120,6 +121,7 @@ export default function TeacherStudentProgress() {
 
   const paginatedStudents = filteredStudents.slice((page - 1) * pageSize, page * pageSize);
   const pageCount = Math.max(1, Math.ceil(filteredStudents.length / pageSize));
+  const hasActiveStudentFilters = Boolean(searchQuery || selectedGrade || selectedSection);
 
   return (
     <DashboardContainer
@@ -187,7 +189,7 @@ export default function TeacherStudentProgress() {
                     <label>Search student</label>
                     <input
                       type="search"
-                      placeholder="Search by name"
+                      placeholder="Search by name or Student ID"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />
@@ -217,17 +219,21 @@ export default function TeacherStudentProgress() {
               className="student-progress-table-section"
               contentClassName="student-progress-table-shell"
             >
+              <div className="table-report-controls">
+                <TablePrintButton reportTitle="Student Progress" reportContext={`${filteredStudents.length} authorised records`} />
+              </div>
               <div className="table-wrapper">
                 {!authReady || loading ? (
                   <div className="loading-state">Loading performance data...</div>
                 ) : error ? (
                   <div className="fallback-note">{error}</div>
                 ) : filteredStudents.length === 0 ? (
-                  <div className="empty-state">No student records match the current filter.</div>
+                  <div className="empty-state">{hasActiveStudentFilters ? 'No student records match the current filter.' : 'No student records are available yet.'}</div>
                 ) : (
                   <table className="student-progress-table">
                     <thead>
                       <tr>
+                        <th>No.</th>
                         <th>Student Name</th>
                         <th>Student ID</th>
                         <th>Grade Level</th>
@@ -237,16 +243,17 @@ export default function TeacherStudentProgress() {
                         <th>Incorrect</th>
                         <th>Accuracy</th>
                         <th>Difficulty</th>
-                        <th>Actions</th>
+                        <th className="no-print">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {paginatedStudents.map((student) => (
+                      {paginatedStudents.map((student, index) => (
                         <tr
                           key={student.student_id}
                           className="clickable-row"
                           onClick={() => navigate(`/teacher/student-progress/${student.student_id}`)}
                         >
+                          <td>{((page - 1) * pageSize) + index + 1}</td>
                           <td>{student.student_name || 'Unknown'}</td>
                           <td>{student.game_student_id || 'Not linked'}</td>
                           <td>{student.grade_level || 'N/A'}</td>
@@ -260,7 +267,7 @@ export default function TeacherStudentProgress() {
                               {student.difficulty_level || student.difficulty || 'Unknown'}
                             </div>
                           </td>
-                          <td className="table-action-cell">
+                          <td className="table-action-cell no-print">
                             <button
                               type="button"
                               className="table-action-button"
@@ -279,7 +286,7 @@ export default function TeacherStudentProgress() {
                 )}
               </div>
 
-              <div className="pagination-row">
+              <div className="pagination-row no-print">
                 <button disabled={page <= 1} onClick={() => setPage((prev) => Math.max(prev - 1, 1))}>Previous</button>
                 <span>Page {page} of {pageCount}</span>
                 <button disabled={page >= pageCount} onClick={() => setPage((prev) => Math.min(prev + 1, pageCount))}>Next</button>

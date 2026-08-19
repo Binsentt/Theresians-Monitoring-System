@@ -137,6 +137,7 @@ describe('ManageUsers edit flow', () => {
 
     expect(container.textContent).toContain('PARENT ID');
     expect(container.textContent).toContain('482915');
+    expect(container.querySelector('button[aria-label="Print Manage Users"]')).not.toBeNull();
   });
 
   test('loads managed accounts with the existing authenticated session header', async () => {

@@ -11,6 +11,7 @@ import {
 import { buildScopedApiUrl } from './analyticsEndpoints';
 import { buildAuthHeaders } from './session.utils';
 import { sortStudentsByName } from './studentProgress.utils';
+import { TablePrintButton } from './TablePrintButton';
 
 const GRADE_SECTIONS = {
   'Grade 1': ['Section A', 'Section B'],
@@ -214,7 +215,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
             <input
               id="search-input"
               type="text"
-              placeholder="Search by student name..."
+              placeholder="Search by student name or Student ID..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="filter-input search-input"
@@ -294,6 +295,12 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
       )}
 
       <div className="al-results-info">
+        <div className="table-report-controls">
+          <TablePrintButton
+            reportTitle={role === 'parent' ? 'Child Activity Log' : 'Student Activity Log'}
+            reportContext={`${pagination.total || activities.length} authorised records`}
+          />
+        </div>
         <span className="results-count">
           Showing {activities.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} - {Math.min((currentPage - 1) * itemsPerPage + activities.length, pagination.total || activities.length)} of {pagination.total || activities.length} records
         </span>

@@ -56,6 +56,16 @@ describe('student progress helpers', () => {
     ).toEqual([2]);
   });
 
+  test('searches the canonical six-digit game Student ID without numeric coercion', () => {
+    const students = [
+      { student_id: 1, student_name: 'Ana Reyes', game_student_id: '001234', grade_level: 'Grade 1' },
+      { student_id: 2, student_name: 'Ben Cruz', game_student_id: '101234', grade_level: 'Grade 1' },
+    ];
+
+    expect(filterStudentProgress(students, { searchQuery: '001234' }).map((student) => student.student_id)).toEqual([1]);
+    expect(filterStudentProgress(students, { searchQuery: '1234' })).toEqual([]);
+  });
+
   test('does not invent section filters when section data has not been synced', () => {
     expect(getStudentProgressSectionOptions([
       { student_id: 3, grade_level: 'Grade 2', section: null },
