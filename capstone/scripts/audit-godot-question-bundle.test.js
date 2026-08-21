@@ -522,6 +522,25 @@ test('reviewed import manifests preserve explicit metadata and database dry runs
   assert.ok(calls.includes('BEGIN READ ONLY'));
   assert.ok(calls.includes('COMMIT'));
   assert.equal(calls.some((sql) => /INSERT|UPDATE|DELETE/i.test(sql)), false);
+
+  const strictCalls = [];
+  const changedStateClient = {
+    query: async (sql) => {
+      strictCalls.push(sql);
+      if (/SELECT id, role, is_archived FROM public\.accounts/.test(sql)) {
+        return { rows: [{ id: 17, role: 'admin', is_archived: false }] };
+      }
+      if (/SELECT id FROM public\.learning_files/.test(sql)) return { rows: [{ id: 99 }] };
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  await assert.rejects(
+    applyClientProvidedImportPlan(plan, { connect: async () => changedStateClient }),
+    /already represented after its approved dry run/
+  );
+  assert.ok(strictCalls.includes('ROLLBACK'));
+  assert.equal(strictCalls.some((sql) => /INSERT INTO public\.learning_files/.test(sql)), false);
 });
 
 test('import application requires an active Lesson Manager role and a resolved actor', async () => {

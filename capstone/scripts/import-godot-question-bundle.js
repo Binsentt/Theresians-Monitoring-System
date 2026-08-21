@@ -199,6 +199,7 @@ const buildReviewedManifestImportPlan = (reviewedManifest, { actorId } = {}) => 
   return {
     mode: 'reviewed-manifest-import-only',
     production_import_performed: false,
+    require_exact_import: true,
     import_actor_id: normalizedActorId,
     proposed_source_label: CLIENT_PROVIDED_LABEL,
     default_user_facing_status: 'Pending',
@@ -362,6 +363,9 @@ const applyClientProvidedImportPlan = async (plan, pool) => {
         [operation.learning_file.file_url]
       );
       if (existingSet.rows.length > 0) {
+        if (plan.require_exact_import) {
+          throw new Error(`Reviewed question set ${operation.learning_file.title} is already represented after its approved dry run.`);
+        }
         summary.skipped_existing_sets += 1;
         continue;
       }
@@ -388,6 +392,9 @@ const applyClientProvidedImportPlan = async (plan, pool) => {
         }
       }
       if (duplicateExists) {
+        if (plan.require_exact_import) {
+          throw new Error(`Reviewed question set ${operation.learning_file.title} has a duplicate question after its approved dry run.`);
+        }
         summary.skipped_duplicate_sets += 1;
         continue;
       }
