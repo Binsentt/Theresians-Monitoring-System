@@ -11,6 +11,7 @@ const {
   canonicalDifficulty,
   inferMetadata,
   normalizeQuestion,
+  normalizeQuestionWithValidation,
   parseDocxQuestionLines,
 } = require('./audit-godot-question-bundle');
 const {
@@ -90,7 +91,13 @@ test('manifest exposes malformed reasons and duplicate provenance without repair
   assert.equal(duplicate.import_eligibility, 'DUPLICATE ONLY');
   assert.equal(duplicate.duplicate_details[0].canonical_source_path, canonical.path);
   assert.equal(malformed.import_eligibility, 'NEEDS MANUAL QUESTION REPAIR');
-  assert.deepEqual(malformed.malformed_details, [{ question_index: 1, reason: 'Missing correct answer.' }]);
+  assert.deepEqual(malformed.malformed_details, [{
+    question_index: 1,
+    reason: 'Missing correct answer.',
+    raw_question_text: 'Missing answer',
+    raw_choices: ['A', 'B'],
+    raw_correct_answer: null,
+  }]);
 }));
 
 test('manifest topic distribution counts source question metadata rather than one value per file', () => withFixtureDirectory((root) => {
@@ -128,6 +135,18 @@ test('dry-run question audit resolves a letter answer to its supplied choice', (
     answer: '4',
     topic: null,
   });
+});
+
+test('dry-run validation preserves malformed source context for a per-question review manifest', () => {
+  const result = normalizeQuestionWithValidation({
+    question: 'Which number is missing?',
+    choices: ['1', '2'],
+  });
+  assert.equal(result.question, null);
+  assert.equal(result.reason, 'Missing correct answer.');
+  assert.equal(result.raw_question_text, 'Which number is missing?');
+  assert.deepEqual(result.raw_choices, ['1', '2']);
+  assert.equal(result.raw_correct_answer, null);
 });
 
 test('DOCX parser preserves question punctuation that ends in a letter matching an option marker', () => {

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "source": "Read-only PostgreSQL fingerprint snapshot",
+  "captured_at": "2026-08-21",
+  "scope": "All 25 current public.questions rows, verified by read-only count query.",
+  "question_fingerprints": [
+    { "learning_file_id": 8, "grade": "Grade 1", "canonical_difficulty": "Hard", "topic": "Problem Solving (Addition and Subtraction)", "question_fingerprint": "6af1ff8d04de5064f228a99a9b691f4e9d1069285e2d2d74f2d3d197f599e086" },
+    { "learning_file_id": 8, "grade": "Grade 1", "canonical_difficulty": "Hard", "topic": "Problem Solving (Addition and Subtraction)", "question_fingerprint": "dff034bc7a69c8617bd6b993b25dc681b1d11595b116f9e9f6639f0793b536b3" },
+    { "learning_file_id": 8, "grade": "Grade 1", "canonical_difficulty": "Hard", "topic": "Problem Solving (Addition and Subtraction)", "question_fingerprint": "45a45d3a764409bbf210746583d7c9b9f507386b56ae96a8b564d98ed0250fe7" },
+    { "learning_file_id": 8, "grade": "Grade 1", "canonical_difficulty": "Hard", "topic": "Problem Solving (Addition and Subtraction)", "question_fingerprint": "96f65b4477405ccb7343ed7e3dd171cbdf2c6f57b0513b18ff33c423c99e2057" },
+    { "learning_file_id": 8, "grade": "Grade 1", "canonical_difficulty": "Hard", "topic": "Problem Solving (Addition and Subtraction)", "question_fingerprint": "f9a28882307b73354a9b0ea3edb347dd383815f49163008e1ed1ee359f41376a" },
+    { "learning_file_id": 9, "grade": "Grade 3", "canonical_difficulty": "Hard", "topic": "Multi-step Problem Solving", "question_fingerprint": "87054994e39e5deb9582258573e908c671298dc6a3fb687b9eb6602144e7a69f" },
+    { "learning_file_id": 9, "grade": "Grade 3", "canonical_difficulty": "Hard", "topic": "Multi-step Problem Solving", "question_fingerprint": "ce4d72f62e26e72893346d84da8d922be0b549862234646d9dc91f49cc1565c6" },
+    { "learning_file_id": 9, "grade": "Grade 3", "canonical_difficulty": "Hard", "topic": "Multi-step Problem Solving", "question_fingerprint": "741b9d9aa70b38823bec363b41b86569b23d29ea16a6d991458d32ec300d5fc3" },
+    { "learning_file_id": 9, "grade": "Grade 3", "canonical_difficulty": "Hard", "topic": "Multi-step Problem Solving", "question_fingerprint": "5410832b6bd71c8557f146c75ffea71326ed85b3684ffe7a4b7518a996d6dc41" },
+    { "learning_file_id": 9, "grade": "Grade 3", "canonical_difficulty": "Hard", "topic": "Multi-step Problem Solving", "question_fingerprint": "3c495aaec7ffe165f9d857293d402fcaaa5360a0c6239f228ccae4e08e270f5e" },
+    { "learning_file_id": 10, "grade": "Grade 4", "canonical_difficulty": "Hard", "topic": "Reading, Writing, and Comparing Whole Numbers", "question_fingerprint": "12a0224c3fa820c58dd39b1f1d3b61eda2e4d5b1021cb20f0a36ee96758266d6" },
+    { "learning_file_id": 10, "grade": "Grade 4", "canonical_difficulty": "Hard", "topic": "Reading, Writing, and Comparing Whole Numbers", "question_fingerprint": "6798602329bc196c37026fde339c94f9eb486b4530730e28b5d23b9a0127a10c" },
+    { "learning_file_id": 10, "grade": "Grade 4", "canonical_difficulty": "Hard", "topic": "Reading, Writing, and Comparing Whole Numbers", "question_fingerprint": "11eb4402a9c50a5968f0b6dcf71f48f87bf504ccb063a0775427a81bfbf38395" },
+    { "learning_file_id": 10, "grade": "Grade 4", "canonical_difficulty": "Hard", "topic": "Reading, Writing, and Comparing Whole Numbers", "question_fingerprint": "4aec7128dd33dfb7f662a086e66f0fb60752a843845fbd02f821c9d9025896e4" },
+    { "learning_file_id": 10, "grade": "Grade 4", "canonical_difficulty": "Hard", "topic": "Reading, Writing, and Comparing Whole Numbers", "question_fingerprint": "f8281a26b848d09130382788f387103497d37da92a86d51871fda8072eabac60" },
+    { "learning_file_id": 11, "grade": "Grade 4", "canonical_difficulty": "Medium", "topic": "Place Value of Whole Numbers", "question_fingerprint": "e199bb92b41857a75d9264820a37910c6c7febb580a1ca5b7196dc17306c310d" },
+    { "learning_file_id": 11, "grade": "Grade 4", "canonical_difficulty": "Medium", "topic": "Place Value of Whole Numbers", "question_fingerprint": "c45cc8313345422377f193b7459de5d0c10ad8a27669a79f0b45a1923d198ef8" },
+    { "learning_file_id": 11, "grade": "Grade 4", "canonical_difficulty": "Medium", "topic": "Place Value of Whole Numbers", "question_fingerprint": "afbcff06985c902a90554a221132ab7804f3901e487c857b5b4ed5e95d67c034" },
+    { "learning_file_id": 11, "grade": "Grade 4", "canonical_difficulty": "Medium", "topic": "Place Value of Whole Numbers", "question_fingerprint": "4c4de83a412907af33cee353054a36a090566d91f8acac43ec1ccc9a457e9ef9" },
+    { "learning_file_id": 11, "grade": "Grade 4", "canonical_difficulty": "Medium", "topic": "Place Value of Whole Numbers", "question_fingerprint": "d034febe604e8f2190eb116b947c9c7c73a8eb7090e5744fb40b6077a147abd2" },
+    { "learning_file_id": 12, "grade": "Grade 6", "canonical_difficulty": "Medium", "topic": "Number Sense and Operations", "question_fingerprint": "0a20ada0e4298839f7d1f3685151372368d82bd6c6e346afd77f5a874a9a137d" },
+    { "learning_file_id": 12, "grade": "Grade 6", "canonical_difficulty": "Medium", "topic": "Number Sense and Operations", "question_fingerprint": "b1e7211092fae93a2d771ef1327e68388e11b36aa9c27278f0729b18d12b824d" },
+    { "learning_file_id": 12, "grade": "Grade 6", "canonical_difficulty": "Medium", "topic": "Number Sense and Operations", "question_fingerprint": "09acc73526e16d8a3b180c8230dea6766d7578d7b0b5ae5a5f882a656f39f54a" },
+    { "learning_file_id": 12, "grade": "Grade 6", "canonical_difficulty": "Medium", "topic": "Number Sense and Operations", "question_fingerprint": "ff4ee1e8494a605fc3414f1565ba58f54fb398271ad22107b4186148fc57dfcd" },
+    { "learning_file_id": 12, "grade": "Grade 6", "canonical_difficulty": "Medium", "topic": "Number Sense and Operations", "question_fingerprint": "57ac561889557fbd7ac1a424632ca0fe7e0fae00ebcddb198ca9fb0046671b25" }
+  ]
+}

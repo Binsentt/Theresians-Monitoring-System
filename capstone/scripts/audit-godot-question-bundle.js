@@ -42,7 +42,13 @@ const readDocxText = (filePath) => {
 
 const normalizeQuestionWithValidation = (candidate = {}) => {
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
-    return { question: null, reason: 'Question record must be an object.' };
+    return {
+      question: null,
+      reason: 'Question record must be an object.',
+      raw_question_text: null,
+      raw_choices: [],
+      raw_correct_answer: null,
+    };
   }
   const question = String(candidate.question || candidate.question_text || candidate.text || '').trim();
   const choices = Array.isArray(candidate.choices)
@@ -54,14 +60,21 @@ const normalizeQuestionWithValidation = (candidate = {}) => {
   const answer = optionIndex
     ? normalizedChoices[optionIndex.charCodeAt(0) - 'A'.charCodeAt(0)]
     : rawAnswer.replace(/^[A-D][.)]\s*/i, '').trim();
-  if (!question) return { question: null, reason: 'Missing question text.' };
+  const malformed = (reason) => ({
+    question: null,
+    reason,
+    raw_question_text: question || null,
+    raw_choices: normalizedChoices,
+    raw_correct_answer: rawAnswer || null,
+  });
+  if (!question) return malformed('Missing question text.');
   if (!Array.isArray(candidate.choices) && !Array.isArray(candidate.options)) {
-    return { question: null, reason: 'Choices must be an array.' };
+    return malformed('Choices must be an array.');
   }
-  if (normalizedChoices.length < 2) return { question: null, reason: 'At least two choices are required.' };
-  if (!rawAnswer || !answer) return { question: null, reason: 'Missing correct answer.' };
+  if (normalizedChoices.length < 2) return malformed('At least two choices are required.');
+  if (!rawAnswer || !answer) return malformed('Missing correct answer.');
   if (!normalizedChoices.some((choice) => choice.localeCompare(answer, undefined, { sensitivity: 'accent' }) === 0)) {
-    return { question: null, reason: 'Correct answer is not present in the choices.' };
+    return malformed('Correct answer is not present in the choices.');
   }
   return { question: {
     question,
@@ -109,7 +122,13 @@ const parseDocxQuestionLines = (lines) => {
   const finishCurrent = () => {
     if (!current) return;
     const result = normalizeQuestionWithValidation(current);
-    parsed.push(result.question || { invalid: true, reason: result.reason });
+    parsed.push(result.question || {
+      invalid: true,
+      reason: result.reason,
+      raw_question_text: result.raw_question_text,
+      raw_choices: result.raw_choices,
+      raw_correct_answer: result.raw_correct_answer,
+    });
     current = null;
   };
 
@@ -169,7 +188,13 @@ const parseJsonQuestions = (filePath) => {
   if (!Array.isArray(entries)) throw new Error('JSON must be an array or contain a questions array.');
   return entries.map((entry) => {
     const result = normalizeQuestionWithValidation(entry);
-    return result.question || { invalid: true, reason: result.reason };
+    return result.question || {
+      invalid: true,
+      reason: result.reason,
+      raw_question_text: result.raw_question_text,
+      raw_choices: result.raw_choices,
+      raw_correct_answer: result.raw_correct_answer,
+    };
   });
 };
 
@@ -414,11 +439,15 @@ const auditGodotQuestionBundle = (rootPath) => {
         parseError = error.message;
       }
     }
-    const validQuestions = questions.filter((question) => !question.invalid);
-    const malformedDetails = questions
+    const sourceQuestions = questions.map((question, index) => ({ ...question, source_index: index + 1 }));
+    const validQuestions = sourceQuestions.filter((question) => !question.invalid);
+    const malformedDetails = sourceQuestions
       .map((question, index) => (question.invalid ? {
-        question_index: index + 1,
+        question_index: question.source_index || index + 1,
         reason: question.reason || 'Question could not be normalized.',
+        raw_question_text: question.raw_question_text || null,
+        raw_choices: question.raw_choices || [],
+        raw_correct_answer: question.raw_correct_answer || null,
       } : null))
       .filter(Boolean);
     const invalidQuestions = malformedDetails.length;
@@ -431,7 +460,7 @@ const auditGodotQuestionBundle = (rootPath) => {
       if (canonical) {
         duplicateCount += 1;
         duplicateDetails.push({
-          question_index: index + 1,
+          question_index: question.source_index || index + 1,
           question_fingerprint: questionFingerprint,
           canonical_source_path: canonical.path,
           canonical_question_index: canonical.questionIndex,
@@ -484,6 +513,7 @@ const auditGodotQuestionBundle = (rootPath) => {
       proposed_source_label: 'Client Provided',
     };
     Object.defineProperty(record, 'questions', { value: validQuestions, enumerable: false });
+    Object.defineProperty(record, 'source_questions', { value: sourceQuestions, enumerable: false });
     Object.defineProperty(record, 'source_file_bytes', { value: fs.readFileSync(filePath), enumerable: false });
     Object.defineProperty(record, 'source_file_mime_type', { value: mimeTypeForExtension(extension), enumerable: false });
     record.content_fingerprint = recordFingerprint(record);
