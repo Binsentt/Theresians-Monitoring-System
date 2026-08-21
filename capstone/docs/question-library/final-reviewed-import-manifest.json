@@ -1,0 +1,1033 @@
+{
+  "schema_version": 1,
+  "mode": "reviewed-import-manifest",
+  "production_import_performed": false,
+  "topic_inference_performed_during_apply": false,
+  "source_review_manifest_schema_version": 1,
+  "source_bundle": "capstone-theresians-quest/Questions",
+  "production_snapshot": {
+    "source": "Read-only PostgreSQL fingerprint snapshot",
+    "captured_at": "2026-08-21",
+    "scope": "All 25 current public.questions rows, verified by read-only count query.",
+    "question_fingerprint_count": 25
+  },
+  "question_count": 43,
+  "question_set_count": 23,
+  "grade_distribution": {
+    "Grade 1": 16,
+    "Grade 2": 14,
+    "Grade 3": 10,
+    "Grade 6": 3
+  },
+  "difficulty_distribution": {
+    "Easy": 24,
+    "Medium": 14,
+    "Hard": 5
+  },
+  "location_distribution": {
+    "Oakleaf Village": 24,
+    "City of Knowledge": 14,
+    "Pinehill Village": 5
+  },
+  "topic_distribution": {
+    "Basic Addition": 4,
+    "Shapes": 2,
+    "Subtraction": 4,
+    "Place Value": 2,
+    "Addition": 2,
+    "Multiplication": 6,
+    "Word Problems": 3,
+    "Division": 3,
+    "Problem Solving": 2,
+    "Fractions": 3,
+    "Ordinal Numbers": 1,
+    "Basic Addition/Subtraction": 3,
+    "Addition of Money": 4,
+    "Whole Numbers": 1,
+    "Number Sense and Operations": 3
+  },
+  "questions": [
+    {
+      "source_file": "grade 1/Easy/easy.docx",
+      "source_index": 1,
+      "stable_fingerprint": "9b72820de80cd8cb7fc49b615031e9a2433123318d9a3dd8ccb2990b0e9a8b39",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Basic Addition",
+      "question_text": "5 + 2 = ?",
+      "choices": [
+        "8",
+        "7",
+        "6",
+        "9"
+      ],
+      "correct_answer": "7"
+    },
+    {
+      "source_file": "grade 1/Easy/easy.docx",
+      "source_index": 2,
+      "stable_fingerprint": "6da9153287e9bf2b7dfe09769f641074efef5a0de05174ecaa24b0d4b3016554",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Shapes",
+      "question_text": "How many sides does a triangle have?",
+      "choices": [
+        "4",
+        "3",
+        "5",
+        "2"
+      ],
+      "correct_answer": "3"
+    },
+    {
+      "source_file": "grade 1/Easy/easy.docx",
+      "source_index": 3,
+      "stable_fingerprint": "515d07c8843e818598452afc8860cb24f3f19da3d3349bfa9e93f5a16ae6e2aa",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Subtraction",
+      "question_text": "Anna has 8 candies. She gives 3 to her friend. How many are left?",
+      "choices": [
+        "5",
+        "11",
+        "6",
+        "4"
+      ],
+      "correct_answer": "5"
+    },
+    {
+      "source_file": "grade 1/Easy/easy.docx",
+      "source_index": 4,
+      "stable_fingerprint": "ad0fadef4133a83cc96ec6e07c2d344032c045fc8faf1bd3ce79fc9ff2c39169",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Subtraction",
+      "question_text": "18 − 9 = ?",
+      "choices": [
+        "9",
+        "13",
+        "8",
+        "10"
+      ],
+      "correct_answer": "9"
+    },
+    {
+      "source_file": "grade 1/Easy/easy.docx",
+      "source_index": 5,
+      "stable_fingerprint": "2f056cc5a04d0f1aa8780ac3dbe00c5774e658eba808dee02a2c64878c6fc419",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Place Value",
+      "question_text": "What is the place value of 3 in 34?",
+      "choices": [
+        "Ones",
+        "Tens",
+        "Hundreds",
+        "Thousands"
+      ],
+      "correct_answer": "Tens"
+    },
+    {
+      "source_file": "grade 1/Normal/average.docx",
+      "source_index": 1,
+      "stable_fingerprint": "babc98d97c6c4c2cc2e5c6ae4eb435cae4a42a0a41a1f9c62b92742922162656",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Addition",
+      "question_text": "There are 16 boys and 8 girls. How many pupils are there in all?",
+      "choices": [
+        "24",
+        "56",
+        "30",
+        "66"
+      ],
+      "correct_answer": "24"
+    },
+    {
+      "source_file": "grade 1/Normal/average.docx",
+      "source_index": 2,
+      "stable_fingerprint": "207d8ca37d3f424a53445f843346aecf9f3138df20a8fcd387c59e5920e6558f",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Multiplication",
+      "question_text": "5 × 5 = ?",
+      "choices": [
+        "25",
+        "15",
+        "42",
+        "20"
+      ],
+      "correct_answer": "25"
+    },
+    {
+      "source_file": "grade 1/Normal/average.docx",
+      "source_index": 3,
+      "stable_fingerprint": "546626963d8d6ef33d94d398294e45839edec4af38323ca6ddc827fed3dc2297",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Word Problems",
+      "question_text": "Sam grew 23 roses. She picked 13. How many are left?",
+      "choices": [
+        "10",
+        "15",
+        "13",
+        "18"
+      ],
+      "correct_answer": "10"
+    },
+    {
+      "source_file": "grade 1/Normal/average.docx",
+      "source_index": 4,
+      "stable_fingerprint": "b7ad013852646f0c337df1dcd384f73bd7bf201dff4c9e5a0dae00c4f992014d",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Word Problems",
+      "question_text": "How many days are there in a week?",
+      "choices": [
+        "7",
+        "9",
+        "8",
+        "10"
+      ],
+      "correct_answer": "7"
+    },
+    {
+      "source_file": "grade 1/Normal/average.docx",
+      "source_index": 5,
+      "stable_fingerprint": "488ca84d7d2922bc322698c96828db0139ed845483262df73b7c6da02ba96be9",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Addition",
+      "question_text": "A farmer has 9 ducks and 6 chickens. How many animals in all?",
+      "choices": [
+        "13",
+        "15",
+        "14",
+        "16"
+      ],
+      "correct_answer": "15"
+    },
+    {
+      "source_file": "grade 2/Difficult/difficult.docx",
+      "source_index": 1,
+      "stable_fingerprint": "a549406c5b44802efe0a263653c7705c97d53b528405e32f2765e25c72298434",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Hard",
+      "game_location": "Pinehill Village",
+      "confirmed_topic": "Multiplication",
+      "question_text": "There are 8 players in a game. If each player made 6 kicks, how many kicks were made in total?",
+      "choices": [
+        "42",
+        "48",
+        "54",
+        "56"
+      ],
+      "correct_answer": "48"
+    },
+    {
+      "source_file": "grade 2/Difficult/difficult.docx",
+      "source_index": 2,
+      "stable_fingerprint": "a9a52a0aa33f00d669d0ad5430bad9832aec385a1af3af9c6187b005bde0c098",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Hard",
+      "game_location": "Pinehill Village",
+      "confirmed_topic": "Division",
+      "question_text": "A father has 64 candies to share equally among his 8 sons. How many candies will each son receive?",
+      "choices": [
+        "6",
+        "7",
+        "8",
+        "9"
+      ],
+      "correct_answer": "8"
+    },
+    {
+      "source_file": "grade 2/Difficult/difficult.docx",
+      "source_index": 3,
+      "stable_fingerprint": "f352dab9a81b693383e7695ce1549080ca5fe0552203a33ab95b65700c910875",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Hard",
+      "game_location": "Pinehill Village",
+      "confirmed_topic": "Problem Solving",
+      "question_text": "A sports shop has 726 small jerseys and 217 large jerseys. How many more small jerseys are there than large ones?",
+      "choices": [
+        "509",
+        "511",
+        "519",
+        "609"
+      ],
+      "correct_answer": "511"
+    },
+    {
+      "source_file": "grade 2/Difficult/difficult.docx",
+      "source_index": 4,
+      "stable_fingerprint": "00a596932e70187e7cf17ae8045985490af630e6017dd19eb053265091b11a54",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Hard",
+      "game_location": "Pinehill Village",
+      "confirmed_topic": "Problem Solving",
+      "question_text": "A collector had 980 stickers. After giving away 762 stickers to friends, how many stickers are left?",
+      "choices": [
+        "218",
+        "222",
+        "228",
+        "238"
+      ],
+      "correct_answer": "218"
+    },
+    {
+      "source_file": "grade 2/Difficult/difficult.docx",
+      "source_index": 5,
+      "stable_fingerprint": "34834761441cfeeef56a25e92e63c374ffc064a20b7f405259eb3cb75f96676b",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Hard",
+      "game_location": "Pinehill Village",
+      "confirmed_topic": "Fractions",
+      "question_text": "In a class of 18 students, 13 are girls. What fraction of the students are boys?",
+      "choices": [
+        "$5/13$",
+        "$13/18$",
+        "$5/18$",
+        "$8/18$"
+      ],
+      "correct_answer": "$5/18$"
+    },
+    {
+      "source_file": "grade 2/Easy/easy.docx",
+      "source_index": 1,
+      "stable_fingerprint": "778f5034884a04dcad119a5ccc8c2f969ac4ebbcb82dcc4ff232b278b96bb821",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Shapes",
+      "question_text": "What shape has 4 equal sides?",
+      "choices": [
+        "Rectangle",
+        "Square",
+        "Triangle",
+        "Circle"
+      ],
+      "correct_answer": "Square"
+    },
+    {
+      "source_file": "grade 2/Easy/easy.docx",
+      "source_index": 2,
+      "stable_fingerprint": "116d63bd4550dfbb5638ffcf2612e8cd3717d77b3e2fee9c9e728c65002362ca",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Ordinal Numbers",
+      "question_text": "What is the ordinal number of the last month of the year?",
+      "choices": [
+        "9th",
+        "12th",
+        "10th",
+        "11th"
+      ],
+      "correct_answer": "12th"
+    },
+    {
+      "source_file": "grade 2/Easy/easy.docx",
+      "source_index": 3,
+      "stable_fingerprint": "5669ad09bb01843ad296fcff0f48d5aa67c8ac71fd760f240eac3c6e87e061ac",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Basic Addition/Subtraction",
+      "question_text": "Jenny has 56 candies. Chloe has 94. How many do they have together?",
+      "choices": [
+        "150",
+        "190",
+        "140",
+        "130"
+      ],
+      "correct_answer": "150"
+    },
+    {
+      "source_file": "grade 2/Easy/easy.docx",
+      "source_index": 4,
+      "stable_fingerprint": "c2ba0478379d8b7330dd31316e338f5136e2d98090ba29e66635b5fd081939d1",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Basic Addition/Subtraction",
+      "question_text": "There are 437 girls and 325 boys. How many more girls than boys?",
+      "choices": [
+        "112",
+        "132",
+        "102",
+        "120"
+      ],
+      "correct_answer": "112"
+    },
+    {
+      "source_file": "grade 2/Easy/easy.docx",
+      "source_index": 5,
+      "stable_fingerprint": "bce5937dd7fa7cd7fb1cd0c4f676edf2fb36daa421769117677af2256801e069",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Basic Addition/Subtraction",
+      "question_text": "Nikolai received ₱89.00 and ₱30.00. How much does he have in total?",
+      "choices": [
+        "₱109.00",
+        "₱119.00",
+        "₱129.00",
+        "₱99.00"
+      ],
+      "correct_answer": "₱119.00"
+    },
+    {
+      "source_file": "grade 2/Normal/average.docx",
+      "source_index": 1,
+      "stable_fingerprint": "8d1285a089e564da68f8fcc6e9c39c30eaf1cda626ed04e43fc39fb211874fbc",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Multiplication",
+      "question_text": "What is the sum of 2 nines and 6 fives?",
+      "choices": [
+        "48",
+        "56",
+        "58",
+        "66"
+      ],
+      "correct_answer": "48"
+    },
+    {
+      "source_file": "grade 2/Normal/average.docx",
+      "source_index": 2,
+      "stable_fingerprint": "1e9f9cbf884a64960b5f8ac0f4639fcb596fd40237c85f311a7a3eb38ccf1593",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Multiplication",
+      "question_text": "There are 18 boxes with 7 pins each. How many pins in all?",
+      "choices": [
+        "126",
+        "136",
+        "146",
+        "156"
+      ],
+      "correct_answer": "126"
+    },
+    {
+      "source_file": "grade 2/Normal/average.docx",
+      "source_index": 3,
+      "stable_fingerprint": "2e40bf734213612011cadbc5895c7f8e0a1e16716a5d8edffb7be4d19790a74a",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Word Problems",
+      "question_text": "Sam grew 543 roses. She picked 147. How many are left?",
+      "choices": [
+        "396",
+        "584",
+        "690",
+        "706"
+      ],
+      "correct_answer": "396"
+    },
+    {
+      "source_file": "grade 2/Normal/average.docx",
+      "source_index": 4,
+      "stable_fingerprint": "a56e94c9e4f21cf1cb4cbccdc400b63f8c39718fd8ee5cce0a0346708d5ee512",
+      "grade": "Grade 2",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Division",
+      "question_text": "There are 42 days. How many weeks is that?",
+      "choices": [
+        "6",
+        "7",
+        "8",
+        "9"
+      ],
+      "correct_answer": "6"
+    },
+    {
+      "source_file": "grade 3/Easy/easy.docx",
+      "source_index": 1,
+      "stable_fingerprint": "23f7fb61ff8098b87a3158ea8c1a478af96669b85f94956d2657b4b6b1e66640",
+      "grade": "Grade 3",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Addition of Money",
+      "question_text": "Last Christmas, Joseph received ₱598.00 from his uncle Lito and ₱523.00 from his uncle John. How much money does he have?",
+      "choices": [
+        "₱1,321",
+        "₱1,121",
+        "₱1,021",
+        "₱1,221"
+      ],
+      "correct_answer": "₱1,121"
+    },
+    {
+      "source_file": "grade 3/Easy/easy.docx",
+      "source_index": 2,
+      "stable_fingerprint": "514fe08c2f910c157d27f2546e7cca9df2e43787f370e335a669f530eb18d047",
+      "grade": "Grade 3",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Addition of Money",
+      "question_text": "Rodel bought 12 goldfish that cost ₱3,000.00 and 10 packages of fish food that cost ₱1,567.00. How much money did he spend?",
+      "choices": [
+        "₱3,568",
+        "₱4,567",
+        "₱4,657",
+        "₱3,658"
+      ],
+      "correct_answer": "₱4,567"
+    },
+    {
+      "source_file": "grade 3/Easy/easy.docx",
+      "source_index": 3,
+      "stable_fingerprint": "f4fd6cbf8b241f3e573f876cedb5dbeac5ba3a891c4a05c64e62f5a964ad4733",
+      "grade": "Grade 3",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Addition of Money",
+      "question_text": "Nikolai’s father gave him ₱89.00 and his mother gave him ₱30.00. How much money does he have combined?",
+      "choices": [
+        "₱109.00",
+        "₱119.00",
+        "₱129.00",
+        "₱139.00"
+      ],
+      "correct_answer": "₱119.00"
+    },
+    {
+      "source_file": "grade 3/Easy/easy.docx",
+      "source_index": 4,
+      "stable_fingerprint": "cc7a41b7b7bec8cf5253e04c566e4804d5845ef9e4f65c4cfecd5de49b5cd07e",
+      "grade": "Grade 3",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Addition of Money",
+      "question_text": "Shean received ₱100.00 from his godmother and ₱500.00 from his godfather. How much money does he have?",
+      "choices": [
+        "₱600.00",
+        "₱700.00",
+        "₱400.00",
+        "₱800.00"
+      ],
+      "correct_answer": "₱600.00"
+    },
+    {
+      "source_file": "grade 3/Easy/easy.docx",
+      "source_index": 5,
+      "stable_fingerprint": "22ac7ee53a60eeac20581a05d92a824aee99657edadd7518e7c74b8b75bba493",
+      "grade": "Grade 3",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Whole Numbers",
+      "question_text": "Jenny has 56 candies. Chloe has 94. How many candies do they have together?",
+      "choices": [
+        "150",
+        "160",
+        "140",
+        "170"
+      ],
+      "correct_answer": "150"
+    },
+    {
+      "source_file": "grade 3/Normal/average.docx",
+      "source_index": 1,
+      "stable_fingerprint": "17846a58bd6b852ba2eeaf8b625bc4b4b68ac0c466b1d3e3aa39edea58e3876e",
+      "grade": "Grade 3",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Multiplication",
+      "question_text": "Average Round What is the sum of 5 eights and 2 sixes?",
+      "choices": [
+        "52",
+        "72",
+        "82",
+        "92"
+      ],
+      "correct_answer": "52"
+    },
+    {
+      "source_file": "grade 3/Normal/average.docx",
+      "source_index": 2,
+      "stable_fingerprint": "26b281c920d0dcd390e6ab9e6e2717b250916da39c3fa4ffda646997fddc1f8e",
+      "grade": "Grade 3",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Multiplication",
+      "question_text": "There are 5 pencil holders and each pencil holder has 9 pencils. How many pencils are there in all?",
+      "choices": [
+        "15",
+        "35",
+        "45",
+        "65"
+      ],
+      "correct_answer": "45"
+    },
+    {
+      "source_file": "grade 3/Normal/average.docx",
+      "source_index": 3,
+      "stable_fingerprint": "691fde9e3780b14eeafb080188b5e2e4bd5ccbd1f5316352ef338111e9710948",
+      "grade": "Grade 3",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Division",
+      "question_text": "Mr. Jimmy has 360 stamps. If each envelope contains 12 stamps, how many envelopes does he use?",
+      "choices": [
+        "20",
+        "30",
+        "40",
+        "60"
+      ],
+      "correct_answer": "30"
+    },
+    {
+      "source_file": "grade 3/Normal/average.docx",
+      "source_index": 4,
+      "stable_fingerprint": "ef9ecc5f2121454d6c5643f8869cee3dd3a2026a8b87b4025c486381a880b996",
+      "grade": "Grade 3",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Fractions",
+      "question_text": "What is the mixed fraction symbol of 32/3?",
+      "choices": [
+        "8 2/3",
+        "9 2/3",
+        "10 2/3",
+        "11 5/3"
+      ],
+      "correct_answer": "10 2/3"
+    },
+    {
+      "source_file": "grade 3/Normal/average.docx",
+      "source_index": 5,
+      "stable_fingerprint": "707ad4730bcdc8a3ed87814963cd919fbab08d5f340684f2cd2eac700e6ad030",
+      "grade": "Grade 3",
+      "canonical_difficulty": "Medium",
+      "game_location": "City of Knowledge",
+      "confirmed_topic": "Fractions",
+      "question_text": "What is the mixed fraction symbol of 21/4?",
+      "choices": [
+        "5 1/4",
+        "6 2/4",
+        "7 2/3",
+        "8 5/4"
+      ],
+      "correct_answer": "5 1/4"
+    },
+    {
+      "source_file": "grade 6/Easy/easy.docx",
+      "source_index": 1,
+      "stable_fingerprint": "dac66bd3f18997024da375fe4a7087af057f68863477e96ae430a9342239a1cc",
+      "grade": "Grade 6",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Number Sense and Operations",
+      "question_text": "When writing a whole number as a fraction, what should its denominator be?",
+      "choices": [
+        "4",
+        "5",
+        "2",
+        "1"
+      ],
+      "correct_answer": "1"
+    },
+    {
+      "source_file": "grade 6/Easy/easy.docx",
+      "source_index": 2,
+      "stable_fingerprint": "f0a5947fd2d0563ec207784ed9b5bf8d9bd6ff4fe64e9b6e5acd04c7c97e893b",
+      "grade": "Grade 6",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Number Sense and Operations",
+      "question_text": "In dividing fractions, you’ll need to get the _______ of the given divisor before you multiply the numerators and the denominators.",
+      "choices": [
+        "LCD",
+        "Simplified Form",
+        "Reciprocal",
+        "None of the above Answer:",
+        "Reciprocal",
+        "6",
+        "16",
+        "–6",
+        "55"
+      ],
+      "correct_answer": "Simplified Form"
+    },
+    {
+      "source_file": "grade 6/Easy/easy.docx",
+      "source_index": 3,
+      "stable_fingerprint": "f42e92274432bb91ec706ade279efe1d30bd75eec5c5bd25c7afbd74e180aa9c",
+      "grade": "Grade 6",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Number Sense and Operations",
+      "question_text": "What is 10% of 350?",
+      "choices": [
+        "3.5",
+        "35",
+        "70",
+        "315"
+      ],
+      "correct_answer": "35"
+    },
+    {
+      "source_file": "grade_1_easy.json",
+      "source_index": 1,
+      "stable_fingerprint": "f2c037bc6216ed6d823be0302cb3d928a0564214218c89ee31d5f200b3b6901f",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Basic Addition",
+      "question_text": "2 + 2 = ?",
+      "choices": [
+        "3",
+        "4",
+        "5"
+      ],
+      "correct_answer": "4"
+    },
+    {
+      "source_file": "grade_1_easy.json",
+      "source_index": 2,
+      "stable_fingerprint": "67ef1c327bb38392e2dcd41aeebcb0d4b2300cb60d77d19769f3f71f3f982603",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Basic Addition",
+      "question_text": "1 + 3 = ?",
+      "choices": [
+        "2",
+        "4",
+        "5"
+      ],
+      "correct_answer": "4"
+    },
+    {
+      "source_file": "grade_1_easy.json",
+      "source_index": 3,
+      "stable_fingerprint": "2189382d4388664e8caebbcde0b4336c690f142f130ccfddd14a438e7193f738",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Subtraction",
+      "question_text": "5 - 2 = ?",
+      "choices": [
+        "2",
+        "3",
+        "4"
+      ],
+      "correct_answer": "3"
+    },
+    {
+      "source_file": "grade_1_easy.json",
+      "source_index": 4,
+      "stable_fingerprint": "14ea10acf09377064c69d82f886ebcb25635d6e5f03441c656f0b442b228dbcb",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Basic Addition",
+      "question_text": "6 + 1 = ?",
+      "choices": [
+        "6",
+        "7",
+        "8"
+      ],
+      "correct_answer": "7"
+    },
+    {
+      "source_file": "grade_1_easy.json",
+      "source_index": 5,
+      "stable_fingerprint": "bbe7bf9d740d1090474dc4f1338bf089a82fc661cc1e3ee41250f793f96afb84",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Subtraction",
+      "question_text": "4 - 1 = ?",
+      "choices": [
+        "2",
+        "3",
+        "4"
+      ],
+      "correct_answer": "3"
+    },
+    {
+      "source_file": "grade_1_easy.json",
+      "source_index": 6,
+      "stable_fingerprint": "5a99e2f5c444ed6dda97fb4184b679091612e1b2375318714870af52f5df6e4b",
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "game_location": "Oakleaf Village",
+      "confirmed_topic": "Place Value",
+      "question_text": "Which number comes after 8?",
+      "choices": [
+        "7",
+        "9",
+        "10"
+      ],
+      "correct_answer": "9"
+    }
+  ],
+  "question_set_groups": [
+    {
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "topic": "Basic Addition",
+      "game_location": "Oakleaf Village",
+      "question_count": 4,
+      "question_fingerprints": [
+        "14ea10acf09377064c69d82f886ebcb25635d6e5f03441c656f0b442b228dbcb",
+        "67ef1c327bb38392e2dcd41aeebcb0d4b2300cb60d77d19769f3f71f3f982603",
+        "9b72820de80cd8cb7fc49b615031e9a2433123318d9a3dd8ccb2990b0e9a8b39",
+        "f2c037bc6216ed6d823be0302cb3d928a0564214218c89ee31d5f200b3b6901f"
+      ]
+    },
+    {
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "topic": "Place Value",
+      "game_location": "Oakleaf Village",
+      "question_count": 2,
+      "question_fingerprints": [
+        "2f056cc5a04d0f1aa8780ac3dbe00c5774e658eba808dee02a2c64878c6fc419",
+        "5a99e2f5c444ed6dda97fb4184b679091612e1b2375318714870af52f5df6e4b"
+      ]
+    },
+    {
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "topic": "Shapes",
+      "game_location": "Oakleaf Village",
+      "question_count": 1,
+      "question_fingerprints": [
+        "6da9153287e9bf2b7dfe09769f641074efef5a0de05174ecaa24b0d4b3016554"
+      ]
+    },
+    {
+      "grade": "Grade 1",
+      "canonical_difficulty": "Easy",
+      "topic": "Subtraction",
+      "game_location": "Oakleaf Village",
+      "question_count": 4,
+      "question_fingerprints": [
+        "2189382d4388664e8caebbcde0b4336c690f142f130ccfddd14a438e7193f738",
+        "515d07c8843e818598452afc8860cb24f3f19da3d3349bfa9e93f5a16ae6e2aa",
+        "ad0fadef4133a83cc96ec6e07c2d344032c045fc8faf1bd3ce79fc9ff2c39169",
+        "bbe7bf9d740d1090474dc4f1338bf089a82fc661cc1e3ee41250f793f96afb84"
+      ]
+    },
+    {
+      "grade": "Grade 1",
+      "canonical_difficulty": "Medium",
+      "topic": "Addition",
+      "game_location": "City of Knowledge",
+      "question_count": 2,
+      "question_fingerprints": [
+        "488ca84d7d2922bc322698c96828db0139ed845483262df73b7c6da02ba96be9",
+        "babc98d97c6c4c2cc2e5c6ae4eb435cae4a42a0a41a1f9c62b92742922162656"
+      ]
+    },
+    {
+      "grade": "Grade 1",
+      "canonical_difficulty": "Medium",
+      "topic": "Multiplication",
+      "game_location": "City of Knowledge",
+      "question_count": 1,
+      "question_fingerprints": [
+        "207d8ca37d3f424a53445f843346aecf9f3138df20a8fcd387c59e5920e6558f"
+      ]
+    },
+    {
+      "grade": "Grade 1",
+      "canonical_difficulty": "Medium",
+      "topic": "Word Problems",
+      "game_location": "City of Knowledge",
+      "question_count": 2,
+      "question_fingerprints": [
+        "546626963d8d6ef33d94d398294e45839edec4af38323ca6ddc827fed3dc2297",
+        "b7ad013852646f0c337df1dcd384f73bd7bf201dff4c9e5a0dae00c4f992014d"
+      ]
+    },
+    {
+      "grade": "Grade 2",
+      "canonical_difficulty": "Easy",
+      "topic": "Basic Addition/Subtraction",
+      "game_location": "Oakleaf Village",
+      "question_count": 3,
+      "question_fingerprints": [
+        "5669ad09bb01843ad296fcff0f48d5aa67c8ac71fd760f240eac3c6e87e061ac",
+        "bce5937dd7fa7cd7fb1cd0c4f676edf2fb36daa421769117677af2256801e069",
+        "c2ba0478379d8b7330dd31316e338f5136e2d98090ba29e66635b5fd081939d1"
+      ]
+    },
+    {
+      "grade": "Grade 2",
+      "canonical_difficulty": "Easy",
+      "topic": "Ordinal Numbers",
+      "game_location": "Oakleaf Village",
+      "question_count": 1,
+      "question_fingerprints": [
+        "116d63bd4550dfbb5638ffcf2612e8cd3717d77b3e2fee9c9e728c65002362ca"
+      ]
+    },
+    {
+      "grade": "Grade 2",
+      "canonical_difficulty": "Easy",
+      "topic": "Shapes",
+      "game_location": "Oakleaf Village",
+      "question_count": 1,
+      "question_fingerprints": [
+        "778f5034884a04dcad119a5ccc8c2f969ac4ebbcb82dcc4ff232b278b96bb821"
+      ]
+    },
+    {
+      "grade": "Grade 2",
+      "canonical_difficulty": "Hard",
+      "topic": "Division",
+      "game_location": "Pinehill Village",
+      "question_count": 1,
+      "question_fingerprints": [
+        "a9a52a0aa33f00d669d0ad5430bad9832aec385a1af3af9c6187b005bde0c098"
+      ]
+    },
+    {
+      "grade": "Grade 2",
+      "canonical_difficulty": "Hard",
+      "topic": "Fractions",
+      "game_location": "Pinehill Village",
+      "question_count": 1,
+      "question_fingerprints": [
+        "34834761441cfeeef56a25e92e63c374ffc064a20b7f405259eb3cb75f96676b"
+      ]
+    },
+    {
+      "grade": "Grade 2",
+      "canonical_difficulty": "Hard",
+      "topic": "Multiplication",
+      "game_location": "Pinehill Village",
+      "question_count": 1,
+      "question_fingerprints": [
+        "a549406c5b44802efe0a263653c7705c97d53b528405e32f2765e25c72298434"
+      ]
+    },
+    {
+      "grade": "Grade 2",
+      "canonical_difficulty": "Hard",
+      "topic": "Problem Solving",
+      "game_location": "Pinehill Village",
+      "question_count": 2,
+      "question_fingerprints": [
+        "00a596932e70187e7cf17ae8045985490af630e6017dd19eb053265091b11a54",
+        "f352dab9a81b693383e7695ce1549080ca5fe0552203a33ab95b65700c910875"
+      ]
+    },
+    {
+      "grade": "Grade 2",
+      "canonical_difficulty": "Medium",
+      "topic": "Division",
+      "game_location": "City of Knowledge",
+      "question_count": 1,
+      "question_fingerprints": [
+        "a56e94c9e4f21cf1cb4cbccdc400b63f8c39718fd8ee5cce0a0346708d5ee512"
+      ]
+    },
+    {
+      "grade": "Grade 2",
+      "canonical_difficulty": "Medium",
+      "topic": "Multiplication",
+      "game_location": "City of Knowledge",
+      "question_count": 2,
+      "question_fingerprints": [
+        "1e9f9cbf884a64960b5f8ac0f4639fcb596fd40237c85f311a7a3eb38ccf1593",
+        "8d1285a089e564da68f8fcc6e9c39c30eaf1cda626ed04e43fc39fb211874fbc"
+      ]
+    },
+    {
+      "grade": "Grade 2",
+      "canonical_difficulty": "Medium",
+      "topic": "Word Problems",
+      "game_location": "City of Knowledge",
+      "question_count": 1,
+      "question_fingerprints": [
+        "2e40bf734213612011cadbc5895c7f8e0a1e16716a5d8edffb7be4d19790a74a"
+      ]
+    },
+    {
+      "grade": "Grade 3",
+      "canonical_difficulty": "Easy",
+      "topic": "Addition of Money",
+      "game_location": "Oakleaf Village",
+      "question_count": 4,
+      "question_fingerprints": [
+        "23f7fb61ff8098b87a3158ea8c1a478af96669b85f94956d2657b4b6b1e66640",
+        "514fe08c2f910c157d27f2546e7cca9df2e43787f370e335a669f530eb18d047",
+        "cc7a41b7b7bec8cf5253e04c566e4804d5845ef9e4f65c4cfecd5de49b5cd07e",
+        "f4fd6cbf8b241f3e573f876cedb5dbeac5ba3a891c4a05c64e62f5a964ad4733"
+      ]
+    },
+    {
+      "grade": "Grade 3",
+      "canonical_difficulty": "Easy",
+      "topic": "Whole Numbers",
+      "game_location": "Oakleaf Village",
+      "question_count": 1,
+      "question_fingerprints": [
+        "22ac7ee53a60eeac20581a05d92a824aee99657edadd7518e7c74b8b75bba493"
+      ]
+    },
+    {
+      "grade": "Grade 3",
+      "canonical_difficulty": "Medium",
+      "topic": "Division",
+      "game_location": "City of Knowledge",
+      "question_count": 1,
+      "question_fingerprints": [
+        "691fde9e3780b14eeafb080188b5e2e4bd5ccbd1f5316352ef338111e9710948"
+      ]
+    },
+    {
+      "grade": "Grade 3",
+      "canonical_difficulty": "Medium",
+      "topic": "Fractions",
+      "game_location": "City of Knowledge",
+      "question_count": 2,
+      "question_fingerprints": [
+        "707ad4730bcdc8a3ed87814963cd919fbab08d5f340684f2cd2eac700e6ad030",
+        "ef9ecc5f2121454d6c5643f8869cee3dd3a2026a8b87b4025c486381a880b996"
+      ]
+    },
+    {
+      "grade": "Grade 3",
+      "canonical_difficulty": "Medium",
+      "topic": "Multiplication",
+      "game_location": "City of Knowledge",
+      "question_count": 2,
+      "question_fingerprints": [
+        "17846a58bd6b852ba2eeaf8b625bc4b4b68ac0c466b1d3e3aa39edea58e3876e",
+        "26b281c920d0dcd390e6ab9e6e2717b250916da39c3fa4ffda646997fddc1f8e"
+      ]
+    },
+    {
+      "grade": "Grade 6",
+      "canonical_difficulty": "Easy",
+      "topic": "Number Sense and Operations",
+      "game_location": "Oakleaf Village",
+      "question_count": 3,
+      "question_fingerprints": [
+        "dac66bd3f18997024da375fe4a7087af057f68863477e96ae430a9342239a1cc",
+        "f0a5947fd2d0563ec207784ed9b5bf8d9bd6ff4fe64e9b6e5acd04c7c97e893b",
+        "f42e92274432bb91ec706ade279efe1d30bd75eec5c5bd25c7afbd74e180aa9c"
+      ]
+    }
+  ]
+}

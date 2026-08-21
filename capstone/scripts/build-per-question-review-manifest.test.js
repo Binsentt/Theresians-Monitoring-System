@@ -12,6 +12,7 @@ test('local artifact generator reads a supplied snapshot and writes review artif
     const snapshotPath = path.join(root, 'snapshot.json');
     const manifestOutputPath = path.join(root, 'artifacts', 'manifest.json');
     const reportOutputPath = path.join(root, 'artifacts', 'review.md');
+    const reviewedImportOutputPath = path.join(root, 'artifacts', 'reviewed-import.json');
     fs.mkdirSync(path.join(questionsRoot, 'Grade1', 'Easy'), { recursive: true });
     fs.writeFileSync(path.join(questionsRoot, 'Grade1', 'Easy', 'explicit.json'), JSON.stringify({
       questions: [{
@@ -23,11 +24,12 @@ test('local artifact generator reads a supplied snapshot and writes review artif
     }));
     fs.writeFileSync(snapshotPath, JSON.stringify({ question_fingerprints: [] }));
 
-    const manifest = buildArtifacts({
+    const { manifest, reviewedImportManifest } = buildArtifacts({
       questionsRoot,
       snapshotPath,
       manifestOutputPath,
       reportOutputPath,
+      reviewedImportOutputPath,
       generatedAt: '2026-08-21T00:00:00.000Z',
     });
 
@@ -35,6 +37,8 @@ test('local artifact generator reads a supplied snapshot and writes review artif
     assert.equal(manifest.questions[0].status, 'CONFIRMED');
     assert.equal(manifest.questions[0].game_location, 'Oakleaf Village');
     assert.equal(JSON.parse(fs.readFileSync(manifestOutputPath, 'utf8')).questions.length, 1);
+    assert.equal(JSON.parse(fs.readFileSync(reviewedImportOutputPath, 'utf8')).question_count, 1);
+    assert.equal(reviewedImportManifest.topic_inference_performed_during_apply, false);
     assert.match(fs.readFileSync(reportOutputPath, 'utf8'), /Per-Question Client Bundle Review/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

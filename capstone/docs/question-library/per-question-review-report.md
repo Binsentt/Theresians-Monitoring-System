@@ -15,7 +15,7 @@
 
 | Confirmed | Needs Manual Confirmation | Already Represented | Duplicate | Malformed |
 | ---: | ---: | ---: | ---: | ---: |
-| 41 | 2 | 25 | 6 | 13 |
+| 43 | 0 | 25 | 6 | 13 |
 
 ## Grade × Difficulty coverage matrix
 
@@ -23,7 +23,7 @@ Cell legend: C = Confirmed, M = Needs Manual Confirmation, R = Already Represent
 
 | Grade | Easy — Oakleaf Village | Medium — City of Knowledge | Hard — Pinehill Village |
 | --- | --- | --- | --- |
-| Grade 1 | C 10 / M 1 / R 0 / D 6 / X 0 | C 4 / M 1 / R 0 / D 0 / X 0 | C 0 / M 0 / R 5 / D 0 / X 0 |
+| Grade 1 | C 11 / M 0 / R 0 / D 6 / X 0 | C 5 / M 0 / R 0 / D 0 / X 0 | C 0 / M 0 / R 5 / D 0 / X 0 |
 | Grade 2 | C 5 / M 0 / R 0 / D 0 / X 0 | C 4 / M 0 / R 0 / D 0 / X 1 | C 5 / M 0 / R 0 / D 0 / X 0 |
 | Grade 3 | C 5 / M 0 / R 0 / D 0 / X 0 | C 5 / M 0 / R 0 / D 0 / X 0 | C 0 / M 0 / R 5 / D 0 / X 0 |
 | Grade 4 | C 0 / M 0 / R 0 / D 0 / X 1 | C 0 / M 0 / R 5 / D 0 / X 0 | C 0 / M 0 / R 5 / D 0 / X 0 |
@@ -32,22 +32,19 @@ Cell legend: C = Confirmed, M = Needs Manual Confirmation, R = Already Represent
 
 ## Questions requiring manual topic decision
 
-| Source | # | Grade | Difficulty | Location | Question | Controlled topic options | Reason |
-| --- | ---: | --- | --- | --- | --- | --- | --- |
-| grade 1/Normal/average.docx | 4 | Grade 1 | Medium | City of Knowledge | How many days are there in a week? | Addition; Multiplication; Word Problems | Source topic "Addition, Multiplication, and Word Problems" is not one controlled topic for this Grade and Difficulty. |
-| grade_1_easy.json | 6 | Grade 1 | Easy | Oakleaf Village | Which number comes after 8? | Basic Addition; Subtraction; Shapes; Place Value | No explicit or uniquely determined controlled topic is available for this question. |
+None.
 
 ## Prospective groups from confirmed questions only
 
 | Grade | Difficulty | Location | Confirmed topic | Questions |
 | --- | --- | --- | --- | ---: |
 | Grade 1 | Easy | Oakleaf Village | Basic Addition | 4 |
-| Grade 1 | Easy | Oakleaf Village | Place Value | 1 |
+| Grade 1 | Easy | Oakleaf Village | Place Value | 2 |
 | Grade 1 | Easy | Oakleaf Village | Shapes | 1 |
 | Grade 1 | Easy | Oakleaf Village | Subtraction | 4 |
 | Grade 1 | Medium | City of Knowledge | Addition | 2 |
 | Grade 1 | Medium | City of Knowledge | Multiplication | 1 |
-| Grade 1 | Medium | City of Knowledge | Word Problems | 1 |
+| Grade 1 | Medium | City of Knowledge | Word Problems | 2 |
 | Grade 2 | Easy | Oakleaf Village | Basic Addition/Subtraction | 3 |
 | Grade 2 | Easy | Oakleaf Village | Ordinal Numbers | 1 |
 | Grade 2 | Easy | Oakleaf Village | Shapes | 1 |
@@ -164,6 +161,18 @@ Cell legend: C = Confirmed, M = Needs Manual Confirmation, R = Already Represent
 - Choices: 10 | 15 | 13 | 18
 - Correct answer: 10
 - Reason: Single-operation narrative not represented by the other Grade 1 Medium controlled topics.
+
+#### grade 1/Normal/average.docx — question 4
+
+- Stable fingerprint: `b7ad013852646f0c337df1dcd384f73bd7bf201dff4c9e5a0dae00c4f992014d`
+- Grade / difficulty / location: Grade 1 | Medium | City of Knowledge
+- Original difficulty: Normal
+- Proposed topic: Word Problems
+- Confirmed topic: Word Problems
+- Question: How many days are there in a week?
+- Choices: 7 | 9 | 8 | 10
+- Correct answer: 7
+- Reason: Explicit manual confirmation by the authorized reviewer.
 
 #### grade 1/Normal/average.docx — question 5
 
@@ -561,31 +570,21 @@ Cell legend: C = Confirmed, M = Needs Manual Confirmation, R = Already Represent
 - Correct answer: 3
 - Reason: Direct subtraction expression.
 
-### NEEDS MANUAL CONFIRMATION
-
-#### grade 1/Normal/average.docx — question 4
-
-- Stable fingerprint: `b7ad013852646f0c337df1dcd384f73bd7bf201dff4c9e5a0dae00c4f992014d`
-- Grade / difficulty / location: Grade 1 | Medium | City of Knowledge
-- Original difficulty: Normal
-- Proposed topic: None
-- Confirmed topic: None
-- Question: How many days are there in a week?
-- Choices: 7 | 9 | 8 | 10
-- Correct answer: 7
-- Reason: Source topic "Addition, Multiplication, and Word Problems" is not one controlled topic for this Grade and Difficulty.
-
 #### grade_1_easy.json — question 6
 
 - Stable fingerprint: `5a99e2f5c444ed6dda97fb4184b679091612e1b2375318714870af52f5df6e4b`
 - Grade / difficulty / location: Grade 1 | Easy | Oakleaf Village
 - Original difficulty: Easy
-- Proposed topic: None
-- Confirmed topic: None
+- Proposed topic: Place Value
+- Confirmed topic: Place Value
 - Question: Which number comes after 8?
 - Choices: 7 | 9 | 10
 - Correct answer: 9
-- Reason: No explicit or uniquely determined controlled topic is available for this question.
+- Reason: Explicit manual confirmation by the authorized reviewer.
+
+### NEEDS MANUAL CONFIRMATION
+
+None.
 
 ### ALREADY REPRESENTED
 

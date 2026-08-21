@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   buildPerQuestionReviewManifest,
   buildProspectiveImportGroups,
+  buildFinalReviewedImportManifest,
   buildCoverageMatrix,
   buildReviewReport,
   canonicalDifficultyAndLocation,
@@ -67,6 +68,14 @@ test('manifest keeps represented, duplicate, malformed, and unconfirmed question
   const fingerprint = stableQuestionFingerprint(validQuestion);
   const audit = {
     records: [
+      auditRecord({
+        path: 'Grade1/Easy/000-represented.json',
+        sourceTopicHeader: 'Basic Addition',
+      }),
+      auditRecord({
+        path: 'Grade1/Easy/000-represented.json',
+        sourceTopicHeader: 'Basic Addition',
+      }),
       auditRecord({
         path: 'Grade1/Easy/000-represented.json',
         sourceTopicHeader: 'Basic Addition',
@@ -178,6 +187,73 @@ test('a fingerprint-keyed deterministic review assignment is confirmed only when
   });
   assert.equal(invalidAssignment.questions[0].status, 'NEEDS MANUAL CONFIRMATION');
   assert.equal(invalidAssignment.questions[0].confirmed_topic, null);
+});
+
+test('explicit manual confirmations are controlled and the reviewed import artifact excludes every non-confirmed status', () => {
+  const manualQuestion = { ...validQuestion, question: 'How many days are there in a week?' };
+  const manualFingerprint = stableQuestionFingerprint(manualQuestion);
+  const audit = {
+    records: [
+      {
+        ...auditRecord({
+        path: 'Grade1/Normal/manual.json',
+        difficulty: 'Medium',
+        legacyDifficulty: 'Normal',
+        sourceTopicHeader: null,
+        questions: [manualQuestion],
+        sourceQuestions: [manualQuestion],
+        }),
+        topic_options: ['Addition', 'Multiplication', 'Word Problems'],
+      },
+      auditRecord({
+        path: 'Grade1/Easy/000-represented.json',
+        sourceTopicHeader: 'Basic Addition',
+      }),
+      auditRecord({
+        path: 'Grade1/Easy/duplicate.json',
+        sourceTopicHeader: 'Basic Addition',
+      }),
+      auditRecord({
+        path: 'Grade1/Easy/malformed.json',
+        questions: [],
+        sourceQuestions: [{ invalid: true, reason: 'Missing correct answer.' }],
+      }),
+    ],
+  };
+  const manifest = buildPerQuestionReviewManifest({
+    audit,
+    productionSnapshot: {
+      question_fingerprints: [{
+        question_fingerprint: stableQuestionFingerprint(validQuestion),
+        learning_file_id: 8,
+      }],
+    },
+    deterministicTopicAssignments: {},
+    manualTopicConfirmations: {
+      [manualFingerprint]: {
+        topic: 'Word Problems',
+        reason: 'Explicit manual confirmation by the authorized reviewer.',
+      },
+    },
+  });
+
+  const confirmed = manifest.questions.find((question) => question.stable_fingerprint === manualFingerprint);
+  assert.equal(confirmed.status, 'CONFIRMED');
+  assert.equal(confirmed.confirmed_topic, 'Word Problems');
+
+  const reviewed = buildFinalReviewedImportManifest(manifest);
+  assert.equal(reviewed.production_import_performed, false);
+  assert.equal(reviewed.topic_inference_performed_during_apply, false);
+  assert.equal(reviewed.question_count, 1);
+  assert.deepEqual(reviewed.questions.map((question) => question.stable_fingerprint), [manualFingerprint]);
+  assert.deepEqual(reviewed.question_set_groups, [{
+    grade: 'Grade 1',
+    canonical_difficulty: 'Medium',
+    topic: 'Word Problems',
+    game_location: 'City of Knowledge',
+    question_count: 1,
+    question_fingerprints: [manualFingerprint],
+  }]);
 });
 
 test('prospective import groups consume confirmed topics only and never infer topics during apply preparation', () => {

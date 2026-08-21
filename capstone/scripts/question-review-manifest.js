@@ -51,6 +51,19 @@ const DETERMINISTIC_TOPIC_ASSIGNMENTS = Object.freeze({
   '707ad4730bcdc8a3ed87814963cd919fbab08d5f340684f2cd2eac700e6ad030': { topic: 'Fractions', reason: 'Direct mixed-fraction question.' },
 });
 
+// Explicit reviewer decisions are separate from deterministic assignments.
+// They are fingerprint-keyed so a changed question must be reviewed again.
+const MANUAL_TOPIC_CONFIRMATIONS = Object.freeze({
+  'b7ad013852646f0c337df1dcd384f73bd7bf201dff4c9e5a0dae00c4f992014d': {
+    topic: 'Word Problems',
+    reason: 'Explicit manual confirmation by the authorized reviewer.',
+  },
+  '5a99e2f5c444ed6dda97fb4184b679091612e1b2375318714870af52f5df6e4b': {
+    topic: 'Place Value',
+    reason: 'Explicit manual confirmation by the authorized reviewer.',
+  },
+});
+
 const canonicalDifficultyAndLocation = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
   const canonical_difficulty = normalized === 'easy'
@@ -102,11 +115,25 @@ const normalizeSnapshot = (productionSnapshot = {}) => {
     }]));
 };
 
-const topicConfirmationFor = ({ question, record, canonicalDifficulty, deterministicAssignment = null }) => {
+const topicConfirmationFor = ({
+  question,
+  record,
+  canonicalDifficulty,
+  deterministicAssignment = null,
+  manualConfirmation = null,
+}) => {
   const allowedTopics = Array.isArray(record.topic_options) ? record.topic_options : [];
   const sourceTopic = String(question.topic || question.math_topic || '').trim();
   const headerTopic = String(record.source_topic_header || '').trim();
   const candidate = sourceTopic || headerTopic || null;
+
+  if (manualConfirmation?.topic && allowedTopics.includes(manualConfirmation.topic)) {
+    return {
+      proposed_topic: manualConfirmation.topic,
+      confirmed_topic: manualConfirmation.topic,
+      reason: manualConfirmation.reason || 'Explicit manual confirmation by the authorized reviewer.',
+    };
+  }
 
   if (deterministicAssignment?.topic && allowedTopics.includes(deterministicAssignment.topic)) {
     return {
@@ -163,6 +190,7 @@ const buildPerQuestionReviewManifest = ({
   productionSnapshot = {},
   generatedAt = null,
   deterministicTopicAssignments = DETERMINISTIC_TOPIC_ASSIGNMENTS,
+  manualTopicConfirmations = MANUAL_TOPIC_CONFIRMATIONS,
 } = {}) => {
   const representedByFingerprint = normalizeSnapshot(productionSnapshot);
   const canonicalBundleRows = new Map();
@@ -236,6 +264,7 @@ const buildPerQuestionReviewManifest = ({
       record,
       canonicalDifficulty: canonical_difficulty,
       deterministicAssignment: deterministicTopicAssignments?.[stable_fingerprint] || null,
+      manualConfirmation: manualTopicConfirmations?.[stable_fingerprint] || null,
     });
     if (topic.confirmed_topic) {
       return {
@@ -309,6 +338,49 @@ const buildProspectiveImportGroups = (manifest) => {
     .map((group) => ({ ...group, question_fingerprints: group.question_fingerprints.sort() }))
     .sort((left, right) => [left.grade, left.canonical_difficulty, left.topic].join('::')
       .localeCompare([right.grade, right.canonical_difficulty, right.topic].join('::')));
+};
+
+const buildFinalReviewedImportManifest = (manifest) => {
+  const questions = (manifest?.questions || [])
+    .filter((question) => question.status === 'CONFIRMED'
+      && question.confirmed_topic
+      && Array.isArray(question.controlled_topic_options)
+      && question.controlled_topic_options.includes(question.confirmed_topic))
+    .map((question) => ({
+      source_file: question.source_file,
+      source_index: question.source_index,
+      stable_fingerprint: question.stable_fingerprint,
+      grade: question.grade,
+      canonical_difficulty: question.canonical_difficulty,
+      game_location: question.game_location,
+      confirmed_topic: question.confirmed_topic,
+      question_text: question.question_text,
+      choices: question.choices,
+      correct_answer: question.correct_answer,
+    }));
+  const distribution = (key) => questions.reduce((result, question) => {
+    const value = question[key];
+    if (value) result[value] = (result[value] || 0) + 1;
+    return result;
+  }, {});
+  const question_set_groups = buildProspectiveImportGroups(manifest);
+  return {
+    schema_version: 1,
+    mode: 'reviewed-import-manifest',
+    production_import_performed: false,
+    topic_inference_performed_during_apply: false,
+    source_review_manifest_schema_version: manifest?.schema_version || null,
+    source_bundle: manifest?.source_bundle || null,
+    production_snapshot: manifest?.production_snapshot || null,
+    question_count: questions.length,
+    question_set_count: question_set_groups.length,
+    grade_distribution: distribution('grade'),
+    difficulty_distribution: distribution('canonical_difficulty'),
+    location_distribution: distribution('game_location'),
+    topic_distribution: distribution('confirmed_topic'),
+    questions,
+    question_set_groups,
+  };
 };
 
 const REVIEW_STATUSES = Object.freeze([
@@ -461,8 +533,10 @@ const buildReviewReport = (manifest) => {
 module.exports = {
   GAME_LOCATION_BY_DIFFICULTY,
   DETERMINISTIC_TOPIC_ASSIGNMENTS,
+  MANUAL_TOPIC_CONFIRMATIONS,
   REVIEW_STATUSES,
   buildCoverageMatrix,
+  buildFinalReviewedImportManifest,
   buildPerQuestionReviewManifest,
   buildProspectiveImportGroups,
   buildReviewReport,

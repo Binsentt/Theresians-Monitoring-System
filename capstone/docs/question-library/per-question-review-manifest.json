@@ -2,7 +2,7 @@
   "schema_version": 1,
   "mode": "local-review-only",
   "production_import_performed": false,
-  "generated_at": "2026-08-21T04:25:19.457Z",
+  "generated_at": "2026-08-21T04:36:01.014Z",
   "source_bundle": "capstone-theresians-quest/Questions",
   "production_snapshot": {
     "source": "Read-only PostgreSQL fingerprint snapshot",
@@ -435,17 +435,17 @@
         "10"
       ],
       "correct_answer": "7",
-      "proposed_topic": null,
-      "confirmed_topic": null,
+      "proposed_topic": "Word Problems",
+      "confirmed_topic": "Word Problems",
       "controlled_topic_options": [
         "Addition",
         "Multiplication",
         "Word Problems"
       ],
-      "status": "NEEDS MANUAL CONFIRMATION",
+      "status": "CONFIRMED",
       "represented": null,
       "duplicate_of": null,
-      "reason": "Source topic \"Addition, Multiplication, and Word Problems\" is not one controlled topic for this Grade and Difficulty."
+      "reason": "Explicit manual confirmation by the authorized reviewer."
     },
     {
       "source_file": "grade 1/Normal/average.docx",
@@ -2349,18 +2349,18 @@
         "10"
       ],
       "correct_answer": "9",
-      "proposed_topic": null,
-      "confirmed_topic": null,
+      "proposed_topic": "Place Value",
+      "confirmed_topic": "Place Value",
       "controlled_topic_options": [
         "Basic Addition",
         "Subtraction",
         "Shapes",
         "Place Value"
       ],
-      "status": "NEEDS MANUAL CONFIRMATION",
+      "status": "CONFIRMED",
       "represented": null,
       "duplicate_of": null,
-      "reason": "No explicit or uniquely determined controlled topic is available for this question."
+      "reason": "Explicit manual confirmation by the authorized reviewer."
     },
     {
       "source_file": "Grade1/easy.json",
