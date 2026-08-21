@@ -17,6 +17,9 @@ const {
 const {
   applyClientProvidedImportPlan,
   buildClientProvidedImportPlan,
+  buildReviewedManifestImportPlan,
+  importDatabaseConnectionString,
+  inspectClientProvidedImportPlan,
   parseCliArguments,
 } = require('./import-godot-question-bundle');
 
@@ -31,6 +34,29 @@ test('dry-run question audit canonicalizes legacy difficulty folders without cha
   );
   assert.equal(metadata.grade, 'Grade 3');
   assert.equal(metadata.difficulty, 'Medium');
+});
+
+test('import runner prefers an explicitly scoped or public Railway database URL without exposing it', () => {
+  const original = {
+    GODOT_QUESTION_IMPORT_DATABASE_URL: process.env.GODOT_QUESTION_IMPORT_DATABASE_URL,
+    DATABASE_PUBLIC_URL: process.env.DATABASE_PUBLIC_URL,
+    DATABASE_URL: process.env.DATABASE_URL,
+  };
+  try {
+    process.env.GODOT_QUESTION_IMPORT_DATABASE_URL = 'scoped-import-url';
+    process.env.DATABASE_PUBLIC_URL = 'public-url';
+    process.env.DATABASE_URL = 'private-url';
+    assert.equal(importDatabaseConnectionString(), 'scoped-import-url');
+    delete process.env.GODOT_QUESTION_IMPORT_DATABASE_URL;
+    assert.equal(importDatabaseConnectionString(), 'public-url');
+    delete process.env.DATABASE_PUBLIC_URL;
+    assert.equal(importDatabaseConnectionString(), 'private-url');
+  } finally {
+    Object.entries(original).forEach(([key, value]) => {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    });
+  }
 });
 
 test('manifest infers filename metadata but keeps a single mapped topic confirmation-gated', () => withFixtureDirectory((root) => {
@@ -119,7 +145,9 @@ test('import CLI accepts only an explicit local topic-overrides file option', ()
       actorId: null,
       apply: false,
       confirmed: false,
+      databaseCheck: false,
       topicOverridesPath: 'C:/review/topics.json',
+      reviewedManifestPath: null,
     }
   );
 });
@@ -367,6 +395,133 @@ test('approved importer is transactional and skips an already represented finger
     imported_questions: 0,
   });
   assert.equal(duplicateCalls.some((call) => /INSERT INTO public\.learning_files/.test(call.sql)), false);
+});
+
+test('reviewed import manifests preserve explicit metadata and database dry runs stay read-only', async () => {
+  const reviewedManifest = {
+    schema_version: 1,
+    mode: 'reviewed-import-manifest',
+    production_import_performed: false,
+    topic_inference_performed_during_apply: false,
+    question_count: 3,
+    question_set_count: 2,
+    questions: [
+      {
+        source_file: 'Grade1/Easy/source-a.json',
+        source_index: 1,
+        stable_fingerprint: 'a'.repeat(64),
+        grade: 'Grade 1',
+        canonical_difficulty: 'Easy',
+        game_location: 'Oakleaf Village',
+        confirmed_topic: 'Addition',
+        question_text: '1 + 1 = ?',
+        choices: ['1', '2'],
+        correct_answer: '2',
+      },
+      {
+        source_file: 'Grade1/Easy/source-b.json',
+        source_index: 2,
+        stable_fingerprint: 'b'.repeat(64),
+        grade: 'Grade 1',
+        canonical_difficulty: 'Easy',
+        game_location: 'Oakleaf Village',
+        confirmed_topic: 'Addition',
+        question_text: '2 + 2 = ?',
+        choices: ['3', '4'],
+        correct_answer: '4',
+      },
+      {
+        source_file: 'Grade2/Hard/source-c.json',
+        source_index: 3,
+        stable_fingerprint: 'c'.repeat(64),
+        grade: 'Grade 2',
+        canonical_difficulty: 'Hard',
+        game_location: 'Pinehill Village',
+        confirmed_topic: 'Division',
+        question_text: '6 / 2 = ?',
+        choices: ['2', '3'],
+        correct_answer: '3',
+      },
+    ],
+  };
+
+  const plan = buildReviewedManifestImportPlan(reviewedManifest, { actorId: 17 });
+  assert.equal(plan.mode, 'reviewed-manifest-import-only');
+  assert.equal(plan.import_actor_id, 17);
+  assert.equal(plan.operations.length, 2);
+  assert.deepEqual(plan.operations.map((operation) => ({
+    grade: operation.learning_file.grade_level,
+    difficulty: operation.learning_file.difficulty,
+    topic: operation.learning_file.math_topic,
+    location: operation.learning_file.game_location,
+    question_count: operation.questions.length,
+    published: operation.learning_file.published,
+    publish_status: operation.learning_file.publish_status,
+  })), [
+    {
+      grade: 'Grade 1',
+      difficulty: 'Easy',
+      topic: 'Addition',
+      location: 'Oakleaf Village',
+      question_count: 2,
+      published: false,
+      publish_status: 'staged',
+    },
+    {
+      grade: 'Grade 2',
+      difficulty: 'Hard',
+      topic: 'Division',
+      location: 'Pinehill Village',
+      question_count: 1,
+      published: false,
+      publish_status: 'staged',
+    },
+  ]);
+  assert.equal(plan.operations[0].questions[0].correct_answer, '2');
+  assert.equal(plan.operations[0].questions[0].math_topic, 'Addition');
+  assert.ok(Buffer.isBuffer(plan.operations[0].source_file.bytes));
+  assert.deepEqual(parseCliArguments([
+    '--reviewed-manifest=docs/question-library/final-reviewed-import-manifest.json',
+    '--database-check',
+  ]), {
+    rootPath: undefined,
+    actorId: null,
+    apply: false,
+    confirmed: false,
+    databaseCheck: true,
+    topicOverridesPath: null,
+    reviewedManifestPath: 'docs/question-library/final-reviewed-import-manifest.json',
+  });
+
+  assert.throws(() => buildReviewedManifestImportPlan({
+    ...reviewedManifest,
+    questions: [{ ...reviewedManifest.questions[0], game_location: 'City of Knowledge' }],
+    question_count: 1,
+    question_set_count: 1,
+  }), /does not match the authoritative location/);
+
+  const calls = [];
+  const readOnlyClient = {
+    query: async (sql) => {
+      calls.push(sql);
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  const dryRun = await inspectClientProvidedImportPlan(plan, {
+    connect: async () => readOnlyClient,
+  });
+  assert.deepEqual(dryRun, {
+    proposed_sets: 2,
+    proposed_questions: 3,
+    eligible_sets: 2,
+    eligible_questions: 3,
+    skipped_existing_sets: 0,
+    skipped_duplicate_sets: 0,
+  });
+  assert.ok(calls.includes('BEGIN READ ONLY'));
+  assert.ok(calls.includes('COMMIT'));
+  assert.equal(calls.some((sql) => /INSERT|UPDATE|DELETE/i.test(sql)), false);
 });
 
 test('import application requires an active Lesson Manager role and a resolved actor', async () => {
