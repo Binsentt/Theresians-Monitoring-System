@@ -1,9 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const Module = require('node:module');
+
+const GAME_RESULT_SESSION_ID = 700;
+const GAME_RESULT_SESSION_CREDENTIAL = 'e'.repeat(64);
 
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
+let useDefaultGameResultLease = true;
 const authenticatedAccounts = {
   1: { id: 1, role: 'admin', session_version: 0, is_archived: false },
   16: { id: 16, role: 'teacher', session_version: 0, is_archived: false },
@@ -33,6 +38,18 @@ const runQuery = async (sql, params = []) => {
   }
   if (compacted.includes('from public.accounts') && compacted.includes('where parent_id = $1') && compacted.includes('lower(role) in')) {
     return { rows: [{ id: 19, parent_id: params[0], name: 'Parent User' }] };
+  }
+  if (useDefaultGameResultLease && compacted.includes('from public.playtime_sessions') && compacted.includes('expires_at > now()')) {
+    return {
+      rows: [{
+        id: GAME_RESULT_SESSION_ID,
+        student_id: params[1],
+        parent_id: params[2],
+        status: 'Playing',
+        expires_at: '2099-01-01T00:00:00.000Z',
+        session_credential_hash: crypto.createHash('sha256').update(GAME_RESULT_SESSION_CREDENTIAL).digest('hex'),
+      }],
+    };
   }
   return result;
 };
@@ -104,8 +121,17 @@ const close = (server) => new Promise((resolve, reject) => {
 });
 
 const requestJson = async (baseUrl, path, options = {}) => {
+  let requestBody = options.body;
+  if (path === '/api/game/result' && options.withGameLease !== false && typeof requestBody === 'string') {
+    requestBody = JSON.stringify({
+      ...JSON.parse(requestBody),
+      playtime_session_id: GAME_RESULT_SESSION_ID,
+      playtime_session_credential: GAME_RESULT_SESSION_CREDENTIAL,
+    });
+  }
   const response = await fetch(`${baseUrl}${path}`, {
     ...options,
+    body: requestBody,
     headers: {
       'Content-Type': 'application/json',
       ...(options.headers || {}),
@@ -136,6 +162,7 @@ test('parent game results routes and access middleware', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
+    useDefaultGameResultLease = true;
     setQueryHandler(async () => emptyResult);
     await close(server);
   });
@@ -175,7 +202,8 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(insertedValues[2], 44);
     assert.equal(insertedValues[8], 80);
     assert.equal(insertedValues[10], null);
-    assert.equal(insertedValues[11], false);
+    assert.equal(insertedValues[11], GAME_RESULT_SESSION_ID);
+    assert.equal(insertedValues[12], false);
   });
 
   await t.test('stores an unlinked game result session when the child name is not resolved', async () => {
@@ -211,7 +239,8 @@ test('parent game results routes and access middleware', async (t) => {
     assert.deepEqual(response.body, { success: true, resolved: false, student_id: null });
     assert.equal(insertedValues[2], null);
     assert.equal(insertedValues[10], null);
-    assert.equal(insertedValues[11], true);
+    assert.equal(insertedValues[11], GAME_RESULT_SESSION_ID);
+    assert.equal(insertedValues[12], true);
   });
 
   await t.test('stores a game result with a submitted linked student_id from Godot', async () => {
@@ -253,7 +282,8 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(insertedValues[1], 'Ava Santos');
     assert.equal(insertedValues[2], 44);
     assert.equal(insertedValues[10], null);
-    assert.equal(insertedValues[11], false);
+    assert.equal(insertedValues[11], GAME_RESULT_SESSION_ID);
+    assert.equal(insertedValues[12], false);
   });
 
   await t.test('resolves a six-digit game Student ID before persisting a question result', async () => {
@@ -340,7 +370,8 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(response.status, 201);
     assert.equal(questionSetChecked, true);
     assert.equal(insertedValues[10], 77);
-    assert.equal(insertedValues[11], false);
+    assert.equal(insertedValues[11], GAME_RESULT_SESSION_ID);
+    assert.equal(insertedValues[12], false);
   });
 
   await t.test('rejects a question set that does not match the submitted result scope', async () => {
@@ -1044,6 +1075,57 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(parentScopeParams[0], 19);
     assert.match(parentScopeSql, /tsr\.teacher_id = \$1/);
   });
+});
+
+test('game result endpoint rejects missing, expired, and forged playtime leases', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    useDefaultGameResultLease = true;
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  const basePayload = {
+    parent_id: '123456',
+    student_id: '001234',
+    student_name: 'Ava Santos',
+    grade_level: 'Grade 1',
+    difficulty: 'Hard',
+    math_topic: 'Problem Solving (Addition and Subtraction)',
+    score: 1,
+    total_items: 1,
+  };
+  const missingLease = await requestJson(baseUrl, '/api/game/result', {
+    method: 'POST',
+    withGameLease: false,
+    body: JSON.stringify(basePayload),
+  });
+  assert.equal(missingLease.status, 400);
+
+  useDefaultGameResultLease = false;
+  setQueryHandler(async (sql) => {
+    if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+      return resultRows([{ id: 19, parent_id: '123456' }]);
+    }
+    if (sql.includes('from public.accounts s') && sql.includes('teacher_student_relationships r')) {
+      return resultRows([{ id: 44, name: 'Ava Santos' }]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('expires_at > now()')) {
+      return emptyResult;
+    }
+    return emptyResult;
+  });
+  const expiredLease = await requestJson(baseUrl, '/api/game/result', {
+    method: 'POST',
+    withGameLease: false,
+    body: JSON.stringify({
+      ...basePayload,
+      playtime_session_id: GAME_RESULT_SESSION_ID,
+      playtime_session_credential: GAME_RESULT_SESSION_CREDENTIAL,
+    }),
+  });
+  assert.equal(expiredLease.status, 403);
 });
 
 test('student monitoring keeps the external six-digit game Student ID beside the internal route key', async (t) => {

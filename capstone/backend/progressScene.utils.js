@@ -10,6 +10,8 @@ const VALID_PLAYTIME_STATUS_LABELS = {
   online: 'Online',
   offline: 'Offline',
   completed: 'Completed',
+  timedout: 'Timed Out',
+  interrupted: 'Interrupted',
   inprogress: 'In Progress',
 };
 

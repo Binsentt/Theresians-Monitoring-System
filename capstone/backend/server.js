@@ -4,6 +4,7 @@ const path = require('path');
 const dns = require('dns');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const fs = require('fs');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
@@ -268,9 +269,11 @@ const ensureSchema = async () => {
       is_unlinked BOOLEAN NOT NULL DEFAULT true
     );`);
     await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS question_set_id INTEGER');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS playtime_session_id INTEGER');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_parent_id ON public.game_results(parent_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_resolved_student_id ON public.game_results(resolved_student_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_question_set_id ON public.game_results(question_set_id)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_playtime_session_id ON public.game_results(playtime_session_id)');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.student_ai_insights (
       id SERIAL PRIMARY KEY,
       student_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
@@ -337,9 +340,15 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS parent_id CHARACTER VARYING(20)');
     await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS section CHARACTER VARYING(50)');
     await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS total_playtime_minutes INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS total_playtime_seconds INTEGER DEFAULT 0');
+    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS server_started_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS session_credential_hash VARCHAR(64)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_student_date ON public.playtime_sessions(student_id, date_played)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_parent_id ON public.playtime_sessions(parent_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_status ON public.playtime_sessions(status)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_expiry ON public.playtime_sessions(status, expires_at)');
 
     await pool.query(`CREATE TABLE IF NOT EXISTS public.announcements (
       id SERIAL PRIMARY KEY,
@@ -651,6 +660,52 @@ const isWebsiteManagedAccountRole = (role) => (
 const accountHasTeacherAccess = (role) => ['teacher', 'parent_teacher'].includes(normalizeAccountRole(role));
 const accountHasParentAccess = (role) => ['parent', 'parent_teacher'].includes(normalizeAccountRole(role));
 const PLAYTIME_DAILY_LIMIT_MINUTES = 60;
+const PLAYTIME_DAILY_LIMIT_SECONDS = PLAYTIME_DAILY_LIMIT_MINUTES * 60;
+const PLAYTIME_SESSION_CREDENTIAL_BYTES = 32;
+
+const createPlaytimeSessionCredential = () => crypto
+  .randomBytes(PLAYTIME_SESSION_CREDENTIAL_BYTES)
+  .toString('hex');
+
+const hashPlaytimeSessionCredential = (credential) => crypto
+  .createHash('sha256')
+  .update(String(credential || ''))
+  .digest('hex');
+
+const hasMatchingPlaytimeSessionCredential = (providedCredential, expectedHash) => {
+  if (!providedCredential || !expectedHash) return false;
+  const providedHash = Buffer.from(hashPlaytimeSessionCredential(providedCredential), 'hex');
+  const storedHash = Buffer.from(String(expectedHash), 'hex');
+  return providedHash.length === storedHash.length && crypto.timingSafeEqual(providedHash, storedHash);
+};
+
+const toPlaytimeResponse = ({
+  session,
+  totalPlaytimeSeconds,
+  sessionCredential,
+  remainingSeconds: remainingSecondsOverride,
+  message,
+}) => {
+  const boundedTotalSeconds = Math.max(0, Math.min(PLAYTIME_DAILY_LIMIT_SECONDS, Number(totalPlaytimeSeconds) || 0));
+  const dailyRemainingSeconds = Math.max(0, PLAYTIME_DAILY_LIMIT_SECONDS - boundedTotalSeconds);
+  const remainingSeconds = Number.isFinite(Number(remainingSecondsOverride))
+    ? Math.max(0, Math.min(dailyRemainingSeconds, Number(remainingSecondsOverride)))
+    : dailyRemainingSeconds;
+  return {
+    success: true,
+    session_id: session?.id,
+    session,
+    total_playtime_today: Math.floor(boundedTotalSeconds / 60),
+    total_playtime_seconds: boundedTotalSeconds,
+    remaining_minutes: Math.ceil(remainingSeconds / 60),
+    remaining_seconds: remainingSeconds,
+    daily_limit_minutes: PLAYTIME_DAILY_LIMIT_MINUTES,
+    can_play: remainingSeconds > 0,
+    expires_at: session?.expires_at || null,
+    ...(sessionCredential ? { session_credential: sessionCredential } : {}),
+    message,
+  };
+};
 
 const normalizePlaytimeStatus = (status, fallback = 'Playing') => {
   return normalizeMonitoringStatus(status, fallback);
@@ -4490,6 +4545,8 @@ app.post('/api/game/result', async (req, res) => {
   const math_topic = req.body?.math_topic || topic;
   const total_items = req.body?.total_items ?? req.body?.total_questions;
   const played_at = req.body?.played_at || req.body?.timestamp;
+  const playtimeSessionId = resolvePositiveInteger(req.body?.playtime_session_id);
+  const playtimeSessionCredential = String(req.body?.playtime_session_credential || '').trim();
   // A game question carries its own canonical difficulty.  Keep that value for
   // analytics, and only infer from the scene for older clients that do not
   // report a question difficulty yet.
@@ -4515,6 +4572,9 @@ app.post('/api/game/result', async (req, res) => {
   }
   if (scoreValue === null || totalItemsValue === null || totalItemsValue <= 0 || percentage === null) {
     return res.status(400).json({ error: 'score and total_items must be valid quiz totals.' });
+  }
+  if (Number.isNaN(playtimeSessionId) || !playtimeSessionId || !playtimeSessionCredential) {
+    return res.status(400).json({ error: 'An active playtime session is required to save a game result.' });
   }
 
   try {
@@ -4587,6 +4647,25 @@ app.post('/api/game/result', async (req, res) => {
       resultStudentName = studentResult.rows[0]?.name || studentName;
     }
 
+    const playtimeSessionResult = await pool.query(
+      `SELECT id, student_id, parent_id, status, expires_at, session_credential_hash
+       FROM public.playtime_sessions
+       WHERE id = $1
+         AND student_id = $2
+         AND parent_id = $3
+         AND status = 'Playing'
+         AND expires_at > NOW()
+       LIMIT 1`,
+      [playtimeSessionId, resolvedStudentId, parentCode]
+    );
+    const playtimeSession = playtimeSessionResult.rows[0];
+    if (!playtimeSession) {
+      return res.status(403).json({ error: 'The active playtime session has expired or is invalid.' });
+    }
+    if (!hasMatchingPlaytimeSessionCredential(playtimeSessionCredential, playtimeSession.session_credential_hash)) {
+      return res.status(403).json({ error: 'The active playtime session credential is invalid.' });
+    }
+
     const questionSetResolution = await resolveGameResultQuestionSet({
       rawQuestionSetId: req.body?.question_set_id,
       gradeLevel: grade_level,
@@ -4600,9 +4679,9 @@ app.post('/api/game/result', async (req, res) => {
     await pool.query(
       `INSERT INTO public.game_results (
          parent_id, student_name, resolved_student_id, grade_level, difficulty,
-          math_topic, score, total_items, percentage, played_at, question_set_id, is_unlinked
+          math_topic, score, total_items, percentage, played_at, question_set_id, playtime_session_id, is_unlinked
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), $11, $12
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), $11, $12, $13
         )`,
       [
         parentCode,
@@ -4616,6 +4695,7 @@ app.post('/api/game/result', async (req, res) => {
         percentage,
         played_at || null,
         questionSetResolution.questionSetId,
+        playtimeSessionId,
         !resolvedStudentId,
       ]
     );
@@ -5234,20 +5314,50 @@ app.post('/api/activity-logs', async (req, res) => {
   }
 });
 
-const getDailyPlaytimeTotal = async (studentId) => {
+const getDailyPlaytimeTotals = async (studentId) => {
   const result = await pool.query(
     `SELECT COALESCE(SUM(
        CASE
-         WHEN status = 'Playing' AND end_time IS NULL THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - start_time)) / 60))::INTEGER
-         ELSE COALESCE(total_playtime_minutes, 0)
+         WHEN status = 'Playing' AND end_time IS NULL THEN GREATEST(
+           0,
+           FLOOR(EXTRACT(EPOCH FROM (
+             LEAST(NOW(), COALESCE(expires_at, NOW()))
+             - COALESCE(server_started_at, start_time)
+           )))::INTEGER
+         )
+         ELSE COALESCE(total_playtime_seconds, total_playtime_minutes * 60, 0)
        END
-     ), 0)::INTEGER AS total_playtime_today
+     ), 0)::INTEGER AS total_playtime_seconds,
+     FLOOR(COALESCE(SUM(
+       CASE
+         WHEN status = 'Playing' AND end_time IS NULL THEN GREATEST(
+           0,
+           FLOOR(EXTRACT(EPOCH FROM (
+             LEAST(NOW(), COALESCE(expires_at, NOW()))
+             - COALESCE(server_started_at, start_time)
+           )))::INTEGER
+         )
+         ELSE COALESCE(total_playtime_seconds, total_playtime_minutes * 60, 0)
+       END
+     ), 0) / 60)::INTEGER AS total_playtime_today
      FROM public.playtime_sessions
      WHERE student_id = $1
        AND date_played = CURRENT_DATE`,
     [studentId]
   );
-  return Number(result.rows[0]?.total_playtime_today || 0);
+  const row = result.rows[0] || {};
+  const totalPlaytimeSeconds = Number.isFinite(Number(row.total_playtime_seconds))
+    ? Number(row.total_playtime_seconds)
+    : Math.max(0, Number(row.total_playtime_today || 0) * 60);
+  return {
+    totalPlaytimeSeconds: Math.max(0, totalPlaytimeSeconds),
+    totalPlaytimeMinutes: Math.max(0, Number(row.total_playtime_today || Math.floor(totalPlaytimeSeconds / 60))),
+  };
+};
+
+const getDailyPlaytimeTotal = async (studentId) => {
+  const { totalPlaytimeMinutes } = await getDailyPlaytimeTotals(studentId);
+  return totalPlaytimeMinutes;
 };
 
 const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
@@ -5516,76 +5626,94 @@ app.post('/api/playtime/start', async (req, res) => {
       }
     }
 
-    // Existing student: proceed with normal playtime logic
-
-    const totalToday = await getDailyPlaytimeTotal(studentId);
-    const remainingMinutes = Math.max(0, PLAYTIME_DAILY_LIMIT_MINUTES - totalToday);
-
+    // A client never controls when a playtime session starts. An interrupted
+    // lease is closed at server time before a new lease is issued, because the
+    // plaintext lease credential is intentionally never recoverable from the
+    // database.
+    let { totalPlaytimeSeconds } = await getDailyPlaytimeTotals(studentId);
     const activeSessionResult = await pool.query(
-      `SELECT *
+      `SELECT *,
+              GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+                COALESCE(expires_at, NOW()) - NOW()
+              )))::INTEGER AS remaining_seconds
        FROM public.playtime_sessions
        WHERE student_id = $1
          AND status = 'Playing'
-       ORDER BY start_time DESC NULLS LAST, id DESC
+       ORDER BY COALESCE(server_started_at, start_time) DESC NULLS LAST, id DESC
        LIMIT 1`,
       [studentId]
     );
 
     if (activeSessionResult.rows.length > 0) {
-      return res.status(200).json({
-        success: true,
-        session_id: activeSessionResult.rows[0].id,
-        session: activeSessionResult.rows[0],
-        total_playtime_today: totalToday,
-        remaining_minutes: remainingMinutes,
-        daily_limit_minutes: PLAYTIME_DAILY_LIMIT_MINUTES,
-        can_play: true,
-        message: 'Existing playtime session resumed.',
-      });
+      const activeSession = activeSessionResult.rows[0];
+      await pool.query(
+        `UPDATE public.playtime_sessions
+         SET end_time = LEAST(NOW(), COALESCE(expires_at, NOW())),
+             total_playtime_seconds = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+               LEAST(NOW(), COALESCE(expires_at, NOW())) - COALESCE(server_started_at, start_time)
+             )))::INTEGER),
+             total_playtime_minutes = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+               LEAST(NOW(), COALESCE(expires_at, NOW())) - COALESCE(server_started_at, start_time)
+             )) / 60)::INTEGER),
+             status = CASE WHEN COALESCE(expires_at, NOW()) <= NOW() THEN 'Timed Out' ELSE 'Interrupted' END,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [activeSession.id]
+      );
+      ({ totalPlaytimeSeconds } = await getDailyPlaytimeTotals(studentId));
     }
 
-    if (totalToday >= PLAYTIME_DAILY_LIMIT_MINUTES) {
+    const remainingSeconds = Math.max(0, PLAYTIME_DAILY_LIMIT_SECONDS - totalPlaytimeSeconds);
+    if (remainingSeconds <= 0) {
       return res.status(403).json({
         error: 'Daily playtime limit reached.',
         message: 'Daily playtime limit reached.',
-        total_playtime_today: totalToday,
+        total_playtime_today: Math.floor(totalPlaytimeSeconds / 60),
+        total_playtime_seconds: totalPlaytimeSeconds,
         remaining_minutes: 0,
+        remaining_seconds: 0,
         can_play: false,
         daily_limit_minutes: PLAYTIME_DAILY_LIMIT_MINUTES,
       });
     }
 
+    const sessionCredential = createPlaytimeSessionCredential();
     const result = await pool.query(
       `INSERT INTO public.playtime_sessions (
         student_id, parent_id, student_name, grade_level, section,
-        date_played, start_time, status, total_playtime_minutes, created_at, updated_at
+        date_played, start_time, server_started_at, expires_at,
+        status, total_playtime_minutes, total_playtime_seconds,
+        session_credential_hash, last_heartbeat_at, created_at, updated_at
       ) VALUES (
         $1, $2, $3, $4, $5,
-        COALESCE($6::timestamptz, NOW())::date,
-        COALESCE($6::timestamptz, NOW()),
-        $7, 0, NOW(), NOW()
-      ) RETURNING *`,
+        CURRENT_DATE, NOW(), NOW(),
+        LEAST(
+          NOW() + ($6::INTEGER * INTERVAL '1 second'),
+          date_trunc('day', NOW()) + INTERVAL '1 day'
+        ),
+        'Playing', 0, 0, $7, NOW(), NOW(), NOW()
+      )
+      RETURNING *,
+        GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (expires_at - NOW())))::INTEGER) AS remaining_seconds`,
       [
         studentId,
         parentCode,
         studentName,
         String(req.body.grade_level || req.body.grade || '').trim() || null,
         String(req.body.section || '').trim() || null,
-        req.body.start_time || req.body.timestamp || null,
-        'Playing',
+        remainingSeconds,
+        hashPlaytimeSessionCredential(sessionCredential),
       ]
     );
 
-    res.status(201).json({
-      success: true,
-      session_id: result.rows[0]?.id,
-      session: result.rows[0],
-      total_playtime_today: totalToday,
-      remaining_minutes: remainingMinutes,
-      daily_limit_minutes: PLAYTIME_DAILY_LIMIT_MINUTES,
-      can_play: true,
+    const session = result.rows[0];
+    return res.status(201).json(toPlaytimeResponse({
+      session,
+      totalPlaytimeSeconds,
+      sessionCredential,
+      remainingSeconds: session?.remaining_seconds,
       message: 'Playtime session started.',
-    });
+    }));
   } catch (err) {
     console.error('Start playtime session failed:', err.message);
     res.status(500).json({ error: 'Failed to start playtime session' });
@@ -5595,33 +5723,43 @@ app.post('/api/playtime/start', async (req, res) => {
 app.post('/api/playtime/end', async (req, res) => {
   try {
     const sessionId = resolvePositiveInteger(req.body.session_id);
-    const studentId = resolvePositiveInteger(req.body.student_id);
-    if (Number.isNaN(sessionId) || Number.isNaN(studentId)) {
+    const sessionCredential = String(req.body.session_credential || '').trim();
+    if (Number.isNaN(sessionId) || !sessionId || !sessionCredential) {
       return res.status(400).json({ error: 'Invalid playtime session payload.' });
     }
-    if (!sessionId && !studentId) {
-      return res.status(400).json({ error: 'session_id or student_id is required.' });
+
+    const sessionResult = await pool.query(
+      `SELECT *
+       FROM public.playtime_sessions
+       WHERE id = $1
+         AND status = 'Playing'
+       LIMIT 1`,
+      [sessionId]
+    );
+    const session = sessionResult.rows[0];
+    if (!session) {
+      return res.status(404).json({ error: 'No active playtime session found.' });
+    }
+    if (!hasMatchingPlaytimeSessionCredential(sessionCredential, session.session_credential_hash)) {
+      return res.status(403).json({ error: 'Invalid playtime session credential.' });
     }
 
     const status = normalizePlaytimeStatus(req.body.status, 'Completed');
     const result = await pool.query(
-      `WITH target AS (
-        SELECT id
-        FROM public.playtime_sessions
-        WHERE (($1::INTEGER IS NOT NULL AND id = $1)
-          OR ($1::INTEGER IS NULL AND student_id = $2 AND status = 'Playing'))
-        ORDER BY start_time DESC NULLS LAST, id DESC
-        LIMIT 1
-      )
-      UPDATE public.playtime_sessions ps
-      SET end_time = COALESCE($3::timestamptz, NOW()),
-          total_playtime_minutes = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (COALESCE($3::timestamptz, NOW()) - ps.start_time)) / 60))::INTEGER,
-          status = $4,
-          updated_at = NOW()
-      FROM target
-      WHERE ps.id = target.id
-      RETURNING ps.*`,
-      [sessionId, studentId, req.body.end_time || null, status]
+      `UPDATE public.playtime_sessions
+       SET end_time = LEAST(NOW(), COALESCE(expires_at, NOW())),
+           total_playtime_seconds = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+             LEAST(NOW(), COALESCE(expires_at, NOW())) - COALESCE(server_started_at, start_time)
+           )))::INTEGER),
+           total_playtime_minutes = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+             LEAST(NOW(), COALESCE(expires_at, NOW())) - COALESCE(server_started_at, start_time)
+           )) / 60)::INTEGER),
+           status = CASE WHEN COALESCE(expires_at, NOW()) <= NOW() THEN 'Timed Out' ELSE $2 END,
+           updated_at = NOW()
+       WHERE id = $1
+         AND status = 'Playing'
+       RETURNING *`,
+      [sessionId, status]
     );
 
     if (result.rows.length === 0) {
@@ -5635,6 +5773,84 @@ app.post('/api/playtime/end', async (req, res) => {
   }
 });
 
+app.post('/api/playtime/heartbeat', async (req, res) => {
+  try {
+    const sessionId = resolvePositiveInteger(req.body.session_id);
+    const sessionCredential = String(req.body.session_credential || '').trim();
+    if (Number.isNaN(sessionId) || !sessionId || !sessionCredential) {
+      return res.status(400).json({ error: 'Invalid playtime heartbeat payload.' });
+    }
+
+    const sessionResult = await pool.query(
+      `SELECT *,
+              GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+                COALESCE(expires_at, NOW()) - NOW()
+              )))::INTEGER AS remaining_seconds
+       FROM public.playtime_sessions
+       WHERE id = $1
+         AND status = 'Playing'
+       LIMIT 1`,
+      [sessionId]
+    );
+    const session = sessionResult.rows[0];
+    if (!session) {
+      return res.status(404).json({ error: 'No active playtime session found.', can_play: false });
+    }
+    if (!hasMatchingPlaytimeSessionCredential(sessionCredential, session.session_credential_hash)) {
+      return res.status(403).json({ error: 'Invalid playtime session credential.', can_play: false });
+    }
+
+    const remainingSeconds = Math.max(0, Number(session.remaining_seconds || 0));
+    if (remainingSeconds <= 0) {
+      await pool.query(
+        `UPDATE public.playtime_sessions
+         SET end_time = COALESCE(expires_at, NOW()),
+             total_playtime_seconds = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+               COALESCE(expires_at, NOW()) - COALESCE(server_started_at, start_time)
+             )))::INTEGER),
+             total_playtime_minutes = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+               COALESCE(expires_at, NOW()) - COALESCE(server_started_at, start_time)
+             )) / 60)::INTEGER),
+             status = 'Timed Out',
+             updated_at = NOW()
+         WHERE id = $1`,
+        [sessionId]
+      );
+      const { totalPlaytimeSeconds } = await getDailyPlaytimeTotals(session.student_id);
+      return res.status(403).json({
+        error: 'Daily playtime limit reached.',
+        ...toPlaytimeResponse({
+          session: { ...session, status: 'Timed Out' },
+          totalPlaytimeSeconds,
+          remainingSeconds: 0,
+          message: 'Daily playtime limit reached.',
+        }),
+      });
+    }
+
+    const updateResult = await pool.query(
+      `UPDATE public.playtime_sessions
+       SET last_heartbeat_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1
+         AND status = 'Playing'
+       RETURNING *,
+         GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (expires_at - NOW())))::INTEGER) AS remaining_seconds`,
+      [sessionId]
+    );
+    const { totalPlaytimeSeconds } = await getDailyPlaytimeTotals(session.student_id);
+    return res.json(toPlaytimeResponse({
+      session: updateResult.rows[0] || session,
+      totalPlaytimeSeconds,
+      remainingSeconds: updateResult.rows[0]?.remaining_seconds ?? remainingSeconds,
+      message: 'Playtime lease renewed.',
+    }));
+  } catch (err) {
+    console.error('Playtime heartbeat failed:', err.message);
+    return res.status(500).json({ error: 'Failed to renew playtime session.', can_play: false });
+  }
+});
+
 app.get('/api/playtime/today/:student_id', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, async (req, res) => {
   try {
     const studentId = resolvePositiveInteger(req.params.student_id);
@@ -5642,13 +5858,15 @@ app.get('/api/playtime/today/:student_id', requireAnalyticsAccess, verifyScopedS
       return res.status(400).json({ error: 'A valid student_id is required.' });
     }
 
-    const totalToday = await getDailyPlaytimeTotal(studentId);
-    const remaining = Math.max(0, PLAYTIME_DAILY_LIMIT_MINUTES - totalToday);
+    const { totalPlaytimeSeconds, totalPlaytimeMinutes } = await getDailyPlaytimeTotals(studentId);
+    const remainingSeconds = Math.max(0, PLAYTIME_DAILY_LIMIT_SECONDS - totalPlaytimeSeconds);
     res.json({
       student_id: studentId,
-      total_playtime_today: totalToday,
-      remaining_minutes: remaining,
-      can_play: totalToday < PLAYTIME_DAILY_LIMIT_MINUTES,
+      total_playtime_today: totalPlaytimeMinutes,
+      total_playtime_seconds: totalPlaytimeSeconds,
+      remaining_minutes: Math.ceil(remainingSeconds / 60),
+      remaining_seconds: remainingSeconds,
+      can_play: remainingSeconds > 0,
       daily_limit_minutes: PLAYTIME_DAILY_LIMIT_MINUTES,
     });
   } catch (err) {

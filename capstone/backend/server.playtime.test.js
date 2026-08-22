@@ -1,5 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const Module = require('node:module');
 
 const emptyResult = { rows: [] };
@@ -288,6 +291,73 @@ test('playtime start returns explicit can_play contract for authorized sessions'
   assert.equal(response.body.message, 'Playtime session started.');
 });
 
+test('server-authoritative playtime migration is additive and preserves existing rows', () => {
+  const migrationPath = path.join(__dirname, 'migrations', '007_add_server_authoritative_playtime.sql');
+  const migration = fs.readFileSync(migrationPath, 'utf8');
+  for (const column of [
+    'total_playtime_seconds',
+    'server_started_at',
+    'expires_at',
+    'last_heartbeat_at',
+    'session_credential_hash',
+  ]) {
+    assert.match(migration, new RegExp(`\\b${column}\\b`, 'i'));
+  }
+  assert.match(migration, /add column if not exists playtime_session_id/i);
+  assert.doesNotMatch(migration, /\b(drop|truncate|update)\b/i);
+});
+
+test('playtime start ignores caller time and returns a server-authoritative lease', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let insertSql = '';
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params, rawSql) => {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $2')) {
+      return resultRows([{ id: 44 }]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
+      return resultRows([{ total_playtime_today: 25 }]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes("status = 'playing'")) {
+      return emptyResult;
+    }
+    if (sql.startsWith('insert into public.playtime_sessions')) {
+      insertSql = String(rawSql);
+      return resultRows([{
+        id: 79,
+        student_id: 44,
+        parent_id: '123456',
+        status: 'Playing',
+        server_started_at: '2026-08-22T08:00:00.000Z',
+        expires_at: '2026-08-22T08:35:00.000Z',
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: '001234',
+      parent_id: '123456',
+      student_name: 'Ava Santos',
+      grade_level: 'Grade 3',
+      start_time: '2000-01-01T00:00:00.000Z',
+    }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.doesNotMatch(insertSql, /coalesce\(\$6::timestamptz/i);
+  assert.equal(response.body.remaining_seconds, 2100);
+  assert.equal(response.body.expires_at, '2026-08-22T08:35:00.000Z');
+  assert.match(response.body.session_credential, /^[a-f0-9]{64}$/);
+});
+
 test('playtime start preserves six-digit external student IDs through the link lookup and rejects bad contracts', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -431,18 +501,29 @@ test('playtime start preserves six-digit external student IDs through the link l
   assert.equal(limitResponse.body.can_play, false);
 });
 
-test('playtime end updates the active session and returns calculated duration', async (t) => {
+test('playtime end requires the issued lease credential and ignores caller end time', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   let updatedValues = null;
+  let updateSql = '';
+  const sessionCredential = 'a'.repeat(64);
   t.after(async () => {
     resetTestState();
     await close(server);
   });
 
   setQueryHandler(async (sql, params) => {
-    if (sql.startsWith('with target as') && sql.includes('update public.playtime_sessions')) {
+    if (sql.startsWith('select *') && sql.includes('from public.playtime_sessions') && sql.includes('status = \'playing\'')) {
+      return resultRows([{
+        id: 77,
+        student_id: 44,
+        status: 'Playing',
+        session_credential_hash: crypto.createHash('sha256').update(sessionCredential).digest('hex'),
+      }]);
+    }
+    if (sql.startsWith('update public.playtime_sessions')) {
       updatedValues = params;
+      updateSql = sql;
       return resultRows([{
         id: 77,
         student_id: 44,
@@ -458,16 +539,147 @@ test('playtime end updates the active session and returns calculated duration', 
     method: 'POST',
     body: JSON.stringify({
       session_id: 77,
-      student_id: 44,
       end_time: '2026-06-01T09:30:00.000Z',
       status: 'Completed',
+      session_credential: sessionCredential,
     }),
   });
 
   assert.equal(response.status, 200);
   assert.equal(response.body.success, true);
   assert.equal(response.body.session.total_playtime_minutes, 30);
-  assert.deepEqual(updatedValues, [77, 44, '2026-06-01T09:30:00.000Z', 'Completed']);
+  assert.deepEqual(updatedValues, [77, 'Completed']);
+  assert.doesNotMatch(updateSql, /\$3::timestamptz/);
+});
+
+test('playtime end rejects a missing or invalid lease credential', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  const missingCredential = await requestJson(baseUrl, '/api/playtime/end', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: 77, status: 'Completed' }),
+  });
+  assert.equal(missingCredential.status, 400);
+
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select *') && sql.includes('from public.playtime_sessions')) {
+      return resultRows([{
+        id: 77,
+        status: 'Playing',
+        session_credential_hash: crypto.createHash('sha256').update('a'.repeat(64)).digest('hex'),
+      }]);
+    }
+    return emptyResult;
+  });
+  const invalidCredential = await requestJson(baseUrl, '/api/playtime/end', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 77,
+      session_credential: 'b'.repeat(64),
+      status: 'Completed',
+    }),
+  });
+  assert.equal(invalidCredential.status, 403);
+});
+
+test('playtime heartbeat refreshes an unexpired server lease without accepting client timing', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const sessionCredential = 'c'.repeat(64);
+  let heartbeatUpdateSql = '';
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, _params, rawSql) => {
+    if (sql.startsWith('select *,') && sql.includes('from public.playtime_sessions')) {
+      return resultRows([{
+        id: 77,
+        student_id: 44,
+        status: 'Playing',
+        remaining_seconds: 120,
+        expires_at: '2026-08-22T09:02:00.000Z',
+        session_credential_hash: crypto.createHash('sha256').update(sessionCredential).digest('hex'),
+      }]);
+    }
+    if (sql.startsWith('update public.playtime_sessions') && sql.includes('last_heartbeat_at')) {
+      heartbeatUpdateSql = String(rawSql);
+      return resultRows([{
+        id: 77,
+        student_id: 44,
+        status: 'Playing',
+        remaining_seconds: 119,
+        expires_at: '2026-08-22T09:02:00.000Z',
+      }]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
+      return resultRows([{ total_playtime_seconds: 3481, total_playtime_today: 58 }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime/heartbeat', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 77,
+      session_credential: sessionCredential,
+      client_remaining_seconds: 999999,
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.remaining_seconds, 119);
+  assert.equal(response.body.can_play, true);
+  assert.match(heartbeatUpdateSql, /last_heartbeat_at = now\(\)/i);
+  assert.doesNotMatch(heartbeatUpdateSql, /client_remaining_seconds|timestamp/i);
+});
+
+test('playtime heartbeat expires the lease server-side and blocks additional gameplay', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const sessionCredential = 'd'.repeat(64);
+  let timeoutUpdate = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select *,') && sql.includes('from public.playtime_sessions')) {
+      return resultRows([{
+        id: 77,
+        student_id: 44,
+        status: 'Playing',
+        remaining_seconds: 0,
+        expires_at: '2026-08-22T09:00:00.000Z',
+        session_credential_hash: crypto.createHash('sha256').update(sessionCredential).digest('hex'),
+      }]);
+    }
+    if (sql.startsWith('update public.playtime_sessions') && sql.includes("status = 'timed out'")) {
+      timeoutUpdate = true;
+      return resultRows([]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
+      return resultRows([{ total_playtime_seconds: 3600, total_playtime_today: 60 }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime/heartbeat', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: 77, session_credential: sessionCredential }),
+  });
+
+  assert.equal(response.status, 403);
+  assert.equal(response.body.can_play, false);
+  assert.equal(response.body.remaining_seconds, 0);
+  assert.equal(timeoutUpdate, true);
 });
 
 test('all-student playtime rejects parent sessions and allows admin scoped filters', async (t) => {
@@ -664,7 +876,9 @@ test('daily playtime limit reports remaining minutes and can_play status', async
   assert.deepEqual(response.body, {
     student_id: 44,
     total_playtime_today: 60,
+    total_playtime_seconds: 3600,
     remaining_minutes: 0,
+    remaining_seconds: 0,
     can_play: false,
     daily_limit_minutes: 60,
   });
