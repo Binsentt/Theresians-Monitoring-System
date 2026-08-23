@@ -120,4 +120,26 @@ describe('ParentDashboard defensive game data rendering', () => {
     expect(container.textContent).toContain('Accuracy: 80%');
     expect(container.textContent).toContain('Completion: 42%');
   });
+
+  test('renders a canonical null Section as Not assigned', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url.startsWith('/api/user/19')) return jsonResponse({ id: 19, role: 'parent', name: 'Parent User' });
+      if (url.startsWith('/api/top-achievers')) return jsonResponse([]);
+      if (url.startsWith('/api/analytics/overview')) return jsonResponse({ studentCount: 1, averageAccuracy: null, averageProgress: null });
+      if (url.startsWith('/api/analytics/recommendations')) return jsonResponse({ recommendations: [] });
+      if (url.startsWith('/api/parent/children')) {
+        return jsonResponse({
+          children: [{ id: 44, student_name: 'Ava Santos', game_student_id: '001234', grade_level: 'Grade 3', section: null, accuracy: null, completion_percentage: null }],
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    await act(async () => {
+      root.render(<ParentDashboard />);
+    });
+
+    expect(container.textContent).toContain('Section: Not assigned');
+    expect(container.textContent).not.toContain('Section: Not set');
+  });
 });

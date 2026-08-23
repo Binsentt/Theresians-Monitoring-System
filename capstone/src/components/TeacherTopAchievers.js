@@ -281,7 +281,7 @@ export default function TeacherTopAchievers() {
                           <td className="name-cell">{achiever.student_name || 'Unknown'}</td>
                           <td>{achiever.game_student_id || 'Not linked'}</td>
                           <td>{achiever.grade_level || 'N/A'}</td>
-                          <td>{achiever.section || 'N/A'}</td>
+                          <td>{achiever.section || 'Not assigned'}</td>
                           <td className="progress-cell">
                             <div className="progress-bar">
                               {completionWidth !== null && (

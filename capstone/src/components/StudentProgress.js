@@ -259,7 +259,7 @@ export default function StudentProgress() {
                     <td>{student.student_name || 'Unknown'}</td>
                     <td>{student.game_student_id || 'Not linked'}</td>
                     <td>{student.grade_level || 'N/A'}</td>
-                    <td>{student.section || 'Not available'}</td>
+                    <td>{student.section || 'Not assigned'}</td>
                     <td>{student.current_quest || 'N/A'}</td>
                     <td>{student.correct_answers ?? 'Not available'}</td>
                     <td>{student.incorrect_answers ?? 'Not available'}</td>

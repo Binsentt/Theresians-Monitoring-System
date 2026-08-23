@@ -1,7 +1,6 @@
 import {
   getPasswordStrength,
   PARENT_CHILD_GRADE_OPTIONS,
-  PARENT_CHILD_SECTION_OPTIONS_BY_GRADE,
   validateChildProfile,
   validateEmail,
   validateGameStudentId,
@@ -211,8 +210,6 @@ describe('validation.utils', () => {
         studentId: '001234',
       })).toEqual({});
       expect(PARENT_CHILD_GRADE_OPTIONS).toEqual(['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6']);
-      expect(PARENT_CHILD_SECTION_OPTIONS_BY_GRADE['Grade 1']).toEqual(['Section A', 'Section B']);
-      expect(PARENT_CHILD_SECTION_OPTIONS_BY_GRADE['Grade 3']).toEqual(['Section A', 'Section B', 'Section C']);
     });
 
     test('rejects an invalid middle initial, malformed Section, and malformed Student ID', () => {
@@ -230,7 +227,7 @@ describe('validation.utils', () => {
       });
     });
 
-    test('keeps existing grade-specific Section values as suggestions without rejecting a valid school section', () => {
+    test('does not seed fabricated section suggestions while accepting a supplied real school Section', () => {
       expect(validateChildProfile({
         firstName: 'Ava',
         lastName: 'Santos',

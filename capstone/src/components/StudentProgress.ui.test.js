@@ -110,6 +110,37 @@ describe('Student Progress summary cards', () => {
     expect(container.textContent).not.toContain('0%');
   });
 
+  test('renders a canonical null Section as Not assigned', async () => {
+    global.fetch = jest.fn((url) => {
+      const value = String(url);
+      if (value.startsWith('/api/students/progress')) {
+        return jsonResponse([
+          {
+            student_id: 44,
+            student_name: 'Ava Santos',
+            game_student_id: '001234',
+            grade_level: 'Grade 3',
+            section: null,
+            current_quest: 'No recorded data',
+            correct_answers: null,
+            incorrect_answers: null,
+            performance_percentage: null,
+          },
+        ]);
+      }
+      if (value.startsWith('/api/analytics/overview')) return jsonResponse({ studentCount: 1, averageAccuracy: null, averageProgress: null });
+      if (value.startsWith('/api/analytics/recommendations')) return jsonResponse({ recommendations: [] });
+      return jsonResponse({});
+    });
+
+    await act(async () => {
+      root.render(<AdminStudentProgress />);
+    });
+
+    const sectionCell = container.querySelectorAll('.student-progress-table tbody tr td')[4];
+    expect(sectionCell?.textContent).toBe('Not assigned');
+  });
+
   test('uses a dataset-ready empty state when no authorised student records exist', async () => {
     global.fetch = jest.fn((url) => {
       const value = String(url);

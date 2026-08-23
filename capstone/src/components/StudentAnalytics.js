@@ -147,7 +147,7 @@ export default function StudentAnalytics() {
   const studentInitials = getInitials(progress?.student_name);
   const resolvedStudentId = safeDisplayText(progress?.game_student_id, 'Not linked');
   const grade = safeDisplayText(progress?.grade_level || progress?.grade, 'N/A');
-  const section = safeDisplayText(progress?.section, 'Not available');
+  const section = safeDisplayText(progress?.section, 'Not assigned');
   const currentQuest = safeDisplayText(metrics?.currentQuest || progress?.current_quest, 'Not available');
   const currentDifficulty = safeDisplayText(progress?.difficulty_level || progress?.difficulty, 'Unknown');
   const currentScene = safeDisplayText(

@@ -137,6 +137,26 @@ describe('ParentChildProgress child selection and game warnings', () => {
     ))).toBe(true);
   });
 
+  test('shows Not assigned for a linked child whose canonical Section is null', async () => {
+    global.fetch = jest.fn((url) => successPayloadForUrl(url, {
+      children: [{
+        id: 44,
+        game_student_id: '001234',
+        student_name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        section: null,
+        total_quizzes: 0,
+      }],
+      unlinked_count: 0,
+    }));
+
+    await act(async () => {
+      root.render(<ParentChildProgress />);
+    });
+
+    expect(container.textContent).toContain('Grade 3 - Not assigned');
+  });
+
   test('shows the selector first when the parent has multiple linked children', async () => {
     global.fetch = jest.fn((url) => successPayloadForUrl(url, {
       children: [

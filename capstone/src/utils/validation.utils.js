@@ -4,15 +4,6 @@
 
 export const WEBSITE_PASSWORD_MIN_LENGTH = 12;
 export const PARENT_CHILD_GRADE_OPTIONS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
-export const PARENT_CHILD_SECTION_OPTIONS_BY_GRADE = {
-  'Grade 1': ['Section A', 'Section B'],
-  'Grade 2': ['Section A', 'Section B', 'Section C'],
-  'Grade 3': ['Section A', 'Section B', 'Section C'],
-  'Grade 4': ['Section A', 'Section B', 'Section C'],
-  'Grade 5': ['Section A', 'Section B', 'Section C'],
-  'Grade 6': ['Section A', 'Section B', 'Section C'],
-};
-export const getParentChildSectionOptions = (gradeLevel) => PARENT_CHILD_SECTION_OPTIONS_BY_GRADE[gradeLevel] || [];
 
 export const validateSchoolSection = (value, { required = false } = {}) => {
   const section = String(value ?? '').trim().replace(/\s+/g, ' ');

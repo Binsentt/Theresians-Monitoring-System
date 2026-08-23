@@ -261,7 +261,7 @@ export default function ParentChildProgress() {
             onClick={() => setSelectedStudentId(studentId)}
           >
             <strong>{safeDisplayText(student.student_name, 'Unknown')}</strong>
-            <span>{[safeDisplayText(student.grade_level || student.grade, 'Grade N/A'), safeDisplayText(student.section, '')].filter(Boolean).join(' - ')}</span>
+            <span>{[safeDisplayText(student.grade_level || student.grade, 'Grade N/A'), safeDisplayText(student.section, 'Not assigned')].filter(Boolean).join(' - ')}</span>
           </button>
         );
       })}
@@ -359,7 +359,7 @@ export default function ParentChildProgress() {
                       <div className="child-profile-avatar" aria-hidden="true">{focusStudentInitials}</div>
                       <div>
                         <h2>{safeDisplayText(focusStudent.student_name, 'Unknown Child')}</h2>
-                        <p>{[safeDisplayText(focusStudent.grade_level || focusStudent.grade, 'Grade N/A'), safeDisplayText(focusStudent.section, '')].filter(Boolean).join(' - ')}</p>
+                        <p>{[safeDisplayText(focusStudent.grade_level || focusStudent.grade, 'Grade N/A'), safeDisplayText(focusStudent.section, 'Not assigned')].filter(Boolean).join(' - ')}</p>
                         <small>Student ID: {focusStudent.game_student_id || 'Not linked'}</small>
                       </div>
                     </div>
@@ -375,7 +375,7 @@ export default function ParentChildProgress() {
                       </div>
                       <div className="child-progress-stat">
                         <span>Grade / Section</span>
-                        <strong>{[safeDisplayText(focusStudent.grade_level || focusStudent.grade, ''), safeDisplayText(focusStudent.section, '')].filter(Boolean).join(' - ') || 'N/A'}</strong>
+                        <strong>{[safeDisplayText(focusStudent.grade_level || focusStudent.grade, ''), safeDisplayText(focusStudent.section, 'Not assigned')].filter(Boolean).join(' - ') || 'Not assigned'}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Current Quest</span>

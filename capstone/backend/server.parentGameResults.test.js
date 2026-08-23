@@ -410,6 +410,44 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(insertedValues[3], 'Grade 3');
   });
 
+  await t.test('persists a result for a linked child whose canonical Section is null', async () => {
+    let insertedValues = null;
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+        assert.deepEqual(params, [19, '001234']);
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3', section: null }]);
+      }
+      if (sql.startsWith('insert into public.game_results')) {
+        insertedValues = params;
+        return emptyResult;
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: '001234',
+        student_name: 'Caller supplied name',
+        grade_level: 'Grade 6',
+        section: 'Caller supplied Section',
+        difficulty: 'Hard',
+        math_topic: 'Fractions',
+        score: 1,
+        total_items: 1,
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(response.body.student_id, 44);
+    assert.equal(insertedValues[1], 'Ava Santos');
+    assert.equal(insertedValues[3], 'Grade 3');
+  });
+
   await t.test('rejects a question set that does not match the submitted result scope', async () => {
     let insertedGameResult = false;
     setQueryHandler(async (sql, params) => {
@@ -889,7 +927,7 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(response.body.children[0].total_quizzes, 0);
   });
 
-  await t.test('parent children uses profile Grade/Section and truthful per-child summary metrics', async () => {
+  await t.test('parent children keeps canonical profile Section authoritative and returns truthful per-child summary metrics', async () => {
     let childrenSql = '';
     setQueryHandler(async (sql) => {
       if (sql.includes('from public.teacher_student_relationships tsr') && sql.includes('left join public.game_results gr on gr.resolved_student_id = s.id')) {
@@ -933,7 +971,7 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(response.body.children[1].accuracy, null);
     assert.equal(response.body.children[1].completion_percentage, null);
     assert.match(childrenSql, /coalesce\(p\.grade_level, s\.grade_level\) as grade_level/);
-    assert.match(childrenSql, /coalesce\(p\.section, s\.section\) as section/);
+    assert.match(childrenSql, /nullif\(s\.section, ''\) as section/);
     assert.match(childrenSql, /as accuracy/);
     assert.match(childrenSql, /as completion_percentage/);
   });
@@ -1112,6 +1150,32 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(parentScopeParams[0], 19);
     assert.match(parentScopeSql, /tsr\.teacher_id = \$1/);
   });
+});
+
+test('game profile check accepts a linked canonical child with a null Section', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    useDefaultGameResultLease = true;
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.includes('where parent_id = $1') && sql.includes('lower(role) in')) {
+      return resultRows([{ id: 19, parent_id: '123456', name: 'Parent User' }]);
+    }
+    if (sql.includes('join public.accounts p on p.id = r.teacher_id') && sql.includes('s.game_student_id = $1')) {
+      return resultRows([{ id: 44, section: null }]);
+    }
+    if (sql.includes('from public.student_game_progress')) return emptyResult;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/profile/check/001234?parent_id=123456');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.can_play, true);
 });
 
 test('game result endpoint rejects missing, expired, and forged playtime leases', async (t) => {

@@ -225,7 +225,7 @@ export default function ParentDashboard() {
                   {connectedChildren.map((child) => (
                     <InfoCard key={child.id || child.student_id || safeDisplayText(child.student_name, 'student')} title={safeDisplayText(child.student_name || child.name, 'Student')}>
                       <p>Grade: {safeDisplayText(child.grade_level || child.grade, 'Not set')}</p>
-                      <p>Section: {safeDisplayText(child.section, 'Not set')}</p>
+                      <p>Section: {safeDisplayText(child.section, 'Not assigned')}</p>
                       <p>Student ID: {safeDisplayText(child.game_student_id, 'Not set')}</p>
                       <p>Accuracy: {formatPercent(child.accuracy, 'No Data')}</p>
                       <p>Completion: {formatPercent(child.completion_percentage, 'No Data')}</p>

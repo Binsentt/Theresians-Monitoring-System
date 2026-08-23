@@ -213,3 +213,61 @@ test('game progress persists linked child identity, grade, and section from the 
   assert.deepEqual(progressValues.slice(0, 4), [44, 'Ava Santos', 'Grade 3', 'Section A']);
   assert.deepEqual(activityValues.slice(0, 4), [44, 'Ava Santos', 'Grade 3', 'Section A']);
 });
+
+test('game progress preserves a linked child\'s canonical null Section instead of caller metadata', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let progressValues = [];
+  let activityValues = [];
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (['begin', 'commit', 'rollback'].includes(sql)) return emptyResult;
+    if (sql.startsWith('select id, name, parent_id from public.accounts')) {
+      return resultRows([{ id: 19, name: 'Parent User', parent_id: '123456' }]);
+    }
+    if (sql.startsWith('select s.* from public.accounts s join public.teacher_student_relationships')) {
+      return resultRows([{
+        id: 44,
+        name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        section: null,
+        email: 'ava@example.com',
+        role: 'student',
+      }]);
+    }
+    if (sql.startsWith('insert into public.teacher_student_relationships')) return emptyResult;
+    if (sql.startsWith('select id from public.student_game_progress')) return resultRows([]);
+    if (sql.startsWith('insert into public.student_game_progress')) {
+      progressValues = params;
+      return resultRows([{ id: 88, student_id: 44, student_name: 'Ava Santos' }]);
+    }
+    if (sql.startsWith('insert into public.activity_logs')) {
+      activityValues = params;
+      return resultRows([{ id: 99, student_id: 44 }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/progress', {
+    method: 'POST',
+    body: JSON.stringify({
+      parent_id: '123456',
+      student_id: '001234',
+      student_name: 'Caller supplied name',
+      grade_level: 'Grade 6',
+      section: 'Caller supplied Section',
+      current_quest: 'City Quiz',
+      score: 3,
+      correct_answers: 3,
+      total_questions: 4,
+    }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.deepEqual(progressValues.slice(0, 4), [44, 'Ava Santos', 'Grade 3', null]);
+  assert.deepEqual(activityValues.slice(0, 4), [44, 'Ava Santos', 'Grade 3', null]);
+});

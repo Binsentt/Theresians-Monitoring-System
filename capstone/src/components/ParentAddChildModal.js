@@ -3,7 +3,6 @@ import { apiUrl } from '../api';
 import { buildAuthHeaders } from './session.utils';
 import {
   PARENT_CHILD_GRADE_OPTIONS,
-  getParentChildSectionOptions,
   validateChildProfile,
 } from '../utils/validation.utils';
 
@@ -108,11 +107,9 @@ export default function ParentAddChildModal({ onClose, onCreated }) {
             {errors.gradeLevel && <span className="error-text" role="alert">{errors.gradeLevel}</span>}
           </div>
           <div className="form-group">
-            <label htmlFor="child-section">Section</label>
-            <input id="child-section" list="child-section-suggestions" value={form.section} onChange={(event) => updateField('section', event.target.value)} onBlur={() => touchField('section')} maxLength={50} aria-invalid={Boolean(errors.section)} placeholder="e.g. Rizal" />
-            <datalist id="child-section-suggestions">
-              {getParentChildSectionOptions(form.gradeLevel).map((section) => <option key={section} value={section} />)}
-            </datalist>
+            <label htmlFor="child-section">Section (Optional)</label>
+            <input id="child-section" value={form.section} onChange={(event) => updateField('section', event.target.value)} onBlur={() => touchField('section')} maxLength={50} aria-invalid={Boolean(errors.section)} />
+            <span className="field-help">Leave blank until official school Section data is available.</span>
             {errors.section && <span className="error-text" role="alert">{errors.section}</span>}
           </div>
           <div className="form-group parent-add-child-student-id">

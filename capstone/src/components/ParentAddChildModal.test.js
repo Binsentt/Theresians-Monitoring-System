@@ -51,6 +51,17 @@ describe('ParentAddChildModal', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  test('keeps Section optional without fabricated suggestion values', async () => {
+    await act(async () => {
+      root.render(<ParentAddChildModal onClose={jest.fn()} onCreated={jest.fn()} />);
+    });
+
+    expect(container.querySelector('label[for="child-section"]')?.textContent).toBe('Section (Optional)');
+    expect(container.querySelector('#child-section')?.getAttribute('list')).toBeNull();
+    expect(container.querySelector('#child-section-suggestions')).toBeNull();
+    expect(container.textContent).toContain('Leave blank until official school Section data is available.');
+  });
+
   test('accepts a normalized real section label and preserves the leading-zero Student ID', async () => {
     const onCreated = jest.fn();
     global.fetch.mockResolvedValue({

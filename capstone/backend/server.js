@@ -836,14 +836,6 @@ const normalizePhilippineMobile = (value) => {
 };
 
 const PARENT_CHILD_GRADE_LEVELS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
-const PARENT_CHILD_SECTIONS_BY_GRADE = {
-  'Grade 1': ['Section A', 'Section B'],
-  'Grade 2': ['Section A', 'Section B', 'Section C'],
-  'Grade 3': ['Section A', 'Section B', 'Section C'],
-  'Grade 4': ['Section A', 'Section B', 'Section C'],
-  'Grade 5': ['Section A', 'Section B', 'Section C'],
-  'Grade 6': ['Section A', 'Section B', 'Section C'],
-};
 
 const normalizeSchoolSection = (value, { required = false } = {}) => {
   const section = String(value ?? '').trim().replace(/\s+/g, ' ');
@@ -973,7 +965,15 @@ const buildCanonicalStudentProgressQuery = () => `
          a.role AS student_role,
          a.game_student_id,
          COALESCE(NULLIF(a.grade_level, ''), p.grade_level) AS grade_level,
-         COALESCE(NULLIF(a.section, ''), p.section) AS section
+         CASE
+           WHEN EXISTS (
+             SELECT 1
+             FROM public.teacher_student_relationships parent_relationship
+             WHERE parent_relationship.student_id = a.id
+               AND LOWER(parent_relationship.relationship_type) = 'parent'
+           ) THEN NULLIF(a.section, '')
+           ELSE COALESCE(NULLIF(a.section, ''), p.section)
+         END AS section
   FROM public.accounts a
   LEFT JOIN LATERAL (
     SELECT progress.*
@@ -4489,6 +4489,7 @@ app.post('/api/game/progress', async (req, res) => {
     const submittedStudentCode = normalizeStudentCode(String(req.body?.student_id || '').trim());
     let student = null;
     let studentResult = null;
+    let isLinkedCanonicalChild = false;
 
     if (submittedStudentCode) {
       // Attempt to find a student account with this game_student_id linked to this parent
@@ -4506,6 +4507,7 @@ app.post('/api/game/progress', async (req, res) => {
 
       if (studentResult.rows.length > 0) {
         student = studentResult.rows[0];
+        isLinkedCanonicalChild = true;
       } else {
         // If an account exists with this student code but not linked to this parent, reject.
         const existing = await client.query('SELECT * FROM public.accounts WHERE game_student_id = $1 LIMIT 1', [submittedStudentCode]);
@@ -4545,6 +4547,7 @@ app.post('/api/game/progress', async (req, res) => {
           return res.status(403).json({ error: 'Student is not linked to this parent.' });
         }
         student = studentResult.rows[0];
+        isLinkedCanonicalChild = true;
       } else {
         // Fallback to matching by name (least preferred)
         studentResult = await client.query(
@@ -4558,7 +4561,10 @@ app.post('/api/game/progress', async (req, res) => {
            LIMIT 1`,
           [parent.id, studentName]
         );
-        if (studentResult.rows.length > 0) student = studentResult.rows[0];
+        if (studentResult.rows.length > 0) {
+          student = studentResult.rows[0];
+          isLinkedCanonicalChild = true;
+        }
       }
     }
 
@@ -4573,7 +4579,10 @@ app.post('/api/game/progress', async (req, res) => {
     // values until a managed profile exists.
     const resolvedStudentName = normalizeGameStudentName(student.name) || studentName;
     const resolvedGradeLevel = String(student.grade_level || '').trim() || grade_level || null;
-    const resolvedSection = String(student.section || '').trim() || section || null;
+    const canonicalSection = String(student.section || '').trim() || null;
+    const resolvedSection = isLinkedCanonicalChild
+      ? canonicalSection
+      : canonicalSection || section || null;
 
     const scoreValue = Math.round(toNullableNumber(score) ?? 0);
     const correctAnswersValue = Math.round(toNullableNumber(correct_answers) ?? 0);
@@ -5772,7 +5781,7 @@ app.post('/api/playtime/start', async (req, res) => {
       studentId = linkedStudent.id;
       resolvedStudentName = String(linkedStudent.name || '').trim() || studentName;
       resolvedGradeLevel = String(linkedStudent.grade_level || '').trim() || resolvedGradeLevel;
-      resolvedSection = String(linkedStudent.section || '').trim() || resolvedSection;
+      resolvedSection = String(linkedStudent.section || '').trim() || null;
     } else {
       // Student not found or not linked to this parent
       // For NEW GAME registration, allow it if student doesn't exist yet
@@ -6198,7 +6207,7 @@ app.get('/api/parent/children', requireParentAnalyticsAccess, async (req, res) =
               s.name AS student_name,
               s.email,
               COALESCE(p.grade_level, s.grade_level) AS grade_level,
-              COALESCE(p.section, s.section) AS section,
+              NULLIF(s.section, '') AS section,
               p.current_quest,
               p.score,
               CASE WHEN p.id IS NULL THEN NULL ELSE p.progress_percentage END AS completion_percentage,

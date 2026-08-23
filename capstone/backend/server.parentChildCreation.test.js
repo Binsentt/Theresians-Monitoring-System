@@ -143,6 +143,30 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     assert.equal(accountInsert.includes('  Rizal  '), false);
   });
 
+  await t.test('keeps a blank optional Section as null while preserving a leading-zero Student ID', async () => {
+    let accountInsert = null;
+    queryHandler = async (sql, params) => {
+      if (sql.includes('from public.accounts s') && sql.includes('where s.game_student_id = $1')) return emptyResult;
+      if (sql.startsWith('insert into public.accounts')) {
+        accountInsert = params;
+        return { rows: [{ id: 47, game_student_id: params.at(-1), role: 'student', name: 'Ava M Santos', grade_level: 'Grade 3', section: null }] };
+      }
+      if (sql.startsWith('select id from public.teacher_student_relationships')) return emptyResult;
+      if (sql.startsWith('insert into public.teacher_student_relationships')) return { rows: [{ id: 12 }] };
+      return emptyResult;
+    };
+
+    const response = await requestJson(baseUrl, '/api/parent/children', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer parent-token' },
+      body: JSON.stringify({ ...validChild, section: '   ', student_id: '001247' }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.ok(accountInsert.includes(null));
+    assert.equal(accountInsert.at(-1), '001247');
+  });
+
   await t.test('allows Parent/Teacher only through the authenticated parent identity', async () => {
     let relationshipInsert = null;
     queryHandler = async (sql, params) => {

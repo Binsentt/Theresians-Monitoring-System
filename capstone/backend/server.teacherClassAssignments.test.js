@@ -251,6 +251,7 @@ test('class assignment grants only the matching teacher automatic canonical zero
 
   const teacherScope = observedScopeSql.find((entry) => entry.params.includes(16));
   assert.match(teacherScope.sql, /teacher_class_assignments/);
+  assert.match(teacherScope.sql, /tca\.section_key = lower\(regexp_replace\(btrim\(coalesce\(scoped_student\.section, ''\)\), '\\s\+', ' ', 'g'\)\)/);
   assert.match(teacherScope.sql, /teacher_student_relationships/);
   assert.match(teacherScope.sql, /lower\(tsr\.relationship_type\) = 'teacher'/);
 });
