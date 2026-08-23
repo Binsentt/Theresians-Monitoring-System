@@ -21,7 +21,7 @@ import {
 } from './manageUsers.utils';
 import { apiUrl } from '../api';
 import { buildAuthHeaders, clearStoredSession } from './session.utils';
-import { validateEmail as validateEmailFormat, validatePhilippineMobile } from '../utils/validation.utils';
+import { PARENT_CHILD_GRADE_OPTIONS, validateEmail as validateEmailFormat, validatePhilippineMobile } from '../utils/validation.utils';
 import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext } from './tableReporting.utils';
@@ -77,6 +77,13 @@ export default function ManageUsers() {
   const [teacherRelations, setTeacherRelations] = useState([]);
   const [relationEmail, setRelationEmail] = useState('');
   const [relationMessage, setRelationMessage] = useState('');
+  const [parentRelations, setParentRelations] = useState([]);
+  const [parentRelationEmail, setParentRelationEmail] = useState('');
+  const [parentRelationMessage, setParentRelationMessage] = useState('');
+  const [teacherClassAssignments, setTeacherClassAssignments] = useState([]);
+  const [classAssignmentForm, setClassAssignmentForm] = useState({ grade_level: '', section: '' });
+  const [editingClassAssignmentId, setEditingClassAssignmentId] = useState(null);
+  const [classAssignmentMessage, setClassAssignmentMessage] = useState('');
   const [deletingUser, setDeletingUser] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteOperation, setDeleteOperation] = useState('archive');
@@ -302,6 +309,13 @@ export default function ManageUsers() {
     setEditTouched({});
     setRelationEmail('');
     setRelationMessage('');
+    setParentRelations([]);
+    setParentRelationEmail('');
+    setParentRelationMessage('');
+    setTeacherClassAssignments([]);
+    setClassAssignmentForm({ grade_level: '', section: '' });
+    setEditingClassAssignmentId(null);
+    setClassAssignmentMessage('');
     const nameParts = String(u.name || '').trim().split(/\s+/).filter(Boolean);
     setEditForm({
       firstName: nameParts[0] || '',
@@ -315,27 +329,45 @@ export default function ManageUsers() {
       employee_id: u.employee_id || '',
       role: formatRoleLabel(u.role || 'Parent')
     });
-    if (isTeacherRole(u.role) || isParentRole(u.role)) {
-      loadTeacherRelationships(u.id);
-    } else {
-      setTeacherRelations([]);
+    if (isTeacherRole(u.role)) loadTeacherRelationships(u.id, 'teacher');
+    else setTeacherRelations([]);
+    if (isParentRole(u.role)) loadTeacherRelationships(u.id, 'parent');
+    if (isTeacherRole(u.role)) {
+      loadTeacherClassAssignments(u.id);
     }
   };
 
-  const loadTeacherRelationships = async (teacherId) => {
+  const loadTeacherClassAssignments = async (teacherId) => {
+    try {
+      const response = await fetch(apiUrl(`/api/teacher-class-assignments?teacherId=${teacherId}`), {
+        headers: buildAuthHeaders(),
+      });
+      const data = await response.json();
+      setTeacherClassAssignments(response.ok ? (data.assignments || []) : []);
+    } catch (error) {
+      console.error('Failed to load teacher class assignments:', error);
+      setTeacherClassAssignments([]);
+    }
+  };
+
+  const loadTeacherRelationships = async (teacherId, relationshipType) => {
+    const expectedType = String(relationshipType || '').toLowerCase();
+    const setRelations = expectedType === 'parent' ? setParentRelations : setTeacherRelations;
     try {
       const response = await fetch(apiUrl(`/api/teacher-student-relationships?teacherId=${teacherId}`), {
         headers: buildAuthHeaders(),
       });
       const data = await response.json();
       if (response.ok) {
-        setTeacherRelations(data.relationships || []);
+        setRelations((data.relationships || []).filter((relationship) => (
+          !expectedType || String(relationship.relationship_type || '').toLowerCase() === expectedType
+        )));
       } else {
-        setTeacherRelations([]);
+        setRelations([]);
       }
     } catch (error) {
       console.error('Failed to load teacher relationships:', error);
-      setTeacherRelations([]);
+      setRelations([]);
     }
   };
 
@@ -352,14 +384,14 @@ export default function ManageUsers() {
         body: JSON.stringify({
           teacherId: editingUser.id,
           studentEmail: relationEmail,
-          relationship_type: isParentRole(editingUser.role) ? 'Parent' : 'Teacher',
+          relationship_type: 'Teacher',
         }),
       });
       const data = await response.json();
       if (response.ok) {
         setRelationMessage('Relationship added successfully.');
         setRelationEmail('');
-        loadTeacherRelationships(editingUser.id);
+        loadTeacherRelationships(editingUser.id, 'teacher');
       } else {
         setRelationMessage(data.error || 'Could not add relationship.');
       }
@@ -369,21 +401,122 @@ export default function ManageUsers() {
     }
   };
 
-  const handleRemoveTeacherRelation = async (relationId) => {
+  const handleAddParentRelation = async () => {
+    if (!parentRelationEmail) {
+      setParentRelationMessage('Student email is required to link a child.');
+      return;
+    }
+
+    try {
+      const response = await fetch(apiUrl('/api/teacher-student-relationships'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
+        body: JSON.stringify({
+          teacherId: editingUser.id,
+          studentEmail: parentRelationEmail,
+          relationship_type: 'Parent',
+        }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setParentRelationMessage('Child linked successfully.');
+        setParentRelationEmail('');
+        loadTeacherRelationships(editingUser.id, 'parent');
+      } else {
+        setParentRelationMessage(data.error || 'Could not link child.');
+      }
+    } catch (error) {
+      console.error('Failed to add parent relation:', error);
+      setParentRelationMessage('Connection error while linking child.');
+    }
+  };
+
+  const handleRemoveTeacherRelation = async (relationId, relationshipType = 'teacher') => {
+    const isParentRelationship = String(relationshipType).toLowerCase() === 'parent';
+    const setMessage = isParentRelationship ? setParentRelationMessage : setRelationMessage;
     try {
       const response = await fetch(apiUrl(`/api/teacher-student-relationships/${relationId}`), {
         method: 'DELETE',
         headers: buildAuthHeaders(),
       });
       if (response.ok) {
-        setRelationMessage('Relationship removed.');
-        loadTeacherRelationships(editingUser.id);
+        setMessage(isParentRelationship ? 'Child link removed.' : 'Relationship removed.');
+        loadTeacherRelationships(editingUser.id, isParentRelationship ? 'parent' : 'teacher');
       } else {
-        setRelationMessage('Failed to remove relationship.');
+        setMessage(isParentRelationship ? 'Failed to remove child link.' : 'Failed to remove relationship.');
       }
     } catch (error) {
       console.error('Failed to remove relationship:', error);
-      setRelationMessage('Connection error while removing relationship.');
+      setMessage(isParentRelationship ? 'Connection error while removing child link.' : 'Connection error while removing relationship.');
+    }
+  };
+
+  const resetClassAssignmentForm = () => {
+    setClassAssignmentForm({ grade_level: '', section: '' });
+    setEditingClassAssignmentId(null);
+  };
+
+  const handleSaveTeacherClassAssignment = async () => {
+    const gradeLevel = String(classAssignmentForm.grade_level || '').trim();
+    const section = String(classAssignmentForm.section || '').trim().replace(/\s+/g, ' ');
+    if (!gradeLevel || !section) {
+      setClassAssignmentMessage('Grade and Section are required.');
+      return;
+    }
+
+    try {
+      const path = editingClassAssignmentId
+        ? `/api/teacher-class-assignments/${editingClassAssignmentId}`
+        : '/api/teacher-class-assignments';
+      const response = await fetch(apiUrl(path), {
+        method: editingClassAssignmentId ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
+        body: JSON.stringify({
+          ...(editingClassAssignmentId ? {} : { teacherId: editingUser.id }),
+          grade_level: gradeLevel,
+          section,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setClassAssignmentMessage(data.error || 'Could not save the class assignment.');
+        return;
+      }
+      setClassAssignmentMessage(editingClassAssignmentId ? 'Class assignment updated.' : 'Class assignment added.');
+      resetClassAssignmentForm();
+      loadTeacherClassAssignments(editingUser.id);
+    } catch (error) {
+      console.error('Failed to save teacher class assignment:', error);
+      setClassAssignmentMessage('Connection error while saving the class assignment.');
+    }
+  };
+
+  const handleEditTeacherClassAssignment = (assignment) => {
+    setClassAssignmentForm({
+      grade_level: assignment.grade_level || '',
+      section: assignment.section || '',
+    });
+    setEditingClassAssignmentId(assignment.id);
+    setClassAssignmentMessage('');
+  };
+
+  const handleRemoveTeacherClassAssignment = async (assignmentId) => {
+    try {
+      const response = await fetch(apiUrl(`/api/teacher-class-assignments/${assignmentId}`), {
+        method: 'DELETE',
+        headers: buildAuthHeaders(),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setClassAssignmentMessage(data.error || 'Could not remove the class assignment.');
+        return;
+      }
+      if (editingClassAssignmentId === assignmentId) resetClassAssignmentForm();
+      setClassAssignmentMessage('Class assignment removed.');
+      loadTeacherClassAssignments(editingUser.id);
+    } catch (error) {
+      console.error('Failed to remove teacher class assignment:', error);
+      setClassAssignmentMessage('Connection error while removing the class assignment.');
     }
   };
 
@@ -1204,11 +1337,80 @@ export default function ManageUsers() {
                       {editErrors.gender && <p className="error-text">{editErrors.gender}</p>}
                     </div>
 
-                    {(isTeacherRole(editingUser.role) || isParentRole(editingUser.role)) && (
+                    {isTeacherRole(editingUser.role) && (
                       <div className="form-container-card edit-user-teacher-panel">
-                        <h3>{isParentRole(editingUser.role) ? 'Linked Children' : 'Assigned Students'}</h3>
+                        <h3>Class Assignments</h3>
                         <p className="edit-user-helper-text">
-                          Link students to this {isParentRole(editingUser.role) ? 'parent' : 'teacher'} from a dedicated, roomier section so role-specific settings stay readable.
+                          Assign the Grade and Section this teacher can monitor. Matching canonical students appear automatically, including before gameplay.
+                        </p>
+                        <div className="form-group edit-user-teacher-input">
+                          <label htmlFor="teacher-assignment-grade">Grade</label>
+                          <select
+                            id="teacher-assignment-grade"
+                            value={classAssignmentForm.grade_level}
+                            onChange={(event) => setClassAssignmentForm((current) => ({ ...current, grade_level: event.target.value }))}
+                            className="sts-input"
+                          >
+                            <option value="">Select Grade</option>
+                            {PARENT_CHILD_GRADE_OPTIONS.map((grade) => <option key={grade} value={grade}>{grade}</option>)}
+                          </select>
+                        </div>
+                        <div className="form-group edit-user-teacher-input">
+                          <label htmlFor="teacher-assignment-section">Section</label>
+                          <input
+                            id="teacher-assignment-section"
+                            type="text"
+                            value={classAssignmentForm.section}
+                            onChange={(event) => setClassAssignmentForm((current) => ({ ...current, section: event.target.value }))}
+                            className="sts-input"
+                            maxLength={50}
+                            placeholder="e.g. Rizal"
+                          />
+                        </div>
+                        <div className="modal-actions edit-user-teacher-actions">
+                          <button type="button" className="sts-add-btn" onClick={handleSaveTeacherClassAssignment}>
+                            {editingClassAssignmentId ? 'Update Assignment' : 'Add Assignment'}
+                          </button>
+                          {editingClassAssignmentId && (
+                            <button type="button" className="cancel-btn" onClick={resetClassAssignmentForm}>Cancel Edit</button>
+                          )}
+                        </div>
+                        {classAssignmentMessage && <p className="info-text">{classAssignmentMessage}</p>}
+                        {teacherClassAssignments.length === 0 ? (
+                          <p className="empty-table-msg">No class assignments yet.</p>
+                        ) : (
+                          <div className="table-container">
+                            <table className="sts-data-table">
+                              <thead>
+                                <tr>
+                                  <th>GRADE</th>
+                                  <th>SECTION</th>
+                                  <th>ACTION</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {teacherClassAssignments.map((assignment) => (
+                                  <tr key={assignment.id}>
+                                    <td>{assignment.grade_level}</td>
+                                    <td>{assignment.section}</td>
+                                    <td>
+                                      <button type="button" className="edit-action-btn" onClick={() => handleEditTeacherClassAssignment(assignment)}>Edit</button>
+                                      <button type="button" className="delete-action-btn" onClick={() => handleRemoveTeacherClassAssignment(assignment.id)}>Remove</button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {isTeacherRole(editingUser.role) && (
+                      <div className="form-container-card edit-user-teacher-panel">
+                        <h3>Individual Student Exceptions</h3>
+                        <p className="edit-user-helper-text">
+                          Use an individual student link only when a documented exception is needed beyond the teacher's assigned classes.
                         </p>
                         <div className="form-group edit-user-teacher-input">
                           <label>Student Email</label>
@@ -1226,12 +1428,12 @@ export default function ManageUsers() {
                             className="sts-add-btn"
                             onClick={handleAddTeacherRelation}
                           >
-                            {isParentRole(editingUser.role) ? 'Add Child' : 'Add Student'}
+                            Add Student Exception
                           </button>
                         </div>
                         {relationMessage && <p className="info-text">{relationMessage}</p>}
                         {teacherRelations.length === 0 ? (
-                          <p className="empty-table-msg">{isParentRole(editingUser.role) ? 'No linked children yet.' : 'No assigned students yet.'}</p>
+                          <p className="empty-table-msg">No individual student exceptions yet.</p>
                         ) : (
                           <div className="table-container">
                             <table className="sts-data-table">
@@ -1254,6 +1456,69 @@ export default function ManageUsers() {
                                         type="button"
                                         className="delete-action-btn"
                                         onClick={() => handleRemoveTeacherRelation(relation.id)}
+                                      >
+                                        Remove
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {isParentRole(editingUser.role) && (
+                      <div className="form-container-card edit-user-teacher-panel">
+                        <h3>Linked Children</h3>
+                        <p className="edit-user-helper-text">
+                          Parent-child links remain separate from Teacher class assignments and individual student exceptions.
+                        </p>
+                        <div className="form-group edit-user-teacher-input">
+                          <label>Student Email</label>
+                          <input
+                            type="email"
+                            value={parentRelationEmail}
+                            onChange={(e) => setParentRelationEmail(e.target.value)}
+                            className="sts-input"
+                            placeholder="student@gmail.com"
+                          />
+                        </div>
+                        <div className="modal-actions edit-user-teacher-actions">
+                          <button
+                            type="button"
+                            className="sts-add-btn"
+                            onClick={handleAddParentRelation}
+                          >
+                            Add Child
+                          </button>
+                        </div>
+                        {parentRelationMessage && <p className="info-text">{parentRelationMessage}</p>}
+                        {parentRelations.length === 0 ? (
+                          <p className="empty-table-msg">No linked children yet.</p>
+                        ) : (
+                          <div className="table-container">
+                            <table className="sts-data-table">
+                              <thead>
+                                <tr>
+                                  <th>STUDENT NAME</th>
+                                  <th>STUDENT ID</th>
+                                  <th>EMAIL</th>
+                                  <th>ACTION</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {parentRelations.map((relation) => (
+                                  <tr key={relation.id}>
+                                    <td>{relation.student_name || 'Unknown'}</td>
+                                    <td>{relation.game_student_id || 'Not linked'}</td>
+                                    <td>{relation.student_email || 'N/A'}</td>
+                                    <td>
+                                      <button
+                                        type="button"
+                                        className="delete-action-btn"
+                                        onClick={() => handleRemoveTeacherRelation(relation.id, 'parent')}
                                       >
                                         Remove
                                       </button>

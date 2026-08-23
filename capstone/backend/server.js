@@ -845,6 +845,16 @@ const PARENT_CHILD_SECTIONS_BY_GRADE = {
   'Grade 6': ['Section A', 'Section B', 'Section C'],
 };
 
+const normalizeSchoolSection = (value, { required = false } = {}) => {
+  const section = String(value ?? '').trim().replace(/\s+/g, ' ');
+  if (!section) return required ? { error: 'Section is required.' } : { section: null, sectionKey: null };
+  if (section.length > 50) return { error: 'Section must be 50 characters or fewer.' };
+  if (!/^[A-Za-z0-9][A-Za-z0-9 .'-]*$/.test(section)) {
+    return { error: 'Section may only contain letters, numbers, spaces, periods, apostrophes, or hyphens.' };
+  }
+  return { section, sectionKey: section.toLowerCase() };
+};
+
 const normalizeChildNamePart = (value, label, { required = false, initial = false } = {}) => {
   const normalized = String(value ?? '').trim().replace(/\s+/g, ' ');
   if (!normalized) return required ? { error: `${label} is required.` } : { value: null };
@@ -870,10 +880,8 @@ const resolveParentChildProfile = (payload = {}) => {
   if (!gradeLevel) return { error: 'Grade is required.' };
   if (!PARENT_CHILD_GRADE_LEVELS.includes(gradeLevel)) return { error: 'Grade must be between Grade 1 and Grade 6.' };
 
-  const section = normalizeOptionalText(payload.section);
-  if (section && !PARENT_CHILD_SECTIONS_BY_GRADE[gradeLevel].includes(section)) {
-    return { error: 'Section must be one of the available sections.' };
-  }
+  const sectionResult = normalizeSchoolSection(payload.section);
+  if (sectionResult.error) return sectionResult;
 
   const studentId = normalizeStudentCode(payload.student_id ?? payload.studentId ?? payload.game_student_id);
   if (!studentId) {
@@ -890,7 +898,7 @@ const resolveParentChildProfile = (payload = {}) => {
     lastName: lastName.value,
     middleInitial: middleInitial.value,
     gradeLevel,
-    section,
+    section: sectionResult.section,
     studentId,
     fullName,
   };
@@ -939,6 +947,21 @@ const normalizeStudentProgressRow = (row) => {
     incorrect_answers: incorrectAnswers,
     difficulty: difficultyLevel,
     difficulty_level: difficultyLevel,
+  };
+};
+
+const normalizeTeacherClassAssignment = (payload = {}) => {
+  const gradeLevel = String(payload.grade_level ?? payload.gradeLevel ?? '').trim();
+  if (!PARENT_CHILD_GRADE_LEVELS.includes(gradeLevel)) {
+    return { error: 'Grade must be between Grade 1 and Grade 6.' };
+  }
+  const sectionResult = normalizeSchoolSection(payload.section, { required: true });
+  if (sectionResult.error) return sectionResult;
+
+  return {
+    gradeLevel,
+    section: sectionResult.section,
+    sectionKey: sectionResult.sectionKey,
   };
 };
 
@@ -1210,20 +1233,39 @@ const ensureParentStudentRelationship = async (client, { teacherId, studentId, r
   return inserted.rows[0] ?? { teacher_id: teacherId, student_id: studentId, relationship_type: normalizedRelationshipType };
 };
 
+const buildTeacherStudentScopePredicate = ({ teacherPlaceholder, studentColumn }) => `
+  EXISTS (
+    SELECT 1
+    FROM public.accounts scoped_student
+    JOIN public.accounts scope_owner
+      ON scope_owner.id = ${teacherPlaceholder}
+     AND COALESCE(scope_owner.is_archived, false) = false
+    WHERE scoped_student.id = ${studentColumn}
+      AND COALESCE(scoped_student.is_archived, false) = false
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM public.teacher_class_assignments tca
+          WHERE tca.teacher_account_id = ${teacherPlaceholder}
+            AND tca.grade_level = scoped_student.grade_level
+            AND tca.section_key = LOWER(REGEXP_REPLACE(BTRIM(COALESCE(scoped_student.section, '')), '\\s+', ' ', 'g'))
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM public.teacher_student_relationships tsr
+          WHERE tsr.teacher_id = ${teacherPlaceholder}
+            AND tsr.student_id = scoped_student.id
+            AND LOWER(tsr.relationship_type) = 'teacher'
+        )
+      )
+  )
+`;
+
 const appendTeacherScopeFilter = ({ teacherId, params, studentColumn }) => {
   if (!teacherId) return '';
   params.push(teacherId);
-  return `
-    AND ${studentColumn} IN (
-      SELECT tsr.student_id
-      FROM public.teacher_student_relationships tsr
-      JOIN public.accounts scope_owner
-        ON scope_owner.id = tsr.teacher_id
-       AND COALESCE(scope_owner.is_archived, false) = false
-      WHERE tsr.teacher_id = $${params.length}
-        AND LOWER(tsr.relationship_type) = 'teacher'
-    )
-  `;
+  const teacherPlaceholder = `$${params.length}`;
+  return ` AND ${buildTeacherStudentScopePredicate({ teacherPlaceholder, studentColumn })}`;
 };
 
 const appendParentScopeFilter = ({ parentId, params, studentColumn, relationshipType = 'parent' }) => {
@@ -1377,27 +1419,31 @@ const verifyScopedStudentAnalyticsAccess = async (req, res, next) => {
     return res.status(403).json({ error: 'This account cannot access student analytics.' });
   }
 
-  const scopeOwnerId = scope.type === 'parent' ? scope.parentId : scope.teacherId;
-  const relationshipClause = scope.type === 'parent'
-    ? "AND LOWER(tsr.relationship_type) = 'parent'"
-    : '';
-
   try {
-    const relationResult = await pool.query(
-      `SELECT 1
-       FROM public.teacher_student_relationships tsr
-       JOIN public.accounts scope_owner
-         ON scope_owner.id = tsr.teacher_id
-        AND COALESCE(scope_owner.is_archived, false) = false
-       JOIN public.accounts child
-         ON child.id = tsr.student_id
-        AND COALESCE(child.is_archived, false) = false
-       WHERE tsr.teacher_id = $1
-         AND tsr.student_id = $2
-         ${relationshipClause}
-       LIMIT 1`,
-      [scopeOwnerId, studentId]
-    );
+    const relationResult = scope.type === 'teacher'
+      ? await pool.query(
+        `SELECT 1
+         FROM public.accounts child
+         WHERE child.id = $2
+           AND ${buildTeacherStudentScopePredicate({ teacherPlaceholder: '$1', studentColumn: 'child.id' })}
+         LIMIT 1`,
+        [scope.teacherId, studentId]
+      )
+      : await pool.query(
+        `SELECT 1
+         FROM public.teacher_student_relationships tsr
+         JOIN public.accounts scope_owner
+           ON scope_owner.id = tsr.teacher_id
+          AND COALESCE(scope_owner.is_archived, false) = false
+         JOIN public.accounts child
+           ON child.id = tsr.student_id
+          AND COALESCE(child.is_archived, false) = false
+         WHERE tsr.teacher_id = $1
+           AND tsr.student_id = $2
+           AND LOWER(tsr.relationship_type) = 'parent'
+         LIMIT 1`,
+        [scope.parentId, studentId]
+      );
 
     if (relationResult.rows.length === 0) {
       return res.status(403).json({ error: 'This account cannot access this student.' });
@@ -3143,6 +3189,115 @@ app.put('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) => 
   } catch (err) {
     console.error('Update Error:', err.message);
     res.status(500).json({ error: 'Update failed: ' + err.message });
+  }
+});
+
+const getAssignableTeacherAccount = async (teacherId) => {
+  const result = await pool.query(
+    `SELECT id, role, is_archived
+     FROM public.accounts
+     WHERE id = $1
+     LIMIT 1`,
+    [teacherId]
+  );
+  const account = result.rows[0];
+  if (!account) return { error: { status: 404, message: 'Teacher account not found.' } };
+  if (account.is_archived || !accountHasTeacherAccess(account.role)) {
+    return { error: { status: 400, message: 'Selected account must be an active Teacher or Parent/Teacher user.' } };
+  }
+  return { account };
+};
+
+app.get('/api/teacher-class-assignments', requireAccountManagementAdmin, async (req, res) => {
+  try {
+    const teacherId = resolveScopeId(req.query.teacherId);
+    if (!teacherId || Number.isNaN(teacherId)) return res.status(400).json({ error: 'Invalid teacher ID' });
+    const target = await getAssignableTeacherAccount(teacherId);
+    if (target.error) return res.status(target.error.status).json({ error: target.error.message });
+
+    const result = await pool.query(
+      `SELECT id, teacher_account_id, grade_level, section, section_key, created_by_admin, created_at, updated_at
+       FROM public.teacher_class_assignments
+       WHERE teacher_account_id = $1
+       ORDER BY grade_level, section_key, id`,
+      [teacherId]
+    );
+    return res.json({ assignments: result.rows });
+  } catch (err) {
+    console.error('Fetch teacher class assignments failed:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch teacher class assignments.' });
+  }
+});
+
+app.post('/api/teacher-class-assignments', requireAccountManagementAdmin, async (req, res) => {
+  try {
+    const teacherId = resolveScopeId(req.body?.teacherId ?? req.body?.teacher_account_id);
+    if (!teacherId || Number.isNaN(teacherId)) return res.status(400).json({ error: 'Invalid teacher ID' });
+    const assignmentInput = normalizeTeacherClassAssignment(req.body);
+    if (assignmentInput.error) return res.status(400).json({ error: assignmentInput.error });
+
+    const target = await getAssignableTeacherAccount(teacherId);
+    if (target.error) return res.status(target.error.status).json({ error: target.error.message });
+
+    const result = await pool.query(
+      `INSERT INTO public.teacher_class_assignments (
+         teacher_account_id, grade_level, section, section_key, created_by_admin
+       ) VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (teacher_account_id, grade_level, section_key) DO NOTHING
+       RETURNING id, teacher_account_id, grade_level, section, section_key, created_by_admin, created_at, updated_at`,
+      [teacherId, assignmentInput.gradeLevel, assignmentInput.section, assignmentInput.sectionKey, req.authenticatedUser.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(409).json({ error: 'This teacher already has the selected Grade and Section assignment.' });
+    }
+    await writeAdminAuditLog(req.authenticatedUser, 'Assign Teacher Class', target.account);
+    return res.status(201).json({ success: true, assignment: result.rows[0] });
+  } catch (err) {
+    console.error('Create teacher class assignment failed:', err.message);
+    return res.status(500).json({ error: 'Failed to create teacher class assignment.' });
+  }
+});
+
+app.put('/api/teacher-class-assignments/:id', requireAccountManagementAdmin, async (req, res) => {
+  try {
+    const assignmentId = resolveScopeId(req.params.id);
+    if (!assignmentId || Number.isNaN(assignmentId)) return res.status(400).json({ error: 'Invalid assignment ID' });
+    const assignmentInput = normalizeTeacherClassAssignment(req.body);
+    if (assignmentInput.error) return res.status(400).json({ error: assignmentInput.error });
+
+    const result = await pool.query(
+      `UPDATE public.teacher_class_assignments
+       SET grade_level = $2, section = $3, section_key = $4
+       WHERE id = $1
+       RETURNING id, teacher_account_id, grade_level, section, section_key, created_by_admin, created_at, updated_at`,
+      [assignmentId, assignmentInput.gradeLevel, assignmentInput.section, assignmentInput.sectionKey]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Teacher class assignment not found.' });
+    await writeAdminAuditLog(req.authenticatedUser, 'Update Teacher Class Assignment', { id: assignmentId });
+    return res.json({ success: true, assignment: result.rows[0] });
+  } catch (err) {
+    if (err?.code === '23505') return res.status(409).json({ error: 'This teacher already has the selected Grade and Section assignment.' });
+    console.error('Update teacher class assignment failed:', err.message);
+    return res.status(500).json({ error: 'Failed to update teacher class assignment.' });
+  }
+});
+
+app.delete('/api/teacher-class-assignments/:id', requireAccountManagementAdmin, async (req, res) => {
+  try {
+    const assignmentId = resolveScopeId(req.params.id);
+    if (!assignmentId || Number.isNaN(assignmentId)) return res.status(400).json({ error: 'Invalid assignment ID' });
+    const result = await pool.query(
+      `DELETE FROM public.teacher_class_assignments
+       WHERE id = $1
+       RETURNING id, teacher_account_id, grade_level, section`,
+      [assignmentId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Teacher class assignment not found.' });
+    await writeAdminAuditLog(req.authenticatedUser, 'Remove Teacher Class Assignment', result.rows[0]);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Delete teacher class assignment failed:', err.message);
+    return res.status(500).json({ error: 'Failed to remove teacher class assignment.' });
   }
 });
 
@@ -5435,14 +5590,10 @@ const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
   if (scope === 'teacher') {
     const teacherAccountId = Number(req.authenticatedUser.id);
     const teacherAccountPlaceholder = addParam(teacherAccountId);
-    filters.push(`ps.student_id IN (
-      SELECT tsr.student_id
-      FROM public.teacher_student_relationships tsr
-      JOIN public.accounts child
-        ON child.id = tsr.student_id
-       AND COALESCE(child.is_archived, false) = false
-      WHERE tsr.teacher_id = ${teacherAccountPlaceholder}
-    )`);
+    filters.push(buildTeacherStudentScopePredicate({
+      teacherPlaceholder: teacherAccountPlaceholder,
+      studentColumn: 'ps.student_id',
+    }));
   }
 
   const dateValue = String(req.query.date || req.query.date_played || '').trim();

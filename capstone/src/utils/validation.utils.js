@@ -14,6 +14,16 @@ export const PARENT_CHILD_SECTION_OPTIONS_BY_GRADE = {
 };
 export const getParentChildSectionOptions = (gradeLevel) => PARENT_CHILD_SECTION_OPTIONS_BY_GRADE[gradeLevel] || [];
 
+export const validateSchoolSection = (value, { required = false } = {}) => {
+  const section = String(value ?? '').trim().replace(/\s+/g, ' ');
+  if (!section) return required ? 'Section is required.' : null;
+  if (section.length > 50) return 'Section must be 50 characters or fewer.';
+  if (!/^[A-Za-z0-9][A-Za-z0-9 .'-]*$/.test(section)) {
+    return 'Section may only contain letters, numbers, spaces, periods, apostrophes, or hyphens.';
+  }
+  return null;
+};
+
 export const validatePhilippineMobile = (value) => {
   const normalized = String(value ?? '').trim();
   if (!normalized) {
@@ -88,9 +98,8 @@ export const validateChildProfile = ({
 
   if (!String(gradeLevel || '').trim()) errors.gradeLevel = 'Grade is required.';
   else if (!PARENT_CHILD_GRADE_OPTIONS.includes(gradeLevel)) errors.gradeLevel = 'Select an available Grade.';
-  if (String(section || '').trim() && !getParentChildSectionOptions(gradeLevel).includes(section)) {
-    errors.section = 'Section must be one of the available sections.';
-  }
+  const sectionError = validateSchoolSection(section);
+  if (sectionError) errors.section = sectionError;
 
   const studentIdResult = validateGameStudentId(studentId);
   if (!studentIdResult.isValid) errors.studentId = studentIdResult.error;

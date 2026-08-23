@@ -24,9 +24,7 @@ export default function ParentAddChildModal({ onClose, onCreated }) {
   const [submitting, setSubmitting] = useState(false);
 
   const updateField = (field, value) => {
-    const nextForm = field === 'gradeLevel' && form.section && !getParentChildSectionOptions(value).includes(form.section)
-      ? { ...form, gradeLevel: value, section: '' }
-      : { ...form, [field]: value };
+    const nextForm = { ...form, [field]: value };
     setForm(nextForm);
     if (touched[field]) {
       setErrors((current) => ({ ...current, [field]: validateChildProfile(nextForm)[field] }));
@@ -56,7 +54,7 @@ export default function ParentAddChildModal({ onClose, onCreated }) {
           last_name: form.lastName.trim(),
           middle_initial: form.middleInitial.trim(),
           grade_level: form.gradeLevel,
-          section: form.section,
+          section: form.section.trim().replace(/\s+/g, ' '),
           student_id: form.studentId.trim(),
         }),
       });
@@ -111,10 +109,10 @@ export default function ParentAddChildModal({ onClose, onCreated }) {
           </div>
           <div className="form-group">
             <label htmlFor="child-section">Section</label>
-            <select id="child-section" value={form.section} onChange={(event) => updateField('section', event.target.value)} onBlur={() => touchField('section')} aria-invalid={Boolean(errors.section)}>
-              <option value="">Not set</option>
-              {getParentChildSectionOptions(form.gradeLevel).map((section) => <option key={section} value={section}>{section}</option>)}
-            </select>
+            <input id="child-section" list="child-section-suggestions" value={form.section} onChange={(event) => updateField('section', event.target.value)} onBlur={() => touchField('section')} maxLength={50} aria-invalid={Boolean(errors.section)} placeholder="e.g. Rizal" />
+            <datalist id="child-section-suggestions">
+              {getParentChildSectionOptions(form.gradeLevel).map((section) => <option key={section} value={section} />)}
+            </datalist>
             {errors.section && <span className="error-text" role="alert">{errors.section}</span>}
           </div>
           <div className="form-group parent-add-child-student-id">

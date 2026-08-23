@@ -98,6 +98,13 @@ describe('ManageUsers edit flow', () => {
         });
       }
 
+      if (String(url).includes('/api/teacher-class-assignments')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ assignments: [] }),
+        });
+      }
+
       return Promise.reject(new Error(`Unexpected fetch: ${url}`));
     });
   });
@@ -393,6 +400,89 @@ describe('ManageUsers edit flow', () => {
     }));
   });
 
+  test('Admin can review a Teacher class assignment separately from individual student exceptions', async () => {
+    localStorage.setItem('rememberToken', 'manage-users-token');
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/accounts')) {
+        return Promise.resolve({ ok: true, json: async () => accountsPayload });
+      }
+      if (String(url).includes('/api/teacher-class-assignments')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            assignments: [{ id: 71, grade_level: 'Grade 3', section: 'Rizal', section_key: 'rizal' }],
+          }),
+        });
+      }
+      if (String(url).includes('/api/teacher-student-relationships')) {
+        return Promise.resolve({ ok: true, json: async () => ({ relationships: [] }) });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+    const editButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Edit');
+    await act(async () => {
+      editButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Class Assignments');
+    expect(container.textContent).toContain('Grade 3');
+    expect(container.textContent).toContain('Rizal');
+    expect(container.textContent).toContain('Individual Student Exceptions');
+    expect(global.fetch).toHaveBeenCalledWith('/api/teacher-class-assignments?teacherId=7', expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer manage-users-token' }),
+    }));
+  });
+
+  test('Admin keeps Parent/Teacher class assignments, teacher exceptions, and linked children distinct', async () => {
+    const parentTeacher = {
+      id: 11,
+      name: 'Parent Teacher User',
+      email: 'parent-teacher@example.com',
+      role: 'parent_teacher',
+      employee_id: 'EMP-11',
+      parent_id: '482916',
+    };
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/accounts')) {
+        return Promise.resolve({ ok: true, json: async () => [...accountsPayload, parentTeacher] });
+      }
+      if (String(url).includes('/api/teacher-class-assignments')) {
+        return Promise.resolve({ ok: true, json: async () => ({ assignments: [] }) });
+      }
+      if (String(url).includes('/api/teacher-student-relationships')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            relationships: [
+              { id: 51, relationship_type: 'teacher', student_name: 'Assigned Exception', game_student_id: '001101' },
+              { id: 52, relationship_type: 'parent', student_name: 'Linked Child', game_student_id: '001102' },
+            ],
+          }),
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+    const parentTeacherRow = Array.from(container.querySelectorAll('tr')).find((row) => row.textContent.includes('Parent Teacher User'));
+    const editButton = Array.from(parentTeacherRow.querySelectorAll('button')).find((button) => button.textContent === 'Edit');
+    await act(async () => {
+      editButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Class Assignments');
+    expect(container.textContent).toContain('Individual Student Exceptions');
+    expect(container.textContent).toContain('Assigned Exception');
+    expect(container.textContent).toContain('Linked Children');
+    expect(container.textContent).toContain('Linked Child');
+  });
+
   test('Linked Children shows the authoritative Student ID returned by the backend', async () => {
     global.fetch = jest.fn((url) => {
       if (String(url).includes('/api/accounts')) {
@@ -407,6 +497,7 @@ describe('ManageUsers edit flow', () => {
               student_name: 'Child One',
               student_email: 'child@example.com',
               game_student_id: '001234',
+              relationship_type: 'parent',
             }],
           }),
         });

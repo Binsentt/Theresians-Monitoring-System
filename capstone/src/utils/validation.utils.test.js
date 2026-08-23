@@ -201,13 +201,13 @@ describe('validation.utils', () => {
       });
     });
 
-    test('accepts a controlled Grade/Section and preserves a leading-zero Student ID', () => {
+    test('accepts a normalized school Section label and preserves a leading-zero Student ID', () => {
       expect(validateChildProfile({
         firstName: 'Ava',
         lastName: 'Santos',
         middleInitial: 'M',
         gradeLevel: 'Grade 3',
-        section: 'Section B',
+        section: 'Rizal',
         studentId: '001234',
       })).toEqual({});
       expect(PARENT_CHILD_GRADE_OPTIONS).toEqual(['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6']);
@@ -215,29 +215,29 @@ describe('validation.utils', () => {
       expect(PARENT_CHILD_SECTION_OPTIONS_BY_GRADE['Grade 3']).toEqual(['Section A', 'Section B', 'Section C']);
     });
 
-    test('rejects an invalid middle initial, unavailable section, and malformed Student ID', () => {
+    test('rejects an invalid middle initial, malformed Section, and malformed Student ID', () => {
       expect(validateChildProfile({
         firstName: 'Ava',
         lastName: 'Santos',
         middleInitial: 'MM',
         gradeLevel: 'Grade 3',
-        section: 'Section Z',
+        section: 'Rizal!',
         studentId: '12345',
       })).toEqual({
         middleInitial: 'Middle initial must be one letter.',
-        section: 'Section must be one of the available sections.',
+        section: 'Section may only contain letters, numbers, spaces, periods, apostrophes, or hyphens.',
         studentId: 'Student ID must be exactly 6 digits.',
       });
     });
 
-    test('uses the existing grade-specific Section options', () => {
+    test('keeps existing grade-specific Section values as suggestions without rejecting a valid school section', () => {
       expect(validateChildProfile({
         firstName: 'Ava',
         lastName: 'Santos',
         gradeLevel: 'Grade 1',
         section: 'Section C',
         studentId: '001234',
-      })).toEqual({ section: 'Section must be one of the available sections.' });
+      })).toEqual({});
     });
   });
 

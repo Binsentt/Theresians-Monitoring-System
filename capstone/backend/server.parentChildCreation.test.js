@@ -119,6 +119,30 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     assert.deepEqual(relationshipInsert, [19, 44, 'parent']);
   });
 
+  await t.test('normalizes a real Section label before storing the canonical child profile', async () => {
+    let accountInsert = null;
+    queryHandler = async (sql, params) => {
+      if (sql.includes('from public.accounts s') && sql.includes('where s.game_student_id = $1')) return emptyResult;
+      if (sql.startsWith('insert into public.accounts')) {
+        accountInsert = params;
+        return { rows: [{ id: 46, game_student_id: params.at(-1), role: 'student', name: 'Ava M Santos', grade_level: 'Grade 3', section: 'Rizal' }] };
+      }
+      if (sql.startsWith('select id from public.teacher_student_relationships')) return emptyResult;
+      if (sql.startsWith('insert into public.teacher_student_relationships')) return { rows: [{ id: 11 }] };
+      return emptyResult;
+    };
+
+    const response = await requestJson(baseUrl, '/api/parent/children', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer parent-token' },
+      body: JSON.stringify({ ...validChild, section: '  Rizal  ', student_id: '001246' }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.ok(accountInsert.includes('Rizal'));
+    assert.equal(accountInsert.includes('  Rizal  '), false);
+  });
+
   await t.test('allows Parent/Teacher only through the authenticated parent identity', async () => {
     let relationshipInsert = null;
     queryHandler = async (sql, params) => {

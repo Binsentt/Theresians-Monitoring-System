@@ -51,7 +51,7 @@ describe('ParentAddChildModal', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  test('sends only validated child data and preserves the leading-zero Student ID', async () => {
+  test('accepts a normalized real section label and preserves the leading-zero Student ID', async () => {
     const onCreated = jest.fn();
     global.fetch.mockResolvedValue({
       ok: true,
@@ -61,7 +61,7 @@ describe('ParentAddChildModal', () => {
           student_name: 'Ava M Santos',
           game_student_id: '001234',
           grade_level: 'Grade 3',
-          section: 'Section B',
+          section: 'Rizal',
         },
       }),
     });
@@ -82,7 +82,8 @@ describe('ParentAddChildModal', () => {
       setInputValue(fields.lastName, 'Santos');
       setInputValue(fields.middleInitial, 'M');
       setSelectValue(fields.gradeLevel, 'Grade 3');
-      setSelectValue(fields.section, 'Section B');
+      expect(fields.section.tagName).toBe('INPUT');
+      setInputValue(fields.section, '  Rizal  ');
       setInputValue(fields.studentId, '001234');
       container.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
@@ -95,7 +96,7 @@ describe('ParentAddChildModal', () => {
         last_name: 'Santos',
         middle_initial: 'M',
         grade_level: 'Grade 3',
-        section: 'Section B',
+        section: 'Rizal',
         student_id: '001234',
       }),
     }));
