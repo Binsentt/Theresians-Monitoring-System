@@ -944,7 +944,7 @@ test('parent game results routes and access middleware', async (t) => {
       if (sql.startsWith('select 1') && sql.includes('from public.teacher_student_relationships')) {
         return resultRows([{ linked: true }]);
       }
-      if (sql.startsWith('select p.*') && sql.includes('where p.student_id = $1')) {
+      if (sql.includes('from public.accounts a') && sql.includes('left join lateral') && sql.includes('and a.id = $1')) {
         queriedStudentIds.push(params[0]);
         return resultRows([{
           student_id: params[0],
@@ -988,9 +988,10 @@ test('parent game results routes and access middleware', async (t) => {
 
   await t.test('teacher progress list stays scoped to the teacher while returning separate students', async () => {
     setQueryHandler(async (sql, params) => {
-      if (sql.startsWith('select p.*') && sql.includes('from public.student_game_progress p')) {
+      if (sql.includes('from public.accounts a') && sql.includes('left join lateral')) {
         assert.equal(params[0], 16);
         assert.match(sql, /tsr\.teacher_id = \$1/);
+        assert.match(sql, /lower\(tsr\.relationship_type\) = 'teacher'/);
         return resultRows([
           { student_id: 44, student_name: 'Ava Santos', score: 90, accuracy_rate: 90, progress_percentage: 80 },
           { student_id: 45, student_name: 'Noah Santos', score: 70, accuracy_rate: 70, progress_percentage: 60 },
@@ -1173,7 +1174,7 @@ test('student monitoring keeps the external six-digit game Student ID beside the
   });
 
   setQueryHandler(async (sql) => {
-    if (sql.startsWith('select p.*') && sql.includes('from public.student_game_progress p')) {
+    if (sql.includes('from public.accounts a') && sql.includes('left join lateral')) {
       assert.match(sql, /a\.game_student_id/);
       return resultRows([{
         student_id: 44,
@@ -1216,7 +1217,7 @@ test('student analytics reports insufficient data instead of inferring hard-ques
     if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
       return resultRows([{ id: 19, parent_id: '112832' }]);
     }
-    if (sql.startsWith('select p.*') && sql.includes('where p.student_id = $1')) {
+    if (sql.includes('from public.accounts a') && sql.includes('left join lateral') && sql.includes('and a.id = $1')) {
       return resultRows([{
         student_id: 44,
         game_student_id: '001234',
@@ -1258,7 +1259,7 @@ test('student analytics derives difficulty recommendations from recorded questio
     if (sql.startsWith('select 1') && sql.includes('from public.teacher_student_relationships')) {
       return resultRows([{ linked: true }]);
     }
-    if (sql.startsWith('select p.*') && sql.includes('where p.student_id = $1')) {
+    if (sql.includes('from public.accounts a') && sql.includes('left join lateral') && sql.includes('and a.id = $1')) {
       return resultRows([{
         student_id: params[0],
         student_name: 'Ava Santos',

@@ -371,6 +371,8 @@ describe('ManageUsers edit flow', () => {
   });
 
   test('Edit Parent form exposes linked children management', async () => {
+    localStorage.setItem('rememberToken', 'manage-users-token');
+
     await act(async () => {
       root.render(<ManageUsers />);
     });
@@ -386,7 +388,9 @@ describe('ManageUsers edit flow', () => {
     expect(container.textContent).toContain('Linked Children');
     expect(container.textContent).toContain('Student Email');
     expect(container.textContent).toContain('Parent ID');
-    expect(global.fetch).toHaveBeenCalledWith('/api/teacher-student-relationships?teacherId=8');
+    expect(global.fetch).toHaveBeenCalledWith('/api/teacher-student-relationships?teacherId=8', expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer manage-users-token' }),
+    }));
   });
 
   test('Linked Children shows the authoritative Student ID returned by the backend', async () => {

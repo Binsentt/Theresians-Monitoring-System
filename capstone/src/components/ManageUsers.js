@@ -324,7 +324,9 @@ export default function ManageUsers() {
 
   const loadTeacherRelationships = async (teacherId) => {
     try {
-      const response = await fetch(apiUrl(`/api/teacher-student-relationships?teacherId=${teacherId}`));
+      const response = await fetch(apiUrl(`/api/teacher-student-relationships?teacherId=${teacherId}`), {
+        headers: buildAuthHeaders(),
+      });
       const data = await response.json();
       if (response.ok) {
         setTeacherRelations(data.relationships || []);
@@ -346,7 +348,7 @@ export default function ManageUsers() {
     try {
       const response = await fetch(apiUrl('/api/teacher-student-relationships'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
         body: JSON.stringify({
           teacherId: editingUser.id,
           studentEmail: relationEmail,
@@ -370,7 +372,8 @@ export default function ManageUsers() {
   const handleRemoveTeacherRelation = async (relationId) => {
     try {
       const response = await fetch(apiUrl(`/api/teacher-student-relationships/${relationId}`), {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: buildAuthHeaders(),
       });
       if (response.ok) {
         setRelationMessage('Relationship removed.');

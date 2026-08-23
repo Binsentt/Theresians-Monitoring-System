@@ -942,6 +942,27 @@ const normalizeStudentProgressRow = (row) => {
   };
 };
 
+const buildCanonicalStudentProgressQuery = () => `
+  SELECT p.*,
+         a.id AS student_id,
+         a.name AS student_name,
+         a.email AS student_email,
+         a.role AS student_role,
+         a.game_student_id,
+         COALESCE(NULLIF(a.grade_level, ''), p.grade_level) AS grade_level,
+         COALESCE(NULLIF(a.section, ''), p.section) AS section
+  FROM public.accounts a
+  LEFT JOIN LATERAL (
+    SELECT progress.*
+    FROM public.student_game_progress progress
+    WHERE progress.student_id = a.id
+    ORDER BY progress.updated_at DESC NULLS LAST, progress.id DESC
+    LIMIT 1
+  ) p ON true
+  WHERE LOWER(a.role) = 'student'
+    AND COALESCE(a.is_archived, false) = false
+`;
+
 const calculateGameResultPercentage = ({ score, totalItems }) => {
   const scoreValue = toNullableNumber(score);
   const totalItemsValue = toNullableNumber(totalItems);
@@ -1200,6 +1221,7 @@ const appendTeacherScopeFilter = ({ teacherId, params, studentColumn }) => {
         ON scope_owner.id = tsr.teacher_id
        AND COALESCE(scope_owner.is_archived, false) = false
       WHERE tsr.teacher_id = $${params.length}
+        AND LOWER(tsr.relationship_type) = 'teacher'
     )
   `;
 };
@@ -3124,7 +3146,7 @@ app.put('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) => 
   }
 });
 
-app.get('/api/teacher-student-relationships', async (req, res) => {
+app.get('/api/teacher-student-relationships', requireAccountManagementAdmin, async (req, res) => {
   try {
     const teacherId = parseInt(req.query.teacherId, 10);
     if (Number.isNaN(teacherId)) return res.status(400).json({ error: 'Invalid teacher ID' });
@@ -3144,7 +3166,7 @@ app.get('/api/teacher-student-relationships', async (req, res) => {
   }
 });
 
-app.post('/api/teacher-student-relationships', async (req, res) => {
+app.post('/api/teacher-student-relationships', requireAccountManagementAdmin, async (req, res) => {
   const { teacherId, studentEmail, relationship_type } = req.body;
   try {
     const resultTeacher = await pool.query('SELECT * FROM accounts WHERE id = $1', [teacherId]);
@@ -3182,7 +3204,7 @@ app.post('/api/teacher-student-relationships', async (req, res) => {
   }
 });
 
-app.delete('/api/teacher-student-relationships/:id', async (req, res) => {
+app.delete('/api/teacher-student-relationships/:id', requireAccountManagementAdmin, async (req, res) => {
   try {
     const relationId = parseInt(req.params.id, 10);
     if (Number.isNaN(relationId)) return res.status(400).json({ error: 'Invalid relationship ID' });
@@ -6165,14 +6187,9 @@ app.get('/api/students/progress', requireAnalyticsAccess, async (req, res) => {
   try {
     const scope = resolveAnalyticsScope(req);
     const params = [];
-    let query = `
-      SELECT p.*, a.name AS student_name, a.email AS student_email, a.role AS student_role, a.game_student_id
-      FROM public.student_game_progress p
-      LEFT JOIN accounts a ON a.id = p.student_id
-      WHERE 1=1
-    `;
-    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'p.student_id' });
-    query += " ORDER BY LOWER(COALESCE(NULLIF(a.name, ''), NULLIF(p.student_name, ''), '')), p.student_id ASC";
+    let query = buildCanonicalStudentProgressQuery();
+    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'a.id' });
+    query += " ORDER BY LOWER(COALESCE(NULLIF(a.name, ''), NULLIF(p.student_name, ''), '')), a.id ASC";
 
     const result = await pool.query(query, params);
     const rows = sortRowsByStudentName(result.rows.map(normalizeStudentProgressRow).map((row) => {
@@ -6198,13 +6215,8 @@ app.get('/api/analytics/overview', requireAnalyticsAccess, async (req, res) => {
   try {
     const scope = resolveAnalyticsScope(req);
     const params = [];
-    let query = `
-      SELECT p.*, a.name AS student_name, a.email AS student_email, a.role AS student_role, a.game_student_id
-      FROM public.student_game_progress p
-      LEFT JOIN accounts a ON a.id = p.student_id
-      WHERE 1=1
-    `;
-    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'p.student_id' });
+    let query = buildCanonicalStudentProgressQuery();
+    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'a.id' });
 
     const result = await pool.query(query, params);
     const rows = result.rows.map(normalizeStudentProgressRow).map((row) => {
@@ -6409,14 +6421,10 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
     const scope = resolveAnalyticsScope(req);
 
     const params = [studentId];
-    let query = `
-      SELECT p.*, a.email AS student_email, a.name AS student_name, a.game_student_id
-      FROM public.student_game_progress p
-      LEFT JOIN accounts a ON a.id = p.student_id
-      WHERE p.student_id = $1
-    `;
-    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'p.student_id' });
-    query += ' ORDER BY p.last_played DESC LIMIT 1';
+    let query = buildCanonicalStudentProgressQuery();
+    query += ' AND a.id = $1';
+    query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'a.id' });
+    query += ' ORDER BY p.last_played DESC NULLS LAST, a.id ASC LIMIT 1';
 
     const result = await pool.query(query, params);
 

@@ -8,7 +8,7 @@ const path = require('node:path');
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
 let parsedPdfText = '';
-const authenticatedTeacher = { id: 1, role: 'teacher', is_archived: false, session_version: 0 };
+const authenticatedTeacher = { id: 1, role: 'admin', is_archived: false, session_version: 0 };
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const mockPool = {
