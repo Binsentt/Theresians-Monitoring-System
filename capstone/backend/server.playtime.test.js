@@ -109,6 +109,12 @@ const requestJson = async (baseUrl, path, options = {}) => {
   };
 };
 
+const assertValidRemainingSecondsSelectSql = (sql) => {
+  const normalized = compactSql(sql);
+  assert.match(normalized, /greatest\(0, floor\(extract\(epoch from \(.*?\)\)\)::integer\) as remaining_seconds/);
+  assert.doesNotMatch(normalized, /::integer as remaining_seconds/);
+};
+
 test('playtime start creates a Playing session for Godot gameplay', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -158,6 +164,68 @@ test('playtime start creates a Playing session for Godot gameplay', async (t) =>
   assert.equal(response.body.session_id, 77);
   assert.deepEqual(linkedStudentValues, [19, '001234']);
   assert.deepEqual(insertedValues.slice(0, 5), [44, '123456', 'Ava Santos', 'Grade 3', 'Section A']);
+});
+
+test('playtime start and heartbeat close their server-side remaining-seconds GREATEST expressions', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const sessionCredential = 'e'.repeat(64);
+  const remainingSecondsSelects = [];
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params, rawSql) => {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $2')) {
+      return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3', section: null }]);
+    }
+    if (sql.startsWith('select *,') && sql.includes('from public.playtime_sessions')) {
+      remainingSecondsSelects.push(String(rawSql));
+      if (params[0] === 77) {
+        return resultRows([{
+          id: 77,
+          student_id: 44,
+          status: 'Playing',
+          remaining_seconds: 120,
+          expires_at: '2026-08-22T09:02:00.000Z',
+          session_credential_hash: crypto.createHash('sha256').update(sessionCredential).digest('hex'),
+        }]);
+      }
+      return emptyResult;
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
+      return resultRows([{ total_playtime_seconds: 0, total_playtime_today: 0 }]);
+    }
+    if (sql.startsWith('insert into public.playtime_sessions')) {
+      return resultRows([{ id: 88, student_id: 44, status: 'Playing', remaining_seconds: 3600 }]);
+    }
+    if (sql.startsWith('update public.playtime_sessions') && sql.includes('last_heartbeat_at')) {
+      return resultRows([{ id: 77, student_id: 44, status: 'Playing', remaining_seconds: 119, expires_at: '2026-08-22T09:02:00.000Z' }]);
+    }
+    return emptyResult;
+  });
+
+  const startResponse = await requestJson(baseUrl, '/api/playtime/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: '001234',
+      parent_id: '123456',
+      student_name: 'Ava Santos',
+      grade_level: 'Grade 3',
+      section: '',
+    }),
+  });
+  assert.equal(startResponse.status, 201);
+
+  const heartbeatResponse = await requestJson(baseUrl, '/api/playtime/heartbeat', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: 77, session_credential: sessionCredential }),
+  });
+  assert.equal(heartbeatResponse.status, 200);
+
+  assert.equal(remainingSecondsSelects.length, 2);
+  remainingSecondsSelects.forEach(assertValidRemainingSecondsSelectSql);
 });
 
 test('playtime start persists the linked child profile instead of caller-supplied identity metadata', async (t) => {

@@ -5836,7 +5836,7 @@ app.post('/api/playtime/start', async (req, res) => {
       `SELECT *,
               GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
                 COALESCE(expires_at, NOW()) - NOW()
-              )))::INTEGER AS remaining_seconds
+              )))::INTEGER) AS remaining_seconds
        FROM public.playtime_sessions
        WHERE student_id = $1
          AND status = 'Playing'
@@ -5986,7 +5986,7 @@ app.post('/api/playtime/heartbeat', async (req, res) => {
       `SELECT *,
               GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
                 COALESCE(expires_at, NOW()) - NOW()
-              )))::INTEGER AS remaining_seconds
+              )))::INTEGER) AS remaining_seconds
        FROM public.playtime_sessions
        WHERE id = $1
          AND status = 'Playing'
