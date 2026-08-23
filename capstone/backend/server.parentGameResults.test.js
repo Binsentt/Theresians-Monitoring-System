@@ -374,6 +374,42 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(insertedValues[12], false);
   });
 
+  await t.test('uses the linked child name and grade instead of caller-supplied result metadata', async () => {
+    let insertedValues = null;
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+        assert.deepEqual(params, [19, '001234']);
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3', section: 'Section A' }]);
+      }
+      if (sql.startsWith('insert into public.game_results')) {
+        insertedValues = params;
+        return emptyResult;
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: '001234',
+        student_name: 'Caller supplied name',
+        grade_level: 'Grade 6',
+        difficulty: 'Hard',
+        math_topic: 'Fractions',
+        score: 1,
+        total_items: 1,
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(insertedValues[1], 'Ava Santos');
+    assert.equal(insertedValues[3], 'Grade 3');
+  });
+
   await t.test('rejects a question set that does not match the submitted result scope', async () => {
     let insertedGameResult = false;
     setQueryHandler(async (sql, params) => {

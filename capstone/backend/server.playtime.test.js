@@ -160,6 +160,49 @@ test('playtime start creates a Playing session for Godot gameplay', async (t) =>
   assert.deepEqual(insertedValues.slice(0, 5), [44, '123456', 'Ava Santos', 'Grade 3', 'Section A']);
 });
 
+test('playtime start persists the linked child profile instead of caller-supplied identity metadata', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let insertedValues = null;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $2')) {
+      return resultRows([{
+        id: 44,
+        name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        section: 'Section A',
+      }]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
+      return resultRows([{ total_playtime_today: 0 }]);
+    }
+    if (sql.startsWith('insert into public.playtime_sessions')) {
+      insertedValues = params;
+      return resultRows([{ id: 78, student_id: 44, status: 'Playing' }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: '001234',
+      parent_id: '123456',
+      student_name: 'Caller supplied name',
+      grade_level: 'Grade 6',
+      section: 'Section Z',
+    }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.deepEqual(insertedValues.slice(0, 5), [44, '123456', 'Ava Santos', 'Grade 3', 'Section A']);
+});
+
 test('playtime start creates and links an unused six-digit Student ID for New Game', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;

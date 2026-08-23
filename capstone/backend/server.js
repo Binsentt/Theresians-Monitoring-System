@@ -4391,6 +4391,13 @@ app.post('/api/game/progress', async (req, res) => {
       relationshipType: 'parent',
     });
 
+    // A linked Parent-created child profile is the authority for identity and
+    // school metadata. Legacy New Game registrations keep their submitted
+    // values until a managed profile exists.
+    const resolvedStudentName = normalizeGameStudentName(student.name) || studentName;
+    const resolvedGradeLevel = String(student.grade_level || '').trim() || grade_level || null;
+    const resolvedSection = String(student.section || '').trim() || section || null;
+
     const scoreValue = Math.round(toNullableNumber(score) ?? 0);
     const correctAnswersValue = Math.round(toNullableNumber(correct_answers) ?? 0);
     const totalQuestionsValue = Math.round(toNullableNumber(total_questions) ?? 0);
@@ -4434,9 +4441,9 @@ app.post('/api/game/progress', async (req, res) => {
          WHERE id = $16
          RETURNING *`,
         [
-          studentName,
-          grade_level || null,
-          section || null,
+          resolvedStudentName,
+          resolvedGradeLevel,
+          resolvedSection,
           current_quest || null,
           scoreValue,
           correctAnswersValue,
@@ -4465,9 +4472,9 @@ app.post('/api/game/progress', async (req, res) => {
         RETURNING *`,
         [
           student.id,
-          studentName,
-          grade_level || null,
-          section || null,
+          resolvedStudentName,
+          resolvedGradeLevel,
+          resolvedSection,
           current_quest || null,
           scoreValue,
           correctAnswersValue,
@@ -4497,9 +4504,9 @@ app.post('/api/game/progress', async (req, res) => {
       RETURNING *`,
       [
         student.id,
-        studentName,
-        grade_level || null,
-        section || null,
+        resolvedStudentName,
+        resolvedGradeLevel,
+        resolvedSection,
         current_quest || null,
         save_status,
         totalPlayTimeValue,
@@ -4596,9 +4603,10 @@ app.post('/api/game/result', async (req, res) => {
     // Keep result ingestion non-destructive: unresolved names stay reviewable instead of auto-creating a child here.
     let resolvedStudentId = null;
     let resultStudentName = studentName;
+    let resultGradeLevel = grade_level;
     if (submittedStudentCode) {
       const studentResult = await pool.query(
-        `SELECT s.id, s.name
+        `SELECT s.id, s.name, s.grade_level
          FROM public.accounts s
          JOIN public.teacher_student_relationships r ON r.student_id = s.id
          WHERE r.teacher_id = $1
@@ -4612,10 +4620,11 @@ app.post('/api/game/result', async (req, res) => {
         return res.status(403).json({ error: 'Student is not linked to this parent.' });
       }
       resolvedStudentId = studentResult.rows[0].id;
-      resultStudentName = resultStudentName || studentResult.rows[0].name || `Student ${submittedStudentCode}`;
+      resultStudentName = String(studentResult.rows[0].name || '').trim() || resultStudentName || `Student ${submittedStudentCode}`;
+      resultGradeLevel = String(studentResult.rows[0].grade_level || '').trim() || resultGradeLevel;
     } else if (submittedStudentId) {
       const studentResult = await pool.query(
-        `SELECT s.id, s.name
+        `SELECT s.id, s.name, s.grade_level
          FROM public.accounts s
          JOIN public.teacher_student_relationships r ON r.student_id = s.id
          WHERE r.teacher_id = $1
@@ -4629,10 +4638,11 @@ app.post('/api/game/result', async (req, res) => {
         return res.status(403).json({ error: 'Student is not linked to this parent.' });
       }
       resolvedStudentId = studentResult.rows[0].id;
-      resultStudentName = resultStudentName || studentResult.rows[0].name || `Student ${resolvedStudentId}`;
+      resultStudentName = String(studentResult.rows[0].name || '').trim() || resultStudentName || `Student ${resolvedStudentId}`;
+      resultGradeLevel = String(studentResult.rows[0].grade_level || '').trim() || resultGradeLevel;
     } else {
       const studentResult = await pool.query(
-        `SELECT s.id, s.name
+        `SELECT s.id, s.name, s.grade_level
          FROM public.accounts s
          JOIN public.teacher_student_relationships r ON r.student_id = s.id
          WHERE r.teacher_id = $1
@@ -4644,7 +4654,8 @@ app.post('/api/game/result', async (req, res) => {
         [parent.id, studentName]
       );
       resolvedStudentId = studentResult.rows[0]?.id || null;
-      resultStudentName = studentResult.rows[0]?.name || studentName;
+      resultStudentName = String(studentResult.rows[0]?.name || '').trim() || studentName;
+      resultGradeLevel = String(studentResult.rows[0]?.grade_level || '').trim() || resultGradeLevel;
     }
 
     const playtimeSessionResult = await pool.query(
@@ -4668,7 +4679,7 @@ app.post('/api/game/result', async (req, res) => {
 
     const questionSetResolution = await resolveGameResultQuestionSet({
       rawQuestionSetId: req.body?.question_set_id,
-      gradeLevel: grade_level,
+      gradeLevel: resultGradeLevel,
       difficulty,
       mathTopic: math_topic,
     });
@@ -4687,7 +4698,7 @@ app.post('/api/game/result', async (req, res) => {
         parentCode,
         resultStudentName,
         resolvedStudentId,
-        grade_level || null,
+        resultGradeLevel || null,
         difficulty,
         math_topic || null,
         Math.round(scoreValue),
@@ -5566,7 +5577,7 @@ app.post('/api/playtime/start', async (req, res) => {
 
     // Check for linked student (existing student account linked to this parent)
     const linkedStudentResult = await pool.query(
-      `SELECT s.id
+      `SELECT s.id, s.name, s.grade_level, s.section
        FROM public.accounts s
        JOIN public.teacher_student_relationships r ON r.student_id = s.id
        WHERE r.teacher_id = $1
@@ -5578,9 +5589,17 @@ app.post('/api/playtime/start', async (req, res) => {
     );
 
     let studentId = null;
+    let resolvedStudentName = studentName;
+    let resolvedGradeLevel = String(req.body.grade_level || req.body.grade || '').trim() || null;
+    let resolvedSection = String(req.body.section || '').trim() || null;
     if (linkedStudentResult.rows.length > 0) {
-      // Student is already linked to this parent
-      studentId = linkedStudentResult.rows[0].id;
+      // Parent-created profiles own identity, grade, and section. Never allow
+      // the game client to overwrite those fields while starting a lease.
+      const linkedStudent = linkedStudentResult.rows[0];
+      studentId = linkedStudent.id;
+      resolvedStudentName = String(linkedStudent.name || '').trim() || studentName;
+      resolvedGradeLevel = String(linkedStudent.grade_level || '').trim() || resolvedGradeLevel;
+      resolvedSection = String(linkedStudent.section || '').trim() || resolvedSection;
     } else {
       // Student not found or not linked to this parent
       // For NEW GAME registration, allow it if student doesn't exist yet
@@ -5698,9 +5717,9 @@ app.post('/api/playtime/start', async (req, res) => {
       [
         studentId,
         parentCode,
-        studentName,
-        String(req.body.grade_level || req.body.grade || '').trim() || null,
-        String(req.body.section || '').trim() || null,
+        resolvedStudentName,
+        resolvedGradeLevel,
+        resolvedSection,
         remainingSeconds,
         hashPlaytimeSessionCredential(sessionCredential),
       ]
