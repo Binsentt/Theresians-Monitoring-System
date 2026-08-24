@@ -4356,7 +4356,7 @@ app.get('/api/game/profile/check/:student_id', async (req, res) => {
     }
 
     const linkedStudent = await pool.query(
-      `SELECT s.id
+      `SELECT s.id, s.name, s.grade_level, s.section
        FROM public.accounts s
        JOIN public.teacher_student_relationships r ON r.student_id = s.id
        JOIN public.accounts p ON p.id = r.teacher_id
@@ -4384,12 +4384,13 @@ app.get('/api/game/profile/check/:student_id', async (req, res) => {
           message: 'Student ID already has an existing game profile. Please use Load Game.',
         });
       }
-      return res.status(200).json({
-        ok: true,
+      return res.status(404).json({
+        ok: false,
         exists: false,
-        should_block: false,
-        can_play: true,
-        message: 'Student ID is available for a new game.',
+        should_block: true,
+        can_play: false,
+        error: 'Student ID is not linked to this Parent account.',
+        message: 'Student ID is not linked to this Parent account.',
       });
     }
 
@@ -4417,6 +4418,11 @@ app.get('/api/game/profile/check/:student_id', async (req, res) => {
       exists: false,
       should_block: false,
       can_play: true,
+      canonical_profile: {
+        name: linkedStudent.rows[0].name,
+        grade_level: linkedStudent.rows[0].grade_level,
+        section: linkedStudent.rows[0].section ?? null,
+      },
       message: 'Student ID is available for a new game.',
     });
   } catch (err) {
