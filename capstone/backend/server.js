@@ -211,6 +211,7 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS middle_initial VARCHAR(5)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS grade_level VARCHAR(20)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS section VARCHAR(50)');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS current_learning_cycle_started_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS session_version INTEGER DEFAULT 0');
     await pool.query('UPDATE public.accounts SET is_archived = false WHERE is_archived IS NULL');
     await pool.query('UPDATE public.accounts SET session_version = 0 WHERE session_version IS NULL');
@@ -318,9 +319,11 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS lesson_progress DECIMAL(5, 2) DEFAULT 0.00');
     await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS current_scene TEXT');
     await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS current_map TEXT');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS actor_account_id INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_timestamp ON public.activity_logs(activity_timestamp DESC)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_student_name ON public.activity_logs(student_name)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_grade_section ON public.activity_logs(grade_level, section)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_actor_account_id ON public.activity_logs(actor_account_id)');
 
     await pool.query(`CREATE TABLE IF NOT EXISTS public.playtime_sessions (
       id SERIAL PRIMARY KEY,
@@ -756,6 +759,32 @@ const appendAnalyticsScopeFilter = ({ scope, params, studentColumn }) => {
   return '';
 };
 
+const LEARNING_CYCLE_RESET_REASONS = new Set([
+  'New Lesson',
+  'Completed Current Lesson',
+  'New Grading Period',
+  'Testing Data Cleanup',
+  'Other',
+]);
+const MAX_LEARNING_CYCLE_RESET_REASON_LENGTH = 1000;
+const resolveLearningCycleResetReason = (body = {}) => {
+  const reason = String(body.reason || '').trim();
+  const customReason = String(body.custom_reason || '').trim();
+  if (!LEARNING_CYCLE_RESET_REASONS.has(reason)) {
+    return { error: 'Select a valid reason for reset.' };
+  }
+  if (reason === 'Other' && !customReason) {
+    return { error: 'Provide a reason for Other.' };
+  }
+  if (customReason.length > MAX_LEARNING_CYCLE_RESET_REASON_LENGTH) {
+    return { error: `Reason for reset must be ${MAX_LEARNING_CYCLE_RESET_REASON_LENGTH} characters or fewer.` };
+  }
+  return {
+    reason,
+    auditReason: reason === 'Other' ? `Other: ${customReason}` : reason,
+  };
+};
+
 const requireAccountManagementAdmin = (req, res, next) => {
   if (!req.authenticatedUser) {
     return res.status(401).json({ error: 'Authentication is required.' });
@@ -964,6 +993,7 @@ const buildCanonicalStudentProgressQuery = () => `
          a.email AS student_email,
          a.role AS student_role,
          a.game_student_id,
+         a.current_learning_cycle_started_at,
          COALESCE(NULLIF(a.grade_level, ''), p.grade_level) AS grade_level,
          CASE
            WHEN EXISTS (
@@ -979,6 +1009,10 @@ const buildCanonicalStudentProgressQuery = () => `
     SELECT progress.*
     FROM public.student_game_progress progress
     WHERE progress.student_id = a.id
+      AND (
+        a.current_learning_cycle_started_at IS NULL
+        OR progress.updated_at >= a.current_learning_cycle_started_at
+      )
     ORDER BY progress.updated_at DESC NULLS LAST, progress.id DESC
     LIMIT 1
   ) p ON true
@@ -5211,6 +5245,10 @@ const handleTopAchieversRequest = async (req, res) => {
           LIMIT 1
         ) latest_activity ON true
         WHERE 1=1
+          AND (
+            a.current_learning_cycle_started_at IS NULL
+            OR p.updated_at >= a.current_learning_cycle_started_at
+          )
     `;
 
     query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'p.student_id' });
@@ -6234,10 +6272,19 @@ app.get('/api/parent/children', requireParentAnalyticsAccess, async (req, res) =
                 progress.score, progress.progress_percentage
          FROM public.student_game_progress progress
          WHERE progress.student_id = s.id
+           AND (
+             s.current_learning_cycle_started_at IS NULL
+             OR progress.updated_at >= s.current_learning_cycle_started_at
+           )
          ORDER BY progress.updated_at DESC NULLS LAST, progress.id DESC
          LIMIT 1
        ) p ON true
-       LEFT JOIN public.game_results gr ON gr.resolved_student_id = s.id
+       LEFT JOIN public.game_results gr
+         ON gr.resolved_student_id = s.id
+        AND (
+          s.current_learning_cycle_started_at IS NULL
+          OR gr.played_at >= s.current_learning_cycle_started_at
+        )
        WHERE tsr.teacher_id = $1
          AND LOWER(tsr.relationship_type) = 'parent'
          AND COALESCE(s.is_archived, false) = false
@@ -6277,18 +6324,28 @@ app.get('/api/parent/children/:studentId/quizzes', requireParentAnalyticsAccess,
 
     const [quizzesResult, countResult] = await Promise.all([
       pool.query(
-        `SELECT id, parent_id, student_name, resolved_student_id, grade_level, difficulty,
-                math_topic, score, total_items, percentage, played_at
-         FROM public.game_results
-         WHERE resolved_student_id = $1
+        `SELECT gr.id, gr.parent_id, gr.student_name, gr.resolved_student_id, gr.grade_level, gr.difficulty,
+                gr.math_topic, gr.score, gr.total_items, gr.percentage, gr.played_at
+         FROM public.game_results gr
+         JOIN public.accounts student ON student.id = gr.resolved_student_id
+         WHERE gr.resolved_student_id = $1
+           AND (
+             student.current_learning_cycle_started_at IS NULL
+             OR gr.played_at >= student.current_learning_cycle_started_at
+           )
          ORDER BY played_at DESC NULLS LAST, id DESC
          LIMIT $2 OFFSET $3`,
         [studentId, limit, offset]
       ),
       pool.query(
         `SELECT COUNT(*)::INTEGER AS total
-         FROM public.game_results
-         WHERE resolved_student_id = $1`,
+         FROM public.game_results gr
+         JOIN public.accounts student ON student.id = gr.resolved_student_id
+         WHERE gr.resolved_student_id = $1
+           AND (
+             student.current_learning_cycle_started_at IS NULL
+             OR gr.played_at >= student.current_learning_cycle_started_at
+           )`,
         [studentId]
       ),
     ]);
@@ -6312,13 +6369,18 @@ app.get('/api/parent/children/:studentId/quizzes', requireParentAnalyticsAccess,
 app.get('/api/parent/children/:studentId/topics', requireParentAnalyticsAccess, verifyParentChildAccess, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT math_topic,
+      `SELECT gr.math_topic,
               COUNT(*)::INTEGER AS times_played,
-              MAX(score) AS best_score
-       FROM public.game_results
-       WHERE resolved_student_id = $1
-         AND math_topic IS NOT NULL
-       GROUP BY math_topic
+              MAX(gr.score) AS best_score
+       FROM public.game_results gr
+       JOIN public.accounts student ON student.id = gr.resolved_student_id
+       WHERE gr.resolved_student_id = $1
+         AND gr.math_topic IS NOT NULL
+         AND (
+           student.current_learning_cycle_started_at IS NULL
+           OR gr.played_at >= student.current_learning_cycle_started_at
+         )
+       GROUP BY gr.math_topic
        ORDER BY times_played DESC, math_topic`,
       [req.parentChildAccess.studentId]
     );
@@ -6337,7 +6399,12 @@ app.get('/api/students', requireAuthenticatedRoles(['admin', 'teacher', 'parent_
     let query = `SELECT a.id, a.game_student_id, a.name, a.email, a.role, a.mobile_number, a.address, a.birthday, a.gender, a.status,
               p.score, p.correct_answers, p.total_questions, p.accuracy_rate, p.progress_percentage, p.current_quest
         FROM accounts a
-        LEFT JOIN public.student_game_progress p ON a.id = p.student_id
+        LEFT JOIN public.student_game_progress p
+          ON a.id = p.student_id
+         AND (
+           a.current_learning_cycle_started_at IS NULL
+           OR p.updated_at >= a.current_learning_cycle_started_at
+         )
        WHERE LOWER(a.role) = 'student' AND COALESCE(a.is_archived, false) = false`;
     query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'a.id' });
     query += ' ORDER BY a.name';
@@ -6440,6 +6507,10 @@ app.get('/api/students/progress-analysis', requireAuthenticatedRoles(['admin', '
       params.push(minAccuracy);
       filters.push(`p.accuracy_rate >= $${params.length}`);
     }
+    filters.push(`(
+      a.current_learning_cycle_started_at IS NULL
+      OR p.updated_at >= a.current_learning_cycle_started_at
+    )`);
     if (filters.length > 0) {
       baseQuery += ` WHERE ${filters.join(' AND ')}`;
     } else {
@@ -6482,20 +6553,79 @@ app.get('/api/students/progress-analysis', requireAuthenticatedRoles(['admin', '
   }
 });
 
+app.post('/api/student-progress/:studentId/reset', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, async (req, res) => {
+  const studentId = resolvePositiveInteger(req.params.studentId);
+  const resetReason = resolveLearningCycleResetReason(req.body);
+  if (!studentId || resetReason.error) {
+    return res.status(400).json({ error: resetReason.error || 'A valid student ID is required.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const studentResult = await client.query(
+      `SELECT id, name, grade_level, section
+       FROM public.accounts
+       WHERE id = $1
+         AND LOWER(role) = 'student'
+         AND COALESCE(is_archived, false) = false
+       FOR UPDATE`,
+      [studentId]
+    );
+    const student = studentResult.rows[0];
+    if (!student) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Student not found.' });
+    }
+
+    const cycleResult = await client.query(
+      `UPDATE public.accounts
+       SET current_learning_cycle_started_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+       RETURNING current_learning_cycle_started_at`,
+      [studentId]
+    );
+    await client.query('DELETE FROM public.student_game_progress WHERE student_id = $1', [studentId]);
+    await markStudentInsightStale(client, studentId);
+    await client.query(
+      `INSERT INTO public.activity_logs (
+        student_id, student_name, grade_level, section, activity_description,
+        actor_account_id, role, status, activity_timestamp
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'Active', CURRENT_TIMESTAMP)`,
+      [
+        studentId,
+        student.name,
+        student.grade_level,
+        student.section,
+        `Student progress reset for new learning cycle — Reason: ${resetReason.auditReason}`,
+        req.authenticatedUser.id,
+        req.authenticatedRole,
+      ]
+    );
+    await client.query('COMMIT');
+    return res.json({
+      success: true,
+      student_id: studentId,
+      learning_cycle_started_at: cycleResult.rows[0]?.current_learning_cycle_started_at || null,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Learning cycle reset failed:', err.message);
+    return res.status(500).json({ error: 'Unable to start a new learning cycle.' });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
     if (Number.isNaN(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
 
-    const progressResult = await pool.query(
-      `SELECT p.*, a.name AS student_name
-       FROM public.student_game_progress p
-       LEFT JOIN public.accounts a ON a.id = p.student_id
-       WHERE p.student_id = $1
-       ORDER BY p.last_played DESC NULLS LAST, p.id DESC
-       LIMIT 1`,
-      [studentId]
-    );
+    let progressQuery = buildCanonicalStudentProgressQuery();
+    progressQuery += ' AND a.id = $1';
+    progressQuery += ' ORDER BY p.last_played DESC NULLS LAST, a.id ASC LIMIT 1';
+    const progressResult = await pool.query(progressQuery, [studentId]);
     if (progressResult.rows.length === 0) return res.status(404).json({ error: 'Student progress not found' });
 
     const [quizResult, playtimeResult] = await Promise.all([
@@ -6503,9 +6633,10 @@ app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, 
         `SELECT math_topic, difficulty, score, total_items, played_at
          FROM public.game_results
          WHERE resolved_student_id = $1
+           AND ($2::TIMESTAMPTZ IS NULL OR played_at >= $2)
          ORDER BY played_at ASC NULLS LAST, id ASC
          LIMIT 500`,
-        [studentId]
+        [studentId, progressResult.rows[0].current_learning_cycle_started_at || null]
       ),
       pool.query(
         `SELECT total_playtime_minutes, status
@@ -6597,22 +6728,25 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
     if (result.rows.length === 0) return res.status(404).json({ error: 'Student progress not found' });
 
     const progress = normalizeStudentProgressRow(result.rows[0]);
+    const cycleBoundary = progress.current_learning_cycle_started_at || null;
     const [quizResult, activityResult, playtimeResult] = await Promise.all([
       pool.query(
         `SELECT math_topic, difficulty, percentage, score, total_items, played_at
          FROM public.game_results
          WHERE resolved_student_id = $1
+           AND ($2::TIMESTAMPTZ IS NULL OR played_at >= $2)
          ORDER BY played_at ASC NULLS LAST, id ASC
          LIMIT 100`,
-        [studentId]
+        [studentId, cycleBoundary]
       ),
       pool.query(
         `SELECT student_id, activity_description, quest_progress, lesson_progress, activity_timestamp, last_played
          FROM public.activity_logs
          WHERE student_id = $1
+           AND ($2::TIMESTAMPTZ IS NULL OR activity_timestamp >= $2)
          ORDER BY activity_timestamp DESC NULLS LAST, id DESC
          LIMIT 100`,
-        [studentId]
+        [studentId, cycleBoundary]
       ),
       pool.query(
         `SELECT total_playtime_minutes, status, date_played, end_time

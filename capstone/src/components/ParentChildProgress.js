@@ -17,6 +17,7 @@ import {
   sortStudentsByName,
   toFiniteNumber,
 } from './studentProgress.utils';
+import { LearningCycleResetAction } from './LearningCycleResetAction';
 import '../styles/studentprogress.css';
 
 export default function ParentChildProgress() {
@@ -39,6 +40,7 @@ export default function ParentChildProgress() {
   const [unlinkedWarningDismissed, setUnlinkedWarningDismissed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [refreshToken, setRefreshToken] = useState(0);
 
   useEffect(() => {
     const loadData = async () => {
@@ -113,7 +115,7 @@ export default function ParentChildProgress() {
     };
 
     loadData();
-  }, [navigate]);
+  }, [navigate, refreshToken]);
 
   const focusStudent = useMemo(() => {
     if (!students.length) return null;
@@ -362,6 +364,12 @@ export default function ParentChildProgress() {
                         <p>{[safeDisplayText(focusStudent.grade_level || focusStudent.grade, 'Grade N/A'), safeDisplayText(focusStudent.section, 'Not assigned')].filter(Boolean).join(' - ')}</p>
                         <small>Student ID: {focusStudent.game_student_id || 'Not linked'}</small>
                       </div>
+                      <LearningCycleResetAction
+                        studentId={focusStudentId}
+                        role="parent"
+                        className="table-action-button child-reset-action"
+                        onReset={() => setRefreshToken((value) => value + 1)}
+                      />
                     </div>
 
                     <div className="child-progress-stats">

@@ -130,6 +130,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('001234');
     expect(container.textContent).toContain('Quiz Sessions');
     expect(container.textContent).toContain('No game progress data available yet.');
+    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Reset Progress')).toBe(true);
     expect(container.textContent).not.toContain('My Children');
     expect(mockNavigate).not.toHaveBeenCalledWith('/login');
     expect(global.fetch.mock.calls.every(([, options]) => (

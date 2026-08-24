@@ -78,6 +78,7 @@ describe('Student Progress summary cards', () => {
     expect(container.textContent).toContain('Average completion');
     expect(container.textContent).not.toMatch(/Grade groups/i);
     expect(container.querySelector('button[aria-label="Print Student List"]')).not.toBeNull();
+    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Reset Progress')).toBe(true);
     expect(container.querySelectorAll('.printable-table-report tbody tr')).toHaveLength(1);
     expect(container.querySelector('.student-progress-table thead th')?.textContent).toBe('No.');
     expect(global.fetch.mock.calls.every(([, options]) => (

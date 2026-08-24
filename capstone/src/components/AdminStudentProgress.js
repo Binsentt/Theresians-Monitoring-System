@@ -15,6 +15,7 @@ import {
 import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext } from './tableReporting.utils';
+import { LearningCycleResetAction } from './LearningCycleResetAction';
 import '../styles/studentprogress.css';
 
 const studentReportColumns = [
@@ -41,6 +42,7 @@ export default function AdminStudentProgress() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [refreshToken, setRefreshToken] = useState(0);
   const pageSize = 10;
 
   useEffect(() => {
@@ -86,7 +88,7 @@ export default function AdminStudentProgress() {
     };
 
     loadData();
-  }, []);
+  }, [refreshToken]);
 
   const grades = useMemo(() => {
     return Array.from(new Set(students.map((student) => student.grade_level || 'Unknown'))).sort();
@@ -274,6 +276,11 @@ export default function AdminStudentProgress() {
                             >
                               View Analytics
                             </button>
+                            <LearningCycleResetAction
+                              studentId={student.student_id}
+                              role="admin"
+                              onReset={() => setRefreshToken((value) => value + 1)}
+                            />
                           </td>
                         </tr>
                       ))}
