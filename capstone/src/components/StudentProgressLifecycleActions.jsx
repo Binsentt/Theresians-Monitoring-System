@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { buildScopedApiUrl } from './analyticsEndpoints';
 import { buildAuthHeaders } from './session.utils';
 
@@ -24,15 +25,20 @@ const requestJson = async (path, role, body) => {
   return payload;
 };
 
-const LifecycleDialog = ({ children, onClose, className = '' }) => (
+const LifecycleDialog = ({ children, onClose, className = '' }) => createPortal(
   <div
     className="learning-cycle-reset-overlay"
     onPointerDown={(event) => {
+      stopModalEvent(event);
       if (event.target === event.currentTarget) onClose();
     }}
+    onMouseDown={stopModalEvent}
     onClick={(event) => {
+      stopModalEvent(event);
       if (event.target === event.currentTarget) onClose();
     }}
+    onChange={stopModalEvent}
+    onSubmit={stopModalEvent}
   >
     <div
       className={`learning-cycle-reset-dialog ${className}`.trim()}
@@ -41,10 +47,12 @@ const LifecycleDialog = ({ children, onClose, className = '' }) => (
       onPointerDown={stopModalEvent}
       onMouseDown={stopModalEvent}
       onClick={stopModalEvent}
+      onChange={stopModalEvent}
     >
       {children}
     </div>
-  </div>
+  </div>,
+  document.body,
 );
 
 export const StudentProgressArchiveAction = ({ studentId, role, onComplete, className = 'table-action-button table-archive-action' }) => {
@@ -84,20 +92,22 @@ export const StudentProgressArchiveAction = ({ studentId, role, onComplete, clas
 
   return (
     <>
-      <button type="button" className={className} onClick={(event) => { event.stopPropagation(); setOpen(true); }}>
-        Archive Progress
+      <button type="button" className={className} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={(event) => { event.stopPropagation(); setOpen(true); }}>
+        Delete
       </button>
       {open && (
         <LifecycleDialog onClose={close}>
           <form onSubmit={submit} onPointerDown={stopModalEvent} onClick={stopModalEvent}>
-            <h2>Archive Progress</h2>
+            <h2>Delete Student Progress</h2>
+            <p><strong>Action type: Archive / Remove from Active Progress</strong></p>
             <p>This removes the student from Active Progress views. Historical gameplay, Screen Time, and Activity Log remain preserved.</p>
-            <label htmlFor={`archive-reason-${studentId}`}>Reason for Archive</label>
+            <label htmlFor={`archive-reason-${studentId}`}>Reason for Delete</label>
             <select
               id={`archive-reason-${studentId}`}
               name="archive-reason"
               value={reason}
               onPointerDown={stopModalEvent}
+              onMouseDown={stopModalEvent}
               onClick={stopModalEvent}
               onChange={(event) => { setReason(event.target.value); setError(''); }}
               disabled={submitting}
@@ -112,6 +122,7 @@ export const StudentProgressArchiveAction = ({ studentId, role, onComplete, clas
                   id={`archive-custom-reason-${studentId}`}
                   value={customReason}
                   onPointerDown={stopModalEvent}
+                  onMouseDown={stopModalEvent}
                   onClick={stopModalEvent}
                   onChange={(event) => { setCustomReason(event.target.value); setError(''); }}
                   maxLength={1000}
@@ -122,7 +133,7 @@ export const StudentProgressArchiveAction = ({ studentId, role, onComplete, clas
             {error && <p className="learning-cycle-reset-error" role="alert">{error}</p>}
             <div className="learning-cycle-reset-actions">
               <button type="button" className="secondary-button" onClick={close} disabled={submitting}>Cancel</button>
-              <button type="submit" className="table-action-button" disabled={submitting}>{submitting ? 'Archiving…' : 'Archive Progress'}</button>
+              <button type="submit" className="table-action-button" disabled={submitting}>{submitting ? 'Removing…' : 'Delete (Archive)'}</button>
             </div>
           </form>
         </LifecycleDialog>
@@ -161,16 +172,16 @@ export const StudentProgressPermanentDeleteAction = ({ studentId, onComplete, cl
   };
   return (
     <>
-      <button type="button" className={className} onClick={(event) => { event.stopPropagation(); setOpen(true); }}>Permanent Delete</button>
+      <button type="button" className={className} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={(event) => { event.stopPropagation(); setOpen(true); }}>Permanent Delete</button>
       {open && (
         <LifecycleDialog onClose={close} className="learning-cycle-permanent-delete-dialog">
           <form onSubmit={submit} onPointerDown={stopModalEvent} onClick={stopModalEvent}>
             <h2>Permanently Delete Gameplay Progress</h2>
             <p>This deletes only current and historical gameplay/progress-derived data. Screen Time, activity history, accounts, and relationships remain preserved.</p>
             <label htmlFor={`permanent-delete-reason-${studentId}`}>Required reason</label>
-            <textarea id={`permanent-delete-reason-${studentId}`} value={reason} onPointerDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setReason(event.target.value); setError(''); }} maxLength={1000} disabled={submitting} />
+            <textarea id={`permanent-delete-reason-${studentId}`} value={reason} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setReason(event.target.value); setError(''); }} maxLength={1000} disabled={submitting} />
             <label htmlFor={`permanent-delete-confirmation-${studentId}`}>Type DELETE to confirm</label>
-            <input id={`permanent-delete-confirmation-${studentId}`} value={confirmation} onPointerDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setConfirmation(event.target.value); setError(''); }} disabled={submitting} autoComplete="off" />
+            <input id={`permanent-delete-confirmation-${studentId}`} value={confirmation} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setConfirmation(event.target.value); setError(''); }} disabled={submitting} autoComplete="off" />
             {error && <p className="learning-cycle-reset-error" role="alert">{error}</p>}
             <div className="learning-cycle-reset-actions">
               <button type="button" className="secondary-button" onClick={close} disabled={submitting}>Cancel</button>
@@ -193,7 +204,7 @@ export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const isArchive = operation === 'archive';
-  const label = isArchive ? 'Archive All' : 'Reset All';
+  const label = isArchive ? 'Delete All' : 'Reset All';
   const requiredPhrase = isArchive ? 'ARCHIVE' : 'RESET';
   const reasons = isArchive ? ARCHIVE_REASONS : ['New Lesson', 'Completed Current Lesson', 'New Grading Period', 'Testing Data Cleanup', 'Other'];
 
@@ -227,7 +238,7 @@ export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete
         reason,
         custom_reason: customReason.trim(),
         expected_count: affectedCount,
-        confirmation_phrase: confirmation,
+      confirmation,
       });
       close(true); onComplete?.(payload);
     } catch (requestError) {
@@ -238,21 +249,21 @@ export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete
   };
   return (
     <>
-      <button type="button" className="table-action-button" onClick={openDialog}>{label}</button>
+      <button type="button" className="table-action-button" onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={openDialog}>{label}</button>
       {open && (
         <LifecycleDialog onClose={close}>
           <form onSubmit={submit} onPointerDown={stopModalEvent} onClick={stopModalEvent}>
             <h2>{label}</h2>
-            <p>{isArchive ? 'Archive all currently authorized active Students. New Lesson is not an archive reason.' : 'Start a fresh learning cycle for all currently authorized active Students.'}</p>
+            <p>{isArchive ? 'Delete all currently authorized active Students by moving them to Archived Progress. Historical records remain preserved. New Lesson is not an archive reason.' : 'Start a fresh learning cycle for all currently authorized active Students.'}</p>
             <p><strong>{summaryLoading ? 'Preparing affected count…' : `${affectedCount ?? 0} Students will be affected.`}</strong></p>
             <label htmlFor={`bulk-${operation}-reason`}>Reason</label>
-            <select id={`bulk-${operation}-reason`} name={`bulk-${operation}-reason`} value={reason} onPointerDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setReason(event.target.value); setError(''); }} disabled={submitting || summaryLoading}>
+            <select id={`bulk-${operation}-reason`} name={`bulk-${operation}-reason`} value={reason} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setReason(event.target.value); setError(''); }} disabled={submitting || summaryLoading}>
               <option value="">Select a reason</option>
               {reasons.map((option) => <option key={option} value={option}>{option}</option>)}
             </select>
-            {reason === 'Other' && <textarea aria-label="Custom reason" value={customReason} onPointerDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setCustomReason(event.target.value); setError(''); }} maxLength={1000} disabled={submitting} />}
+            {reason === 'Other' && <textarea aria-label="Custom reason" value={customReason} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setCustomReason(event.target.value); setError(''); }} maxLength={1000} disabled={submitting} />}
             <label htmlFor={`bulk-${operation}-confirmation`}>Type {requiredPhrase} to confirm</label>
-            <input id={`bulk-${operation}-confirmation`} value={confirmation} onPointerDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setConfirmation(event.target.value); setError(''); }} disabled={submitting || summaryLoading} autoComplete="off" />
+            <input id={`bulk-${operation}-confirmation`} value={confirmation} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setConfirmation(event.target.value); setError(''); }} disabled={submitting || summaryLoading} autoComplete="off" />
             {error && <p className="learning-cycle-reset-error" role="alert">{error}</p>}
             <div className="learning-cycle-reset-actions">
               <button type="button" className="secondary-button" onClick={close} disabled={submitting}>Cancel</button>

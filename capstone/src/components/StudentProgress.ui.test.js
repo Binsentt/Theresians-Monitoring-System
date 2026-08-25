@@ -170,8 +170,9 @@ describe('Student Progress summary cards', () => {
 
     await act(async () => root.render(<AdminStudentProgress />));
     expect(container.textContent).toContain('Reset All');
-    expect(container.textContent).toContain('Archive All');
-    expect(container.textContent).toContain('Archive Progress');
+    expect(container.textContent).toContain('Delete All');
+    expect(container.textContent).toContain('Delete');
+    expect(container.textContent).not.toContain('Archive All');
     expect(container.textContent).not.toContain('Permanent Delete');
 
     const progressView = Array.from(container.querySelectorAll('select')).find((select) => select.value === 'active');
@@ -183,6 +184,6 @@ describe('Student Progress summary cards', () => {
     expect(global.fetch.mock.calls.some(([url]) => String(url).startsWith('/api/students/progress?lifecycle=archived'))).toBe(true);
     expect(container.textContent).toContain('Archived Student Progress');
     expect(container.textContent).toContain('Permanent Delete');
-    expect(container.textContent).not.toContain('Archive All');
+    expect(container.textContent).not.toContain('Delete All');
   });
 });

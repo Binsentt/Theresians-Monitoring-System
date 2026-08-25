@@ -43,3 +43,38 @@ test('server exposes scoped archive, bulk lifecycle, permanent delete, and canon
   assert.match(resetRoute, /progress_archived_at IS NULL/);
   assert.match(resetRoute, /startFreshLearningCycle\(client, studentId\)/);
 });
+
+test('bulk reset is registered before the single-student route so it never treats bulk as a Student ID', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const bulkResetIndex = source.indexOf("app.post('/api/student-progress/bulk/reset'");
+  const singleResetIndex = source.indexOf("app.post('/api/student-progress/:studentId/reset'");
+  const confirmationHelper = source.slice(
+    source.indexOf('const resolveBulkLifecycleConfirmation'),
+    source.indexOf('const getScopedLifecycleStudents')
+  );
+
+  assert.ok(bulkResetIndex >= 0, 'bulk reset route is registered');
+  assert.ok(singleResetIndex >= 0, 'single-student reset route is registered');
+  assert.ok(bulkResetIndex < singleResetIndex, 'bulk reset route precedes /:studentId/reset');
+  assert.match(confirmationHelper, /expected_count/);
+  assert.doesNotMatch(confirmationHelper, /student_id|parent_id/i);
+});
+
+test('active monitoring excludes only soft-archived students while archive history remains queryable', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const playtimeFilters = source.slice(
+    source.indexOf('const applyPlaytimeFilters'),
+    source.indexOf('const handlePlaytimeListRequest')
+  );
+  const topAchievers = source.slice(
+    source.indexOf('const handleTopAchieversRequest'),
+    source.indexOf("app.get('/api/top-achievers'")
+  );
+
+  assert.match(playtimeFilters, /lifecycle === 'archived'/);
+  assert.match(playtimeFilters, /archived_student\.progress_archived_at IS NOT NULL/);
+  assert.match(playtimeFilters, /NOT EXISTS/);
+  assert.match(topAchievers, /a\.progress_archived_at IS NULL/);
+  assert.match(source, /Archive: Progress Archived/);
+  assert.match(source, /Reset: New Learning Cycle Started/);
+});

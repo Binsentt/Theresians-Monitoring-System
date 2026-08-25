@@ -256,6 +256,45 @@ test('Teacher can reset only an authorized student', async (t) => {
   assert.equal(observed.transactionStarted, false);
 });
 
+test('Admin bulk Reset derives the active Student scope without a caller-supplied Student ID', async (t) => {
+  reset();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  const response = await requestJson(baseUrl, '/api/student-progress/bulk/reset', {
+    method: 'POST',
+    headers: authHeaders('admin'),
+    body: JSON.stringify({ reason: 'New Lesson', expected_count: 1, confirmation: 'RESET' }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.affected_count, 1);
+  assert.equal(observed.boundaryUpdatedFor, 44);
+  assert.equal(observed.transactionCommitted, true);
+});
+
+test('Parent and Parent/Teacher parent scopes cannot run bulk Reset', async (t) => {
+  reset();
+  configureActor('parent', 3, 'parent');
+  configureActor('parentTeacher', 4, 'parent_teacher');
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+  const payload = JSON.stringify({ reason: 'New Lesson', expected_count: 1, confirmation: 'RESET' });
+
+  const parentResponse = await requestJson(baseUrl, '/api/student-progress/bulk/reset', {
+    method: 'POST', headers: authHeaders('parent'), body: payload,
+  });
+  const parentTeacherResponse = await requestJson(baseUrl, '/api/student-progress/bulk/reset?scope=parent', {
+    method: 'POST', headers: authHeaders('parentTeacher'), body: payload,
+  });
+
+  assert.equal(parentResponse.status, 403);
+  assert.equal(parentTeacherResponse.status, 403);
+  assert.equal(observed.transactionStarted, false);
+});
+
 test('Parent and Parent/Teacher reset scopes remain isolated', async (t) => {
   reset();
   configureActor('parent', 3, 'parent');

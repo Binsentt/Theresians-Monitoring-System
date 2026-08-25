@@ -852,7 +852,7 @@ const getLifecycleMutationScope = (req, { allowParentSingle = false } = {}) => {
 
 const resolveBulkLifecycleConfirmation = (body = {}, operation) => {
   const expectedCount = Number(body.expected_count);
-  const confirmationPhrase = String(body.confirmation_phrase || '').trim();
+  const confirmationPhrase = String(body.confirmation || body.confirmation_phrase || '').trim();
   const requiredPhrase = operation === 'archive' ? 'ARCHIVE' : 'RESET';
   if (!Number.isInteger(expectedCount) || expectedCount < 0) {
     return { error: 'The affected student count is required.' };
@@ -4692,29 +4692,41 @@ app.get('/api/game/profile/check/:student_id', async (req, res) => {
               s.current_learning_cycle_version, s.current_learning_cycle_started_at
        FROM public.accounts s
        JOIN public.teacher_student_relationships r ON r.student_id = s.id
-       JOIN public.accounts p ON p.id = r.teacher_id
-       WHERE s.game_student_id = $1
-         AND p.parent_id = $2
+       WHERE r.teacher_id = $1
+         AND s.game_student_id = $2
          AND LOWER(r.relationship_type) = 'parent'
          AND COALESCE(s.is_archived, false) = false
-         AND COALESCE(p.is_archived, false) = false
        LIMIT 1`,
-      [studentCode, parentCode]
+      [parent.id, studentCode]
     );
 
     if (linkedStudent.rows.length === 0) {
       const existingStudent = await pool.query(
-        'SELECT id FROM public.accounts WHERE game_student_id = $1 LIMIT 1',
+        `SELECT id, is_archived
+         FROM public.accounts
+         WHERE game_student_id = $1
+           AND LOWER(role) = 'student'
+         LIMIT 1`,
         [studentCode]
       );
       if (existingStudent.rows.length > 0) {
-        return res.status(409).json({
+        if (existingStudent.rows[0].is_archived) {
+          return res.status(403).json({
+            ok: false,
+            exists: true,
+            should_block: true,
+            can_play: false,
+            error: 'Student account is no longer active.',
+            message: 'Student account is no longer active.',
+          });
+        }
+        return res.status(403).json({
           ok: false,
           exists: true,
           should_block: true,
           can_play: false,
-          error: 'Student ID already has an existing game profile. Please use Load Game.',
-          message: 'Student ID already has an existing game profile. Please use Load Game.',
+          error: 'This Student is not linked to this Parent account.',
+          message: 'This Student is not linked to this Parent account.',
         });
       }
       return res.status(404).json({
@@ -4722,8 +4734,8 @@ app.get('/api/game/profile/check/:student_id', async (req, res) => {
         exists: false,
         should_block: true,
         can_play: false,
-        error: 'Student ID is not linked to this Parent account.',
-        message: 'Student ID is not linked to this Parent account.',
+        error: 'Student ID does not exist.',
+        message: 'Student ID does not exist.',
       });
     }
 
@@ -5929,6 +5941,26 @@ const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
     return `$${params.length}`;
   };
 
+  const lifecycle = String(req.query.lifecycle || 'active').trim().toLowerCase();
+  if (!['active', 'archived'].includes(lifecycle)) {
+    return { error: 'Invalid monitoring lifecycle.' };
+  }
+  if (lifecycle === 'archived') {
+    filters.push(`EXISTS (
+      SELECT 1
+      FROM public.accounts archived_student
+      WHERE archived_student.id = ps.student_id
+        AND archived_student.progress_archived_at IS NOT NULL
+    )`);
+  } else {
+    filters.push(`NOT EXISTS (
+      SELECT 1
+      FROM public.accounts archived_student
+      WHERE archived_student.id = ps.student_id
+        AND archived_student.progress_archived_at IS NOT NULL
+    )`);
+  }
+
   if (scope === 'children') {
     const parentAccountId = Number(req.authenticatedUser.id);
     const parentAccountPlaceholder = addParam(parentAccountId);
@@ -6897,6 +6929,9 @@ app.get('/api/students/progress-analysis', requireAuthenticatedRoles(['admin', '
   }
 });
 
+app.post('/api/student-progress/bulk/reset', requireAnalyticsAccess, (req, res) => runBulkLifecycleAction(req, res, 'reset'));
+app.post('/api/student-progress/bulk/archive', requireAnalyticsAccess, (req, res) => runBulkLifecycleAction(req, res, 'archive'));
+
 app.post('/api/student-progress/:studentId/reset', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, async (req, res) => {
   const studentId = resolvePositiveInteger(req.params.studentId);
   const resetReason = resolveLearningCycleResetReason(req.body);
@@ -7011,7 +7046,7 @@ const runBulkLifecycleAction = async (req, res, operation) => {
           student,
           actor: req.authenticatedUser,
           role: req.authenticatedRole,
-          action: 'Archive Progress',
+          action: 'Archive: Progress Archived',
           reason: reasonResult.auditReason,
           description: 'Historical gameplay, Screen Time, and Activity Log remain preserved.',
         });
@@ -7022,7 +7057,7 @@ const runBulkLifecycleAction = async (req, res, operation) => {
           student,
           actor: req.authenticatedUser,
           role: req.authenticatedRole,
-          action: 'Reset Progress',
+          action: 'Reset: New Learning Cycle Started',
           reason: reasonResult.auditReason,
           description: `Started learning cycle ${descriptor.version}. Historical gameplay and Screen Time remain preserved.`,
         });
@@ -7034,7 +7069,7 @@ const runBulkLifecycleAction = async (req, res, operation) => {
         student: targets[0],
         actor: req.authenticatedUser,
         role: req.authenticatedRole,
-        action: operation === 'archive' ? 'Archive All' : 'Reset All',
+        action: operation === 'archive' ? 'Archive: Progress Archived (bulk)' : 'Reset: New Learning Cycles Started (bulk)',
         reason: reasonResult.auditReason,
         description: `${targets.length} authorized Student progress records affected.`,
       });
@@ -7049,9 +7084,6 @@ const runBulkLifecycleAction = async (req, res, operation) => {
     client.release();
   }
 };
-
-app.post('/api/student-progress/bulk/reset', requireAnalyticsAccess, (req, res) => runBulkLifecycleAction(req, res, 'reset'));
-app.post('/api/student-progress/bulk/archive', requireAnalyticsAccess, (req, res) => runBulkLifecycleAction(req, res, 'archive'));
 
 app.post('/api/student-progress/:studentId/archive', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, async (req, res) => {
   const studentId = resolvePositiveInteger(req.params.studentId);
@@ -7086,7 +7118,7 @@ app.post('/api/student-progress/:studentId/archive', requireAnalyticsAccess, ver
       student,
       actor: req.authenticatedUser,
       role: req.authenticatedRole,
-      action: 'Archive Progress',
+      action: 'Archive: Progress Archived',
       reason: archiveReason.auditReason,
       description: 'Historical gameplay, Screen Time, and Activity Log remain preserved.',
     });

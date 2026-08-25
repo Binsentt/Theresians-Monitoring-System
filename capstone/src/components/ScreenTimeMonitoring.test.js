@@ -87,6 +87,7 @@ describe('ScreenTimeMonitoring', () => {
     await waitForContent(container, 'Ava Santos');
 
     expect(global.fetch.mock.calls[0][0]).toContain('/api/playtime?');
+    expect(global.fetch.mock.calls[0][0]).toContain('lifecycle=active');
     expect(global.fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer remember-token');
     expect(container.textContent).toContain('Screen Time Monitoring');
     expect(container.textContent).toContain('Parent ID');
@@ -104,6 +105,26 @@ describe('ScreenTimeMonitoring', () => {
     const report = container.querySelector('.printable-table-report');
     expect(report.querySelectorAll('tbody tr')).toHaveLength(1);
     expect(Array.from(report.querySelectorAll('th')).map((header) => header.textContent)).not.toContain('Parent ID');
+  });
+
+  test('defaults to active Students and can request archived Screen Time history without changing the authorised endpoint', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
+    localStorage.setItem('rememberToken', 'remember-token');
+    global.fetch = jest.fn(() => jsonResponse(playtimePayload));
+
+    act(() => {
+      root.render(<ScreenTimeMonitoring mode="all" />);
+    });
+    await waitForContent(container, 'Ava Santos');
+
+    const viewSelect = Array.from(container.querySelectorAll('select')).find((select) => select.value === 'active' && select.textContent.includes('Archived History'));
+    await act(async () => {
+      viewSelect.value = 'archived';
+      viewSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitForContent(container, 'Ava Santos');
+
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes('/api/playtime?') && String(url).includes('lifecycle=archived'))).toBe(true);
   });
 
   test('paginates the authorised Screen Time records after server filtering', async () => {

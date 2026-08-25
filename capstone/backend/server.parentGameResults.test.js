@@ -24,6 +24,7 @@ const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowe
 const runQuery = async (sql, params = []) => {
   const compacted = compactSql(sql);
   const result = (await queryHandler(compacted, params, sql)) || emptyResult;
+  if (result.handled) return { rows: result.rows || [] };
   if (result.rows?.length > 0) return result;
 
   if (compacted.startsWith('select * from public.accounts where id = $1')) {
@@ -830,7 +831,7 @@ test('parent game results routes and access middleware', async (t) => {
       if (sql.includes('from public.teacher_student_relationships') && sql.startsWith('select 1')) {
         return resultRows([{ linked: true }]);
       }
-      if (sql.startsWith('select id, parent_id') && sql.includes('from public.game_results')) {
+      if (sql.startsWith('select gr.id, gr.parent_id') && sql.includes('from public.game_results')) {
         return resultRows([{
           id: 12,
           math_topic: 'Fractions',
@@ -883,7 +884,7 @@ test('parent game results routes and access middleware', async (t) => {
       if (sql.includes('from public.teacher_student_relationships') && sql.startsWith('select 1')) {
         return resultRows([{ linked: true }]);
       }
-      if (sql.startsWith('select math_topic') && sql.includes('from public.game_results')) {
+      if (sql.startsWith('select gr.math_topic') && sql.includes('from public.game_results')) {
         return resultRows([{ math_topic: 'Fractions', times_played: 3, best_score: 9 }]);
       }
       return emptyResult;
@@ -1150,6 +1151,10 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(parentScopeParams[0], 19);
     assert.match(parentScopeSql, /tsr\.teacher_id = \$1/);
   });
+
+  await t.test('game profile validation supports more than one linked child and returns truthful Parent/Student relationship errors', async () => {
+    await verifyGameProfileMultipleChildren(baseUrl);
+  });
 });
 
 test('game profile check accepts a linked canonical child with a null Section', async (t) => {
@@ -1165,8 +1170,8 @@ test('game profile check accepts a linked canonical child with a null Section', 
     if (sql.includes('where parent_id = $1') && sql.includes('lower(role) in')) {
       return resultRows([{ id: 19, parent_id: '123456', name: 'Parent User' }]);
     }
-    if (sql.includes('join public.accounts p on p.id = r.teacher_id') && sql.includes('s.game_student_id = $1')) {
-      return resultRows([{ id: 44, section: null }]);
+    if (sql.includes('r.teacher_id = $1') && sql.includes('s.game_student_id = $2')) {
+      return resultRows([{ id: 44, name: 'Linked Child', grade_level: 'Grade 1', section: null }]);
     }
     if (sql.includes('from public.student_game_progress')) return emptyResult;
     return emptyResult;
@@ -1177,6 +1182,58 @@ test('game profile check accepts a linked canonical child with a null Section', 
   assert.equal(response.status, 200);
   assert.equal(response.body.can_play, true);
 });
+
+const verifyGameProfileMultipleChildren = async (baseUrl) => {
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('where parent_id = $1') && sql.includes('lower(role) in')) {
+      if (params[0] === '999999') return { handled: true, rows: [] };
+      return { handled: true, rows: [{ id: 19, parent_id: params[0], name: 'Parent User', role: 'parent', is_archived: false }] };
+    }
+    if (sql.includes('from public.accounts s') && sql.includes('r.teacher_id = $1') && sql.includes('s.game_student_id = $2')) {
+      const studentCode = params[1];
+      if (studentCode === '000001' || studentCode === '000002') {
+        return {
+          handled: true,
+          rows: [{
+            id: studentCode === '000001' ? 44 : 45,
+            name: studentCode === '000001' ? 'Child One' : 'Child Two',
+            grade_level: 'Grade 1',
+            section: null,
+            current_learning_cycle_version: 0,
+          }],
+        };
+      }
+      return { handled: true, rows: [] };
+    }
+    if (sql.includes('from public.accounts') && sql.includes("lower(role) = 'student'") && sql.includes('game_student_id = $1')) {
+      if (params[0] === '000003') return { handled: true, rows: [{ id: 46, is_archived: false }] };
+      if (params[0] === '000005') return { handled: true, rows: [{ id: 47, is_archived: true }] };
+      return { handled: true, rows: [] };
+    }
+    if (sql.includes('from public.student_game_progress')) return { handled: true, rows: [] };
+    return emptyResult;
+  });
+
+  const firstChild = await requestJson(baseUrl, '/api/game/profile/check/000001?parent_id=123456');
+  const secondChild = await requestJson(baseUrl, '/api/game/profile/check/000002?parent_id=123456');
+  const unlinkedChild = await requestJson(baseUrl, '/api/game/profile/check/000003?parent_id=123456');
+  const missingStudent = await requestJson(baseUrl, '/api/game/profile/check/000004?parent_id=123456');
+  const inactiveStudent = await requestJson(baseUrl, '/api/game/profile/check/000005?parent_id=123456');
+  const missingParent = await requestJson(baseUrl, '/api/game/profile/check/000001?parent_id=999999');
+
+  assert.equal(firstChild.status, 200);
+  assert.equal(secondChild.status, 200);
+  assert.equal(firstChild.body.canonical_profile.section, null);
+  assert.equal(secondChild.body.canonical_profile.name, 'Child Two');
+  assert.equal(unlinkedChild.status, 403);
+  assert.equal(unlinkedChild.body.error, 'This Student is not linked to this Parent account.');
+  assert.equal(missingStudent.status, 404);
+  assert.equal(missingStudent.body.error, 'Student ID does not exist.');
+  assert.equal(inactiveStudent.status, 403);
+  assert.equal(inactiveStudent.body.error, 'Student account is no longer active.');
+  assert.equal(missingParent.status, 404);
+  assert.equal(missingParent.body.error, 'Parent ID does not exist.');
+};
 
 test('game result endpoint rejects missing, expired, and forged playtime leases', async (t) => {
   const server = await listen();

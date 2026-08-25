@@ -27,28 +27,33 @@ describe('StudentProgressLifecycleActions', () => {
 
   afterEach(() => {
     act(() => root.unmount());
+    document.querySelectorAll('.learning-cycle-reset-overlay').forEach((overlay) => overlay.remove());
     container.remove();
     delete global.fetch;
   });
 
-  test('archives only the selected Student after a required reason and keeps modal events from the row', async () => {
+  test('soft-deletes only the selected Student after a required reason and keeps every modal event out of the row', async () => {
     const onComplete = jest.fn();
     const rowClick = jest.fn();
     global.fetch = jest.fn(() => jsonResponse({ success: true }));
     await act(async () => root.render(<div onClick={rowClick}><StudentProgressArchiveAction studentId={44} role="teacher" onComplete={onComplete} /></div>));
 
-    const button = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Archive Progress');
+    const button = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Delete');
     await act(async () => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(rowClick).not.toHaveBeenCalled();
 
-    const select = container.querySelector('select[name="archive-reason"]');
+    const overlay = document.body.querySelector('.learning-cycle-reset-overlay');
+    expect(overlay?.parentElement).toBe(document.body);
+    const select = overlay.querySelector('select[name="archive-reason"]');
     await act(async () => {
+      select.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      select.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
       select.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       select.value = 'Transferred';
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
     expect(rowClick).not.toHaveBeenCalled();
-    const submit = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Archive Progress' && item.type === 'submit');
+    const submit = Array.from(overlay.querySelectorAll('button')).find((item) => item.textContent === 'Delete (Archive)' && item.type === 'submit');
     await act(async () => submit.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 
     expect(global.fetch).toHaveBeenCalledWith(
@@ -60,7 +65,7 @@ describe('StudentProgressLifecycleActions', () => {
       })
     );
     expect(onComplete).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
   });
 
   test('requires DELETE before the admin-only gameplay delete request', async () => {
@@ -68,9 +73,9 @@ describe('StudentProgressLifecycleActions', () => {
     await act(async () => root.render(<StudentProgressPermanentDeleteAction studentId={44} onComplete={jest.fn()} />));
     const open = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Permanent Delete');
     await act(async () => open.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    const submit = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Delete Gameplay Data');
+    const submit = Array.from(document.body.querySelectorAll('button')).find((item) => item.textContent === 'Delete Gameplay Data');
     await act(async () => submit.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(container.textContent).toContain('Provide a deletion reason.');
+    expect(document.body.textContent).toContain('Provide a deletion reason.');
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
@@ -82,12 +87,29 @@ describe('StudentProgressLifecycleActions', () => {
     await act(async () => root.render(<BulkStudentProgressLifecycleAction operation="reset" role="teacher" onComplete={jest.fn()} />));
     const open = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Reset All');
     await act(async () => open.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(container.textContent).toContain('3 Students will be affected.');
-    const select = container.querySelector('select[name="bulk-reset-reason"]');
+    const overlay = document.body.querySelector('.learning-cycle-reset-overlay');
+    expect(overlay.textContent).toContain('3 Students will be affected.');
+    const select = overlay.querySelector('select[name="bulk-reset-reason"]');
     await act(async () => { select.value = 'New Lesson'; select.dispatchEvent(new Event('change', { bubbles: true })); });
-    const submit = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Reset All' && item.type === 'submit');
+    const submit = Array.from(overlay.querySelectorAll('button')).find((item) => item.textContent === 'Reset All' && item.type === 'submit');
     await act(async () => submit.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(container.textContent).toContain('Type RESET to confirm.');
+    expect(overlay.textContent).toContain('Type RESET to confirm.');
     expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    const confirmation = overlay.querySelector('input[id="bulk-reset-confirmation"]');
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      valueSetter.call(confirmation, 'RESET');
+      confirmation.dispatchEvent(new Event('input', { bubbles: true }));
+      confirmation.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await act(async () => submit.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/student-progress/bulk/reset',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ reason: 'New Lesson', custom_reason: '', expected_count: 3, confirmation: 'RESET' }),
+      })
+    );
   });
 });

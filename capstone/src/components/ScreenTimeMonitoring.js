@@ -31,6 +31,7 @@ const initialFilters = {
   student_id: '',
   parent_id: '',
   status: '',
+  lifecycle: 'active',
   sort_by: 'student_name',
 };
 
@@ -193,6 +194,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     : (normalizeRole(user?.role) === 'admin' ? 'admin' : 'teacher');
   const activeItem = isChildView ? 'my-child-screen-time' : 'screen-time';
   const activeReportScope = [
+    filters.lifecycle === 'archived' ? 'Archived History' : 'Active Students',
     filters.grade_level,
     filters.section,
     filters.date,
@@ -341,6 +343,18 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                       onChange={(event) => setFilter('search', event.target.value)}
                       placeholder={isChildView ? 'Search child...' : 'Search records...'}
                     />
+                  </label>
+
+                  <label>
+                    Monitoring View
+                    <select
+                      className="screen-time-input"
+                      value={filters.lifecycle}
+                      onChange={(event) => setFilter('lifecycle', event.target.value)}
+                    >
+                      <option value="active">Active Students</option>
+                      <option value="archived">Archived History</option>
+                    </select>
                   </label>
 
                   <label>

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { buildScopedApiUrl } from './analyticsEndpoints';
 import { buildAuthHeaders } from './session.utils';
 
@@ -27,6 +28,7 @@ export const LearningCycleResetAction = ({ studentId, role, onReset, className =
 
   const submit = async (event) => {
     event.preventDefault();
+    event.stopPropagation();
     if (!reason) {
       setError('Select a reason for reset.');
       return;
@@ -73,15 +75,20 @@ export const LearningCycleResetAction = ({ studentId, role, onReset, className =
       >
         Reset Progress
       </button>
-      {open && (
+      {open && createPortal(
         <div
           className="learning-cycle-reset-overlay"
           onPointerDown={(event) => {
+            event.stopPropagation();
             if (event.target === event.currentTarget) close();
           }}
+          onMouseDown={(event) => event.stopPropagation()}
           onClick={(event) => {
+            event.stopPropagation();
             if (event.target === event.currentTarget) close();
           }}
+          onChange={(event) => event.stopPropagation()}
+          onSubmit={(event) => event.stopPropagation()}
         >
           <form
             className="learning-cycle-reset-dialog"
@@ -92,6 +99,7 @@ export const LearningCycleResetAction = ({ studentId, role, onReset, className =
             onPointerDown={(event) => event.stopPropagation()}
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
+            onChange={(event) => event.stopPropagation()}
           >
             <h2 id="learning-cycle-reset-title">Start a New Learning Cycle</h2>
             <p>Current learning progress and analytics will restart for this student.</p>
@@ -102,6 +110,7 @@ export const LearningCycleResetAction = ({ studentId, role, onReset, className =
               name="learning-cycle-reason"
               value={reason}
               onPointerDown={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
               onChange={(event) => {
                 setReason(event.target.value);
@@ -119,6 +128,7 @@ export const LearningCycleResetAction = ({ studentId, role, onReset, className =
                   id="learning-cycle-custom-reason"
                   value={customReason}
                   onPointerDown={(event) => event.stopPropagation()}
+                  onMouseDown={(event) => event.stopPropagation()}
                   onClick={(event) => event.stopPropagation()}
                   onChange={(event) => {
                     setCustomReason(event.target.value);
@@ -137,7 +147,8 @@ export const LearningCycleResetAction = ({ studentId, role, onReset, className =
               </button>
             </div>
           </form>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
