@@ -186,4 +186,24 @@ describe('Student Progress summary cards', () => {
     expect(container.textContent).toContain('Permanent Delete');
     expect(container.textContent).not.toContain('Delete All');
   });
+
+  test('groups active row actions in a dedicated vertical layout without changing their labels', async () => {
+    global.fetch = jest.fn((url) => {
+      const value = String(url);
+      if (value.startsWith('/api/students/progress')) return jsonResponse([{ student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 3' }]);
+      if (value.startsWith('/api/analytics/overview')) return jsonResponse({ studentCount: 1, averageAccuracy: null, averageProgress: null });
+      if (value.startsWith('/api/analytics/recommendations')) return jsonResponse({ recommendations: [] });
+      return jsonResponse({});
+    });
+
+    await act(async () => root.render(<AdminStudentProgress />));
+
+    const actionStack = container.querySelector('.student-progress-row-actions');
+    expect(actionStack).not.toBeNull();
+    expect(Array.from(actionStack.querySelectorAll('button')).map((button) => button.textContent)).toEqual([
+      'View Analytics',
+      'Reset Progress',
+      'Delete',
+    ]);
+  });
 });

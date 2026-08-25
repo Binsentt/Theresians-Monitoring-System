@@ -288,7 +288,7 @@ export default function AdminStudentProgress() {
                           </td>
                           <td className="table-action-cell no-print">
                             {lifecycle === 'active' ? (
-                              <>
+                              <div className="student-progress-row-actions">
                                 <button
                                   type="button"
                                   className="table-action-button"
@@ -309,7 +309,7 @@ export default function AdminStudentProgress() {
                                   role="admin"
                                   onComplete={() => setRefreshToken((value) => value + 1)}
                                 />
-                              </>
+                              </div>
                             ) : (
                               <StudentProgressPermanentDeleteAction
                                 studentId={student.student_id}

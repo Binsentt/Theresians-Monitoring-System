@@ -85,7 +85,7 @@ test('profile check returns only the canonical linked child profile', async (t) 
       grade_level: 'Grade 3',
       section: null,
     });
-    assert.deepEqual(linkedStudentParams, ['001234', '654321']);
+    assert.deepEqual(linkedStudentParams, [activeParent.id, '001234']);
     assert.match(linkedStudentSql, /s\.name/i);
     assert.match(linkedStudentSql, /s\.grade_level/i);
     assert.match(linkedStudentSql, /s\.section/i);
@@ -113,14 +113,15 @@ test('profile check returns only the canonical linked child profile', async (t) 
     queryHandler = async (sql) => {
       if (sql.includes('from public.accounts where parent_id = $1') && sql.includes('lower(role) in')) return { rows: [activeParent] };
       if (sql.includes('from public.accounts s') && sql.includes('join public.teacher_student_relationships r')) return emptyResult;
-      if (sql.includes('select id from public.accounts where game_student_id = $1')) return { rows: [{ id: 77 }] };
+      if (sql.includes('select id, is_archived from public.accounts where game_student_id = $1')) return { rows: [{ id: 77, is_archived: false }] };
       return emptyResult;
     };
 
     const response = await requestJson(baseUrl, '/api/game/profile/check/009999?parent_id=654321');
 
-    assert.equal(response.status, 409);
+    assert.equal(response.status, 403);
     assert.equal(response.body.should_block, true);
+    assert.equal(response.body.error, 'This Student is not linked to this Parent account.');
     assert.equal(Object.hasOwn(response.body, 'canonical_profile'), false);
   });
 
@@ -161,11 +162,12 @@ test('profile check returns only the canonical linked child profile', async (t) 
     queryHandler = async (sql) => {
       if (sql.includes('from public.accounts where parent_id = $1') && sql.includes('lower(role) in')) return { rows: [activeParent] };
       if (sql.includes('from public.accounts s') && sql.includes('join public.teacher_student_relationships r')) return emptyResult;
-      if (sql.includes('select id from public.accounts where game_student_id = $1')) return { rows: [{ id: canonicalChild.id }] };
+      if (sql.includes('select id, is_archived from public.accounts where game_student_id = $1')) return { rows: [{ id: canonicalChild.id, is_archived: true }] };
       return emptyResult;
     };
     const inactiveStudent = await requestJson(baseUrl, '/api/game/profile/check/001234?parent_id=654321');
-    assert.equal(inactiveStudent.status, 409);
+    assert.equal(inactiveStudent.status, 403);
+    assert.equal(inactiveStudent.body.error, 'Student account is no longer active.');
     assert.equal(Object.hasOwn(inactiveStudent.body, 'canonical_profile'), false);
   });
 });

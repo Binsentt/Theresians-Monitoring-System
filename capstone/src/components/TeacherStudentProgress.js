@@ -310,7 +310,7 @@ export default function TeacherStudentProgress() {
                           </td>
                           <td className="table-action-cell no-print">
                             {lifecycle === 'active' ? (
-                              <>
+                              <div className="student-progress-row-actions">
                                 <button
                                   type="button"
                                   className="table-action-button"
@@ -331,7 +331,7 @@ export default function TeacherStudentProgress() {
                                   role={user?.role || 'teacher'}
                                   onComplete={() => setRefreshToken((value) => value + 1)}
                                 />
-                              </>
+                              </div>
                             ) : <span className="student-progress-archived-label">Archived</span>}
                           </td>
                         </tr>
