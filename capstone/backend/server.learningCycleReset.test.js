@@ -100,7 +100,10 @@ const reset = () => {
     }
     if (sql.startsWith('update public.accounts set current_learning_cycle_started_at')) {
       observed.boundaryUpdatedFor = Number(params[0]);
-      return resultRows([{ current_learning_cycle_started_at: '2026-08-24T00:00:00.000Z' }]);
+      return resultRows([{
+        current_learning_cycle_started_at: '2026-08-24T00:00:00.000Z',
+        current_learning_cycle_version: 1,
+      }]);
     }
     if (sql.startsWith('delete from public.student_game_progress')) {
       observed.currentSnapshotDeletedFor = Number(params[0]);
@@ -179,8 +182,8 @@ test('current-cycle reads exclude pre-reset progress and results without hiding 
   assert.match(parentChildren, /gr\.played_at\s*>=\s*s\.current_learning_cycle_started_at/i);
   assert.match(studentDetail, /played_at\s*>=\s*\$2/i);
   assert.match(studentDetail, /activity_timestamp\s*>=\s*\$2/i);
-  const activityLogRoute = source.slice(source.indexOf("app.get('/api/activity-logs'"), source.indexOf("app.post('/api/parent/children'"));
-  const playtimeList = source.slice(source.indexOf('const handlePlaytimeListRequest'), source.indexOf("app.post('/api/parent/children'"));
+  const activityLogRoute = source.match(/app\.get\('\/api\/activity-logs'[\s\S]*?\n\}\);\r?\n\r?\nconst parseActivityDurationSeconds/)?.[0] || '';
+  const playtimeList = source.slice(source.indexOf('const handlePlaytimeListRequest'), source.indexOf("app.post('/api/playtime/start'"));
   assert.doesNotMatch(activityLogRoute, /current_learning_cycle_started_at/i);
   assert.doesNotMatch(playtimeList, /current_learning_cycle_started_at/i);
 });
@@ -207,6 +210,10 @@ test('Admin starts a new learning cycle without deleting historical gameplay or 
   assert.equal(observed.activityHistoryDeleted, false);
   assert.match(observed.auditReason, /Reason: New Lesson/);
   assert.equal(observed.auditActorAccountId, 1);
+  assert.deepEqual(response.body.learning_cycle, {
+    version: 1,
+    started_at: '2026-08-24T00:00:00.000Z',
+  });
 });
 
 test('Reset Progress requires an approved reason', async (t) => {
@@ -298,4 +305,49 @@ test('Reset rolls back if the current progress snapshot cannot be cleared', asyn
   assert.equal(observed.transactionStarted, true);
   assert.equal(observed.transactionCommitted, false);
   assert.equal(observed.transactionRolledBack, true);
+});
+
+test('Archive preserves gameplay and monitoring history, and rejects New Lesson as an archive reason', async (t) => {
+  reset();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  const rejected = await requestJson(baseUrl, '/api/student-progress/44/archive', {
+    method: 'POST', headers: authHeaders('admin'), body: JSON.stringify({ reason: 'New Lesson' }),
+  });
+  assert.equal(rejected.status, 400);
+  assert.match(rejected.body.error, /Reset Progress/i);
+
+  const archived = await requestJson(baseUrl, '/api/student-progress/44/archive', {
+    method: 'POST', headers: authHeaders('admin'), body: JSON.stringify({ reason: 'Transferred' }),
+  });
+  assert.equal(archived.status, 200);
+  assert.equal(observed.transactionCommitted, true);
+  assert.equal(observed.currentSnapshotDeletedFor, null);
+  assert.equal(observed.gameResultsDeleted, false);
+  assert.equal(observed.playtimeDeleted, false);
+  assert.equal(observed.activityHistoryDeleted, false);
+});
+
+test('Admin permanent delete removes only approved gameplay-derived rows and advances the cycle', async (t) => {
+  reset();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  const denied = await requestJson(baseUrl, '/api/student-progress/44/permanent-delete', {
+    method: 'POST', headers: authHeaders('admin'), body: JSON.stringify({ reason: 'Testing Data Cleanup', confirmation_phrase: 'REMOVE' }),
+  });
+  assert.equal(denied.status, 400);
+
+  const deleted = await requestJson(baseUrl, '/api/student-progress/44/permanent-delete', {
+    method: 'POST', headers: authHeaders('admin'), body: JSON.stringify({ reason: 'Testing Data Cleanup', confirmation_phrase: 'DELETE' }),
+  });
+  assert.equal(deleted.status, 200);
+  assert.equal(observed.currentSnapshotDeletedFor, 44);
+  assert.equal(observed.gameResultsDeleted, true);
+  assert.equal(observed.playtimeDeleted, false);
+  assert.equal(observed.activityHistoryDeleted, false);
+  assert.deepEqual(deleted.body.learning_cycle, { version: 1, started_at: '2026-08-24T00:00:00.000Z' });
 });

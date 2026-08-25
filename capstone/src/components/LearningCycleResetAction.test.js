@@ -85,4 +85,18 @@ describe('LearningCycleResetAction', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     expect(global.fetch).not.toHaveBeenCalled();
   });
+
+  test('does not bubble the reset reason selector click into a clickable Student Progress row', async () => {
+    const rowClick = jest.fn();
+    await act(async () => {
+      root.render(<div onClick={rowClick}><LearningCycleResetAction studentId={44} role="teacher" onReset={jest.fn()} /></div>);
+    });
+    const openButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Reset Progress');
+    await act(async () => openButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(rowClick).not.toHaveBeenCalled();
+
+    const reasonSelect = container.querySelector('select[name="learning-cycle-reason"]');
+    await act(async () => reasonSelect.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(rowClick).not.toHaveBeenCalled();
+  });
 });

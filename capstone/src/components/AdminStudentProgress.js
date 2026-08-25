@@ -16,6 +16,11 @@ import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext } from './tableReporting.utils';
 import { LearningCycleResetAction } from './LearningCycleResetAction';
+import {
+  BulkStudentProgressLifecycleAction,
+  StudentProgressArchiveAction,
+  StudentProgressPermanentDeleteAction,
+} from './StudentProgressLifecycleActions';
 import '../styles/studentprogress.css';
 
 const studentReportColumns = [
@@ -43,6 +48,7 @@ export default function AdminStudentProgress() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshToken, setRefreshToken] = useState(0);
+  const [lifecycle, setLifecycle] = useState('active');
   const pageSize = 10;
 
   useEffect(() => {
@@ -54,7 +60,7 @@ export default function AdminStudentProgress() {
         const role = loggedInUser?.role || 'admin';
         const requestOptions = { headers: buildAuthHeaders() };
         const [studentsResult, overviewResult, recommendationsResult] = await Promise.allSettled([
-          fetch(buildScopedApiUrl('/api/students/progress', role), requestOptions),
+          fetch(buildScopedApiUrl(`/api/students/progress?lifecycle=${lifecycle}`, role), requestOptions),
           fetch(buildScopedApiUrl('/api/analytics/overview', role), requestOptions),
           fetch(buildScopedApiUrl('/api/analytics/recommendations', role), requestOptions),
         ]);
@@ -88,7 +94,7 @@ export default function AdminStudentProgress() {
     };
 
     loadData();
-  }, [refreshToken]);
+  }, [refreshToken, lifecycle]);
 
   const grades = useMemo(() => {
     return Array.from(new Set(students.map((student) => student.grade_level || 'Unknown'))).sort();
@@ -108,12 +114,12 @@ export default function AdminStudentProgress() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, selectedGrade, selectedSection]);
+  }, [searchQuery, selectedGrade, selectedSection, lifecycle]);
 
   const paginatedStudents = filteredStudents.slice((page - 1) * pageSize, page * pageSize);
   const pageCount = Math.max(1, Math.ceil(filteredStudents.length / pageSize));
   const hasActiveStudentFilters = Boolean(searchQuery || selectedGrade || selectedSection);
-  const reportScope = [selectedGrade, selectedSection, searchQuery ? `Search: ${searchQuery}` : ''].filter(Boolean).join(' / ') || 'All authorised students';
+  const reportScope = [lifecycle === 'archived' ? 'Archived Progress' : 'Active Progress', selectedGrade, selectedSection, searchQuery ? `Search: ${searchQuery}` : ''].filter(Boolean).join(' / ') || 'All authorised students';
 
   return (
     <DashboardContainer
@@ -159,6 +165,13 @@ export default function AdminStudentProgress() {
             >
               <div className="student-progress-filters-card">
                 <div className="student-progress-filters">
+                  <div className="filter-group">
+                    <label>Progress view</label>
+                    <select value={lifecycle} onChange={(event) => setLifecycle(event.target.value)}>
+                      <option value="active">Active Progress</option>
+                      <option value="archived">Archived Progress</option>
+                    </select>
+                  </div>
                   <div className="filter-group">
                     <label>Grade</label>
                     <select value={selectedGrade} onChange={(e) => setSelectedGrade(e.target.value)}>
@@ -207,18 +220,24 @@ export default function AdminStudentProgress() {
             </ContentSection>
 
             <ContentSection
-              title={`Student Progress Table (${filteredStudents.length} records found)`}
+              title={`${lifecycle === 'archived' ? 'Archived Student Progress' : 'Student Progress'} Table (${filteredStudents.length} records found)`}
               className="student-progress-table-section"
               contentClassName="student-progress-table-shell"
             >
               <div className="table-report-controls">
                 <TablePrintButton
-                  reportTitle="Student Progress List"
+                  reportTitle={lifecycle === 'archived' ? 'Archived Student Progress List' : 'Student Progress List'}
                   reportContext={formatReportContext({ scope: reportScope, recordCount: filteredStudents.length })}
                   label="Print Student List"
                   showPrintHeading={false}
                   disabled={!filteredStudents.length}
                 />
+                {lifecycle === 'active' && (
+                  <div className="student-lifecycle-bulk-actions no-print">
+                    <BulkStudentProgressLifecycleAction operation="reset" role="admin" onComplete={() => setRefreshToken((value) => value + 1)} />
+                    <BulkStudentProgressLifecycleAction operation="archive" role="admin" onComplete={() => setRefreshToken((value) => value + 1)} />
+                  </div>
+                )}
               </div>
               <div className="table-wrapper">
                 {loading ? (
@@ -248,8 +267,10 @@ export default function AdminStudentProgress() {
                       {paginatedStudents.map((student, index) => (
                         <tr
                           key={student.student_id}
-                          className="clickable-row"
-                          onClick={() => navigate(`/admin/student-progress/${student.student_id}`)}
+                          className={lifecycle === 'active' ? 'clickable-row' : ''}
+                          onClick={() => {
+                            if (lifecycle === 'active') navigate(`/admin/student-progress/${student.student_id}`);
+                          }}
                         >
                           <td>{((page - 1) * pageSize) + index + 1}</td>
                           <td>{student.student_name || 'Unknown'}</td>
@@ -266,21 +287,35 @@ export default function AdminStudentProgress() {
                             </div>
                           </td>
                           <td className="table-action-cell no-print">
-                            <button
-                              type="button"
-                              className="table-action-button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                navigate(`/admin/student-progress/${student.student_id}`);
-                              }}
-                            >
-                              View Analytics
-                            </button>
-                            <LearningCycleResetAction
-                              studentId={student.student_id}
-                              role="admin"
-                              onReset={() => setRefreshToken((value) => value + 1)}
-                            />
+                            {lifecycle === 'active' ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="table-action-button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    navigate(`/admin/student-progress/${student.student_id}`);
+                                  }}
+                                >
+                                  View Analytics
+                                </button>
+                                <LearningCycleResetAction
+                                  studentId={student.student_id}
+                                  role="admin"
+                                  onReset={() => setRefreshToken((value) => value + 1)}
+                                />
+                                <StudentProgressArchiveAction
+                                  studentId={student.student_id}
+                                  role="admin"
+                                  onComplete={() => setRefreshToken((value) => value + 1)}
+                                />
+                              </>
+                            ) : (
+                              <StudentProgressPermanentDeleteAction
+                                studentId={student.student_id}
+                                onComplete={() => setRefreshToken((value) => value + 1)}
+                              />
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -295,7 +330,7 @@ export default function AdminStudentProgress() {
                 <button disabled={page >= pageCount} onClick={() => setPage((prev) => Math.min(prev + 1, pageCount))}>Next</button>
               </div>
               <PrintableTableReport
-                title="Student Progress List"
+                title={lifecycle === 'archived' ? 'Archived Student Progress List' : 'Student Progress List'}
                 context={reportScope}
                 rows={filteredStudents}
                 columns={studentReportColumns}

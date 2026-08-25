@@ -69,18 +69,29 @@ export const LearningCycleResetAction = ({ studentId, role, onReset, className =
           event.stopPropagation();
           setOpen(true);
         }}
+        onPointerDown={(event) => event.stopPropagation()}
       >
         Reset Progress
       </button>
       {open && (
-        <div className="learning-cycle-reset-overlay" onMouseDown={close}>
+        <div
+          className="learning-cycle-reset-overlay"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) close();
+          }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) close();
+          }}
+        >
           <form
             className="learning-cycle-reset-dialog"
             role="dialog"
             aria-modal="true"
             aria-labelledby="learning-cycle-reset-title"
             onSubmit={submit}
+            onPointerDown={(event) => event.stopPropagation()}
             onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
           >
             <h2 id="learning-cycle-reset-title">Start a New Learning Cycle</h2>
             <p>Current learning progress and analytics will restart for this student.</p>
@@ -90,6 +101,8 @@ export const LearningCycleResetAction = ({ studentId, role, onReset, className =
               id="learning-cycle-reason"
               name="learning-cycle-reason"
               value={reason}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
               onChange={(event) => {
                 setReason(event.target.value);
                 setError('');
@@ -105,6 +118,8 @@ export const LearningCycleResetAction = ({ studentId, role, onReset, className =
                 <textarea
                   id="learning-cycle-custom-reason"
                   value={customReason}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
                   onChange={(event) => {
                     setCustomReason(event.target.value);
                     setError('');

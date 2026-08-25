@@ -124,9 +124,10 @@ export default function ParentChildProgress() {
   }, [selectedStudentId, students]);
 
   const focusStudentId = focusStudent?.student_id || focusStudent?.id || null;
+  const isFocusStudentProgressArchived = Boolean(focusStudent?.progress_archived_at);
 
   useEffect(() => {
-    if (!focusStudentId || !parentAccountId) {
+    if (!focusStudentId || !parentAccountId || isFocusStudentProgressArchived) {
       setQuizSessions([]);
       setTopicCoverage([]);
       setSelectedChildMetrics(null);
@@ -184,7 +185,7 @@ export default function ParentChildProgress() {
     return () => {
       active = false;
     };
-  }, [focusStudentId, parentAccountId]);
+  }, [focusStudentId, parentAccountId, isFocusStudentProgressArchived]);
 
   const logsByStudent = useMemo(() => {
     return activityLogs.reduce((groups, log) => {
@@ -364,12 +365,14 @@ export default function ParentChildProgress() {
                         <p>{[safeDisplayText(focusStudent.grade_level || focusStudent.grade, 'Grade N/A'), safeDisplayText(focusStudent.section, 'Not assigned')].filter(Boolean).join(' - ')}</p>
                         <small>Student ID: {focusStudent.game_student_id || 'Not linked'}</small>
                       </div>
-                      <LearningCycleResetAction
-                        studentId={focusStudentId}
-                        role="parent"
-                        className="table-action-button child-reset-action"
-                        onReset={() => setRefreshToken((value) => value + 1)}
-                      />
+                      {!isFocusStudentProgressArchived && (
+                        <LearningCycleResetAction
+                          studentId={focusStudentId}
+                          role="parent"
+                          className="table-action-button child-reset-action"
+                          onReset={() => setRefreshToken((value) => value + 1)}
+                        />
+                      )}
                     </div>
 
                     <div className="child-progress-stats">
@@ -387,21 +390,27 @@ export default function ParentChildProgress() {
                       </div>
                       <div className="child-progress-stat">
                         <span>Current Quest</span>
-                        <strong>{safeDisplayText(focusStudent.current_quest, 'N/A')}</strong>
+                        <strong>{isFocusStudentProgressArchived ? 'Archived' : safeDisplayText(focusStudent.current_quest, 'N/A')}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Score</span>
-                        <strong>{selectedChildMetrics?.gameScore ?? 'Not available'}</strong>
+                        <strong>{isFocusStudentProgressArchived ? 'No Data' : selectedChildMetrics?.gameScore ?? 'Not available'}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Accuracy</span>
-                        <strong>{formatPercent(selectedChildMetrics?.accuracy, 'Not available')}</strong>
+                        <strong>{isFocusStudentProgressArchived ? 'No Data' : formatPercent(selectedChildMetrics?.accuracy, 'Not available')}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Progress</span>
-                        <strong>{formatPercent(selectedChildMetrics?.totalProgress, 'Not available')}</strong>
+                        <strong>{isFocusStudentProgressArchived ? 'No Data' : formatPercent(selectedChildMetrics?.totalProgress, 'Not available')}</strong>
                       </div>
                     </div>
+
+                    {isFocusStudentProgressArchived && (
+                      <div className="parent-progress-archived-notice" role="status">
+                        This child’s progress is archived. Historical activity and Screen Time remain preserved, but current-cycle analytics are not shown in Active Progress.
+                      </div>
+                    )}
 
                     <div className="child-activity-panel">
                       <div className="insights-header">
@@ -538,7 +547,7 @@ export default function ParentChildProgress() {
                     {insightError || selectedChildAiInsight?.message || 'Generate an insight only when you want an interpretation of this child’s recorded metrics.'}
                   </div>
                 )}
-                {selectedChildAiInsight?.status !== 'insufficient_data' && focusStudentId && (
+                {!isFocusStudentProgressArchived && selectedChildAiInsight?.status !== 'insufficient_data' && focusStudentId && (
                   <button type="button" className="btn btn-primary" onClick={generateChildInsight} disabled={insightLoading}>
                     {insightLoading ? 'Generating insight...' : selectedChildAiInsight?.status === 'stale' ? 'Generate refreshed insight' : 'Generate grounded insight'}
                   </button>

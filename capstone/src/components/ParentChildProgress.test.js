@@ -158,6 +158,27 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('Grade 3 - Not assigned');
   });
 
+  test('shows a truthful archived-progress notice without exposing a parent archive action', async () => {
+    global.fetch = jest.fn((url) => successPayloadForUrl(url, {
+      children: [{
+        id: 44,
+        game_student_id: '001234',
+        student_name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        section: null,
+        progress_archived_at: '2026-08-25T00:00:00.000Z',
+      }],
+      unlinked_count: 0,
+    }));
+
+    await act(async () => root.render(<ParentChildProgress />));
+
+    expect(container.textContent).toContain('This child’s progress is archived.');
+    expect(container.textContent).toContain('No Data');
+    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Reset Progress')).toBe(false);
+    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Archive Progress')).toBe(false);
+  });
+
   test('shows the selector first when the parent has multiple linked children', async () => {
     global.fetch = jest.fn((url) => successPayloadForUrl(url, {
       children: [

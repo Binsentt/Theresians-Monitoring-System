@@ -1106,6 +1106,11 @@
   margin: 0;
 }
 
+.learning-cycle-reset-dialog form {
+  display: grid;
+  gap: 12px;
+}
+
 .learning-cycle-reset-dialog p {
   color: var(--text-muted, #64748b);
   line-height: 1.5;
@@ -1116,7 +1121,8 @@
 }
 
 .learning-cycle-reset-dialog select,
-.learning-cycle-reset-dialog textarea {
+.learning-cycle-reset-dialog textarea,
+.learning-cycle-reset-dialog input {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid var(--border-color, #cbd5e1);
@@ -1142,6 +1148,36 @@
   justify-content: flex-end;
   gap: 10px;
   margin-top: 4px;
+}
+
+.student-lifecycle-bulk-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.table-archive-action {
+  background: #475569;
+}
+
+.table-permanent-delete-action {
+  background: #b91c1c;
+}
+
+.student-progress-archived-label {
+  color: var(--text-muted, #64748b);
+  font-weight: 600;
+}
+
+.parent-progress-archived-notice {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border: 1px solid #f0c36d;
+  border-radius: 10px;
+  background: #fff8e7;
+  color: #7a4b00;
+  line-height: 1.5;
 }
 
 @media (max-width: 479px) {

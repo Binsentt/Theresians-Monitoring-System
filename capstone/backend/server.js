@@ -218,9 +218,14 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS grade_level VARCHAR(20)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS section VARCHAR(50)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS current_learning_cycle_started_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS current_learning_cycle_version INTEGER NOT NULL DEFAULT 0');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS progress_archived_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS progress_archived_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS progress_archive_reason VARCHAR(1000)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS session_version INTEGER DEFAULT 0');
     await pool.query('UPDATE public.accounts SET is_archived = false WHERE is_archived IS NULL');
     await pool.query('UPDATE public.accounts SET session_version = 0 WHERE session_version IS NULL');
+    await pool.query('UPDATE public.accounts SET current_learning_cycle_version = 0 WHERE current_learning_cycle_version IS NULL');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.login_otp_device_skips (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
@@ -354,10 +359,12 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS session_credential_hash VARCHAR(64)');
+    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS learning_cycle_version INTEGER NOT NULL DEFAULT 0');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_student_date ON public.playtime_sessions(student_id, date_played)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_parent_id ON public.playtime_sessions(parent_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_status ON public.playtime_sessions(status)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_expiry ON public.playtime_sessions(status, expires_at)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_student_cycle ON public.playtime_sessions(student_id, learning_cycle_version, status)');
 
     await pool.query(`CREATE TABLE IF NOT EXISTS public.announcements (
       id SERIAL PRIMARY KEY,
@@ -791,6 +798,175 @@ const resolveLearningCycleResetReason = (body = {}) => {
   };
 };
 
+const LEARNING_CYCLE_ARCHIVE_REASONS = new Set([
+  'Graduated',
+  'End of School Year',
+  'Transferred',
+  'No Longer Enrolled',
+  'Testing Data Cleanup',
+  'Other',
+]);
+const resolveLearningCycleArchiveReason = (body = {}) => {
+  const reason = String(body.reason || '').trim();
+  const customReason = String(body.custom_reason || '').trim();
+  if (reason === 'New Lesson') {
+    return { error: 'Use Reset Progress to start a new lesson.' };
+  }
+  if (!LEARNING_CYCLE_ARCHIVE_REASONS.has(reason)) {
+    return { error: 'Select a valid reason for archive.' };
+  }
+  if (reason === 'Other' && !customReason) {
+    return { error: 'Provide a reason for Other.' };
+  }
+  if (customReason.length > MAX_LEARNING_CYCLE_RESET_REASON_LENGTH) {
+    return { error: `Reason for archive must be ${MAX_LEARNING_CYCLE_RESET_REASON_LENGTH} characters or fewer.` };
+  }
+  return {
+    reason,
+    auditReason: reason === 'Other' ? `Other: ${customReason}` : reason,
+  };
+};
+
+const toLearningCycleDescriptor = (row = {}) => ({
+  version: Math.max(0, Number(row.current_learning_cycle_version ?? row.learning_cycle_version ?? 0) || 0),
+  started_at: row.current_learning_cycle_started_at || null,
+});
+
+const resolveStudentProgressLifecycle = (value) => {
+  const lifecycle = String(value || 'active').trim().toLowerCase();
+  return ['active', 'archived'].includes(lifecycle) ? lifecycle : null;
+};
+
+const getStudentProgressArchivePredicate = (lifecycle = 'active', alias = 'a') => (
+  lifecycle === 'archived'
+    ? `${alias}.progress_archived_at IS NOT NULL`
+    : `${alias}.progress_archived_at IS NULL`
+);
+
+const getLifecycleMutationScope = (req, { allowParentSingle = false } = {}) => {
+  const scope = resolveAnalyticsScope(req);
+  if (scope?.type === 'all' || scope?.type === 'teacher') return scope;
+  if (allowParentSingle && scope?.type === 'parent') return scope;
+  return null;
+};
+
+const resolveBulkLifecycleConfirmation = (body = {}, operation) => {
+  const expectedCount = Number(body.expected_count);
+  const confirmationPhrase = String(body.confirmation_phrase || '').trim();
+  const requiredPhrase = operation === 'archive' ? 'ARCHIVE' : 'RESET';
+  if (!Number.isInteger(expectedCount) || expectedCount < 0) {
+    return { error: 'The affected student count is required.' };
+  }
+  if (confirmationPhrase !== requiredPhrase) {
+    return { error: `Type ${requiredPhrase} to confirm this action.` };
+  }
+  return { expectedCount };
+};
+
+const getScopedLifecycleStudents = async (client, scope, { lifecycle = 'active', forUpdate = false } = {}) => {
+  const params = [];
+  let query = `SELECT a.id, a.name, a.grade_level, a.section,
+                      a.current_learning_cycle_version, a.current_learning_cycle_started_at,
+                      a.progress_archived_at, a.progress_archive_reason
+               FROM public.accounts a
+               WHERE LOWER(a.role) = 'student'
+                 AND COALESCE(a.is_archived, false) = false
+                 AND ${getStudentProgressArchivePredicate(lifecycle, 'a')}`;
+  query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'a.id' });
+  query += ' ORDER BY a.id ASC';
+  if (forUpdate) query += ' FOR UPDATE';
+  return client.query(query, params);
+};
+
+const writeStudentLifecycleAudit = async (client, {
+  student,
+  actor,
+  role,
+  action,
+  reason,
+  description,
+}) => client.query(
+  `INSERT INTO public.activity_logs (
+     student_id, student_name, grade_level, section, activity_description,
+     actor_account_id, role, status, activity_timestamp
+   ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'Active', CURRENT_TIMESTAMP)`,
+  [
+    student.id,
+    student.name || 'Student',
+    student.grade_level || null,
+    student.section || null,
+    `${action} — Reason: ${reason}${description ? ` — ${description}` : ''}`,
+    actor.id,
+    role,
+  ]
+);
+
+const startFreshLearningCycle = async (client, studentId) => {
+  const result = await client.query(
+    `UPDATE public.accounts
+     SET current_learning_cycle_started_at = CURRENT_TIMESTAMP,
+         current_learning_cycle_version = COALESCE(current_learning_cycle_version, 0) + 1,
+         progress_archived_at = NULL,
+         progress_archived_by = NULL,
+         progress_archive_reason = NULL
+     WHERE id = $1
+     RETURNING current_learning_cycle_started_at, current_learning_cycle_version`,
+    [studentId]
+  );
+  await client.query('DELETE FROM public.student_game_progress WHERE student_id = $1', [studentId]);
+  await markStudentInsightStale(client, studentId);
+  return toLearningCycleDescriptor(result.rows[0]);
+};
+
+const validateProgressLearningCycleLease = async (client, { studentId, sessionId, sessionCredential }) => {
+  const accountResult = await client.query(
+    `SELECT COALESCE(current_learning_cycle_version, 0) AS current_learning_cycle_version
+     FROM public.accounts
+     WHERE id = $1
+     LIMIT 1`,
+    [studentId]
+  );
+  const currentVersion = Number(accountResult.rows[0]?.current_learning_cycle_version ?? 0);
+  // Legacy cycle-zero clients did not attach a lease to progress writes. They
+  // remain compatible until the Student's lifecycle has advanced.
+  if (currentVersion === 0 && (!sessionId || !sessionCredential)) return { ok: true };
+  if (!sessionId || !sessionCredential) {
+    return {
+      ok: false,
+      status: 409,
+      body: {
+        code: 'LEARNING_CYCLE_CHANGED',
+        error: 'Progress must be saved from a current learning-cycle playtime session.',
+      },
+    };
+  }
+  const sessionResult = await client.query(
+    `SELECT id, session_credential_hash, COALESCE(learning_cycle_version, 0) AS learning_cycle_version
+     FROM public.playtime_sessions
+     WHERE id = $1
+       AND student_id = $2
+       AND status = 'Playing'
+       AND expires_at > NOW()
+     LIMIT 1`,
+    [sessionId, studentId]
+  );
+  const session = sessionResult.rows[0];
+  if (!session || !hasMatchingPlaytimeSessionCredential(sessionCredential, session.session_credential_hash)) {
+    return { ok: false, status: 403, body: { error: 'The active playtime session is invalid.' } };
+  }
+  if (Number(session.learning_cycle_version ?? 0) !== currentVersion) {
+    return {
+      ok: false,
+      status: 409,
+      body: {
+        code: 'LEARNING_CYCLE_CHANGED',
+        error: 'This progress belongs to a previous learning cycle. Start a new game for the current cycle.',
+      },
+    };
+  }
+  return { ok: true };
+};
+
 const requireAccountManagementAdmin = (req, res, next) => {
   if (!req.authenticatedUser) {
     return res.status(401).json({ error: 'Authentication is required.' });
@@ -992,7 +1168,7 @@ const normalizeTeacherClassAssignment = (payload = {}) => {
   };
 };
 
-const buildCanonicalStudentProgressQuery = () => `
+const buildCanonicalStudentProgressQuery = (lifecycle = 'active') => `
   SELECT p.*,
          a.id AS student_id,
          a.name AS student_name,
@@ -1000,6 +1176,10 @@ const buildCanonicalStudentProgressQuery = () => `
          a.role AS student_role,
          a.game_student_id,
          a.current_learning_cycle_started_at,
+         a.current_learning_cycle_version,
+         a.progress_archived_at,
+         a.progress_archived_by,
+         a.progress_archive_reason,
          COALESCE(NULLIF(a.grade_level, ''), p.grade_level) AS grade_level,
          CASE
            WHEN EXISTS (
@@ -1024,6 +1204,7 @@ const buildCanonicalStudentProgressQuery = () => `
   ) p ON true
   WHERE LOWER(a.role) = 'student'
     AND COALESCE(a.is_archived, false) = false
+    AND ${getStudentProgressArchivePredicate(lifecycle, 'a')}
 `;
 
 const calculateGameResultPercentage = ({ score, totalItems }) => {
@@ -4457,6 +4638,39 @@ app.post('/api/game/parent/validate', async (req, res) => {
   }
 });
 
+app.get('/api/game/learning-cycle/:student_id', async (req, res) => {
+  try {
+    const studentCode = normalizeStudentCode(req.params.student_id);
+    const parentCode = normalizeParentCode(req.query.parent_id);
+    if (!studentCode || !parentCode) {
+      return res.status(400).json({ ok: false, error: 'Parent ID and Student ID must each be exactly 6 digits.' });
+    }
+
+    const { parent, error } = await getValidatedActiveParentAccount(parentCode);
+    if (error) return res.status(error.status).json({ ok: false, error: error.message });
+
+    const linkedStudent = await pool.query(
+      `SELECT s.id, s.current_learning_cycle_version, s.current_learning_cycle_started_at
+       FROM public.accounts s
+       JOIN public.teacher_student_relationships r ON r.student_id = s.id
+       WHERE r.teacher_id = $1
+         AND s.game_student_id = $2
+         AND LOWER(r.relationship_type) = 'parent'
+         AND COALESCE(s.is_archived, false) = false
+       LIMIT 1`,
+      [parent.id, studentCode]
+    );
+    if (linkedStudent.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: 'Student ID is not linked to this Parent account.' });
+    }
+
+    return res.json({ ok: true, learning_cycle: toLearningCycleDescriptor(linkedStudent.rows[0]) });
+  } catch (err) {
+    console.error('Game learning cycle lookup failed:', err.message);
+    return res.status(500).json({ ok: false, error: 'Failed to retrieve the learning cycle.' });
+  }
+});
+
 app.get('/api/game/profile/check/:student_id', async (req, res) => {
   try {
     const studentCode = normalizeStudentCode(req.params.student_id);
@@ -4474,7 +4688,8 @@ app.get('/api/game/profile/check/:student_id', async (req, res) => {
     }
 
     const linkedStudent = await pool.query(
-      `SELECT s.id, s.name, s.grade_level, s.section
+      `SELECT s.id, s.name, s.grade_level, s.section,
+              s.current_learning_cycle_version, s.current_learning_cycle_started_at
        FROM public.accounts s
        JOIN public.teacher_student_relationships r ON r.student_id = s.id
        JOIN public.accounts p ON p.id = r.teacher_id
@@ -4541,6 +4756,7 @@ app.get('/api/game/profile/check/:student_id', async (req, res) => {
         grade_level: linkedStudent.rows[0].grade_level,
         section: linkedStudent.rows[0].section ?? null,
       },
+      learning_cycle: toLearningCycleDescriptor(linkedStudent.rows[0]),
       message: 'Student ID is available for a new game.',
     });
   } catch (err) {
@@ -4707,6 +4923,16 @@ app.post('/api/game/progress', async (req, res) => {
     const resolvedSection = isLinkedCanonicalChild
       ? canonicalSection
       : canonicalSection || section || null;
+
+    const lifecycleLease = await validateProgressLearningCycleLease(client, {
+      studentId: student.id,
+      sessionId: resolvePositiveInteger(req.body?.playtime_session_id),
+      sessionCredential: String(req.body?.playtime_session_credential || '').trim(),
+    });
+    if (!lifecycleLease.ok) {
+      await client.query('ROLLBACK');
+      return res.status(lifecycleLease.status).json(lifecycleLease.body);
+    }
 
     const scoreValue = Math.round(toNullableNumber(score) ?? 0);
     const correctAnswersValue = Math.round(toNullableNumber(correct_answers) ?? 0);
@@ -4969,7 +5195,11 @@ app.post('/api/game/result', async (req, res) => {
     }
 
     const playtimeSessionResult = await pool.query(
-      `SELECT id, student_id, parent_id, status, expires_at, session_credential_hash
+      `SELECT id, student_id, parent_id, status, expires_at, session_credential_hash,
+              COALESCE(learning_cycle_version, 0) AS learning_cycle_version,
+              (SELECT COALESCE(a.current_learning_cycle_version, 0)
+                 FROM public.accounts a
+                WHERE a.id = public.playtime_sessions.student_id) AS current_learning_cycle_version
        FROM public.playtime_sessions
        WHERE id = $1
          AND student_id = $2
@@ -4985,6 +5215,12 @@ app.post('/api/game/result', async (req, res) => {
     }
     if (!hasMatchingPlaytimeSessionCredential(playtimeSessionCredential, playtimeSession.session_credential_hash)) {
       return res.status(403).json({ error: 'The active playtime session credential is invalid.' });
+    }
+    if (Number(playtimeSession.learning_cycle_version ?? 0) !== Number(playtimeSession.current_learning_cycle_version ?? 0)) {
+      return res.status(409).json({
+        code: 'LEARNING_CYCLE_CHANGED',
+        error: 'This result belongs to a previous learning cycle. Start a new game for the current cycle.',
+      });
     }
 
     const questionSetResolution = await resolveGameResultQuestionSet({
@@ -5329,6 +5565,7 @@ const handleTopAchieversRequest = async (req, res) => {
           LIMIT 1
         ) latest_activity ON true
         WHERE 1=1
+          AND a.progress_archived_at IS NULL
           AND (
             a.current_learning_cycle_started_at IS NULL
             OR p.updated_at >= a.current_learning_cycle_started_at
@@ -5887,7 +6124,8 @@ app.post('/api/playtime/start', async (req, res) => {
 
     // Check for linked student (existing student account linked to this parent)
     const linkedStudentResult = await pool.query(
-      `SELECT s.id, s.name, s.grade_level, s.section
+      `SELECT s.id, s.name, s.grade_level, s.section,
+              s.current_learning_cycle_version, s.current_learning_cycle_started_at
        FROM public.accounts s
        JOIN public.teacher_student_relationships r ON r.student_id = s.id
        WHERE r.teacher_id = $1
@@ -5899,6 +6137,7 @@ app.post('/api/playtime/start', async (req, res) => {
     );
 
     let studentId = null;
+    let learningCycle = toLearningCycleDescriptor();
     let resolvedStudentName = studentName;
     let resolvedGradeLevel = String(req.body.grade_level || req.body.grade || '').trim() || null;
     let resolvedSection = String(req.body.section || '').trim() || null;
@@ -5907,6 +6146,7 @@ app.post('/api/playtime/start', async (req, res) => {
       // the game client to overwrite those fields while starting a lease.
       const linkedStudent = linkedStudentResult.rows[0];
       studentId = linkedStudent.id;
+      learningCycle = toLearningCycleDescriptor(linkedStudent);
       resolvedStudentName = String(linkedStudent.name || '').trim() || studentName;
       resolvedGradeLevel = String(linkedStudent.grade_level || '').trim() || resolvedGradeLevel;
       resolvedSection = String(linkedStudent.section || '').trim() || null;
@@ -6012,7 +6252,7 @@ app.post('/api/playtime/start', async (req, res) => {
         student_id, parent_id, student_name, grade_level, section,
         date_played, start_time, server_started_at, expires_at,
         status, total_playtime_minutes, total_playtime_seconds,
-        session_credential_hash, last_heartbeat_at, created_at, updated_at
+        session_credential_hash, last_heartbeat_at, learning_cycle_version, created_at, updated_at
       ) VALUES (
         $1, $2, $3, $4, $5,
         CURRENT_DATE, NOW(), NOW(),
@@ -6020,7 +6260,7 @@ app.post('/api/playtime/start', async (req, res) => {
           NOW() + ($6::INTEGER * INTERVAL '1 second'),
           date_trunc('day', NOW()) + INTERVAL '1 day'
         ),
-        'Playing', 0, 0, $7, NOW(), NOW(), NOW()
+        'Playing', 0, 0, $7, NOW(), $8, NOW(), NOW()
       )
       RETURNING *,
         GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (expires_at - NOW())))::INTEGER) AS remaining_seconds`,
@@ -6032,17 +6272,21 @@ app.post('/api/playtime/start', async (req, res) => {
         resolvedSection,
         remainingSeconds,
         hashPlaytimeSessionCredential(sessionCredential),
+        learningCycle.version,
       ]
     );
 
     const session = result.rows[0];
-    return res.status(201).json(toPlaytimeResponse({
+    return res.status(201).json({
+      ...toPlaytimeResponse({
       session,
       totalPlaytimeSeconds,
       sessionCredential,
       remainingSeconds: session?.remaining_seconds,
       message: 'Playtime session started.',
-    }));
+      }),
+      learning_cycle: learningCycle,
+    });
   } catch (err) {
     console.error('Start playtime session failed:', err.message);
     res.status(500).json({ error: 'Failed to start playtime session' });
@@ -6112,6 +6356,9 @@ app.post('/api/playtime/heartbeat', async (req, res) => {
 
     const sessionResult = await pool.query(
       `SELECT *,
+              (SELECT COALESCE(a.current_learning_cycle_version, 0)
+                 FROM public.accounts a
+                WHERE a.id = public.playtime_sessions.student_id) AS current_learning_cycle_version,
               GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
                 COALESCE(expires_at, NOW()) - NOW()
               )))::INTEGER) AS remaining_seconds
@@ -6127,6 +6374,13 @@ app.post('/api/playtime/heartbeat', async (req, res) => {
     }
     if (!hasMatchingPlaytimeSessionCredential(sessionCredential, session.session_credential_hash)) {
       return res.status(403).json({ error: 'Invalid playtime session credential.', can_play: false });
+    }
+    if (Number(session.learning_cycle_version ?? 0) !== Number(session.current_learning_cycle_version ?? 0)) {
+      return res.status(409).json({
+        code: 'LEARNING_CYCLE_CHANGED',
+        error: 'This playtime session belongs to a previous learning cycle. Start a new game for the current cycle.',
+        can_play: false,
+      });
     }
 
     const remainingSeconds = Math.max(0, Number(session.remaining_seconds || 0));
@@ -6334,6 +6588,8 @@ app.get('/api/parent/children', requireParentAnalyticsAccess, async (req, res) =
               s.name,
               s.name AS student_name,
               s.email,
+              s.progress_archived_at,
+              s.progress_archive_reason,
               COALESCE(p.grade_level, s.grade_level) AS grade_level,
               NULLIF(s.section, '') AS section,
               p.current_quest,
@@ -6372,7 +6628,8 @@ app.get('/api/parent/children', requireParentAnalyticsAccess, async (req, res) =
        WHERE tsr.teacher_id = $1
          AND LOWER(tsr.relationship_type) = 'parent'
          AND COALESCE(s.is_archived, false) = false
-       GROUP BY s.id, p.id, p.grade_level, p.section, p.current_quest, p.score, p.progress_percentage
+       GROUP BY s.id, s.progress_archived_at, s.progress_archive_reason,
+                p.id, p.grade_level, p.section, p.current_quest, p.score, p.progress_percentage
        ORDER BY s.name`,
       [parentId]
     );
@@ -6503,8 +6760,10 @@ app.get('/api/students', requireAuthenticatedRoles(['admin', 'teacher', 'parent_
 app.get('/api/students/progress', requireAnalyticsAccess, async (req, res) => {
   try {
     const scope = resolveAnalyticsScope(req);
+    const lifecycle = resolveStudentProgressLifecycle(req.query.lifecycle);
+    if (!lifecycle) return res.status(400).json({ error: 'lifecycle must be active or archived.' });
     const params = [];
-    let query = buildCanonicalStudentProgressQuery();
+    let query = buildCanonicalStudentProgressQuery(lifecycle);
     query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'a.id' });
     query += " ORDER BY LOWER(COALESCE(NULLIF(a.name, ''), NULLIF(p.student_name, ''), '')), a.id ASC";
 
@@ -6595,6 +6854,7 @@ app.get('/api/students/progress-analysis', requireAuthenticatedRoles(['admin', '
       a.current_learning_cycle_started_at IS NULL
       OR p.updated_at >= a.current_learning_cycle_started_at
     )`);
+    filters.push('a.progress_archived_at IS NULL');
     if (filters.length > 0) {
       baseQuery += ` WHERE ${filters.join(' AND ')}`;
     } else {
@@ -6653,6 +6913,7 @@ app.post('/api/student-progress/:studentId/reset', requireAnalyticsAccess, verif
        WHERE id = $1
          AND LOWER(role) = 'student'
          AND COALESCE(is_archived, false) = false
+         AND progress_archived_at IS NULL
        FOR UPDATE`,
       [studentId]
     );
@@ -6662,15 +6923,7 @@ app.post('/api/student-progress/:studentId/reset', requireAnalyticsAccess, verif
       return res.status(404).json({ error: 'Student not found.' });
     }
 
-    const cycleResult = await client.query(
-      `UPDATE public.accounts
-       SET current_learning_cycle_started_at = CURRENT_TIMESTAMP
-       WHERE id = $1
-       RETURNING current_learning_cycle_started_at`,
-      [studentId]
-    );
-    await client.query('DELETE FROM public.student_game_progress WHERE student_id = $1', [studentId]);
-    await markStudentInsightStale(client, studentId);
+    const learningCycle = await startFreshLearningCycle(client, studentId);
     await client.query(
       `INSERT INTO public.activity_logs (
         student_id, student_name, grade_level, section, activity_description,
@@ -6690,12 +6943,207 @@ app.post('/api/student-progress/:studentId/reset', requireAnalyticsAccess, verif
     return res.json({
       success: true,
       student_id: studentId,
-      learning_cycle_started_at: cycleResult.rows[0]?.current_learning_cycle_started_at || null,
+      learning_cycle_started_at: learningCycle.started_at || null,
+      learning_cycle: learningCycle,
     });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('Learning cycle reset failed:', err.message);
     return res.status(500).json({ error: 'Unable to start a new learning cycle.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/student-progress/lifecycle-summary', requireAnalyticsAccess, async (req, res) => {
+  try {
+    const operation = String(req.query.operation || '').trim().toLowerCase();
+    const scope = getLifecycleMutationScope(req);
+    if (!['reset', 'archive'].includes(operation)) {
+      return res.status(400).json({ error: 'A valid lifecycle operation is required.' });
+    }
+    if (!scope) {
+      return res.status(403).json({ error: 'Bulk lifecycle actions are limited to Admin or the authorized Teacher scope.' });
+    }
+    const targets = await getScopedLifecycleStudents(pool, scope, { lifecycle: 'active' });
+    return res.json({ operation, affected_count: targets.rows.length });
+  } catch (err) {
+    console.error('Lifecycle summary failed:', err.message);
+    return res.status(500).json({ error: 'Failed to prepare the lifecycle summary.' });
+  }
+});
+
+const runBulkLifecycleAction = async (req, res, operation) => {
+  const scope = getLifecycleMutationScope(req);
+  const confirmation = resolveBulkLifecycleConfirmation(req.body, operation);
+  const reasonResult = operation === 'archive'
+    ? resolveLearningCycleArchiveReason(req.body)
+    : resolveLearningCycleResetReason(req.body);
+  if (!scope) {
+    return res.status(403).json({ error: 'Bulk lifecycle actions are limited to Admin or the authorized Teacher scope.' });
+  }
+  if (confirmation.error || reasonResult.error) {
+    return res.status(400).json({ error: confirmation.error || reasonResult.error });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const targetResult = await getScopedLifecycleStudents(client, scope, { lifecycle: 'active', forUpdate: true });
+    const targets = targetResult.rows;
+    if (targets.length !== confirmation.expectedCount) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'The affected student count changed. Review the summary and confirm again.' });
+    }
+
+    const descriptors = [];
+    for (const student of targets) {
+      if (operation === 'archive') {
+        await client.query(
+          `UPDATE public.accounts
+           SET progress_archived_at = CURRENT_TIMESTAMP,
+               progress_archived_by = $2,
+               progress_archive_reason = $3
+           WHERE id = $1`,
+          [student.id, req.authenticatedUser.id, reasonResult.auditReason]
+        );
+        await writeStudentLifecycleAudit(client, {
+          student,
+          actor: req.authenticatedUser,
+          role: req.authenticatedRole,
+          action: 'Archive Progress',
+          reason: reasonResult.auditReason,
+          description: 'Historical gameplay, Screen Time, and Activity Log remain preserved.',
+        });
+      } else {
+        const descriptor = await startFreshLearningCycle(client, student.id);
+        descriptors.push({ student_id: student.id, learning_cycle: descriptor });
+        await writeStudentLifecycleAudit(client, {
+          student,
+          actor: req.authenticatedUser,
+          role: req.authenticatedRole,
+          action: 'Reset Progress',
+          reason: reasonResult.auditReason,
+          description: `Started learning cycle ${descriptor.version}. Historical gameplay and Screen Time remain preserved.`,
+        });
+      }
+    }
+
+    if (targets.length > 0) {
+      await writeStudentLifecycleAudit(client, {
+        student: targets[0],
+        actor: req.authenticatedUser,
+        role: req.authenticatedRole,
+        action: operation === 'archive' ? 'Archive All' : 'Reset All',
+        reason: reasonResult.auditReason,
+        description: `${targets.length} authorized Student progress records affected.`,
+      });
+    }
+    await client.query('COMMIT');
+    return res.json({ success: true, operation, affected_count: targets.length, learning_cycles: descriptors });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error(`Bulk ${operation} failed:`, err.message);
+    return res.status(500).json({ error: `Unable to ${operation} authorized Student progress.` });
+  } finally {
+    client.release();
+  }
+};
+
+app.post('/api/student-progress/bulk/reset', requireAnalyticsAccess, (req, res) => runBulkLifecycleAction(req, res, 'reset'));
+app.post('/api/student-progress/bulk/archive', requireAnalyticsAccess, (req, res) => runBulkLifecycleAction(req, res, 'archive'));
+
+app.post('/api/student-progress/:studentId/archive', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, async (req, res) => {
+  const studentId = resolvePositiveInteger(req.params.studentId);
+  const scope = getLifecycleMutationScope(req);
+  const archiveReason = resolveLearningCycleArchiveReason(req.body);
+  if (!studentId || archiveReason.error) {
+    return res.status(400).json({ error: archiveReason.error || 'A valid student ID is required.' });
+  }
+  if (!scope) {
+    return res.status(403).json({ error: 'Only Admin or the authorized Teacher scope can archive progress.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const targetResult = await getScopedLifecycleStudents(client, scope, { lifecycle: 'active', forUpdate: true });
+    const student = targetResult.rows.find((row) => Number(row.id) === studentId);
+    if (!student) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Active student progress was not found.' });
+    }
+    const archiveResult = await client.query(
+      `UPDATE public.accounts
+       SET progress_archived_at = CURRENT_TIMESTAMP,
+           progress_archived_by = $2,
+           progress_archive_reason = $3
+       WHERE id = $1
+       RETURNING progress_archived_at`,
+      [studentId, req.authenticatedUser.id, archiveReason.auditReason]
+    );
+    await writeStudentLifecycleAudit(client, {
+      student,
+      actor: req.authenticatedUser,
+      role: req.authenticatedRole,
+      action: 'Archive Progress',
+      reason: archiveReason.auditReason,
+      description: 'Historical gameplay, Screen Time, and Activity Log remain preserved.',
+    });
+    await client.query('COMMIT');
+    return res.json({ success: true, student_id: studentId, progress_archived_at: archiveResult.rows[0]?.progress_archived_at || null });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Archive Progress failed:', err.message);
+    return res.status(500).json({ error: 'Unable to archive Student progress.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/student-progress/:studentId/permanent-delete', requireAccountManagementAdmin, async (req, res) => {
+  const studentId = resolvePositiveInteger(req.params.studentId);
+  const reason = String(req.body?.reason || '').trim();
+  const confirmation = String(req.body?.confirmation_phrase || '').trim();
+  if (!studentId || !reason || reason.length > MAX_LEARNING_CYCLE_RESET_REASON_LENGTH || confirmation !== 'DELETE') {
+    return res.status(400).json({ error: 'A deletion reason and typed DELETE confirmation are required.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const studentResult = await client.query(
+      `SELECT id, name, grade_level, section
+       FROM public.accounts
+       WHERE id = $1
+         AND LOWER(role) = 'student'
+         AND COALESCE(is_archived, false) = false
+         AND progress_archived_at IS NOT NULL
+       FOR UPDATE`,
+      [studentId]
+    );
+    const student = studentResult.rows[0];
+    if (!student) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Student not found.' });
+    }
+    const descriptor = await startFreshLearningCycle(client, studentId);
+    await client.query('DELETE FROM public.game_results WHERE resolved_student_id = $1', [studentId]);
+    await client.query('DELETE FROM public.student_ai_insights WHERE student_id = $1', [studentId]);
+    await writeStudentLifecycleAudit(client, {
+      student,
+      actor: req.authenticatedUser,
+      role: 'admin',
+      action: 'Permanent Gameplay Progress Delete',
+      reason,
+      description: 'Deleted student_game_progress, game_results, and derived insight state. Screen Time, Activity Log, accounts, and relationships remain preserved.',
+    });
+    await client.query('COMMIT');
+    return res.json({ success: true, student_id: studentId, learning_cycle: descriptor });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Permanent gameplay progress delete failed:', err.message);
+    return res.status(500).json({ error: 'Unable to permanently delete gameplay progress.' });
   } finally {
     client.release();
   }
@@ -6800,9 +7248,11 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
     const studentId = parseInt(req.params.studentId, 10);
     if (Number.isNaN(studentId)) return res.status(400).json({ error: 'Invalid student ID' });
     const scope = resolveAnalyticsScope(req);
+    const lifecycle = resolveStudentProgressLifecycle(req.query.lifecycle);
+    if (!lifecycle) return res.status(400).json({ error: 'lifecycle must be active or archived.' });
 
     const params = [studentId];
-    let query = buildCanonicalStudentProgressQuery();
+    let query = buildCanonicalStudentProgressQuery(lifecycle);
     query += ' AND a.id = $1';
     query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'a.id' });
     query += ' ORDER BY p.last_played DESC NULLS LAST, a.id ASC LIMIT 1';
