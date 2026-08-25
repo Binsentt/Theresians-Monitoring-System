@@ -68,6 +68,12 @@ const {
   generateLessonQuestions,
 } = require('./lessonQuestionGeneration');
 const {
+  extractFixedQuestionDocument,
+  validateFixedQuestionUploadFile,
+  validateFixedQuestions,
+  validateQuestionSetForPublication,
+} = require('./fixedQuestionDocument');
+const {
   toQuestionSetResponse,
 } = require('./questionSetLifecycle.utils');
 const {
@@ -1431,11 +1437,18 @@ const validateUploadedLearningFile = (file, fileType) => {
   }
 
   if (fileType === 'fixed_questions') {
+    if (originalName.endsWith('.docx') || originalName.endsWith('.pdf')) {
+      try {
+        return validateFixedQuestionUploadFile(file, fs.readFileSync(file.path).subarray(0, 5));
+      } catch {
+        return 'The uploaded Fixed Question document could not be read.';
+      }
+    }
     const jsonFile = originalName.endsWith('.json')
       && hasAllowedMimeType(file, ['application/json', 'text/json']);
     const csvFile = originalName.endsWith('.csv')
       && hasAllowedMimeType(file, ['text/csv', 'application/csv', 'application/vnd.ms-excel']);
-    return jsonFile || csvFile ? '' : 'Fixed Question Files must be uploaded as JSON or CSV.';
+    return jsonFile || csvFile ? '' : 'Fixed Questions support DOCX or PDF documents. JSON and CSV remain available for developer compatibility.';
   }
 
   return 'Invalid file type for the selected upload type.';
@@ -1591,9 +1604,14 @@ const saveQuestionsForFile = async (learningFileId, questions, queryClient = poo
 };
 
 const parseFixedQuestionsFile = async (file) => {
+  const lowerName = String(file.originalname).toLowerCase();
+  if (lowerName.endsWith('.docx') || lowerName.endsWith('.pdf')) {
+    const extracted = await extractFixedQuestionDocument(file);
+    return extracted.questions;
+  }
+
   const buffer = fs.readFileSync(file.path);
   const content = buffer.toString('utf8');
-  const lowerName = String(file.originalname).toLowerCase();
   if (lowerName.endsWith('.json')) {
     const payload = JSON.parse(content);
     if (!Array.isArray(payload)) throw new Error('JSON must contain an array of questions');
@@ -1604,24 +1622,32 @@ const parseFixedQuestionsFile = async (file) => {
       grade_level: String(item.grade_level || '').trim(),
       math_topic: String(item.math_topic || '').trim(),
       source: 'fixed',
-    })).filter((item) => item.question && item.correct_answer);
+    }));
   }
   if (lowerName.endsWith('.csv')) {
     const rows = content.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     return rows.map((line) => {
       const [question, ...rest] = line.split(',').map((cell) => cell.trim());
-      const options = rest.slice(0, 4).filter(Boolean);
+      const options = rest.slice(0, 4);
       return {
         question,
         options,
-        correct_answer: options[0] || '',
+        correct_answer: rest[4] || '',
         grade_level: '',
         math_topic: '',
         source: 'fixed',
       };
-    }).filter((item) => item.question && item.correct_answer);
+    });
   }
   throw new Error('Unsupported fixed question file format');
+};
+
+const extractAndValidateFixedQuestionsFile = async (file) => {
+  const lowerName = String(file?.originalname || '').toLowerCase();
+  if (lowerName.endsWith('.docx') || lowerName.endsWith('.pdf')) {
+    return extractFixedQuestionDocument(file);
+  }
+  return validateFixedQuestions(await parseFixedQuestionsFile(file));
 };
 
 const removeFileFromDisk = (fileUrl) => {
@@ -1695,6 +1721,37 @@ const createLifecycleHttpError = (message, statusCode) => {
   return error;
 };
 
+const getQuestionSetPublicationValidation = async (queryClient, learningFile, { lockRows = false } = {}) => {
+  const questionResult = await queryClient.query(
+    `SELECT id, learning_file_id, question, options, correct_answer, grade_level, difficulty, math_topic
+     FROM public.questions
+     WHERE learning_file_id = $1
+     ORDER BY id ASC${lockRows ? ' FOR UPDATE' : ''}`,
+    [learningFile.id]
+  );
+  const canonicalDifficulty = normalizeDifficultyValue(learningFile.difficulty);
+  return validateQuestionSetForPublication({
+    grade_level: learningFile.grade_level,
+    difficulty: canonicalDifficulty,
+    math_topic: learningFile.math_topic,
+    metadata_error: validateLearningMetadata({
+      grade_level: learningFile.grade_level,
+      difficulty: canonicalDifficulty,
+      math_topic: learningFile.math_topic,
+    }),
+    questions: questionResult.rows.map((question) => ({
+      ...question,
+      difficulty: normalizeDifficultyValue(question.difficulty),
+    })),
+  });
+};
+
+const buildQuestionSetValidationSummary = (validation) => ({
+  is_valid: Boolean(validation?.isValid),
+  invalid_question_count: (validation?.questions || []).filter((question) => !question.is_valid).length,
+  document_errors: validation?.document_errors || [],
+});
+
 const publishLearningFile = async (fileId, publisherId) => {
   const client = await pool.connect();
   try {
@@ -1715,16 +1772,12 @@ const publishLearningFile = async (fileId, publisherId) => {
       throw createLifecycleHttpError('Failed question sets must be generated successfully before publishing.', 409);
     }
 
-    const questionCountResult = await client.query(
-      `SELECT COUNT(*)::INTEGER AS question_count
-       FROM public.questions
-       WHERE learning_file_id = $1
-         AND BTRIM(question) <> ''
-         AND BTRIM(correct_answer) <> ''`,
-      [fileId]
-    );
-    if (Number(questionCountResult.rows[0]?.question_count || 0) < 1) {
-      throw createLifecycleHttpError('A question set must contain valid questions before it can be published.', 422);
+    const publicationValidation = await getQuestionSetPublicationValidation(client, learningFile, { lockRows: true });
+    if (!publicationValidation.isValid) {
+      const error = createLifecycleHttpError('Every question must have four distinct choices, a mapped correct answer, and matching controlled metadata before publication.', 422);
+      error.code = 'QUESTION_SET_VALIDATION_FAILED';
+      error.questionValidation = publicationValidation;
+      throw error;
     }
 
     const canonicalDifficulty = normalizeDifficultyValue(learningFile.difficulty);
@@ -3641,11 +3694,31 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         cleanTemporaryUpload(req.file.path);
         return res.status(400).json({ error: 'Question Count is only available for Lesson PDF files.' });
       }
-      fixedQuestions = await parseFixedQuestionsFile({ path: req.file.path, originalname: req.file.originalname });
-      if (fixedQuestions.length === 0) {
+      let fixedQuestionValidation;
+      try {
+        fixedQuestionValidation = await extractAndValidateFixedQuestionsFile({
+          path: req.file.path,
+          originalname: req.file.originalname,
+        });
+      } catch (error) {
         cleanTemporaryUpload(req.file.path);
-        return res.status(400).json({ error: 'Fixed Question File does not contain valid questions.' });
+        return res.status(422).json({
+          error: 'The uploaded Fixed Question document could not be read. Correct the source document and upload it again.',
+          code: 'FIXED_QUESTION_VALIDATION_FAILED',
+          document_errors: ['No readable numbered questions could be extracted from this document.'],
+          questions: [],
+        });
       }
+      if (!fixedQuestionValidation.isValid) {
+        cleanTemporaryUpload(req.file.path);
+        return res.status(422).json({
+          error: 'Fixed Questions need correction before they can be uploaded.',
+          code: 'FIXED_QUESTION_VALIDATION_FAILED',
+          document_errors: fixedQuestionValidation.document_errors,
+          questions: fixedQuestionValidation.questions,
+        });
+      }
+      fixedQuestions = fixedQuestionValidation.questions;
     }
 
     const fileName = generateUploadFileName(req.file.originalname);
@@ -3874,7 +3947,14 @@ app.get('/api/learning-files', requireLessonQuestionManagerAccess, async (req, r
          AND (f.id IS NULL OR f.deleted_at IS NULL)
        ORDER BY lf.uploaded_at DESC`
     );
-    res.json(result.rows.map(normalizeLearningFileRow));
+    const files = await Promise.all(result.rows.map(async (row) => {
+      const validation = await getQuestionSetPublicationValidation(pool, row);
+      return normalizeLearningFileRow({
+        ...row,
+        validation_summary: buildQuestionSetValidationSummary(validation),
+      });
+    }));
+    res.json(files);
   } catch (err) {
     console.error('Fetch learning files failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch files' });
@@ -3924,19 +4004,19 @@ app.get('/api/learning-files/:id/questions', requireLessonQuestionManagerAccess,
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
 
-    const result = await pool.query(
-      `SELECT q.id, q.learning_file_id, q.question, q.options, q.correct_answer,
-              q.grade_level, q.difficulty, q.math_topic, q.source, q.published
-       FROM public.questions q
-       JOIN public.learning_files lf ON lf.id = q.learning_file_id
-       WHERE q.learning_file_id = $1
-         AND lf.deleted_at IS NULL
-       ORDER BY q.id ASC`,
+    const fileResult = await pool.query(
+      `SELECT id, grade_level, difficulty, math_topic
+       FROM public.learning_files
+       WHERE id = $1 AND deleted_at IS NULL`,
       [fileId]
     );
+    if (fileResult.rows.length === 0) return res.status(404).json({ error: 'File not found' });
+
+    const validation = await getQuestionSetPublicationValidation(pool, fileResult.rows[0]);
 
     res.json({
-      questions: result.rows.map((question) => ({
+      validation: buildQuestionSetValidationSummary(validation),
+      questions: validation.questions.map((question) => ({
         ...question,
         difficulty: normalizeDifficultyValue(question.difficulty),
       })),
@@ -4159,7 +4239,11 @@ app.post('/api/questions/publish/:id', requireLessonQuestionManagerAccess, async
     res.json({ success: true, message: 'Content pushed to game.', learningFile });
   } catch (err) {
     console.error('Publish failed:', err.message);
-    res.status(err.statusCode || 500).json({ error: err.statusCode === 404 ? err.message : 'Failed to publish content' });
+    res.status(err.statusCode || 500).json({
+      error: err.statusCode === 404 || err.statusCode === 422 ? err.message : 'Failed to publish content',
+      ...(err.code ? { code: err.code } : {}),
+      ...(err.questionValidation ? { validation: err.questionValidation } : {}),
+    });
   }
 });
 

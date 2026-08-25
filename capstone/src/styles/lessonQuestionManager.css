@@ -692,6 +692,29 @@ button.drive-folder-card {
   line-height: 1.35;
 }
 
+.fixed-question-upload-help,
+.question-review-metadata {
+  margin: 6px 0 0;
+  color: var(--text-muted, #64748b);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.fixed-question-validation-review {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 14px;
+  border: 1px solid #f5c2c7;
+  border-radius: 14px;
+  background: #fff7f7;
+}
+
+.fixed-question-validation-review h3,
+.fixed-question-validation-review p {
+  margin: 0;
+}
+
 .input-error {
   border-color: #dc2626 !important;
 }
@@ -715,12 +738,22 @@ button.drive-folder-card {
   background: var(--bg-soft, #f8fbff);
 }
 
+.generated-question-card.invalid {
+  border-color: #f5c2c7;
+  background: #fff7f7;
+}
+
+.generated-question-card.valid {
+  border-color: #b8dfc1;
+}
+
 .generated-question-card strong {
   display: block;
   color: var(--text-primary, #0f172a);
 }
 
-.generated-question-card ul {
+.generated-question-card ul,
+.generated-question-card ol {
   display: grid;
   gap: 5px;
   margin: 12px 0 0;
@@ -730,6 +763,13 @@ button.drive-folder-card {
 
 .generated-question-card .correct-option {
   color: var(--success-color, #15803d);
+  font-weight: 700;
+}
+
+.question-validation-valid {
+  margin: 8px 0 0;
+  color: var(--success-color, #15803d);
+  font-size: 0.86rem;
   font-weight: 700;
 }
 

@@ -84,6 +84,16 @@ export const inferLearningFileUploadType = (fileName) => {
   return '';
 };
 
+export const isSupportedLearningUpload = (fileName, fileType) => {
+  const normalizedName = String(fileName || '').trim().toLowerCase();
+  const normalizedType = String(fileType || '').trim().toLowerCase();
+  if (normalizedType === 'lesson') return normalizedName.endsWith('.pdf');
+  if (normalizedType === 'fixed_questions') {
+    return /\.(docx|pdf|json|csv)$/.test(normalizedName);
+  }
+  return false;
+};
+
 export const formatLearningFileSize = (value) => {
   if (value === undefined || value === null || value === '') return '-';
   const size = Number(value);

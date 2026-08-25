@@ -72,7 +72,7 @@ const buildQuestionSchema = (questionCount) => ({
           question: { type: 'string' },
           options: {
             type: 'array',
-            minItems: 2,
+            minItems: 4,
             maxItems: 4,
             items: { type: 'string' },
           },
@@ -95,11 +95,13 @@ const extractOutputText = (responseBody) => {
 const normalizeGeneratedQuestion = (item) => {
   const question = asTrimmedString(item?.question);
   const options = Array.isArray(item?.options)
-    ? item.options.map(asTrimmedString).filter(Boolean)
+    ? item.options.map(asTrimmedString)
     : [];
   const correctAnswer = asTrimmedString(item?.correct_answer);
+  const distinctOptions = new Set(options.map((option) => option.toLocaleLowerCase())).size === options.length;
+  const correctAnswerMatchesExactlyOnce = options.filter((option) => option === correctAnswer).length === 1;
 
-  if (!question || options.length < 2 || options.length > 4 || !correctAnswer || !options.includes(correctAnswer)) {
+  if (!question || options.length !== 4 || options.some((option) => !option) || !distinctOptions || !correctAnswer || !correctAnswerMatchesExactlyOnce) {
     return null;
   }
 
@@ -143,7 +145,7 @@ const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, mathT
       role: 'system',
       content: [{
         type: 'input_text',
-        text: 'You create age-appropriate mathematics multiple-choice questions. Use only the supplied lesson content for facts, methods, and examples. Do not include explanations, markdown, or extra fields. Every correct_answer must exactly match one options value.',
+        text: 'You create age-appropriate mathematics multiple-choice questions. Use only the supplied lesson content for facts, methods, and examples. Do not include explanations, markdown, or extra fields. Every question must have exactly four distinct nonempty options. Every correct_answer must exactly match one options value.',
       }],
     },
     {

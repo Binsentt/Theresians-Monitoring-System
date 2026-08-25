@@ -135,6 +135,18 @@ test('question publishing replaces the active Godot bundle for one grade difficu
         deleted_at: null,
       }]);
     }
+    if (sql.startsWith('select id, learning_file_id') && sql.includes('from public.questions')) {
+      return resultRows([{
+        id: 101,
+        learning_file_id: 77,
+        question: 'What is 2 + 3?',
+        options: ['4', '5', '6', '7'],
+        correct_answer: '5',
+        grade_level: 'Grade 1',
+        difficulty: 'Medium',
+        math_topic: 'Addition',
+      }]);
+    }
     if (sql.startsWith('select count(*)::integer as question_count') && sql.includes('from public.questions')) {
       return resultRows([{ question_count: 1 }]);
     }
@@ -166,6 +178,54 @@ test('question publishing replaces the active Godot bundle for one grade difficu
   assert.match(unpublishedQuestions.sql, /lf\.id <> \$4/);
   assert.deepEqual(publishedLearningFile.params, [77, 1]);
   assert.deepEqual(publishedQuestions.params, [77]);
+});
+
+test('an invalid legacy-shaped Set 13 cannot be published or mutate publication state', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let publicationUpdateAttempted = false;
+  setQueryHandler(async (sql) => {
+    if (sql === 'begin' || sql === 'rollback') return emptyResult;
+    if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) {
+      return resultRows([{
+        id: 13,
+        title: 'legacy-set-13',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+        subject: 'Mathematics',
+        deleted_at: null,
+      }]);
+    }
+    if (sql.startsWith('select id, learning_file_id') && sql.includes('from public.questions')) {
+      return resultRows([{
+        id: 1301,
+        learning_file_id: 13,
+        question: 'What is 2 + 3?',
+        options: ['4', '5', '6'],
+        correct_answer: '5',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+      }]);
+    }
+    if (sql.startsWith('update public.learning_files') || sql.startsWith('update public.questions')) {
+      publicationUpdateAttempted = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/questions/publish/13', { method: 'POST' });
+
+  assert.equal(response.status, 422);
+  assert.equal(response.body.code, 'QUESTION_SET_VALIDATION_FAILED');
+  assert.equal(publicationUpdateAttempted, false);
+  assert.match(response.body.validation.questions[0].validation_errors.join(' '), /Exactly four/);
 });
 
 test('question folder APIs expose system folders and legacy difficulty files by canonical folder', async (t) => {
@@ -364,8 +424,8 @@ test('lesson upload generates exactly the requested staged questions through the
         ok: true,
         json: async () => ({ output_text: JSON.stringify({
           questions: [
-            { question: 'What is 1 + 1?', options: ['1', '2', '3'], correct_answer: '2' },
-            { question: 'What is 2 + 1?', options: ['2', '3', '4'], correct_answer: '3' },
+            { question: 'What is 1 + 1?', options: ['1', '2', '3', '4'], correct_answer: '2' },
+            { question: 'What is 2 + 1?', options: ['2', '3', '4', '5'], correct_answer: '3' },
           ],
         }) }),
       };
@@ -454,6 +514,14 @@ test('learning file question preview returns staged structured questions without
   });
 
   setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select id, grade_level') && sql.includes('from public.learning_files') && params[0] === 77) {
+      return resultRows([{
+        id: 77,
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+      }]);
+    }
     if (sql.includes('from public.questions') && params[0] === 77) {
       return resultRows([{
         id: 101,

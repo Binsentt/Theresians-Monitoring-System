@@ -92,13 +92,18 @@ describe('LessonQuestionManager upload and trash controls', () => {
         return okJson({ success: true, message: 'Content pushed to game.', learningFile: fixtures.files[0] });
       }
       if (value.includes('/api/learning-files/77/questions')) {
+        const currentFile = fixtures.files.find((file) => file.id === 77);
+        const isInvalid = currentFile?.validation_summary?.is_valid === false;
         return okJson({
+          validation: { is_valid: !isInvalid, invalid_question_count: isInvalid ? 1 : 0 },
           questions: [{
             id: 501,
             question: 'What is 2 + 3?',
-            options: ['4', '5', '6'],
+            options: isInvalid ? ['4', '5', '6'] : ['4', '5', '6', '7'],
             correct_answer: '5',
             published: false,
+            is_valid: !isInvalid,
+            validation_errors: isInvalid ? ['Exactly four answer choices are required.'] : [],
           }],
         });
       }
@@ -241,6 +246,24 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(global.fetch).not.toHaveBeenCalledWith('/api/learning-files/upload', expect.anything());
   });
 
+  test('prioritizes DOCX and PDF documents for Teacher Fixed Questions uploads', async () => {
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+
+    await act(async () => {
+      clickByText(container, 'New');
+    });
+    await act(async () => {
+      clickByText(container, 'Upload File');
+    });
+
+    const fileInput = document.body.querySelector('input[type="file"]');
+    expect(fileInput.accept).toContain('.docx');
+    expect(fileInput.accept).toContain('.pdf');
+    expect(getUploadModal().textContent).toContain('Fixed Questions supported: DOCX, PDF');
+  });
+
   test('restores a trashed file and reports the requested success message', async () => {
     await act(async () => {
       root.render(<LessonQuestionManager />);
@@ -373,10 +396,40 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/77/questions', {
       headers: { Authorization: 'Bearer lesson-manager-token' },
     });
-    expect(container.textContent).toContain('Generated Questions');
+    expect(container.textContent).toContain('Question Review');
     expect(container.textContent).toContain('What is 2 + 3?');
     expect(container.textContent).toContain('5 (Correct)');
-    expect(container.textContent).toContain('staged until Push to Game is clicked');
+    expect(container.textContent).toContain('ready for manual Push to Game');
+  });
+
+  test('shows structured fixed-question validation feedback and disables Push to Game for an invalid set', async () => {
+    fixtures.files = [{
+      id: 77,
+      title: 'three-choice-fixed-document',
+      file_name: 'three-choice-fixed-document.docx',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      file_type: 'fixed_questions',
+      published: false,
+      validation_summary: { is_valid: false, invalid_question_count: 1 },
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+
+    const pushButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Push to Game'));
+    expect(pushButton.disabled).toBe(true);
+
+    await act(async () => {
+      clickByText(container, 'Preview');
+    });
+
+    expect(container.textContent).toContain('Question Review');
+    expect(container.textContent).toContain('Needs Correction');
+    expect(container.textContent).toContain('Exactly four answer choices are required.');
   });
 
   test('Push to Game activates the staged file only after the button is clicked', async () => {

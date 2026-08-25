@@ -12,6 +12,7 @@ import {
   getQuestionFolderView,
   GRADE_TOPIC_MAP,
   inferLearningFileUploadType,
+  isSupportedLearningUpload,
   normalizeDifficultyValue,
   normalizeMathTopicForGradeDifficulty,
   QUESTION_FOLDER_STRUCTURE,
@@ -224,6 +225,10 @@ describe('lesson question manager helpers', () => {
     expect(inferLearningFileUploadType('quiz.csv')).toBe('fixed_questions');
     expect(inferLearningFileUploadType('quiz.json')).toBe('fixed_questions');
     expect(inferLearningFileUploadType('notes.txt')).toBe('');
+    expect(isSupportedLearningUpload('set-a.docx', 'fixed_questions')).toBe(true);
+    expect(isSupportedLearningUpload('set-a.pdf', 'fixed_questions')).toBe(true);
+    expect(isSupportedLearningUpload('set-a.pdf', 'lesson')).toBe(true);
+    expect(isSupportedLearningUpload('set-a.docx', 'lesson')).toBe(false);
     expect(formatLearningFileSize(1536)).toBe('1.5 KB');
     expect(formatLearningFileSize(1.3 * 1024 * 1024 * 1024)).toBe('1.3 GB');
     expect(formatLearningFileSize(null)).toBe('-');

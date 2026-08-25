@@ -92,6 +92,30 @@ test('lesson generation rejects a provider response that does not produce exactl
   );
 });
 
+test('lesson generation rejects a two-question response when either question lacks four distinct choices', async () => {
+  const threeChoiceQuestion = {
+    ...validQuestions[0],
+    options: ['5', '6', '7'],
+  };
+
+  await assert.rejects(
+    generateLessonQuestions({
+      lessonText: 'A lesson about addition.',
+      title: 'Addition lesson',
+      gradeLevel: 'Grade 1',
+      difficulty: 'Easy',
+      mathTopic: 'Basic Addition',
+      questionCount: 2,
+      apiKey: 'test-key',
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({ output_text: JSON.stringify({ questions: [threeChoiceQuestion, validQuestions[1]] }) }),
+      }),
+    }),
+    (error) => error instanceof QuestionGenerationError && error.code === 'QUESTION_AI_INVALID_RESPONSE'
+  );
+});
+
 test('lesson generation captures only safe OpenAI failure metadata for quota diagnostics', async () => {
   const sensitiveProviderMessage = 'Never log this uploaded lesson text or API credential.';
 

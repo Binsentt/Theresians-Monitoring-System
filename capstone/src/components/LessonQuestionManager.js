@@ -19,7 +19,7 @@ import {
   getQuestionFolderView,
   getQuestionFolderPath,
   GRADE_LEVELS,
-  inferLearningFileUploadType,
+  isSupportedLearningUpload,
   isValidDifficulty,
   isValidGradeLevel,
   isValidMathTopicForGradeDifficulty,
@@ -123,7 +123,9 @@ export default function LessonQuestionManager() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [questionPreviewFile, setQuestionPreviewFile] = useState(null);
   const [previewQuestions, setPreviewQuestions] = useState([]);
+  const [previewValidation, setPreviewValidation] = useState(null);
   const [previewQuestionsLoading, setPreviewQuestionsLoading] = useState(false);
+  const [fixedUploadValidation, setFixedUploadValidation] = useState(null);
   const [selectedFolder, setSelectedFolder] = useState({ grade_level: '', difficulty: '' });
   const [renamingFile, setRenamingFile] = useState(null);
   const [filters, setFilters] = useState(initialFilterState);
@@ -189,7 +191,6 @@ export default function LessonQuestionManager() {
     () => getMathTopicsForGradeDifficulty(selectedFolder.grade_level, selectedFolder.difficulty),
     [selectedFolder.difficulty, selectedFolder.grade_level]
   );
-  const inferredFileType = inferLearningFileUploadType(form.file?.name);
   const uploadType = form.file_type;
   const isDifficultyFolderOpen = Boolean(selectedFolder.grade_level && selectedFolder.difficulty);
   const selectedFolderPath = selectedFolder.grade_level
@@ -239,6 +240,7 @@ export default function LessonQuestionManager() {
 
   const handleFormChange = (field, value) => {
     setFormErrors((current) => ({ ...current, [field]: '' }));
+    if (field === 'file' || field === 'file_type') setFixedUploadValidation(null);
     setForm((prev) => {
       if (field === 'grade_level' || field === 'difficulty') {
         const gradeLevel = field === 'grade_level' ? value : prev.grade_level;
@@ -276,6 +278,7 @@ export default function LessonQuestionManager() {
   const resetForm = () => {
     setForm(initialFormState);
     setFormErrors({});
+    setFixedUploadValidation(null);
   };
 
   const handleUpload = async (event) => {
@@ -284,8 +287,8 @@ export default function LessonQuestionManager() {
       showNotification('Grade level, difficulty, topic, and file are required.', 'error');
       return;
     }
-    if (!uploadType || inferredFileType !== uploadType) {
-      showNotification('Lessons must be PDF files. Fixed questions must be JSON or CSV.', 'error');
+    if (!uploadType || !isSupportedLearningUpload(form.file.name, uploadType)) {
+      showNotification('Lesson files must be PDF. Fixed Questions support DOCX or PDF documents.', 'error');
       return;
     }
     if (
@@ -324,7 +327,16 @@ export default function LessonQuestionManager() {
         body: payload,
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Upload failed.');
+      if (!response.ok) {
+        if (data.code === 'FIXED_QUESTION_VALIDATION_FAILED') {
+          setFixedUploadValidation({
+            document_errors: Array.isArray(data.document_errors) ? data.document_errors : [],
+            questions: Array.isArray(data.questions) ? data.questions : [],
+          });
+          return;
+        }
+        throw new Error(data.error || 'Upload failed.');
+      }
       const uploadedFile = {
         ...data.learningFile,
         folder_name: getQuestionFolderPath(data.learningFile?.grade_level || form.grade_level, data.learningFile?.difficulty || form.difficulty),
@@ -425,18 +437,21 @@ export default function LessonQuestionManager() {
   const closeQuestionPreview = () => {
     setQuestionPreviewFile(null);
     setPreviewQuestions([]);
+    setPreviewValidation(null);
     setPreviewQuestionsLoading(false);
   };
 
   const previewGeneratedQuestions = async (file) => {
     setQuestionPreviewFile(file);
     setPreviewQuestions([]);
+    setPreviewValidation(null);
     setPreviewQuestionsLoading(true);
     try {
       const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}/questions`));
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to preview generated questions.');
       setPreviewQuestions(Array.isArray(data.questions) ? data.questions : []);
+      setPreviewValidation(data.validation || null);
     } catch (error) {
       console.error(error);
       showNotification(error.message || 'Unable to preview generated questions.', 'error');
@@ -682,9 +697,15 @@ export default function LessonQuestionManager() {
       render: (_, row) => (
         <div className="drive-row-actions">
           <button type="button" className="drive-action-button" onClick={() => setRenamingFile(row)}><FilePenLine size={16} />Rename</button>
-          <button type="button" className="drive-action-button" onClick={() => (row.file_type === 'lesson' ? previewGeneratedQuestions(row) : previewLearningFile(row))}><FileText size={16} />Preview</button>
+          <button type="button" className="drive-action-button" onClick={() => previewGeneratedQuestions(row)}><FileText size={16} />Preview</button>
           <button type="button" className="drive-action-button" onClick={() => moveFileToTrash(row)}><Trash2 size={16} />Delete</button>
-          <button type="button" className="drive-action-button primary" onClick={() => pushFileToGame(row)} disabled={row.generation_status === 'generating' || row.generation_status === 'failed'}><Upload size={16} />Push to Game</button>
+          <button
+            type="button"
+            className="drive-action-button primary"
+            onClick={() => pushFileToGame(row)}
+            disabled={row.generation_status === 'generating' || row.generation_status === 'failed' || row.validation_summary?.is_valid === false}
+            title={row.validation_summary?.is_valid === false ? 'Review and correct this question set before Push to Game.' : undefined}
+          ><Upload size={16} />Push to Game</button>
         </div>
       ),
     },
@@ -1073,11 +1094,33 @@ export default function LessonQuestionManager() {
                       <label className="form-label required">File</label>
                       <input
                         type="file"
-                        accept={form.file_type === 'lesson' ? '.pdf,application/pdf' : '.json,.csv,application/json,text/csv'}
+                        accept={form.file_type === 'lesson'
+                          ? '.pdf,application/pdf'
+                          : '.docx,.pdf,.json,.csv,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,application/json,text/csv'}
                         onChange={(event) => handleFormChange('file', event.target.files[0] || null)}
                       />
+                      {form.file_type === 'fixed_questions' && (
+                        <p className="fixed-question-upload-help">Fixed Questions supported: DOCX, PDF. JSON/CSV remain available for developer compatibility.</p>
+                      )}
                     </div>
                   </div>
+                  {fixedUploadValidation && (
+                    <section className="fixed-question-validation-review" aria-live="polite">
+                      <h3>Needs Correction</h3>
+                      <p>Correct the source document and re-upload it. Invalid question sets are not saved or publishable.</p>
+                      {(fixedUploadValidation.document_errors || []).map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
+                      {(fixedUploadValidation.questions || []).map((question, index) => (
+                        <article key={`${question.source_index || index}-${question.question}`} className="generated-question-card invalid">
+                          <strong>Question {question.source_index || index + 1}: {question.question || 'Missing question text'}</strong>
+                          <ol type="A">
+                            {(question.options || []).map((option, optionIndex) => <li key={`${option}-${optionIndex}`}>{option || 'Missing choice'}</li>)}
+                          </ol>
+                          <p>Correct answer: {question.correct_answer || 'Missing'}</p>
+                          {(question.validation_errors || []).map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
+                        </article>
+                      ))}
+                    </section>
+                  )}
                   {uploading && (
                     <div className="upload-progress" role="status">
                       <span className="upload-progress-bar" aria-hidden="true" />
@@ -1100,28 +1143,36 @@ export default function LessonQuestionManager() {
                 <div className="manager-modal generated-questions-preview-modal" role="dialog" aria-modal="true" aria-labelledby="generated-questions-preview-title" onMouseDown={(event) => event.stopPropagation()}>
                   <div className="manager-modal-header">
                     <div>
-                      <h2 id="generated-questions-preview-title">Generated Questions</h2>
-                      <p className="empty-text">{questionPreviewFile.title} — staged until Push to Game is clicked.</p>
+                      <h2 id="generated-questions-preview-title">Question Review</h2>
+                      <p className="empty-text">{questionPreviewFile.title} — Grade {questionPreviewFile.grade_level} · {questionPreviewFile.difficulty} · {questionPreviewFile.math_topic}</p>
                     </div>
                     <button type="button" className="icon-button" aria-label="Close generated questions preview" onClick={closeQuestionPreview}>x</button>
                   </div>
                   <div className="generated-questions-list">
                     {previewQuestionsLoading ? (
-                      <p className="empty-text">Loading generated questions...</p>
+                      <p className="empty-text">Loading questions...</p>
                     ) : previewQuestions.length === 0 ? (
-                      <p className="empty-text">No generated questions are available for this lesson yet.</p>
-                    ) : previewQuestions.map((question, index) => (
-                      <article key={question.id || `${question.question}-${index}`} className="generated-question-card">
-                        <strong>{index + 1}. {question.question}</strong>
-                        <ul>
+                      <p className="empty-text">No questions are available for review yet.</p>
+                    ) : (
+                      <>
+                        {previewValidation?.is_valid === false && <p className="manager-inline-error" role="alert">Needs Correction — every question must have four distinct choices, a mapped correct answer, and matching metadata.</p>}
+                        {previewValidation?.is_valid !== false && <p className="question-validation-valid">Valid — this question set is ready for manual Push to Game.</p>}
+                        {previewQuestions.map((question, index) => (
+                          <article key={question.id || `${question.question}-${index}`} className={`generated-question-card ${question.is_valid === false ? 'invalid' : 'valid'}`}>
+                            <strong>{index + 1}. {question.question}</strong>
+                            <ol type="A">
                           {(question.options || []).map((option, optionIndex) => (
                             <li key={`${option}-${optionIndex}`} className={option === question.correct_answer ? 'correct-option' : ''}>
                               {option}{option === question.correct_answer ? ' (Correct)' : ''}
                             </li>
                           ))}
-                        </ul>
-                      </article>
-                    ))}
+                            </ol>
+                            <p className="question-review-metadata">Grade {question.grade_level || questionPreviewFile.grade_level} · {question.difficulty || questionPreviewFile.difficulty} · {question.math_topic || questionPreviewFile.math_topic}</p>
+                            {question.is_valid === false ? (question.validation_errors || []).map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>) : <p className="question-validation-valid">Valid</p>}
+                          </article>
+                        ))}
+                      </>
+                    )}
                   </div>
                   <div className="preview-actions">
                     <button type="button" className="btn btn-secondary" onClick={closeQuestionPreview}>Close</button>
