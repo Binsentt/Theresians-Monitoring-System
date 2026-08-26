@@ -8,10 +8,9 @@ Use only the approved Parent/Child pair and the current signed Android APK.  Do 
 
 ## Pre-defense checklist
 
-- Website/backend release: `aaf2ed1`; Railway deployment health is expected to be green at `https://theresiansquest.com`.
+- Before the human run, record the actual deployed website/backend commit and confirm Railway health at `https://theresiansquest.com`. Do not assume a historical local commit is deployed.
 - Production library: 28 sets / 68 questions. One set is active; the remaining 27 are staged and unpublished.
-- Android release candidate: `92efecd`; package ID `com.theresiansquest.game`; production endpoint `https://theresiansquest.com`; ETC2/ASTC enabled.
-- Signed APK checksum: `4B34D8A82977ACBC70302883BB255A68D693093FCE1A7B9D7128C538F364A759`.
+- Before the human run, record the exact signed APK commit, artifact path, and SHA-256 checksum. Verify package ID `com.theresiansquest.game`, production endpoint `https://theresiansquest.com`, and ETC2/ASTC before installation; do not treat a historical APK checksum as proof for a later release candidate.
 - The demonstrator has an Admin account, a Teacher/Admin Lesson Manager account, an authorized Parent account, and the already-approved linked child. Use each role only in its proper portal context.
 - Begin with no browser tabs or game screens showing identifiers, credentials, API responses, or private data.
 
