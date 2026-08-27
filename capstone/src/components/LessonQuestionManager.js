@@ -1186,7 +1186,7 @@ export default function LessonQuestionManager() {
             )}
 
             {questionPreviewFile && (
-              <div className="manager-modal-backdrop" role="presentation" onMouseDown={closeQuestionPreview}>
+              <div className="manager-modal-backdrop generated-questions-preview-backdrop" role="presentation" onMouseDown={closeQuestionPreview}>
                 <div className="manager-modal generated-questions-preview-modal" role="dialog" aria-modal="true" aria-labelledby="generated-questions-preview-title" onMouseDown={(event) => event.stopPropagation()}>
                   <div className="manager-modal-header generated-questions-preview-header">
                     <div>
