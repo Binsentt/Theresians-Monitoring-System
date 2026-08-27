@@ -443,6 +443,46 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('Push to Game');
   });
 
+  test('keeps publication topics out of generic screen and printable table columns', async () => {
+    fixtures.files = [
+      {
+        id: 77,
+        title: 'grade-1-mixed-review.docx',
+        file_name: 'grade-1-mixed-review.docx',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        document_topic: 'Basic Addition, Subtraction, Shapes, and Place Value',
+        math_topic: null,
+        file_type: 'fixed_questions',
+        question_count: 5,
+        published: false,
+        validation_summary: { is_valid: true, invalid_question_count: 0 },
+      },
+      {
+        id: 78,
+        title: 'basic-addition-lesson.pdf',
+        file_name: 'basic-addition-lesson.pdf',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+        file_type: 'lesson',
+        question_count: 5,
+        published: false,
+      },
+    ];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+
+    expect(container.textContent).not.toContain('Game Publication Topic');
+    expect(document.body.textContent).not.toContain('Topic Identifier');
+    expect(container.textContent).toContain('Topic: Basic Addition');
+    expect(container.textContent).not.toContain('Unknown topic');
+    expect(container.querySelectorAll('.drive-table .data-table-th')).toHaveLength(7);
+  });
+
   test('shows authoritative source and game-fetch metadata for an active question set', async () => {
     fixtures.files = [{
       id: 77,
@@ -533,9 +573,9 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('Exactly four answer choices are required.');
   });
 
-  test('shows a multi-topic document separately from its blocked game publication scope', async () => {
+  test('labels a valid multi-topic document as ineligible without generic publication-ready messaging', async () => {
     fixtures.files = [{
-      id: 78,
+      id: 77,
       title: 'grade-1-foundations.docx',
       file_name: 'grade-1-foundations.docx',
       grade_level: 'Grade 1',
@@ -544,7 +584,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       math_topic: null,
       file_type: 'fixed_questions',
       published: false,
-      validation_summary: { is_valid: false, invalid_question_count: 0 },
+      validation_summary: { is_valid: true, invalid_question_count: 0 },
     }];
 
     await act(async () => {
@@ -552,18 +592,101 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
     await openQuestionFolder(container, 'Grade 1', 'Easy');
 
-    expect(container.textContent).toContain('Not eligible — single-topic source required');
-    const pushButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Push to Game'));
+    expect(container.textContent).not.toContain('Unknown topic');
+    const pushButton = Array.from(container.querySelectorAll('button')).find((button) => (
+      button.textContent.includes('Not Eligible for Game') || button.textContent.includes('Push to Game')
+    ));
     expect(pushButton.disabled).toBe(true);
-    expect(pushButton.title).toMatch(/multiple topics/i);
+    expect(pushButton.textContent).toContain('Not Eligible for Game');
+    expect(pushButton.title).toBe('Game publication requires a single-topic Fixed Question document.');
 
     await act(async () => {
       clickByText(container, 'Preview');
     });
 
     expect(document.body.textContent).toContain('Document Lesson/Topic: Basic Addition, Subtraction, Shapes, and Place Value');
-    expect(document.body.textContent).toContain('Game Publication Topic: Not eligible — single-topic source required');
-    expect(document.body.textContent).toContain('This fixed-question document contains multiple topics. Game publication requires a single-topic question source for a controlled encounter scope.');
+    expect(document.body.textContent).toContain('Game Publication: Not Eligible — Multi-topic document');
+    expect(document.body.textContent).not.toContain('ready for manual Push to Game');
+    expect(document.body.querySelector('.generated-questions-preview-header')).toBeTruthy();
+    expect(document.body.querySelector('.generated-questions-preview-body')).toBeTruthy();
+    expect(document.body.querySelector('.generated-questions-preview-footer')).toBeTruthy();
+    expect(document.body.querySelector('.generated-questions-preview-footer').textContent).toContain('Download Source');
+    expect(document.body.querySelector('.generated-questions-preview-footer').textContent).toContain('Close');
+  });
+
+  test('keeps Push to Game available for a valid single-topic Fixed Question document', async () => {
+    fixtures.files = [{
+      id: 77,
+      title: 'basic-addition.docx',
+      file_name: 'basic-addition.docx',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      document_topic: 'Basic Addition',
+      math_topic: 'Basic Addition',
+      file_type: 'fixed_questions',
+      published: false,
+      validation_summary: { is_valid: true, invalid_question_count: 0 },
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+
+    const pushButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Push to Game'));
+    expect(pushButton.disabled).toBe(false);
+
+    await act(async () => {
+      clickByText(container, 'Preview');
+    });
+
+    expect(document.body.textContent).toContain('Game Publication: Eligible — Basic Addition');
+  });
+
+  test('uses an explicit fixed-header, scrollable-body, fixed-footer Preview shell', async () => {
+    fixtures.files = [{
+      id: 77,
+      title: 'preview-layout.docx',
+      file_name: 'preview-layout.docx',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      document_topic: 'Basic Addition',
+      math_topic: 'Basic Addition',
+      file_type: 'fixed_questions',
+      published: false,
+      file_url: '/uploads/preview-layout.docx',
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+    await act(async () => {
+      clickByText(container, 'Preview');
+    });
+
+    const modal = document.body.querySelector('.generated-questions-preview-modal');
+    expect(modal.querySelector('.generated-questions-preview-header')).toBeTruthy();
+    expect(modal.querySelector('.generated-questions-preview-body')).toBeTruthy();
+    expect(modal.querySelector('.generated-questions-preview-footer')).toBeTruthy();
+    expect(modal.querySelector('.generated-questions-preview-footer').textContent).toContain('Download Source');
+    expect(modal.querySelector('.generated-questions-preview-footer').textContent).toContain('Close');
+
+    const downloadButton = Array.from(modal.querySelectorAll('button')).find((button) => button.textContent.includes('Download Source'));
+    const closeButton = Array.from(modal.querySelectorAll('button')).find((button) => button.textContent === 'Close');
+    expect(downloadButton.disabled).toBe(false);
+
+    const anchorClick = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    await act(async () => {
+      downloadButton.click();
+    });
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+    anchorClick.mockRestore();
+
+    await act(async () => {
+      closeButton.click();
+    });
+    expect(document.body.querySelector('.generated-questions-preview-modal')).toBeNull();
   });
 
   test('Push to Game activates the staged file only after the button is clicked', async () => {

@@ -337,7 +337,7 @@ button.drive-folder-card {
   border-collapse: separate;
   border-spacing: 0;
   width: 100%;
-  min-width: 1120px;
+  min-width: 1000px;
   table-layout: fixed;
 }
 
@@ -353,14 +353,13 @@ button.drive-folder-card {
   vertical-align: middle;
 }
 
-.drive-name-column { width: 25%; min-width: 280px; }
-.drive-topic-column { width: 13%; min-width: 140px; }
-.drive-type-column { width: 11%; min-width: 124px; }
-.drive-count-column { width: 8%; min-width: 96px; text-align: center; }
-.drive-status-column { width: 12%; min-width: 130px; }
-.drive-date-column { width: 10%; min-width: 118px; }
-.drive-size-column { width: 7%; min-width: 84px; }
-.drive-actions-cell { width: 14%; min-width: 214px; }
+.drive-name-column { width: 32%; min-width: 300px; }
+.drive-type-column { width: 13%; min-width: 132px; }
+.drive-count-column { width: 9%; min-width: 100px; text-align: center; }
+.drive-status-column { width: 13%; min-width: 136px; }
+.drive-date-column { width: 12%; min-width: 128px; }
+.drive-size-column { width: 8%; min-width: 88px; }
+.drive-actions-cell { width: 13%; min-width: 214px; }
 
 .drive-file-name svg {
   flex: 0 0 auto;
@@ -423,6 +422,14 @@ button.drive-folder-card {
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
+}
+
+.manager-action-helper {
+  flex-basis: 100%;
+  color: var(--text-muted, #64748b);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-align: right;
 }
 
 .drive-action-button {
@@ -746,15 +753,32 @@ button.drive-folder-card {
 }
 
 .generated-questions-preview-modal {
-  max-width: 760px;
+  width: min(820px, 100%);
+  max-height: min(90dvh, calc(100vh - 32px));
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.generated-questions-preview-header {
+  min-width: 0;
+}
+
+.generated-questions-preview-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
 }
 
 .generated-questions-list {
   display: grid;
   gap: 12px;
-  max-height: min(56vh, 620px);
-  overflow-y: auto;
-  padding-right: 4px;
+}
+
+.generated-questions-preview-footer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border-color, #e5e7eb);
+  padding-top: 12px;
 }
 
 .generated-question-card {
@@ -945,5 +969,10 @@ button.drive-folder-card {
   .manager-modal {
     width: 100%;
     padding: 18px;
+  }
+
+  .generated-questions-preview-modal {
+    align-self: center;
+    max-height: calc(100dvh - 24px);
   }
 }

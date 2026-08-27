@@ -106,15 +106,37 @@ function getQuestionSetStatus(row) {
   return formatQuestionSetStatus(lifecycle.label || row?.status || (row?.published ? 'Active in Game' : 'Pending'));
 }
 
-function getGamePublicationTopicLabel(file = {}) {
-  if (String(file.math_topic || '').trim()) return file.math_topic;
-  if (file.file_type === 'fixed_questions') return 'Not eligible — single-topic source required';
-  return 'Not available';
+function getPublicationEligibility(file = {}) {
+  const gameTopic = String(file.math_topic || '').trim();
+  if (file.file_type !== 'fixed_questions') {
+    return {
+      eligible: Boolean(gameTopic),
+      label: gameTopic ? 'Eligible — ' + gameTopic : 'Not available',
+      reason: '',
+    };
+  }
+  if (gameTopic) {
+    return {
+      eligible: true,
+      label: 'Eligible — ' + gameTopic,
+      reason: '',
+    };
+  }
+
+  const documentTopic = String(file.document_topic || '').trim();
+  return {
+    eligible: false,
+    label: /[,;&]|\band\b/i.test(documentTopic)
+      ? 'Not Eligible — Multi-topic document'
+      : 'Not Eligible — Single-topic source required',
+    reason: 'Game publication requires a single-topic Fixed Question document.',
+  };
 }
 
 function getFixedQuestionPublicationBlockReason(file = {}) {
-  return file.file_type === 'fixed_questions' && !String(file.math_topic || '').trim()
-    ? 'This fixed-question document contains multiple topics. Game publication requires a single-topic question source for a controlled encounter scope.'
+  const eligibility = getPublicationEligibility(file);
+  return file.file_type === 'fixed_questions' && !eligibility.eligible
+    ? eligibility.reason
     : '';
 }
 
@@ -222,12 +244,14 @@ export default function LessonQuestionManager() {
   )), [filters.status, folderView.files]);
   const paginatedFiles = paginateTableRows(displayedFiles, page, pageSize);
   const statusOptions = useMemo(() => Array.from(new Set(folderView.files.map(getQuestionSetStatus).filter(Boolean))).sort(), [folderView.files]);
+  const previewFile = questionPreviewDetails || questionPreviewFile;
+  const previewPublicationEligibility = getPublicationEligibility(previewFile || {});
+  const previewIsReadyForGame = previewValidation?.is_valid !== false && previewPublicationEligibility.eligible;
   const reportColumns = [
     { header: 'No.', value: (_, index) => index + 1 },
     { header: 'File / Question Set Name', value: (row) => row.generated_question_set_name || row.title || row.file_name },
     { header: 'Grade', value: (row) => row.grade_level },
     { header: 'Difficulty', value: (row) => row.difficulty },
-    { header: 'Topic Identifier', value: (row) => row.math_topic },
     { header: 'File Type / Source', value: (row) => row.source_label || (row.file_type === 'lesson' ? 'Lesson PDF File' : 'Fixed Question File') },
     { header: 'Question Count', value: (row) => Number.isInteger(Number(row.question_count)) ? Number(row.question_count) : (row.file_type === 'lesson' ? row.requested_question_count : null) },
     { header: 'Status', value: (row) => getQuestionSetStatus(row) },
@@ -652,19 +676,10 @@ export default function LessonQuestionManager() {
             {row.source_lesson && (
               <span className="file-meta">Source Lesson: {row.source_lesson}</span>
             )}
+            {row.file_type === 'lesson' && String(row.math_topic || '').trim() && (
+              <span className="file-meta">Topic: {row.math_topic}</span>
+            )}
           </div>
-        </div>
-      ),
-    },
-    {
-      key: 'math_topic',
-      header: 'Game Publication Topic',
-      className: 'drive-topic-column',
-      render: (value, row) => (
-        <div className="manager-topic-cell">
-          <span>{getGamePublicationTopicLabel(row)}</span>
-          {row.document_topic && <span className="file-meta">Document: {row.document_topic}</span>}
-          <span className="file-meta">{row.source_label || 'Fixed Question File'}</span>
         </div>
       ),
     },
@@ -709,10 +724,12 @@ export default function LessonQuestionManager() {
       className: 'drive-actions-cell no-print',
       render: (_, row) => {
         const fixedQuestionPublicationBlockReason = getFixedQuestionPublicationBlockReason(row);
+        const publicationEligibility = getPublicationEligibility(row);
+        const fixedQuestionPublicationBlocked = row.file_type === 'fixed_questions' && !publicationEligibility.eligible;
         const pushDisabled = row.generation_status === 'generating'
           || row.generation_status === 'failed'
           || row.validation_summary?.is_valid === false
-          || Boolean(fixedQuestionPublicationBlockReason);
+          || fixedQuestionPublicationBlocked;
         return (
           <div className="drive-row-actions">
           <button type="button" className="drive-action-button" onClick={() => setRenamingFile(row)}><FilePenLine size={16} />Rename</button>
@@ -730,7 +747,10 @@ export default function LessonQuestionManager() {
             onClick={() => pushFileToGame(row)}
             disabled={pushDisabled}
             title={fixedQuestionPublicationBlockReason || (row.validation_summary?.is_valid === false ? 'Review and correct this question set before Push to Game.' : undefined)}
-          ><Upload size={16} />Push to Game</button>
+          ><Upload size={16} />{fixedQuestionPublicationBlocked ? 'Not Eligible for Game' : 'Push to Game'}</button>
+          {fixedQuestionPublicationBlocked && (
+            <span className="manager-action-helper">{fixedQuestionPublicationBlockReason}</span>
+          )}
         </div>
         );
       },
@@ -1168,19 +1188,24 @@ export default function LessonQuestionManager() {
             {questionPreviewFile && (
               <div className="manager-modal-backdrop" role="presentation" onMouseDown={closeQuestionPreview}>
                 <div className="manager-modal generated-questions-preview-modal" role="dialog" aria-modal="true" aria-labelledby="generated-questions-preview-title" onMouseDown={(event) => event.stopPropagation()}>
-                  <div className="manager-modal-header">
+                  <div className="manager-modal-header generated-questions-preview-header">
                     <div>
                       <h2 id="generated-questions-preview-title">Question Review</h2>
-                      <p className="empty-text">{questionPreviewDetails?.title || questionPreviewFile.title} — Grade {questionPreviewDetails?.grade_level || questionPreviewFile.grade_level} · {questionPreviewDetails?.difficulty || questionPreviewFile.difficulty}</p>
-                      <p className="question-review-metadata">Document Lesson/Topic: {(questionPreviewDetails || questionPreviewFile).document_topic || 'Not provided'}</p>
-                      <p className="question-review-metadata">Game Publication Topic: {getGamePublicationTopicLabel(questionPreviewDetails || questionPreviewFile)}</p>
-                      {getFixedQuestionPublicationBlockReason(questionPreviewDetails || questionPreviewFile) && (
-                        <p className="manager-inline-error" role="alert">{getFixedQuestionPublicationBlockReason(questionPreviewDetails || questionPreviewFile)}</p>
+                      <p className="question-review-metadata">File Name: {previewFile.title || previewFile.file_name}</p>
+                      <p className="question-review-metadata">File Type: {previewFile.file_type === 'lesson' ? 'Lesson PDF File' : 'Fixed Question File'}</p>
+                      <p className="question-review-metadata">Grade: {previewFile.grade_level} · Difficulty: {previewFile.difficulty}</p>
+                      {previewFile.file_type === 'fixed_questions' && (
+                        <p className="question-review-metadata">Document Lesson/Topic: {previewFile.document_topic || 'Not provided'}</p>
+                      )}
+                      <p className="question-review-metadata">Game Publication: {previewPublicationEligibility.label}</p>
+                      {getFixedQuestionPublicationBlockReason(previewFile) && (
+                        <p className="manager-inline-error" role="alert">{getFixedQuestionPublicationBlockReason(previewFile)}</p>
                       )}
                     </div>
                     <button type="button" className="icon-button" aria-label="Close generated questions preview" onClick={closeQuestionPreview}>x</button>
                   </div>
-                  <div className="generated-questions-list">
+                  <div className="generated-questions-preview-body">
+                    <div className="generated-questions-list">
                     {previewQuestionsLoading ? (
                       <p className="empty-text">Loading questions...</p>
                     ) : previewQuestions.length === 0 ? (
@@ -1190,9 +1215,9 @@ export default function LessonQuestionManager() {
                       </>
                     ) : (
                       <>
-                        <p className="question-review-metadata">Requested: {questionPreviewDetails?.requested_question_count ?? questionPreviewFile.requested_question_count ?? 'Not specified'} · Available: {previewQuestions.length}</p>
+                        <p className="question-review-metadata">Requested: {previewFile.requested_question_count ?? 'Not specified'} · Available: {previewQuestions.length}</p>
                         {previewValidation?.is_valid === false && <p className="manager-inline-error" role="alert">Needs Correction — every question must have four distinct choices, a mapped correct answer, and matching metadata.</p>}
-                        {previewValidation?.is_valid !== false && <p className="question-validation-valid">Valid — this question set is ready for manual Push to Game.</p>}
+                        {previewValidation?.is_valid !== false && previewIsReadyForGame && <p className="question-validation-valid">Valid — this question set is ready for manual Push to Game.</p>}
                         {previewQuestions.map((question, index) => (
                           <article key={question.id || `${question.question}-${index}`} className={`generated-question-card ${question.is_valid === false ? 'invalid' : 'valid'}`}>
                             <strong>{index + 1}. {question.question}</strong>
@@ -1203,15 +1228,16 @@ export default function LessonQuestionManager() {
                             </li>
                           ))}
                             </ol>
-                            <p className="question-review-metadata">Grade {question.grade_level || questionPreviewFile.grade_level} · {question.difficulty || questionPreviewFile.difficulty} · {question.math_topic || questionPreviewFile.math_topic}</p>
+                            <p className="question-review-metadata">Grade {question.grade_level || previewFile.grade_level} · {question.difficulty || previewFile.difficulty}</p>
                             {question.is_valid === false ? (question.validation_errors || []).map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>) : <p className="question-validation-valid">Valid</p>}
                           </article>
                         ))}
                       </>
                     )}
+                    </div>
                   </div>
-                  <div className="preview-actions">
-                    <button type="button" className="btn btn-primary" onClick={() => downloadFile(questionPreviewDetails || questionPreviewFile)} disabled={!(questionPreviewDetails || questionPreviewFile).file_url}>
+                  <div className="preview-actions generated-questions-preview-footer">
+                    <button type="button" className="btn btn-primary" onClick={() => downloadFile(previewFile)} disabled={!previewFile.file_url}>
                       <Download size={16} />Download Source
                     </button>
                     <button type="button" className="btn btn-secondary" onClick={closeQuestionPreview}>Close</button>
