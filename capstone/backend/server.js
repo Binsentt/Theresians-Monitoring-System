@@ -59,6 +59,8 @@ const {
   serializeUser,
 } = require('./accountResponse.utils');
 const {
+  isValidDifficulty,
+  isValidGradeLevel,
   validateLearningMetadata,
   normalizeDifficultyValue,
   parseLessonQuestionCount,
@@ -68,8 +70,11 @@ const {
   generateLessonQuestions,
 } = require('./lessonQuestionGeneration');
 const {
+  detectFixedQuestionDocumentFormat,
   extractFixedQuestionDocument,
+  resolveFixedQuestionDocumentMetadata,
   validateFixedQuestionUploadFile,
+  validateFixedQuestionDocumentPublicationScope,
   validateFixedQuestions,
   validateQuestionSetForPublication,
 } = require('./fixedQuestionDocument');
@@ -412,7 +417,8 @@ const ensureSchema = async () => {
       file_url TEXT NOT NULL,
       grade_level VARCHAR(50) NOT NULL,
       difficulty VARCHAR(20),
-      math_topic VARCHAR(100) NOT NULL,
+      math_topic VARCHAR(100),
+      document_topic TEXT,
       file_type VARCHAR(50) NOT NULL,
       subject VARCHAR(50) NOT NULL DEFAULT 'Mathematics',
       folder_id INTEGER REFERENCES public.folders(id) ON DELETE SET NULL,
@@ -1618,18 +1624,17 @@ const validateUploadedLearningFile = (file, fileType) => {
   }
 
   if (fileType === 'fixed_questions') {
-    if (originalName.endsWith('.docx') || originalName.endsWith('.pdf')) {
-      try {
-        return validateFixedQuestionUploadFile(file, fs.readFileSync(file.path).subarray(0, 5));
-      } catch {
-        return 'The uploaded Fixed Question document could not be read.';
-      }
-    }
     const jsonFile = originalName.endsWith('.json')
       && hasAllowedMimeType(file, ['application/json', 'text/json']);
     const csvFile = originalName.endsWith('.csv')
       && hasAllowedMimeType(file, ['text/csv', 'application/csv', 'application/vnd.ms-excel']);
-    return jsonFile || csvFile ? '' : 'Fixed Questions support DOCX or PDF documents. JSON and CSV remain available for developer compatibility.';
+    try {
+      const documentValidationError = validateFixedQuestionUploadFile(file, fs.readFileSync(file.path));
+      if (!documentValidationError) return '';
+      return jsonFile || csvFile ? '' : documentValidationError;
+    } catch {
+      return 'The uploaded Fixed Question document could not be read.';
+    }
   }
 
   return 'Invalid file type for the selected upload type.';
@@ -1824,9 +1829,9 @@ const parseFixedQuestionsFile = async (file) => {
 };
 
 const extractAndValidateFixedQuestionsFile = async (file) => {
-  const lowerName = String(file?.originalname || '').toLowerCase();
-  if (lowerName.endsWith('.docx') || lowerName.endsWith('.pdf')) {
-    return extractFixedQuestionDocument(file);
+  const documentContent = fs.readFileSync(file.path);
+  if (detectFixedQuestionDocumentFormat(file, documentContent)) {
+    return extractFixedQuestionDocument({ ...file, buffer: documentContent });
   }
   return validateFixedQuestions(await parseFixedQuestionsFile(file));
 };
@@ -1911,11 +1916,12 @@ const getQuestionSetPublicationValidation = async (queryClient, learningFile, { 
     [learningFile.id]
   );
   const canonicalDifficulty = normalizeDifficultyValue(learningFile.difficulty);
+  const documentScopeError = validateFixedQuestionDocumentPublicationScope(learningFile);
   return validateQuestionSetForPublication({
     grade_level: learningFile.grade_level,
     difficulty: canonicalDifficulty,
     math_topic: learningFile.math_topic,
-    metadata_error: validateLearningMetadata({
+    metadata_error: documentScopeError || validateLearningMetadata({
       grade_level: learningFile.grade_level,
       difficulty: canonicalDifficulty,
       math_topic: learningFile.math_topic,
@@ -3874,20 +3880,26 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
   try {
     const { title, grade_level, difficulty, math_topic, file_type, folder_id, expected_question_count } = req.body;
     if (!req.file) return res.status(400).json({ error: 'File is required' });
-    if (!title || !grade_level || !difficulty || !math_topic || !file_type) {
+    if (!title || !grade_level || !difficulty || !file_type) {
       return res.status(400).json({ error: 'Missing required metadata' });
     }
 
     const normalizedGrade = String(grade_level).trim();
     const normalizedDifficulty = normalizeDifficultyValue(difficulty);
-    const normalizedTopic = String(math_topic).trim();
+    let normalizedTopic = String(math_topic || '').trim();
     const normalizedType = String(file_type).trim().toLowerCase();
 
-    const learningMetadataError = validateLearningMetadata({
-      grade_level: normalizedGrade,
-      difficulty: normalizedDifficulty,
-      math_topic: normalizedTopic,
-    });
+    const learningMetadataError = normalizedType === 'lesson'
+      ? validateLearningMetadata({
+        grade_level: normalizedGrade,
+        difficulty: normalizedDifficulty,
+        math_topic: normalizedTopic,
+      })
+      : !isValidGradeLevel(normalizedGrade)
+        ? 'Grade level must be one of Grade 1 through Grade 6.'
+        : !isValidDifficulty(normalizedDifficulty)
+          ? 'Difficulty must be Easy, Normal, or Difficult.'
+          : '';
     if (learningMetadataError) {
       cleanTemporaryUpload(req.file.path);
       return res.status(400).json({ error: learningMetadataError });
@@ -3911,6 +3923,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
 
     let requestedQuestionCount = null;
     let fixedQuestions = [];
+    let fixedDocumentTopic = null;
     if (normalizedType === 'lesson') {
       const parsedCount = parseLessonQuestionCount(expected_question_count);
       if (parsedCount.error) {
@@ -3928,6 +3941,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         fixedQuestionValidation = await extractAndValidateFixedQuestionsFile({
           path: req.file.path,
           originalname: req.file.originalname,
+          mimetype: req.file.mimetype,
         });
       } catch (error) {
         cleanTemporaryUpload(req.file.path);
@@ -3947,6 +3961,20 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
           questions: fixedQuestionValidation.questions,
         });
       }
+      const fixedQuestionMetadata = resolveFixedQuestionDocumentMetadata({
+        documentText: fixedQuestionValidation.document_text,
+        selectedGradeLevel: normalizedGrade,
+        selectedDifficulty: normalizedDifficulty,
+      });
+      if (fixedQuestionMetadata.metadata_error) {
+        cleanTemporaryUpload(req.file.path);
+        return res.status(422).json({
+          error: fixedQuestionMetadata.metadata_error,
+          code: 'FIXED_QUESTION_METADATA_CONFLICT',
+        });
+      }
+      fixedDocumentTopic = fixedQuestionMetadata.document_topic;
+      normalizedTopic = fixedQuestionMetadata.math_topic || '';
       fixedQuestions = fixedQuestionValidation.questions;
     }
 
@@ -3959,10 +3987,10 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     const createLearningFile = async (generationStatus) => {
       const insertResult = await pool.query(
         `INSERT INTO public.learning_files (
-          title, file_name, file_url, grade_level, difficulty, math_topic,
+          title, file_name, file_url, grade_level, difficulty, math_topic, document_topic,
           file_type, subject, folder_id, published, source, uploaded_by,
           file_size, requested_question_count, generation_status, publish_status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'Mathematics', $8, false, $9, $10, $11, $12, $13, 'staged')
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Mathematics', $9, false, $10, $11, $12, $13, $14, 'staged')
          RETURNING *`,
         [
           String(title).trim(),
@@ -3970,7 +3998,8 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
           fileUrl,
           normalizedGrade,
           normalizedDifficulty,
-          normalizedTopic,
+          normalizedTopic || null,
+          null,
           normalizedType,
           folderResolution.folderId,
           normalizedType === 'lesson' ? 'lesson' : 'fixed',
@@ -4051,10 +4080,10 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
       await client.query('BEGIN');
       const insertResult = await client.query(
         `INSERT INTO public.learning_files (
-          title, file_name, file_url, grade_level, difficulty, math_topic,
+          title, file_name, file_url, grade_level, difficulty, math_topic, document_topic,
           file_type, subject, folder_id, published, source, uploaded_by,
           file_size, requested_question_count, generation_status, publish_status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'Mathematics', $8, false, $9, $10, $11, NULL, 'not_applicable', 'staged')
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Mathematics', $9, false, $10, $11, $12, NULL, 'not_applicable', 'staged')
          RETURNING *`,
         [
           String(title).trim(),
@@ -4062,7 +4091,8 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
           fileUrl,
           normalizedGrade,
           normalizedDifficulty,
-          normalizedTopic,
+          normalizedTopic || null,
+          fixedDocumentTopic,
           normalizedType,
           folderResolution.folderId,
           'fixed',

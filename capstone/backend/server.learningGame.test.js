@@ -661,7 +661,9 @@ test('lesson upload generates exactly the requested staged questions through the
   assert.equal(response.body.learningFile.question_count, 2);
   assert.equal(response.body.learningFile.published, false);
   assert.equal(storedQuestions, 2);
-  assert.equal(learningFileInsertParams[9], 1);
+  assert.equal(learningFileInsertParams[6], null);
+  assert.equal(learningFileInsertParams[9], 'lesson');
+  assert.equal(learningFileInsertParams[10], 1);
 });
 
 test('relationship lookup returns the authoritative game Student ID for linked students', async (t) => {

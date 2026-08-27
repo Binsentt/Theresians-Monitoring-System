@@ -1,13 +1,123 @@
 const QUESTION_LINE = /^\s*(?:question\s*)?(\d+)\s*[.)]\s*(.+?)\s*$/i;
 const OPTION_LINE = /^\s*([A-Z])\s*[.)]\s*(.*?)\s*$/i;
 const ANSWER_LINE = /^\s*(?:correct\s+)?answer\s*:\s*(.*?)\s*$/i;
-const { normalizeDifficultyValue } = require('./learningContentRules.utils');
+const {
+  isValidMathTopicForGradeDifficulty,
+  normalizeDifficultyValue,
+  validateLearningMetadata,
+} = require('./learningContentRules.utils');
 
 const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const PDF_MIME_TYPE = 'application/pdf';
 
 const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
 const normalizeChoiceKey = (value) => normalizeText(value).toLocaleLowerCase();
+
+const getFixedQuestionDocumentContentFormat = (content) => {
+  if (!Buffer.isBuffer(content)) return null;
+  if (content.subarray(0, 5).toString('utf8') === '%PDF-') return 'pdf';
+  if (
+    content.subarray(0, 2).toString('utf8') === 'PK'
+    && content.includes(Buffer.from('word/document.xml'))
+  ) {
+    return 'docx';
+  }
+  return null;
+};
+
+const getFixedQuestionDocumentMimeFormat = (file) => {
+  const mimetype = String(file?.mimetype || '').trim().toLowerCase();
+  if (mimetype === PDF_MIME_TYPE) return 'pdf';
+  if (mimetype === DOCX_MIME_TYPE) return 'docx';
+  return null;
+};
+
+const getUnambiguousFilenameFormat = (file) => {
+  const originalName = String(file?.originalname || '').trim().toLowerCase();
+  if (/\.(?:docx|pdf)\.(?:docx|pdf)$/i.test(originalName)) return null;
+  if (originalName.endsWith('.docx')) return 'docx';
+  if (originalName.endsWith('.pdf')) return 'pdf';
+  return null;
+};
+
+const detectFixedQuestionDocumentFormat = (file, content) => {
+  const contentFormat = getFixedQuestionDocumentContentFormat(content);
+  const mimeFormat = getFixedQuestionDocumentMimeFormat(file);
+  const filenameFormat = getUnambiguousFilenameFormat(file);
+
+  if (!contentFormat || contentFormat !== mimeFormat) return null;
+  if (filenameFormat && filenameFormat !== contentFormat) return null;
+  return contentFormat;
+};
+
+const resolveFixedQuestionDocumentMetadata = ({
+  documentText,
+  selectedGradeLevel,
+  selectedDifficulty,
+} = {}) => {
+  const lines = String(documentText || '').replace(/\r\n?/g, '\n').split('\n');
+  const selectedGrade = normalizeText(selectedGradeLevel);
+  const selectedLevel = normalizeDifficultyValue(selectedDifficulty);
+  const extractedGradeMatch = lines.map((line) => line.match(/^\s*grade\s+([1-6])\s*$/i)).find(Boolean);
+  const extractedGrade = extractedGradeMatch ? `Grade ${extractedGradeMatch[1]}` : '';
+  const extractedLessonMatch = lines.map((line) => line.match(
+    /^\s*(easy|normal|medium|difficult|hard)\s*(?:[-–—]\s*)?(?:lesson|topic)\s*:\s*(.+?)\s*$/i
+  )).find(Boolean);
+  const extractedDifficulty = extractedLessonMatch ? normalizeDifficultyValue(extractedLessonMatch[1]) : '';
+  const documentTopic = extractedLessonMatch ? normalizeText(extractedLessonMatch[2]) : '';
+  const metadataErrors = [];
+
+  if (extractedGrade && extractedGrade !== selectedGrade) {
+    metadataErrors.push('The selected Grade must match the Grade identified in the Fixed Question document.');
+  }
+  if (extractedDifficulty && extractedDifficulty !== selectedLevel) {
+    metadataErrors.push('The selected Difficulty must match the Difficulty identified in the Fixed Question document.');
+  }
+
+  const metadataError = metadataErrors.join(' ');
+  const mathTopic = !metadataError
+    && documentTopic
+    && isValidMathTopicForGradeDifficulty(selectedGrade, selectedLevel, documentTopic)
+    ? documentTopic
+    : null;
+
+  return {
+    document_topic: documentTopic || null,
+    math_topic: mathTopic,
+    metadata_error: metadataError,
+  };
+};
+
+const validateFixedQuestionDocumentPublicationScope = ({
+  file_type,
+  document_topic,
+  math_topic,
+} = {}) => {
+  const documentTopic = normalizeText(document_topic);
+  const gameTopic = normalizeText(math_topic);
+
+  // Legacy rows did not persist a document topic. Preserve their existing
+  // controlled scope while enforcing the new rule for reviewed documents.
+  if (file_type !== 'fixed_questions' || !documentTopic || documentTopic === gameTopic) return '';
+
+  if (/[,&]/.test(documentTopic) || /\band\b/i.test(documentTopic)) {
+    return 'This fixed-question document contains multiple topics. Game publication requires a single-topic question source for a controlled encounter scope.';
+  }
+
+  return 'The Fixed Question document topic does not match its controlled game publication topic.';
+};
+
+const tokenizeFixedQuestionText = (documentText) => String(documentText || '')
+  .replace(/\r\n?/g, '\n')
+  // DOCX/PDF text extraction can flatten a visual bullet and its option onto
+  // the preceding question line. Split only recognized bullet-option markers.
+  .replace(/[●•▪◦]\s*(?=[A-D]\s*[.)])/gi, '\n')
+  // Keep answer markers as their own logical token without splitting arbitrary
+  // punctuation in question text.
+  .replace(/([^\n])\s+((?:correct\s+)?answer\s*:)/gi, '$1\n$2')
+  // A flattened following question is safe to split only after a recognized
+  // answer marker has completed the prior question.
+  .replace(/((?:correct\s+)?answer\s*:[^\n]*?)\s+(?=(?:question\s*)?\d+\s*[.)]\s+)/gi, '$1\n');
 
 const resolveCorrectAnswer = (rawAnswer, optionsWithLabels) => {
   const answer = normalizeText(rawAnswer);
@@ -36,7 +146,7 @@ const finalizeQuestion = (draft) => {
 };
 
 const parseFixedQuestionText = (documentText) => {
-  const lines = String(documentText || '').replace(/\r\n?/g, '\n').split('\n');
+  const lines = tokenizeFixedQuestionText(documentText).split('\n');
   const questions = [];
   let currentQuestion = null;
 
@@ -131,6 +241,11 @@ const validateQuestionSetForPublication = ({
   const normalizedGrade = normalizeText(grade_level);
   const normalizedDifficulty = normalizeDifficultyValue(difficulty);
   const normalizedTopic = normalizeText(math_topic);
+  const publicationMetadataError = metadata_error || validateLearningMetadata({
+    grade_level: normalizedGrade,
+    difficulty: normalizedDifficulty,
+    math_topic: normalizedTopic,
+  });
   const validatedQuestions = questionValidation.questions.map((question) => {
     const validationErrors = [...question.validation_errors];
     if (normalizeText(question.grade_level) !== normalizedGrade) validationErrors.push('Question grade must match the selected Grade.');
@@ -144,52 +259,50 @@ const validateQuestionSetForPublication = ({
   });
 
   return {
-    isValid: !metadata_error && validatedQuestions.length > 0 && validatedQuestions.every((question) => question.is_valid),
+    isValid: !publicationMetadataError && validatedQuestions.length > 0 && validatedQuestions.every((question) => question.is_valid),
     document_errors: [
       ...questionValidation.document_errors,
-      ...(metadata_error ? [metadata_error] : []),
+      ...(publicationMetadataError ? [publicationMetadataError] : []),
     ],
     questions: validatedQuestions,
   };
 };
 
 const validateFixedQuestionUploadFile = (file, header = Buffer.alloc(0)) => {
-  const originalName = String(file?.originalname || '').trim().toLowerCase();
-  const mimetype = String(file?.mimetype || '').trim().toLowerCase();
-  const signature = Buffer.isBuffer(header) ? header.subarray(0, 5).toString('utf8') : '';
+  const contentFormat = getFixedQuestionDocumentContentFormat(header);
+  const mimeFormat = getFixedQuestionDocumentMimeFormat(file);
+  const filenameFormat = getUnambiguousFilenameFormat(file);
 
-  if (originalName.endsWith('.docx')) {
-    if (mimetype !== DOCX_MIME_TYPE || !Buffer.isBuffer(header) || header.subarray(0, 2).toString('utf8') !== 'PK') {
-      return 'Fixed Question DOCX files must be uploaded as a valid DOCX document.';
-    }
-    return '';
+  if (!contentFormat) {
+    return 'Fixed Questions support a valid PDF or DOCX document with the expected file signature.';
   }
-
-  if (originalName.endsWith('.pdf')) {
-    if (mimetype !== PDF_MIME_TYPE || signature !== '%PDF-') {
-      return 'Fixed Question PDF files must be uploaded as a valid PDF.';
-    }
-    return '';
+  if (mimeFormat !== contentFormat) {
+    return 'Fixed Question file MIME type does not match its document content.';
   }
-
-  return 'Fixed Questions support DOCX or PDF documents.';
+  if (filenameFormat && filenameFormat !== contentFormat) {
+    return 'Fixed Question filename extension does not match its document content.';
+  }
+  return '';
 };
 
 const extractFixedQuestionDocument = async (file, {
   extractDocxText,
   extractPdfText,
 } = {}) => {
-  const originalName = String(file?.originalname || '').trim().toLowerCase();
+  const content = Buffer.isBuffer(file?.buffer)
+    ? file.buffer
+    : require('fs').readFileSync(file.path);
+  const documentFormat = detectFixedQuestionDocumentFormat(file, content);
   let extractedText = '';
 
-  if (originalName.endsWith('.docx')) {
+  if (documentFormat === 'docx') {
     const extract = extractDocxText || (async (inputPath) => {
       const mammoth = require('mammoth');
       const result = await mammoth.extractRawText({ path: inputPath });
       return result.value;
     });
     extractedText = await extract(file.path);
-  } else if (originalName.endsWith('.pdf')) {
+  } else if (documentFormat === 'pdf') {
     const extract = extractPdfText || (async (inputPath) => {
       const pdfParse = require('pdf-parse');
       const result = await pdfParse(require('fs').readFileSync(inputPath));
@@ -202,14 +315,21 @@ const extractFixedQuestionDocument = async (file, {
 
   const normalizedText = String(extractedText || '').trim();
   if (!normalizedText) throw new Error('The uploaded Fixed Question document does not contain readable text.');
-  return validateFixedQuestions(parseFixedQuestionText(normalizedText));
+  return {
+    ...validateFixedQuestions(parseFixedQuestionText(normalizedText)),
+    document_text: normalizedText,
+  };
 };
 
 module.exports = {
   DOCX_MIME_TYPE,
   PDF_MIME_TYPE,
+  detectFixedQuestionDocumentFormat,
   extractFixedQuestionDocument,
   parseFixedQuestionText,
+  resolveFixedQuestionDocumentMetadata,
+  tokenizeFixedQuestionText,
+  validateFixedQuestionDocumentPublicationScope,
   validateFixedQuestion,
   validateFixedQuestionUploadFile,
   validateFixedQuestions,

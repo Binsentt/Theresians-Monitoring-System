@@ -106,6 +106,18 @@ function getQuestionSetStatus(row) {
   return formatQuestionSetStatus(lifecycle.label || row?.status || (row?.published ? 'Active in Game' : 'Pending'));
 }
 
+function getGamePublicationTopicLabel(file = {}) {
+  if (String(file.math_topic || '').trim()) return file.math_topic;
+  if (file.file_type === 'fixed_questions') return 'Not eligible — single-topic source required';
+  return 'Not available';
+}
+
+function getFixedQuestionPublicationBlockReason(file = {}) {
+  return file.file_type === 'fixed_questions' && !String(file.math_topic || '').trim()
+    ? 'This fixed-question document contains multiple topics. Game publication requires a single-topic question source for a controlled encounter scope.'
+    : '';
+}
+
 function buildNextTopicValue(gradeLevel, difficulty, currentTopic) {
   return normalizeMathTopicForGradeDifficulty(gradeLevel, difficulty, currentTopic);
 }
@@ -197,6 +209,7 @@ export default function LessonQuestionManager() {
     [selectedFolder.difficulty, selectedFolder.grade_level]
   );
   const uploadType = form.file_type;
+  const isFixedQuestionUpload = uploadType === 'fixed_questions';
   const isDifficultyFolderOpen = Boolean(selectedFolder.grade_level && selectedFolder.difficulty);
   const selectedFolderPath = selectedFolder.grade_level
     ? `Questions / ${selectedFolder.grade_level}${selectedFolder.difficulty ? ` / ${selectedFolder.difficulty}` : ''}`
@@ -254,7 +267,15 @@ export default function LessonQuestionManager() {
           ...prev,
           grade_level: gradeLevel,
           difficulty,
-          math_topic: buildNextTopicValue(gradeLevel, difficulty, prev.math_topic),
+          math_topic: prev.file_type === 'lesson' ? buildNextTopicValue(gradeLevel, difficulty, prev.math_topic) : '',
+        };
+      }
+      if (field === 'file_type') {
+        return {
+          ...prev,
+          file_type: value,
+          math_topic: value === 'lesson' ? buildNextTopicValue(prev.grade_level, prev.difficulty, prev.math_topic) : '',
+          expected_question_count: value === 'lesson' ? prev.expected_question_count : '',
         };
       }
       return { ...prev, [field]: value };
@@ -288,8 +309,12 @@ export default function LessonQuestionManager() {
 
   const handleUpload = async (event) => {
     event.preventDefault();
-    if (!form.grade_level || !form.difficulty || !form.math_topic.trim() || !form.file) {
-      showNotification('Grade level, difficulty, topic, and file are required.', 'error');
+    if (!form.grade_level || !form.difficulty || !form.file) {
+      showNotification('Grade level, difficulty, and file are required.', 'error');
+      return;
+    }
+    if (uploadType === 'lesson' && !form.math_topic.trim()) {
+      showNotification('Grade level, difficulty, topic, and file are required for Lesson PDF files.', 'error');
       return;
     }
     if (!uploadType || !isSupportedLearningUpload(form.file.name, uploadType)) {
@@ -299,7 +324,7 @@ export default function LessonQuestionManager() {
     if (
       !isValidGradeLevel(form.grade_level)
       || !isValidDifficulty(form.difficulty)
-      || !isValidMathTopicForGradeDifficulty(form.grade_level, form.difficulty, form.math_topic)
+      || (uploadType === 'lesson' && !isValidMathTopicForGradeDifficulty(form.grade_level, form.difficulty, form.math_topic))
     ) {
       showNotification('Invalid grade level, difficulty, or topic for this Mathematics content.', 'error');
       return;
@@ -317,7 +342,7 @@ export default function LessonQuestionManager() {
     payload.append('title', deriveUploadTitle(form.file));
     payload.append('grade_level', form.grade_level);
     payload.append('difficulty', form.difficulty);
-    payload.append('math_topic', form.math_topic.trim());
+    if (uploadType === 'lesson') payload.append('math_topic', form.math_topic.trim());
     payload.append('file_type', uploadType);
     payload.append('uploaded_by', user.id);
     if (uploadType === 'lesson') {
@@ -526,7 +551,7 @@ export default function LessonQuestionManager() {
       ...initialFormState,
       grade_level: gradeLevel,
       difficulty,
-      math_topic: buildNextTopicValue(gradeLevel, difficulty, ''),
+      math_topic: '',
     });
     setShowUploadForm(true);
   };
@@ -633,11 +658,12 @@ export default function LessonQuestionManager() {
     },
     {
       key: 'math_topic',
-      header: 'Topic Identifier',
+      header: 'Game Publication Topic',
       className: 'drive-topic-column',
       render: (value, row) => (
         <div className="manager-topic-cell">
-          <span>{value || 'Unknown topic'}</span>
+          <span>{getGamePublicationTopicLabel(row)}</span>
+          {row.document_topic && <span className="file-meta">Document: {row.document_topic}</span>}
           <span className="file-meta">{row.source_label || 'Fixed Question File'}</span>
         </div>
       ),
@@ -681,8 +707,14 @@ export default function LessonQuestionManager() {
       key: 'actions',
       header: 'Actions',
       className: 'drive-actions-cell no-print',
-      render: (_, row) => (
-        <div className="drive-row-actions">
+      render: (_, row) => {
+        const fixedQuestionPublicationBlockReason = getFixedQuestionPublicationBlockReason(row);
+        const pushDisabled = row.generation_status === 'generating'
+          || row.generation_status === 'failed'
+          || row.validation_summary?.is_valid === false
+          || Boolean(fixedQuestionPublicationBlockReason);
+        return (
+          <div className="drive-row-actions">
           <button type="button" className="drive-action-button" onClick={() => setRenamingFile(row)}><FilePenLine size={16} />Rename</button>
           <button type="button" className="drive-action-button" onClick={() => openQuestionSetPreview(row)}><FileText size={16} />Preview</button>
           <button
@@ -696,11 +728,12 @@ export default function LessonQuestionManager() {
             type="button"
             className="drive-action-button primary"
             onClick={() => pushFileToGame(row)}
-            disabled={row.generation_status === 'generating' || row.generation_status === 'failed' || row.validation_summary?.is_valid === false}
-            title={row.validation_summary?.is_valid === false ? 'Review and correct this question set before Push to Game.' : undefined}
+            disabled={pushDisabled}
+            title={fixedQuestionPublicationBlockReason || (row.validation_summary?.is_valid === false ? 'Review and correct this question set before Push to Game.' : undefined)}
           ><Upload size={16} />Push to Game</button>
         </div>
-      ),
+        );
+      },
     },
   ];
 
@@ -1036,27 +1069,29 @@ export default function LessonQuestionManager() {
                       </select>
                     </div>
                     <div className="form-group">
-                      <label className="form-label required">Topic Identifier</label>
-                      <select
-                        className="select-field"
-                        value={form.math_topic}
-                        disabled={!form.grade_level || !form.difficulty}
-                        onChange={(event) => handleFormChange('math_topic', event.target.value)}
-                      >
-                        {!form.grade_level || !form.difficulty ? (
-                          <option value="">Select grade and difficulty first</option>
-                        ) : (
-                          uploadTopicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)
-                        )}
-                      </select>
-                    </div>
-                    <div className="form-group">
                       <label className="form-label required">File Type</label>
                       <select className="select-field" value={form.file_type} onChange={(event) => handleFormChange('file_type', event.target.value)}>
                         <option value="lesson">Lesson PDF File</option>
                         <option value="fixed_questions">Fixed Question File</option>
                       </select>
                     </div>
+                    {!isFixedQuestionUpload && (
+                      <div className="form-group">
+                        <label className="form-label required">Topic Identifier</label>
+                        <select
+                          className="select-field"
+                          value={form.math_topic}
+                          disabled={!form.grade_level || !form.difficulty}
+                          onChange={(event) => handleFormChange('math_topic', event.target.value)}
+                        >
+                          {!form.grade_level || !form.difficulty ? (
+                            <option value="">Select grade and difficulty first</option>
+                          ) : (
+                            uploadTopicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)
+                          )}
+                        </select>
+                      </div>
+                    )}
                     <div className="form-group">
                       <label className="form-label">Destination</label>
                       <div className="fixed-destination-display">
@@ -1136,7 +1171,12 @@ export default function LessonQuestionManager() {
                   <div className="manager-modal-header">
                     <div>
                       <h2 id="generated-questions-preview-title">Question Review</h2>
-                      <p className="empty-text">{questionPreviewDetails?.title || questionPreviewFile.title} — Grade {questionPreviewDetails?.grade_level || questionPreviewFile.grade_level} · {questionPreviewDetails?.difficulty || questionPreviewFile.difficulty} · {questionPreviewDetails?.math_topic || questionPreviewFile.math_topic}</p>
+                      <p className="empty-text">{questionPreviewDetails?.title || questionPreviewFile.title} — Grade {questionPreviewDetails?.grade_level || questionPreviewFile.grade_level} · {questionPreviewDetails?.difficulty || questionPreviewFile.difficulty}</p>
+                      <p className="question-review-metadata">Document Lesson/Topic: {(questionPreviewDetails || questionPreviewFile).document_topic || 'Not provided'}</p>
+                      <p className="question-review-metadata">Game Publication Topic: {getGamePublicationTopicLabel(questionPreviewDetails || questionPreviewFile)}</p>
+                      {getFixedQuestionPublicationBlockReason(questionPreviewDetails || questionPreviewFile) && (
+                        <p className="manager-inline-error" role="alert">{getFixedQuestionPublicationBlockReason(questionPreviewDetails || questionPreviewFile)}</p>
+                      )}
                     </div>
                     <button type="button" className="icon-button" aria-label="Close generated questions preview" onClick={closeQuestionPreview}>x</button>
                   </div>

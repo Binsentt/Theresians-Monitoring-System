@@ -131,7 +131,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     delete global.fetch;
   });
 
-  test('upload modal filters topic until grade and difficulty are selected', async () => {
+  test('Fixed Question uploads keep Grade and Difficulty but hide the manual Topic selector', async () => {
     await act(async () => {
       root.render(<LessonQuestionManager />);
     });
@@ -144,32 +144,37 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
 
     const selects = getUploadModalSelects();
-    const topicSelect = selects[2];
 
     expect(document.body.textContent).toContain('Grade 1');
     expect(document.body.textContent).toContain('Grade 2');
     expect(document.body.textContent).toContain('Grade 6');
     expect(document.body.textContent).not.toContain('Grade 1-2');
     expect(document.body.textContent).toContain('Difficulty');
-    expect(document.body.textContent).toContain('Topic Identifier');
-    expect(topicSelect.disabled).toBe(true);
-    expect(topicSelect.textContent).toContain('Select grade and difficulty first');
+    expect(getUploadModal().textContent).not.toContain('Topic Identifier');
+    expect(selects).toHaveLength(3);
 
     await act(async () => {
       setSelectValue(selects[0], 'Grade 3');
       setSelectValue(selects[1], 'Normal');
     });
 
-    expect(topicSelect.disabled).toBe(false);
-    expect(topicSelect.textContent).toContain('Multiplication');
-    expect(topicSelect.textContent).toContain('Division');
-    expect(topicSelect.textContent).toContain('Fractions');
     expect(document.body.textContent).toContain('Normal');
     expect(getUploadModal().querySelector('.fixed-destination-display').textContent.trim()).toBe('Questions/Grade 3/Normal');
     expect(document.body.textContent).not.toContain('Select Folder');
     expect(document.body.textContent).not.toContain('New Folder');
     expect(document.body.textContent).toContain('Lesson PDF File');
     expect(document.body.textContent).toContain('Fixed Question File');
+
+    await act(async () => {
+      setSelectValue(getUploadModalSelects()[2], 'lesson');
+    });
+
+    const lessonTopicSelect = getUploadModalSelects()[3];
+    expect(getUploadModal().textContent).toContain('Topic Identifier');
+    expect(lessonTopicSelect.disabled).toBe(false);
+    expect(lessonTopicSelect.textContent).toContain('Multiplication');
+    expect(lessonTopicSelect.textContent).toContain('Division');
+    expect(lessonTopicSelect.textContent).toContain('Fractions');
   });
 
   test('renders the upload dialog in a viewport portal and removes it when cancelled', async () => {
@@ -315,7 +320,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(getUploadModal().textContent).not.toContain('Question Count');
     const selects = getUploadModalSelects();
     await act(async () => {
-      setSelectValue(selects[3], 'lesson');
+      setSelectValue(selects[2], 'lesson');
     });
 
     const countField = document.body.querySelector('input[name="expected_question_count"]');
@@ -526,6 +531,39 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('Question Review');
     expect(container.textContent).toContain('Needs Correction');
     expect(container.textContent).toContain('Exactly four answer choices are required.');
+  });
+
+  test('shows a multi-topic document separately from its blocked game publication scope', async () => {
+    fixtures.files = [{
+      id: 78,
+      title: 'grade-1-foundations.docx',
+      file_name: 'grade-1-foundations.docx',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      document_topic: 'Basic Addition, Subtraction, Shapes, and Place Value',
+      math_topic: null,
+      file_type: 'fixed_questions',
+      published: false,
+      validation_summary: { is_valid: false, invalid_question_count: 0 },
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+
+    expect(container.textContent).toContain('Not eligible — single-topic source required');
+    const pushButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Push to Game'));
+    expect(pushButton.disabled).toBe(true);
+    expect(pushButton.title).toMatch(/multiple topics/i);
+
+    await act(async () => {
+      clickByText(container, 'Preview');
+    });
+
+    expect(document.body.textContent).toContain('Document Lesson/Topic: Basic Addition, Subtraction, Shapes, and Place Value');
+    expect(document.body.textContent).toContain('Game Publication Topic: Not eligible — single-topic source required');
+    expect(document.body.textContent).toContain('This fixed-question document contains multiple topics. Game publication requires a single-topic question source for a controlled encounter scope.');
   });
 
   test('Push to Game activates the staged file only after the button is clicked', async () => {

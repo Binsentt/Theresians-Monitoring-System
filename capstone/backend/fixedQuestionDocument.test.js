@@ -3,8 +3,11 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 const {
+  detectFixedQuestionDocumentFormat,
   extractFixedQuestionDocument,
   parseFixedQuestionText,
+  resolveFixedQuestionDocumentMetadata,
+  validateFixedQuestionDocumentPublicationScope,
   validateFixedQuestionUploadFile,
   validateFixedQuestions,
   validateQuestionSetForPublication,
@@ -41,6 +44,34 @@ test('parses a teacher-formatted four-choice document into canonical question re
       correct_answer: '5',
     },
   ]);
+});
+
+test('parses flattened DOCX/PDF bullet markers into one four-choice question', () => {
+  const parsed = parseFixedQuestionText('1. 5 + 2 = ? ● A. 8 ● B. 7 ● C. 6 ● D. 9 Answer: B. 7');
+
+  assert.deepEqual(parsed, [{
+    source_index: 1,
+    question: '5 + 2 = ?',
+    options: ['8', '7', '6', '9'],
+    correct_answer: '7',
+  }]);
+  assert.equal(validateFixedQuestions(parsed).isValid, true);
+});
+
+test('parses all five representative flattened teacher question types without weakening validation', () => {
+  const parsed = parseFixedQuestionText(`GRADE 1
+EASY – Lesson: Basic Addition, Subtraction, Shapes, and Place Value
+1. 5 + 2 = ? ● A. 8 ● B. 7 ● C. 6 ● D. 9 Answer: B. 7
+2. Which shape has three sides? ● A. Square ● B. Triangle ● C. Rectangle ● D. Circle Answer: B. Triangle
+3. Ana has 3 apples and gets 2 more. How many apples does she have? ● A. 4 ● B. 5 ● C. 6 ● D. 7 Answer: B. 5
+4. 9 - 4 = ? ● A. 3 ● B. 4 ● C. 5 ● D. 6 Answer: C. 5
+5. Which number comes after 8? ● A. 7 ● B. 8 ● C. 9 ● D. 10 Answer: C. 9`);
+
+  assert.equal(parsed.length, 5);
+  assert.deepEqual(parsed.map((question) => question.source_index), [1, 2, 3, 4, 5]);
+  assert.ok(parsed.every((question) => question.options.length === 4));
+  assert.deepEqual(parsed.map((question) => question.correct_answer), ['7', 'Triangle', '5', '5', '9']);
+  assert.equal(validateFixedQuestions(parsed).isValid, true);
 });
 
 test('rejects a three-choice extracted question with a reviewable reason', () => {
@@ -118,7 +149,7 @@ test('accepts only the teacher-facing DOCX and PDF file signatures for fixed-que
   assert.equal(validateFixedQuestionUploadFile({
     originalname: 'set-a.docx',
     mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  }, Buffer.from('PK\x03\x04')), '');
+  }, Buffer.from('PK\x03\x04word/document.xml')), '');
   assert.equal(validateFixedQuestionUploadFile({
     originalname: 'set-a.pdf',
     mimetype: 'application/pdf',
@@ -126,14 +157,88 @@ test('accepts only the teacher-facing DOCX and PDF file signatures for fixed-que
   assert.match(validateFixedQuestionUploadFile({
     originalname: 'set-a.docx',
     mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  }, Buffer.from('%PDF-1.7')), /valid DOCX/i);
+  }, Buffer.from('%PDF-1.7')), /MIME type.*content/i);
+});
+
+test('detects fixed-question documents from matching MIME and content rather than chained suffixes', () => {
+  const pdfFile = {
+    originalname: 'grade1-set.docx.pdf',
+    mimetype: 'application/pdf',
+  };
+  const docxFile = {
+    originalname: 'grade1-set.pdf.docx',
+    mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  };
+
+  assert.equal(detectFixedQuestionDocumentFormat(pdfFile, Buffer.from('%PDF-1.7')), 'pdf');
+  assert.equal(detectFixedQuestionDocumentFormat(docxFile, Buffer.from('PK\x03\x04word/document.xml')), 'docx');
+  assert.match(validateFixedQuestionUploadFile({
+    originalname: 'grade1-set.docx',
+    mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  }, Buffer.from('%PDF-1.7')), /MIME type.*content/i);
+  assert.match(validateFixedQuestionUploadFile({
+    originalname: 'grade1-set.pdf',
+    mimetype: 'application/pdf',
+  }, Buffer.from('PK\x03\x04word/document.xml')), /MIME type.*content/i);
+});
+
+test('preserves a multi-topic document heading without assigning a game publication scope', () => {
+  const metadata = resolveFixedQuestionDocumentMetadata({
+    documentText: `GRADE 1\n\nEASY – Lesson: Basic Addition, Subtraction, Shapes, and Place Value`,
+    selectedGradeLevel: 'Grade 1',
+    selectedDifficulty: 'Easy',
+  });
+
+  assert.deepEqual(metadata, {
+    document_topic: 'Basic Addition, Subtraction, Shapes, and Place Value',
+    math_topic: null,
+    metadata_error: '',
+  });
+});
+
+test('maps a matching single controlled document topic to the only game publication scope', () => {
+  const metadata = resolveFixedQuestionDocumentMetadata({
+    documentText: `GRADE 1\nEASY – Lesson: Basic Addition`,
+    selectedGradeLevel: 'Grade 1',
+    selectedDifficulty: 'Easy',
+  });
+
+  assert.equal(metadata.document_topic, 'Basic Addition');
+  assert.equal(metadata.math_topic, 'Basic Addition');
+  assert.equal(metadata.metadata_error, '');
+});
+
+test('blocks Grade and Difficulty conflicts between selected metadata and the document heading', () => {
+  const gradeConflict = resolveFixedQuestionDocumentMetadata({
+    documentText: `GRADE 2\nEASY – Lesson: Shapes`,
+    selectedGradeLevel: 'Grade 1',
+    selectedDifficulty: 'Easy',
+  });
+  const difficultyConflict = resolveFixedQuestionDocumentMetadata({
+    documentText: `GRADE 1\nDIFFICULT – Lesson: Problem Solving (Addition and Subtraction)`,
+    selectedGradeLevel: 'Grade 1',
+    selectedDifficulty: 'Easy',
+  });
+
+  assert.match(gradeConflict.metadata_error, /selected Grade/i);
+  assert.match(difficultyConflict.metadata_error, /selected Difficulty/i);
 });
 
 test('extracts DOCX and fixed-question PDF text through server-side extractors without using OpenAI', async () => {
-  const docx = await extractFixedQuestionDocument({ path: 'set-a.docx', originalname: 'set-a.docx' }, {
+  const docx = await extractFixedQuestionDocument({
+    path: 'set-a.docx',
+    originalname: 'set-a.docx',
+    mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    buffer: Buffer.from('PK\x03\x04word/document.xml'),
+  }, {
     extractDocxText: async () => VALID_DOCUMENT_TEXT,
   });
-  const pdf = await extractFixedQuestionDocument({ path: 'set-a.pdf', originalname: 'set-a.pdf' }, {
+  const pdf = await extractFixedQuestionDocument({
+    path: 'set-a.pdf',
+    originalname: 'set-a.pdf',
+    mimetype: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.7'),
+  }, {
     extractPdfText: async () => VALID_DOCUMENT_TEXT,
   });
 
@@ -151,6 +256,7 @@ test('extracts both prepared Teacher Set DOCX files into five valid four-choice 
     const result = await extractFixedQuestionDocument({
       path: path.resolve(__dirname, `../docs/teacher-fixed-question-documents/${fileName}`),
       originalname: fileName,
+      mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     });
 
     assert.equal(result.isValid, true);
@@ -163,6 +269,7 @@ test('extracts a real fixed-question PDF fixture into valid canonical questions'
   const result = await extractFixedQuestionDocument({
     path: path.resolve(__dirname, 'test-fixtures/fixed-question-four-choice.pdf'),
     originalname: 'fixed-question-four-choice.pdf',
+    mimetype: 'application/pdf',
   });
 
   assert.equal(result.isValid, true);
@@ -252,4 +359,43 @@ test('allows publication validation only for fully valid stored questions with m
 
   assert.equal(result.isValid, true);
   assert.equal(result.questions[0].is_valid, true);
+});
+
+test('blocks publication when a fixed-question document has no single controlled game topic', () => {
+  const result = validateQuestionSetForPublication({
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    math_topic: null,
+    questions: [{
+      question: 'What is 2 + 3?',
+      options: ['4', '5', '6', '7'],
+      correct_answer: '5',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: null,
+    }],
+  });
+
+  assert.equal(result.isValid, false);
+  assert.match(result.document_errors.join(' '), /Topic must match/i);
+});
+
+test('blocks a mixed fixed-question document if a caller tries to assign it an arbitrary game topic', () => {
+  const error = validateFixedQuestionDocumentPublicationScope({
+    file_type: 'fixed_questions',
+    document_topic: 'Basic Addition, Subtraction, Shapes, and Place Value',
+    math_topic: 'Basic Addition',
+  });
+
+  assert.match(error, /multiple topics/i);
+  assert.equal(validateFixedQuestionDocumentPublicationScope({
+    file_type: 'fixed_questions',
+    document_topic: 'Basic Addition',
+    math_topic: 'Basic Addition',
+  }), '');
+  assert.equal(validateFixedQuestionDocumentPublicationScope({
+    file_type: 'fixed_questions',
+    document_topic: null,
+    math_topic: 'Basic Addition',
+  }), '');
 });
