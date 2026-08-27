@@ -16,7 +16,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { buildStudentProgressDetailUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
 import { buildAuthHeaders } from './session.utils';
-import { normalizeDisplayList, safeDisplayText } from './studentProgress.utils';
+import { normalizeDifficultyDisplay, normalizeDisplayList, safeDisplayText } from './studentProgress.utils';
 import { TablePrintButton } from './TablePrintButton';
 import '../styles/studentprogress.css';
 
@@ -136,8 +136,8 @@ export default function StudentAnalytics() {
 
   const difficultyRows = useMemo(() => [
     { label: 'Easy', value: toNullableNumber(metrics?.difficultyBreakdown?.easy?.accuracy), tone: 'easy' },
-    { label: 'Medium', value: toNullableNumber(metrics?.difficultyBreakdown?.medium?.accuracy), tone: 'medium' },
-    { label: 'Hard', value: toNullableNumber(metrics?.difficultyBreakdown?.hard?.accuracy), tone: 'hard' },
+    { label: 'Normal', value: toNullableNumber(metrics?.difficultyBreakdown?.medium?.accuracy), tone: 'medium' },
+    { label: 'Difficult', value: toNullableNumber(metrics?.difficultyBreakdown?.hard?.accuracy), tone: 'hard' },
   ], [metrics]);
   const insight = aiInsight?.insight || null;
   const strengths = normalizeDisplayList(insight?.strengths);
@@ -149,7 +149,7 @@ export default function StudentAnalytics() {
   const grade = safeDisplayText(progress?.grade_level || progress?.grade, 'N/A');
   const section = safeDisplayText(progress?.section, 'Not assigned');
   const currentQuest = safeDisplayText(metrics?.currentQuest || progress?.current_quest, 'Not available');
-  const currentDifficulty = safeDisplayText(progress?.difficulty_level || progress?.difficulty, 'Unknown');
+  const currentDifficulty = normalizeDifficultyDisplay(progress?.difficulty_level || progress?.difficulty);
   const currentScene = safeDisplayText(
     progress?.current_scene || progress?.currentScene || progress?.scene || progress?.current_map || progress?.currentMap,
     'Unknown'

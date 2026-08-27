@@ -158,6 +158,41 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('Grade 3 - Not assigned');
   });
 
+  test('displays legacy quiz difficulties with the canonical current terminology', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url.includes('/quizzes?')) {
+        return jsonResponse({
+          data: [{
+            id: 901,
+            math_topic: 'Addition',
+            difficulty: 'Hard',
+            score: 4,
+            total_items: 5,
+            percentage: 80,
+            played_at: '2026-08-27T00:00:00.000Z',
+          }],
+        });
+      }
+      return successPayloadForUrl(url, {
+        children: [{
+          id: 44,
+          game_student_id: '001234',
+          student_name: 'Ava Santos',
+          grade_level: 'Grade 3',
+          section: 'Section A',
+        }],
+        unlinked_count: 0,
+      });
+    });
+
+    await act(async () => {
+      root.render(<ParentChildProgress />);
+    });
+
+    expect(container.textContent).toContain('Difficult');
+    expect(container.textContent).not.toContain('(Hard)');
+  });
+
   test('shows a truthful archived-progress notice without exposing a parent archive action', async () => {
     global.fetch = jest.fn((url) => successPayloadForUrl(url, {
       children: [{

@@ -33,8 +33,8 @@ const normalizeLearningMetadataValue = (value) => String(value || '').trim();
 
 export const normalizeDifficultyValue = (value) => {
   const difficulty = normalizeLearningMetadataValue(value);
-  if (/^(normal|average|medium|normal\s*\/\s*average)$/i.test(difficulty)) return 'Medium';
-  if (/^(difficult|hard)$/i.test(difficulty)) return 'Hard';
+  if (/^(normal|average|medium|normal\s*\/\s*average)$/i.test(difficulty)) return 'Normal';
+  if (/^(difficult|hard)$/i.test(difficulty)) return 'Difficult';
   if (/^easy$/i.test(difficulty)) return 'Easy';
   return difficulty;
 };

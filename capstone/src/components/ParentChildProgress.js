@@ -11,6 +11,7 @@ import { isParentRole, normalizeRole } from './manageUsers.utils';
 import {
   clampPercent,
   formatPercent,
+  normalizeDifficultyDisplay,
   normalizeDisplayList,
   normalizeStudentProgressPayload,
   safeDisplayText,
@@ -205,7 +206,7 @@ export default function ParentChildProgress() {
 
   const scoreTimeline = useMemo(() => {
     return quizSessions.slice().reverse().map((session, index) => ({
-      label: `${session.math_topic || 'Topic'} (${session.difficulty || 'Unknown'})`,
+      label: `${session.math_topic || 'Topic'} (${normalizeDifficultyDisplay(session.difficulty)})`,
       percentage: clampPercent(session.percentage, 0),
       quiz: index + 1,
     }));
@@ -450,7 +451,7 @@ export default function ParentChildProgress() {
                               <div key={session.id} className="child-quiz-item">
                                 <strong>{safeDisplayText(session.math_topic, 'Topic unavailable')}</strong>
                                 <span>{toFiniteNumber(session.score, 0)} / {toFiniteNumber(session.total_items, 0)} | {formatPercent(session.percentage, '0%')}</span>
-                                <small>{safeDisplayText(session.difficulty, 'Difficulty unavailable')} | {session.played_at ? new Date(session.played_at).toLocaleString() : 'Date unavailable'}</small>
+                                <small>{normalizeDifficultyDisplay(session.difficulty, 'Difficulty unavailable')} | {session.played_at ? new Date(session.played_at).toLocaleString() : 'Date unavailable'}</small>
                               </div>
                             ))}
                           </div>

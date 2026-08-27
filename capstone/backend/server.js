@@ -1223,7 +1223,7 @@ const normalizeGameGradeLevel = (value) => {
 };
 
 const QUESTION_GRADE_LEVELS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
-const QUESTION_DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
+const QUESTION_DIFFICULTIES = ['Easy', 'Normal', 'Difficult'];
 
 const buildQuestionFolderStructure = () => ({
   root: { name: 'Questions', path: 'Questions/' },
@@ -1249,8 +1249,8 @@ const buildQuestionFolderPath = (gradeLevel, difficulty) => {
 
 const canonicalDifficultySql = (columnName) => (
   `CASE
-     WHEN LOWER(COALESCE(${columnName}, '')) IN ('normal', 'average', 'medium', 'normal / average') THEN 'Medium'
-     WHEN LOWER(COALESCE(${columnName}, '')) IN ('difficult', 'hard') THEN 'Hard'
+     WHEN LOWER(COALESCE(${columnName}, '')) IN ('normal', 'average', 'medium', 'normal / average') THEN 'Normal'
+     WHEN LOWER(COALESCE(${columnName}, '')) IN ('difficult', 'hard') THEN 'Difficult'
      WHEN LOWER(COALESCE(${columnName}, '')) = 'easy' THEN 'Easy'
      ELSE COALESCE(${columnName}, '')
    END`
@@ -1933,7 +1933,18 @@ const buildQuestionSetValidationSummary = (validation) => ({
   document_errors: validation?.document_errors || [],
 });
 
-const publishLearningFile = async (fileId, publisherId) => {
+const buildQuestionSetReplacementSummary = (learningFile, questionCount = null) => ({
+  id: learningFile.id,
+  title: learningFile.generated_question_set_name || learningFile.title || learningFile.file_name || 'Untitled question set',
+  grade_level: learningFile.grade_level,
+  difficulty: normalizeDifficultyValue(learningFile.difficulty),
+  math_topic: learningFile.math_topic,
+  question_count: Number.isInteger(Number(questionCount ?? learningFile.question_count))
+    ? Number(questionCount ?? learningFile.question_count)
+    : null,
+});
+
+const publishLearningFile = async (fileId, publisherId, { confirmReplacement = false } = {}) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1973,6 +1984,43 @@ const publishLearningFile = async (fileId, publisherId) => {
     ];
     const learningDifficulty = canonicalDifficultySql('difficulty');
     const linkedLearningDifficulty = canonicalDifficultySql('lf.difficulty');
+
+    const activeScopeResult = await client.query(
+      `SELECT lf.id,
+              lf.title,
+              lf.file_name,
+              lf.grade_level,
+              lf.difficulty,
+              lf.math_topic,
+              COALESCE(question_counts.question_count, 0)::INTEGER AS question_count
+       FROM public.learning_files lf
+       LEFT JOIN (
+         SELECT learning_file_id, COUNT(*)::INTEGER AS question_count
+         FROM public.questions
+         GROUP BY learning_file_id
+       ) question_counts ON question_counts.learning_file_id = lf.id
+       WHERE lf.grade_level = $1
+         AND ${linkedLearningDifficulty} = $2
+         AND lf.math_topic = $3
+         AND lf.id <> $4
+         AND lf.subject = 'Mathematics'
+         AND lf.deleted_at IS NULL
+         AND (lf.published = true OR lf.publish_status = 'active')
+       ORDER BY lf.published_at DESC NULLS LAST, lf.uploaded_at DESC, lf.id DESC
+       LIMIT 1
+       FOR UPDATE`,
+      destinationParams
+    );
+    const currentActive = activeScopeResult.rows[0] || null;
+    if (currentActive && !confirmReplacement) {
+      const error = createLifecycleHttpError('An Active question set already exists for this Grade, Difficulty, and Topic. Confirm replacement before pushing this set to the game.', 409);
+      error.code = 'ACTIVE_SET_REPLACEMENT_CONFIRMATION_REQUIRED';
+      error.replacement = {
+        current_active: buildQuestionSetReplacementSummary(currentActive),
+        new_set: buildQuestionSetReplacementSummary(learningFile, publicationValidation.questions.length),
+      };
+      throw error;
+    }
 
     await client.query(
       `UPDATE public.learning_files
@@ -4186,7 +4234,7 @@ app.get('/api/learning-files/:id/questions', requireLessonQuestionManagerAccess,
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
 
     const fileResult = await pool.query(
-      `SELECT id, grade_level, difficulty, math_topic
+      `SELECT *
        FROM public.learning_files
        WHERE id = $1 AND deleted_at IS NULL`,
       [fileId]
@@ -4196,6 +4244,7 @@ app.get('/api/learning-files/:id/questions', requireLessonQuestionManagerAccess,
     const validation = await getQuestionSetPublicationValidation(pool, fileResult.rows[0]);
 
     res.json({
+      file: normalizeLearningFileRow(fileResult.rows[0]),
       validation: buildQuestionSetValidationSummary(validation),
       questions: validation.questions.map((question) => ({
         ...question,
@@ -4416,7 +4465,9 @@ app.post('/api/questions/publish/:id', requireLessonQuestionManagerAccess, async
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
-    const learningFile = await publishLearningFile(fileId, req.authenticatedUser.id);
+    const learningFile = await publishLearningFile(fileId, req.authenticatedUser.id, {
+      confirmReplacement: req.body?.confirm_replacement === true,
+    });
     res.json({ success: true, message: 'Content pushed to game.', learningFile });
   } catch (err) {
     console.error('Publish failed:', err.message);
@@ -4424,6 +4475,7 @@ app.post('/api/questions/publish/:id', requireLessonQuestionManagerAccess, async
       error: err.statusCode === 404 || err.statusCode === 422 ? err.message : 'Failed to publish content',
       ...(err.code ? { code: err.code } : {}),
       ...(err.questionValidation ? { validation: err.questionValidation } : {}),
+      ...(err.replacement ? { replacement: err.replacement } : {}),
     });
   }
 });

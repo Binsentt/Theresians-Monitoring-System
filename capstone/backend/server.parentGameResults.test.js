@@ -321,7 +321,7 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(response.status, 201);
     assert.equal(response.body.student_id, 44);
     assert.equal(insertedValues[2], 44);
-    assert.equal(insertedValues[4], 'Hard');
+    assert.equal(insertedValues[4], 'Difficult');
   });
 
   await t.test('stores a matching active question set with the individual Godot result', async () => {
@@ -786,7 +786,7 @@ test('parent game results routes and access middleware', async (t) => {
 
     assert.equal(response.status, 201);
     assert.equal(insertedValues[3], 'Grade 3');
-    assert.equal(insertedValues[4], 'Medium');
+    assert.equal(insertedValues[4], 'Normal');
     assert.equal(insertedValues[5], 'Fractions');
     assert.equal(insertedValues[7], 1);
     assert.equal(insertedValues[8], 100);

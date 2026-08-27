@@ -153,8 +153,8 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('Grounded AI Insight');
     expect(container.textContent).toContain('Recorded results show steady progress.');
     expect(container.textContent).toContain('Easy');
-    expect(container.textContent).toContain('Medium');
-    expect(container.textContent).toContain('Hard');
+    expect(container.textContent).toContain('Normal');
+    expect(container.textContent).toContain('Difficult');
   });
 
   test('offers a dedicated selected-student analytics print report without dashboard controls', async () => {

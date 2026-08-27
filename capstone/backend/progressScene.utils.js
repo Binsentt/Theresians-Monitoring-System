@@ -1,7 +1,7 @@
 const SCENE_DIFFICULTY_MAP = {
   oak_leaf_village: 'Easy',
-  city_of_knowledge: 'Medium',
-  pinehill_village: 'Hard',
+  city_of_knowledge: 'Normal',
+  pinehill_village: 'Difficult',
 };
 
 const VALID_PLAYTIME_STATUS_LABELS = {

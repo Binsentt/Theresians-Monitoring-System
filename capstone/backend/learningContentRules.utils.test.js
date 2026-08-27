@@ -11,6 +11,7 @@ const {
   isValidDifficulty,
   isValidMathTopicForGrade,
   isValidMathTopicForGradeDifficulty,
+  normalizeDifficultyValue,
   parseExpectedQuestionCount,
   parseLessonQuestionCount,
   validateLearningMetadata,
@@ -18,7 +19,15 @@ const {
 } = require('./learningContentRules.utils');
 
 test('stores the approved lesson difficulties exactly', () => {
-  assert.deepEqual(ALLOWED_DIFFICULTIES, ['Easy', 'Medium', 'Hard']);
+  assert.deepEqual(ALLOWED_DIFFICULTIES, ['Easy', 'Normal', 'Difficult']);
+});
+
+test('normalizes legacy and current difficulty terminology to one display value', () => {
+  assert.equal(normalizeDifficultyValue('Easy'), 'Easy');
+  assert.equal(normalizeDifficultyValue('Medium'), 'Normal');
+  assert.equal(normalizeDifficultyValue('Normal'), 'Normal');
+  assert.equal(normalizeDifficultyValue('Hard'), 'Difficult');
+  assert.equal(normalizeDifficultyValue('Difficult'), 'Difficult');
 });
 
 test('maps math topics by grade and difficulty', () => {
@@ -50,7 +59,7 @@ test('maps math topics by grade and difficulty', () => {
     'Rational Numbers',
     'Geometric Measurements',
   ]);
-  assert.deepEqual(GRADE_TOPIC_MAP['Grade 5'].Medium, [
+  assert.deepEqual(GRADE_TOPIC_MAP['Grade 5'].Normal, [
     'Number Theory',
     'Basic Arithmetic',
   ]);
@@ -98,7 +107,7 @@ test('validates topic combinations against grade and difficulty', () => {
       difficulty: 'Impossible',
       math_topic: 'Multiplication',
     }),
-    'Difficulty must be Easy, Medium, or Hard.'
+    'Difficulty must be Easy, Normal, or Difficult.'
   );
   assert.equal(
     validateLearningMetadata({

@@ -201,6 +201,38 @@ test('blocks publication when any stored question fails the four-choice or contr
   assert.deepEqual(result.questions[1].validation_errors, ['Question grade must match the selected Grade.']);
 });
 
+test('treats legacy Medium and Hard question metadata as Normal and Difficult publication scopes', () => {
+  const normal = validateQuestionSetForPublication({
+    grade_level: 'Grade 1',
+    difficulty: 'Normal',
+    math_topic: 'Addition',
+    questions: [{
+      question: 'What is 2 + 3?',
+      options: ['4', '5', '6', '7'],
+      correct_answer: '5',
+      grade_level: 'Grade 1',
+      difficulty: 'Medium',
+      math_topic: 'Addition',
+    }],
+  });
+  const difficult = validateQuestionSetForPublication({
+    grade_level: 'Grade 1',
+    difficulty: 'Difficult',
+    math_topic: 'Problem Solving (Addition and Subtraction)',
+    questions: [{
+      question: 'Ana has 8 candies and gives away 3. How many remain?',
+      options: ['4', '5', '6', '7'],
+      correct_answer: '5',
+      grade_level: 'Grade 1',
+      difficulty: 'Hard',
+      math_topic: 'Problem Solving (Addition and Subtraction)',
+    }],
+  });
+
+  assert.equal(normal.isValid, true);
+  assert.equal(difficult.isValid, true);
+});
+
 test('allows publication validation only for fully valid stored questions with matching controlled metadata', () => {
   const result = validateQuestionSetForPublication({
     grade_level: 'Grade 1',

@@ -16,6 +16,12 @@ const okJson = (payload) => Promise.resolve({
   json: async () => payload,
 });
 
+const errorJson = (payload, status = 409) => Promise.resolve({
+  ok: false,
+  status,
+  json: async () => payload,
+});
+
 const clickByText = (container, label) => {
   const button = Array.from(container.querySelectorAll('button')).find((item) => item.textContent.includes(label));
   button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -57,6 +63,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       folders: [],
       trashFiles: [{ id: 31, title: 'Deleted Quiz', file_name: 'deleted.csv', deleted_at: '2026-05-20T00:00:00.000Z' }],
       trashFolders: [],
+      publishResponse: null,
     };
     global.fetch = jest.fn((url, options = {}) => {
       const value = String(url);
@@ -86,6 +93,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
         return okJson({ success: true, learningFile: fixtures.files[0] });
       }
       if (value.includes('/api/questions/publish/77') && options.method === 'POST') {
+        if (fixtures.publishResponse) return fixtures.publishResponse(options);
         fixtures.files = fixtures.files.map((file) => (
           file.id === 77 ? { ...file, published: true } : file
         ));
@@ -149,15 +157,15 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     await act(async () => {
       setSelectValue(selects[0], 'Grade 3');
-      setSelectValue(selects[1], 'Medium');
+      setSelectValue(selects[1], 'Normal');
     });
 
     expect(topicSelect.disabled).toBe(false);
     expect(topicSelect.textContent).toContain('Multiplication');
     expect(topicSelect.textContent).toContain('Division');
     expect(topicSelect.textContent).toContain('Fractions');
-    expect(document.body.textContent).toContain('Medium');
-    expect(getUploadModal().querySelector('.fixed-destination-display').textContent.trim()).toBe('Questions/Grade 3/Medium');
+    expect(document.body.textContent).toContain('Normal');
+    expect(getUploadModal().querySelector('.fixed-destination-display').textContent.trim()).toBe('Questions/Grade 3/Normal');
     expect(document.body.textContent).not.toContain('Select Folder');
     expect(document.body.textContent).not.toContain('New Folder');
     expect(document.body.textContent).toContain('Lesson PDF File');
@@ -204,6 +212,91 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
     expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/storage-summary', {
       headers: { Authorization: 'Bearer lesson-manager-token' },
+    });
+    expect(container.querySelector('.drive-manager-toolbar')).toBeTruthy();
+    expect(container.querySelector('.drive-manager-sidebar')).toBeNull();
+  });
+
+  test('opens the same structured read-only question preview from a DOCX filename as from the Preview action', async () => {
+    fixtures.files = [{
+      id: 77,
+      title: 'basic-addition.docx',
+      file_name: 'basic-addition.docx',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      file_type: 'fixed_questions',
+      published: false,
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await act(async () => {
+      clickByText(container, 'basic-addition.docx');
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/77/questions', {
+      headers: { Authorization: 'Bearer lesson-manager-token' },
+    });
+    expect(global.fetch).not.toHaveBeenCalledWith('/api/learning-files/77/preview', expect.anything());
+    expect(document.body.textContent).toContain('Question Review');
+    expect(document.body.textContent).toContain('What is 2 + 3?');
+  });
+
+  test('requires a teacher to explicitly confirm server-reported same-scope Active replacement', async () => {
+    fixtures.files = [{
+      id: 77,
+      title: 'replacement-addition.docx',
+      file_name: 'replacement-addition.docx',
+      grade_level: 'Grade 1',
+      difficulty: 'Normal',
+      math_topic: 'Addition',
+      file_type: 'fixed_questions',
+      published: false,
+    }];
+    fixtures.publishResponse = (options) => {
+      if (options.body) return okJson({ success: true, message: 'Content pushed to game.' });
+      return errorJson({
+        code: 'ACTIVE_SET_REPLACEMENT_CONFIRMATION_REQUIRED',
+        replacement: {
+          current_active: { id: 8, title: 'Current Addition', grade_level: 'Grade 1', difficulty: 'Normal', math_topic: 'Addition', question_count: 5 },
+          new_set: { id: 77, title: 'replacement-addition.docx', grade_level: 'Grade 1', difficulty: 'Normal', math_topic: 'Addition', question_count: 5 },
+        },
+      });
+    };
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await act(async () => {
+      clickByText(container, 'Push to Game');
+    });
+
+    expect(document.body.textContent).toContain('Replace Active Question Set?');
+    expect(document.body.textContent).toContain('Current Addition');
+    expect(document.body.textContent).toContain('replacement-addition.docx');
+    expect(global.fetch).toHaveBeenCalledTimes(4);
+
+    await act(async () => {
+      clickByText(document.body, 'Cancel');
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(4);
+
+    await act(async () => {
+      clickByText(container, 'Push to Game');
+    });
+    await act(async () => {
+      clickByText(document.body, 'Replace & Push to Game');
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/questions/publish/77', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer lesson-manager-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ confirm_replacement: true }),
     });
   });
 
@@ -301,7 +394,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     await act(async () => {
       setSelectValue(selects[0], 'Grade 1');
-      setSelectValue(selects[1], 'Medium');
+      setSelectValue(selects[1], 'Normal');
       Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
       fileInput.dispatchEvent(new Event('change', { bubbles: true }));
     });
@@ -312,7 +405,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     expect(container.textContent).toContain('File uploaded successfully');
     expect(container.textContent).toContain('addition-quiz');
-    expect(container.textContent).toContain('Medium');
+    expect(container.textContent).toContain('Normal');
     expect(container.textContent).toContain('Pending');
     expect(getUploadModal()).toBeNull();
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/questions/publish/77'), expect.anything());
@@ -336,7 +429,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       root.render(<LessonQuestionManager />);
     });
 
-    await openQuestionFolder(container, 'Grade 1', 'Medium');
+    await openQuestionFolder(container, 'Grade 1', 'Normal');
 
     expect(container.textContent).not.toContain('Uploaded by');
     expect(container.textContent).not.toContain('Teacher User');
@@ -363,11 +456,14 @@ describe('LessonQuestionManager upload and trash controls', () => {
     await act(async () => {
       root.render(<LessonQuestionManager />);
     });
-    await openQuestionFolder(container, 'Grade 1', 'Medium');
+    await openQuestionFolder(container, 'Grade 1', 'Normal');
 
     expect(container.textContent).toContain('Active in Game');
     expect(container.textContent).toContain('Client Provided');
     expect(container.textContent).toContain('Last Game Fetch:');
+    const deleteButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Delete'));
+    expect(deleteButton.disabled).toBe(true);
+    expect(deleteButton.title).toContain('Active question sets cannot be deleted');
   });
 
   test('Lesson PDF Preview shows staged generated questions before Push to Game', async () => {
@@ -449,7 +545,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       root.render(<LessonQuestionManager />);
     });
 
-    await openQuestionFolder(container, 'Grade 1', 'Medium');
+    await openQuestionFolder(container, 'Grade 1', 'Normal');
 
     expect(container.textContent).toContain('Pending');
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/questions/publish/77'), expect.anything());
@@ -493,7 +589,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
     await act(async () => {
       Array.from(gradeThreeCard.querySelectorAll('.system-difficulty-button'))
-        .find((button) => button.textContent.trim() === 'Medium')
+        .find((button) => button.textContent.trim() === 'Normal')
         .dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
@@ -522,12 +618,71 @@ describe('LessonQuestionManager upload and trash controls', () => {
       root.render(<LessonQuestionManager />);
     });
 
-    await openQuestionFolder(container, 'Grade 1', 'Medium');
+    await openQuestionFolder(container, 'Grade 1', 'Normal');
 
     await act(async () => {
       clickByText(container, 'Delete');
     });
 
+    expect(container.textContent).not.toContain('addition-quiz');
+  });
+
+  test('keeps the Lesson Manager mounted while a delete refreshes in place', async () => {
+    window.confirm = jest.fn(() => true);
+    fixtures.files = [{
+      id: 77,
+      title: 'addition-quiz',
+      file_name: 'addition-quiz.json',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      file_type: 'fixed_questions',
+      published: false,
+    }];
+    const originalFetch = global.fetch;
+    let learningFilesRequests = 0;
+    let resolveRefresh;
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).endsWith('/api/learning-files') && !options.method) {
+        learningFilesRequests += 1;
+        if (learningFilesRequests === 2) {
+          return new Promise((resolve) => {
+            resolveRefresh = () => resolve(okJson([]));
+          });
+        }
+      }
+      return originalFetch(url, options);
+    });
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+
+    await act(async () => {
+      clickByText(container, 'Delete');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(resolveRefresh).toBeDefined();
+    expect(container.querySelector('.question-folder-panel')).toBeTruthy();
+    expect(container.querySelector('.dashboard-inline-loading')).toBeNull();
+
+    await act(async () => {
+      resolveRefresh();
+    });
+  });
+
+  test('shows a truthful empty state without static question rows', async () => {
+    fixtures.files = [];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+
+    expect(container.textContent).toContain('No question files available yet.');
+    expect(container.querySelectorAll('.drive-table tbody tr')).toHaveLength(1);
     expect(container.textContent).not.toContain('addition-quiz');
   });
 
@@ -586,8 +741,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     expect(container.textContent).toContain('Selected Folder: Questions / Grade 1');
     expect(container.textContent).toContain('Easy');
-    expect(container.textContent).toContain('Medium');
-    expect(container.textContent).toContain('Hard');
+    expect(container.textContent).toContain('Normal');
+    expect(container.textContent).toContain('Difficult');
     expect(container.textContent).toContain('Grade 6');
     expect(container.textContent).toContain('addition-quiz');
     expect(container.textContent).toContain('medium-quiz');
@@ -612,11 +767,11 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('Push to Game');
 
     await act(async () => {
-      clickByText(container, 'Hard');
+      clickByText(container, 'Difficult');
     });
 
-    expect(container.textContent).toContain('Selected Folder: Questions / Grade 1 / Hard');
-    expect(container.textContent).toContain('No files available in Grade 1 - Hard.');
+    expect(container.textContent).toContain('Selected Folder: Questions / Grade 1 / Difficult');
+    expect(container.textContent).toContain('No files available in Grade 1 - Difficult.');
   });
 
   test('paginates the filtered Question Library and offers a print-safe report', async () => {

@@ -9,8 +9,8 @@ const {
 
 test('resolves difficulty from Godot scene and map fields only', () => {
   assert.equal(resolveDifficultyFromScene({ current_scene: 'res://world/oak_leaf_village.tscn', difficulty_level: 'Hard' }), 'Easy');
-  assert.equal(resolveDifficultyFromScene({ current_map: 'city_of_knowledge' }), 'Medium');
-  assert.equal(resolveDifficultyFromScene({ currentScene: 'pinehill_village.tscn' }), 'Hard');
+  assert.equal(resolveDifficultyFromScene({ current_map: 'city_of_knowledge' }), 'Normal');
+  assert.equal(resolveDifficultyFromScene({ currentScene: 'pinehill_village.tscn' }), 'Difficult');
   assert.equal(resolveDifficultyFromScene({ scene: 'unknown_scene.tscn', difficulty_level: 'Easy' }), 'Unknown');
   assert.equal(resolveDifficultyFromScene({ difficulty_level: 'Easy' }), 'Unknown');
 });

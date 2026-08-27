@@ -1,6 +1,7 @@
 import {
   filterStudentProgress,
   getStudentProgressSectionOptions,
+  normalizeDifficultyDisplay,
   normalizeStudentProgressPayload,
   resolveDifficultyFromScene,
 } from './studentProgress.utils';
@@ -75,10 +76,19 @@ describe('student progress helpers', () => {
 
   test('maps current Godot scene or map to the displayed difficulty instead of manual values', () => {
     expect(resolveDifficultyFromScene({ current_scene: 'res://world/oak_leaf_village.tscn', difficulty_level: 'Hard' })).toBe('Easy');
-    expect(resolveDifficultyFromScene({ current_map: 'city_of_knowledge' })).toBe('Medium');
-    expect(resolveDifficultyFromScene({ currentScene: 'pinehill_village.tscn' })).toBe('Hard');
+    expect(resolveDifficultyFromScene({ current_map: 'city_of_knowledge' })).toBe('Normal');
+    expect(resolveDifficultyFromScene({ currentScene: 'pinehill_village.tscn' })).toBe('Difficult');
     expect(resolveDifficultyFromScene({ current_scene: 'unknown_scene.tscn' })).toBe('Unknown');
     expect(resolveDifficultyFromScene({ difficulty_level: 'Easy' })).toBe('Unknown');
+  });
+
+  test('normalizes legacy difficulty labels for historical read-only display', () => {
+    expect(normalizeDifficultyDisplay('Easy')).toBe('Easy');
+    expect(normalizeDifficultyDisplay('Medium')).toBe('Normal');
+    expect(normalizeDifficultyDisplay('Normal')).toBe('Normal');
+    expect(normalizeDifficultyDisplay('Hard')).toBe('Difficult');
+    expect(normalizeDifficultyDisplay('Difficult')).toBe('Difficult');
+    expect(normalizeDifficultyDisplay(null)).toBe('Unknown');
   });
 
   test('normalizes student progress rows alphabetically and derives difficulty from scene data', () => {
@@ -89,6 +99,6 @@ describe('student progress helpers', () => {
     ]);
 
     expect(result.map((student) => student.student_name)).toEqual(['Ava Santos', 'Bella Reyes', 'Noah Santos']);
-    expect(result.map((student) => student.difficulty_level)).toEqual(['Easy', 'Medium', 'Hard']);
+    expect(result.map((student) => student.difficulty_level)).toEqual(['Easy', 'Normal', 'Difficult']);
   });
 });

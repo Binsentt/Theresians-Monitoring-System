@@ -1,7 +1,7 @@
 const sceneDifficultyMap = {
   oak_leaf_village: 'Easy',
-  city_of_knowledge: 'Medium',
-  pinehill_village: 'Hard',
+  city_of_knowledge: 'Normal',
+  pinehill_village: 'Difficult',
 };
 
 const toNumber = (value) => {
@@ -34,6 +34,14 @@ export const safeDisplayText = (value, fallback = 'N/A') => {
     return safeDisplayText(candidate, fallback);
   }
   return fallback;
+};
+
+export const normalizeDifficultyDisplay = (value, fallback = 'Unknown') => {
+  const difficulty = safeDisplayText(value, '');
+  if (/^(normal|average|medium|normal\s*\/\s*average)$/i.test(difficulty)) return 'Normal';
+  if (/^(difficult|hard)$/i.test(difficulty)) return 'Difficult';
+  if (/^easy$/i.test(difficulty)) return 'Easy';
+  return difficulty || fallback;
 };
 
 export const normalizeDisplayList = (items) => {

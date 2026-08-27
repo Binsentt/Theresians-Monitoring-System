@@ -20,7 +20,7 @@ import {
 
 describe('lesson question manager helpers', () => {
   test('returns configured difficulty values and grade difficulty topics', () => {
-    expect(DIFFICULTY_LEVELS).toEqual(['Easy', 'Medium', 'Hard']);
+    expect(DIFFICULTY_LEVELS).toEqual(['Easy', 'Normal', 'Difficult']);
     expect(getMathTopicsForGradeDifficulty('Grade 1', 'Easy')).toEqual([
       'Basic Addition',
       'Subtraction',
@@ -54,7 +54,7 @@ describe('lesson question manager helpers', () => {
     expect(getMathTopicsForGradeDifficulty('Grade 6', 'Normal')).toEqual([
       'Number Sense and Operations',
     ]);
-    expect(GRADE_TOPIC_MAP['Grade 5'].Medium).toEqual([
+    expect(GRADE_TOPIC_MAP['Grade 5'].Normal).toEqual([
       'Number Theory',
       'Basic Arithmetic',
     ]);
@@ -62,11 +62,12 @@ describe('lesson question manager helpers', () => {
 
   test('normalizes legacy difficulty values to game folder labels', () => {
     expect(normalizeDifficultyValue('Easy')).toBe('Easy');
-    expect(normalizeDifficultyValue('Normal')).toBe('Medium');
-    expect(normalizeDifficultyValue('Normal / Average')).toBe('Medium');
-    expect(normalizeDifficultyValue('Average')).toBe('Medium');
-    expect(normalizeDifficultyValue('Difficult')).toBe('Hard');
-    expect(normalizeDifficultyValue('Hard')).toBe('Hard');
+    expect(normalizeDifficultyValue('Medium')).toBe('Normal');
+    expect(normalizeDifficultyValue('Normal')).toBe('Normal');
+    expect(normalizeDifficultyValue('Normal / Average')).toBe('Normal');
+    expect(normalizeDifficultyValue('Average')).toBe('Normal');
+    expect(normalizeDifficultyValue('Difficult')).toBe('Difficult');
+    expect(normalizeDifficultyValue('Hard')).toBe('Difficult');
   });
 
   test('keeps grade topic helpers constrained to approved map topics', () => {
@@ -96,12 +97,12 @@ describe('lesson question manager helpers', () => {
       grade: 'Grade 1',
       folderName: 'Grade 1',
       godotFolderName: 'Grade1',
-      difficulties: ['Easy', 'Medium', 'Hard'],
+      difficulties: ['Easy', 'Normal', 'Difficult'],
     });
     expect(getQuestionFolderPath()).toBe('Questions/');
     expect(getQuestionFolderPath('Grade 1')).toBe('Questions/Grade 1/');
     expect(getQuestionFolderPath('Grade 1', 'Easy')).toBe('Questions/Grade 1/Easy');
-    expect(getQuestionFolderPath('Grade 6', 'Difficult')).toBe('Questions/Grade 6/Hard');
+    expect(getQuestionFolderPath('Grade 6', 'Hard')).toBe('Questions/Grade 6/Difficult');
   });
 
   test('returns fixed system folder filters and files for the selected path', () => {
@@ -119,24 +120,24 @@ describe('lesson question manager helpers', () => {
       ]),
       files: [
         expect.objectContaining({ id: 1, difficulty: 'Easy' }),
-        expect.objectContaining({ id: 2, difficulty: 'Medium' }),
-        expect.objectContaining({ id: 3, difficulty: 'Hard' }),
+        expect.objectContaining({ id: 2, difficulty: 'Normal' }),
+        expect.objectContaining({ id: 3, difficulty: 'Difficult' }),
       ],
     });
     expect(getQuestionFolderView(files, { grade_level: 'Grade 1' })).toMatchObject({
       path: ['Questions', 'Grade 1'],
       childFolders: expect.arrayContaining([
         expect.objectContaining({ label: 'Easy', difficulty: 'Easy' }),
-        expect.objectContaining({ label: 'Medium', difficulty: 'Medium' }),
-        expect.objectContaining({ label: 'Hard', difficulty: 'Hard' }),
+        expect.objectContaining({ label: 'Normal', difficulty: 'Normal' }),
+        expect.objectContaining({ label: 'Difficult', difficulty: 'Difficult' }),
       ]),
       files: [
         expect.objectContaining({ id: 1, difficulty: 'Easy' }),
-        expect.objectContaining({ id: 2, difficulty: 'Medium' }),
+        expect.objectContaining({ id: 2, difficulty: 'Normal' }),
       ],
     });
-    expect(getQuestionFolderView(files, { grade_level: 'Grade 1', difficulty: 'Medium' }).files).toEqual([
-      expect.objectContaining({ id: 2, difficulty: 'Medium' }),
+    expect(getQuestionFolderView(files, { grade_level: 'Grade 1', difficulty: 'Normal' }).files).toEqual([
+      expect.objectContaining({ id: 2, difficulty: 'Normal' }),
     ]);
   });
 
@@ -182,21 +183,21 @@ describe('lesson question manager helpers', () => {
 
     expect(filterLearningFiles(files, {
       search: '',
-      folder: 'Questions/Grade 6/Hard',
+      folder: 'Questions/Grade 6/Difficult',
       grade_level: 'Grade 6',
-      difficulty: 'Hard',
+      difficulty: 'Difficult',
       math_topic: 'Rational Numbers',
       file_type: 'lesson',
-    })).toEqual([expect.objectContaining({ ...files[2], difficulty: 'Hard', folder_name: 'Questions/Grade 6/Hard' })]);
+    })).toEqual([expect.objectContaining({ ...files[2], difficulty: 'Difficult', folder_name: 'Questions/Grade 6/Difficult' })]);
 
     expect(filterLearningFiles(files, {
       search: '',
-      folder: 'Questions/Grade 6/Hard',
+      folder: 'Questions/Grade 6/Difficult',
       grade_level: 'Grade 6',
       difficulty: 'Difficult',
       math_topic: '',
       file_type: 'lesson',
-    })).toEqual([expect.objectContaining({ ...files[2], difficulty: 'Hard', folder_name: 'Questions/Grade 6/Hard' })]);
+    })).toEqual([expect.objectContaining({ ...files[2], difficulty: 'Difficult', folder_name: 'Questions/Grade 6/Difficult' })]);
   });
 
   test('returns the uploaded files inside an opened folder', () => {

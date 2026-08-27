@@ -151,8 +151,8 @@ test('game progress stores scene metadata and uses scene-derived difficulty', as
   assert.match(progressSql, /difficulty_level/);
   assert.ok(progressValues.includes('city_of_knowledge.tscn'));
   assert.ok(progressValues.includes('city_of_knowledge'));
-  assert.ok(progressValues.includes('Medium'));
-  assert.equal(activityValues[9], 'Medium');
+  assert.ok(progressValues.includes('Normal'));
+  assert.equal(activityValues[9], 'Normal');
 });
 
 test('game progress persists linked child identity, grade, and section from the canonical profile', async (t) => {

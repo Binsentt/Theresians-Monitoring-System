@@ -1,6 +1,7 @@
 const QUESTION_LINE = /^\s*(?:question\s*)?(\d+)\s*[.)]\s*(.+?)\s*$/i;
 const OPTION_LINE = /^\s*([A-Z])\s*[.)]\s*(.*?)\s*$/i;
 const ANSWER_LINE = /^\s*(?:correct\s+)?answer\s*:\s*(.*?)\s*$/i;
+const { normalizeDifficultyValue } = require('./learningContentRules.utils');
 
 const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const PDF_MIME_TYPE = 'application/pdf';
@@ -128,12 +129,12 @@ const validateQuestionSetForPublication = ({
 } = {}) => {
   const questionValidation = validateFixedQuestions(questions);
   const normalizedGrade = normalizeText(grade_level);
-  const normalizedDifficulty = normalizeText(difficulty);
+  const normalizedDifficulty = normalizeDifficultyValue(difficulty);
   const normalizedTopic = normalizeText(math_topic);
   const validatedQuestions = questionValidation.questions.map((question) => {
     const validationErrors = [...question.validation_errors];
     if (normalizeText(question.grade_level) !== normalizedGrade) validationErrors.push('Question grade must match the selected Grade.');
-    if (normalizeText(question.difficulty) !== normalizedDifficulty) validationErrors.push('Question difficulty must match the selected Difficulty.');
+    if (normalizeDifficultyValue(question.difficulty) !== normalizedDifficulty) validationErrors.push('Question difficulty must match the selected Difficulty.');
     if (normalizeText(question.math_topic) !== normalizedTopic) validationErrors.push('Question topic must match the selected Topic.');
     return {
       ...question,

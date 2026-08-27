@@ -172,12 +172,201 @@ test('question publishing replaces the active Godot bundle for one grade difficu
   const response = await requestJson(baseUrl, '/api/questions/publish/77', { method: 'POST' });
 
   assert.equal(response.status, 200);
-  assert.deepEqual(unpublishedLearningFiles.params, ['Grade 1', 'Medium', 'Addition', 77]);
+  assert.deepEqual(unpublishedLearningFiles.params, ['Grade 1', 'Normal', 'Addition', 77]);
   assert.match(unpublishedLearningFiles.sql, /id <> \$4/);
-  assert.deepEqual(unpublishedQuestions.params, ['Grade 1', 'Medium', 'Addition', 77]);
+  assert.deepEqual(unpublishedQuestions.params, ['Grade 1', 'Normal', 'Addition', 77]);
   assert.match(unpublishedQuestions.sql, /lf\.id <> \$4/);
   assert.deepEqual(publishedLearningFile.params, [77, 1]);
   assert.deepEqual(publishedQuestions.params, [77]);
+});
+
+test('same-scope active content requires an explicit replacement confirmation before it can be superseded', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let publicationMutationAttempted = false;
+  setQueryHandler(async (sql) => {
+    if (sql === 'begin' || sql === 'rollback') return emptyResult;
+    if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) {
+      return resultRows([{
+        id: 78,
+        title: 'Replacement Basic Addition',
+        grade_level: 'Grade 1',
+        difficulty: 'Normal',
+        math_topic: 'Addition',
+        subject: 'Mathematics',
+        deleted_at: null,
+      }]);
+    }
+    if (sql.startsWith('select id, learning_file_id') && sql.includes('from public.questions')) {
+      return resultRows([{
+        id: 7801,
+        learning_file_id: 78,
+        question: 'What is 2 + 3?',
+        options: ['4', '5', '6', '7'],
+        correct_answer: '5',
+        grade_level: 'Grade 1',
+        difficulty: 'Normal',
+        math_topic: 'Addition',
+      }]);
+    }
+    if (sql.includes('from public.learning_files') && sql.includes('publish_status = \'active\'')) {
+      return resultRows([{
+        id: 8,
+        title: 'Current Addition',
+        grade_level: 'Grade 1',
+        difficulty: 'Medium',
+        math_topic: 'Addition',
+        question_count: 5,
+      }]);
+    }
+    if (sql.startsWith('update public.learning_files') || sql.startsWith('update public.questions')) {
+      publicationMutationAttempted = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/questions/publish/78', { method: 'POST' });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'ACTIVE_SET_REPLACEMENT_CONFIRMATION_REQUIRED');
+  assert.equal(response.body.replacement.current_active.id, 8);
+  assert.equal(response.body.replacement.current_active.difficulty, 'Normal');
+  assert.equal(response.body.replacement.new_set.id, 78);
+  assert.equal(response.body.replacement.new_set.difficulty, 'Normal');
+  assert.equal(publicationMutationAttempted, false);
+});
+
+test('a confirmed same-scope replacement supersedes only the active set inside one transaction', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let supersededParams = null;
+  let activatedParams = null;
+  setQueryHandler(async (sql, params) => {
+    if (sql === 'begin' || sql === 'commit') return emptyResult;
+    if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) {
+      return resultRows([{
+        id: 80,
+        title: 'Confirmed Replacement',
+        grade_level: 'Grade 1',
+        difficulty: 'Normal',
+        math_topic: 'Addition',
+        subject: 'Mathematics',
+        deleted_at: null,
+      }]);
+    }
+    if (sql.startsWith('select id, learning_file_id') && sql.includes('from public.questions')) {
+      return resultRows([{
+        id: 180,
+        learning_file_id: 80,
+        question: 'What is 3 + 4?',
+        options: ['5', '6', '7', '8'],
+        correct_answer: '7',
+        grade_level: 'Grade 1',
+        difficulty: 'Medium',
+        math_topic: 'Addition',
+      }]);
+    }
+    if (sql.startsWith('select lf.id') && sql.includes('from public.learning_files lf')) {
+      return resultRows([{
+        id: 8,
+        title: 'Current Addition',
+        grade_level: 'Grade 1',
+        difficulty: 'Medium',
+        math_topic: 'Addition',
+        question_count: 5,
+      }]);
+    }
+    if (sql.startsWith('update public.learning_files') && sql.includes("publish_status = 'superseded'")) {
+      supersededParams = params;
+      return emptyResult;
+    }
+    if (sql.startsWith('update public.learning_files') && sql.includes('published = true')) {
+      activatedParams = params;
+      return resultRows([{ id: 80, published: true, publish_status: 'active', difficulty: 'Normal' }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/questions/publish/80', {
+    method: 'POST',
+    body: JSON.stringify({ confirm_replacement: true }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(supersededParams, ['Grade 1', 'Normal', 'Addition', 80]);
+  assert.deepEqual(activatedParams, [80, 1]);
+});
+
+test('a confirmed same-scope replacement stays transactional when activation fails', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let rollbackCalled = false;
+  let oldActiveSupersedeAttempted = false;
+  setQueryHandler(async (sql) => {
+    if (sql === 'begin') return emptyResult;
+    if (sql === 'rollback') {
+      rollbackCalled = true;
+      return emptyResult;
+    }
+    if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) {
+      return resultRows([{
+        id: 79,
+        title: 'Confirmed Addition Replacement',
+        grade_level: 'Grade 1',
+        difficulty: 'Normal',
+        math_topic: 'Addition',
+        subject: 'Mathematics',
+        deleted_at: null,
+      }]);
+    }
+    if (sql.startsWith('select id, learning_file_id') && sql.includes('from public.questions')) {
+      return resultRows([{
+        id: 7901,
+        learning_file_id: 79,
+        question: 'What is 3 + 4?',
+        options: ['6', '7', '8', '9'],
+        correct_answer: '7',
+        grade_level: 'Grade 1',
+        difficulty: 'Normal',
+        math_topic: 'Addition',
+      }]);
+    }
+    if (sql.includes('from public.learning_files') && sql.includes('publish_status = \'active\'')) {
+      return resultRows([{ id: 8, title: 'Current Addition', question_count: 5 }]);
+    }
+    if (sql.startsWith('update public.learning_files') && sql.includes('published = false')) {
+      oldActiveSupersedeAttempted = true;
+      return emptyResult;
+    }
+    if (sql.startsWith('update public.learning_files') && sql.includes('published = true')) {
+      throw new Error('simulated activation failure');
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/questions/publish/79', {
+    method: 'POST',
+    body: JSON.stringify({ confirm_replacement: true }),
+  });
+
+  assert.equal(response.status, 500);
+  assert.equal(oldActiveSupersedeAttempted, true);
+  assert.equal(rollbackCalled, true);
 });
 
 test('an invalid legacy-shaped Set 13 cannot be published or mutate publication state', async (t) => {
@@ -261,12 +450,12 @@ test('question folder APIs expose system folders and legacy difficulty files by 
   assert.equal(foldersResponse.status, 200);
   assert.equal(foldersResponse.body.root.name, 'Questions');
   assert.equal(foldersResponse.body.grades.length, 6);
-  assert.deepEqual(foldersResponse.body.grades[0].difficulties.map((item) => item.name), ['Easy', 'Medium', 'Hard']);
+  assert.deepEqual(foldersResponse.body.grades[0].difficulties.map((item) => item.name), ['Easy', 'Normal', 'Difficult']);
   assert.equal(filesResponse.status, 200);
-  assert.equal(filesResponse.body.path, 'Questions/Grade 1/Medium');
-  assert.equal(filesResponse.body.files[0].difficulty, 'Medium');
+  assert.equal(filesResponse.body.path, 'Questions/Grade 1/Normal');
+  assert.equal(filesResponse.body.files[0].difficulty, 'Normal');
   assert.equal(filesResponse.body.files[0].status, 'Active in Game');
-  assert.deepEqual(queryCalls[0].params, ['Grade 1', 'Medium']);
+  assert.deepEqual(queryCalls[0].params, ['Grade 1', 'Normal']);
   assert.match(queryCalls[0].sql, /normal/i);
 });
 
@@ -314,12 +503,12 @@ test('learning file preview and rename endpoints preserve canonical folder metad
   });
 
   assert.equal(previewResponse.status, 200);
-  assert.equal(previewResponse.body.file.difficulty, 'Hard');
-  assert.equal(previewResponse.body.file.folder_name, 'Questions/Grade 2/Hard');
+  assert.equal(previewResponse.body.file.difficulty, 'Difficult');
+  assert.equal(previewResponse.body.file.folder_name, 'Questions/Grade 2/Difficult');
   assert.equal(renameResponse.status, 200);
   assert.equal(renameResponse.body.learningFile.title, 'renamed-hard');
-  assert.equal(renameResponse.body.learningFile.difficulty, 'Hard');
-  assert.equal(renameResponse.body.learningFile.folder_name, 'Questions/Grade 2/Hard');
+  assert.equal(renameResponse.body.learningFile.difficulty, 'Difficult');
+  assert.equal(renameResponse.body.learningFile.folder_name, 'Questions/Grade 2/Difficult');
 });
 
 test('lesson upload fails gracefully and persists a failed source record without OPENAI_API_KEY', async (t) => {
@@ -514,12 +703,19 @@ test('learning file question preview returns staged structured questions without
   });
 
   setQueryHandler(async (sql, params) => {
-    if (sql.startsWith('select id, grade_level') && sql.includes('from public.learning_files') && params[0] === 77) {
+    if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1') && params[0] === 77) {
       return resultRows([{
         id: 77,
+        title: 'Basic Addition Review',
+        file_name: 'basic-addition.docx',
+        file_url: '/uploads/basic-addition.docx',
         grade_level: 'Grade 1',
         difficulty: 'Easy',
         math_topic: 'Basic Addition',
+        requested_question_count: null,
+        generation_status: 'not_applicable',
+        publish_status: 'pending',
+        source: 'fixed',
       }]);
     }
     if (sql.includes('from public.questions') && params[0] === 77) {
@@ -545,6 +741,10 @@ test('learning file question preview returns staged structured questions without
   assert.equal(response.body.questions.length, 1);
   assert.equal(response.body.questions[0].question, 'What is 2 + 3?');
   assert.equal(response.body.questions[0].published, false);
+  assert.equal(response.body.file.title, 'Basic Addition Review');
+  assert.equal(response.body.file.file_url, '/uploads/basic-addition.docx');
+  assert.equal(response.body.file.lifecycle.label, 'Pending');
+  assert.equal(response.body.validation.is_valid, false);
 });
 
 test('Godot question endpoint accepts grade and topic query aliases', async (t) => {
@@ -585,7 +785,7 @@ test('Godot question endpoint remains available without a Lesson Manager session
   assert.equal(response.status, 200);
 });
 
-test('Godot question endpoint maps Medium and Hard to legacy Normal and Difficult rows', async (t) => {
+test('Godot question endpoint maps legacy Medium and Hard requests to canonical Normal and Difficult scopes', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -605,8 +805,8 @@ test('Godot question endpoint maps Medium and Hard to legacy Normal and Difficul
   const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201&difficulty=Medium&topic=Addition');
 
   assert.equal(response.status, 200);
-  assert.deepEqual(queryCalls[0].params, ['Mathematics', 'Grade 1', 'Medium', 'Addition']);
-  assert.deepEqual(queryCalls[1].params, ['Mathematics', 'Grade 1', 'Medium', 'Addition']);
+  assert.deepEqual(queryCalls[0].params, ['Mathematics', 'Grade 1', 'Normal', 'Addition']);
+  assert.deepEqual(queryCalls[1].params, ['Mathematics', 'Grade 1', 'Normal', 'Addition']);
   assert.match(queryCalls[0].sql, /normal/i);
   assert.match(queryCalls[1].sql, /normal/i);
 });

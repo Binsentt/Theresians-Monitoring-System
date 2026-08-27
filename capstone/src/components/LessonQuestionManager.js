@@ -11,10 +11,8 @@ import { canAccessRole, normalizeRole } from './manageUsers.utils';
 import { buildAuthHeaders, getStoredUserSession } from './session.utils';
 import {
   DIFFICULTY_LEVELS,
-  formatLearningPreviewText,
   formatLearningFileSize,
   getLargestLearningFiles,
-  getLearningFilePreviewKind,
   getMathTopicsForGradeDifficulty,
   getQuestionFolderView,
   getQuestionFolderPath,
@@ -23,6 +21,7 @@ import {
   isValidDifficulty,
   isValidGradeLevel,
   isValidMathTopicForGradeDifficulty,
+  normalizeDifficultyValue,
   normalizeMathTopicForGradeDifficulty,
   QUESTION_FOLDER_STRUCTURE,
 } from './lessonQuestionManager.utils';
@@ -95,6 +94,13 @@ function formatQuestionSetStatus(value) {
   return value;
 }
 
+function normalizeManagedLearningFile(file = {}) {
+  return {
+    ...file,
+    difficulty: normalizeDifficultyValue(file.difficulty),
+  };
+}
+
 function getQuestionSetStatus(row) {
   const lifecycle = row?.lifecycle || {};
   return formatQuestionSetStatus(lifecycle.label || row?.status || (row?.published ? 'Active in Game' : 'Pending'));
@@ -118,10 +124,8 @@ export default function LessonQuestionManager() {
   const [showUploadForm, setShowUploadForm] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [managerView, setManagerView] = useState('files');
-  const [previewFile, setPreviewFile] = useState(null);
-  const [previewContent, setPreviewContent] = useState('');
-  const [previewLoading, setPreviewLoading] = useState(false);
   const [questionPreviewFile, setQuestionPreviewFile] = useState(null);
+  const [questionPreviewDetails, setQuestionPreviewDetails] = useState(null);
   const [previewQuestions, setPreviewQuestions] = useState([]);
   const [previewValidation, setPreviewValidation] = useState(null);
   const [previewQuestionsLoading, setPreviewQuestionsLoading] = useState(false);
@@ -132,6 +136,7 @@ export default function LessonQuestionManager() {
   const [page, setPage] = useState(1);
   const [trashPage, setTrashPage] = useState(1);
   const [formErrors, setFormErrors] = useState({});
+  const [replacementConfirmation, setReplacementConfirmation] = useState(null);
   const pageSize = 10;
 
   const showNotification = (message, type = 'success') => {
@@ -139,9 +144,9 @@ export default function LessonQuestionManager() {
     window.setTimeout(() => setNotification(null), 5000);
   };
 
-  const loadFilesAndFolders = async () => {
+  const loadFilesAndFolders = async ({ initial = false } = {}) => {
     try {
-      setLoading(true);
+      if (initial) setLoading(true);
       const [filesRes, trashFilesRes, storageRes] = await Promise.all([
         fetchLessonManagerApi(apiUrl('/api/learning-files')),
         fetchLessonManagerApi(apiUrl('/api/learning-files/trash')),
@@ -150,14 +155,14 @@ export default function LessonQuestionManager() {
       if (!filesRes.ok) throw new Error('Failed to load files');
       if (!trashFilesRes.ok) throw new Error('Failed to load trashed files');
       if (!storageRes.ok) throw new Error('Failed to load storage usage');
-      setFiles(await filesRes.json());
-      setTrashFiles(await trashFilesRes.json());
+      setFiles((await filesRes.json()).map(normalizeManagedLearningFile));
+      setTrashFiles((await trashFilesRes.json()).map(normalizeManagedLearningFile));
       setStorageSummary(await storageRes.json());
     } catch (error) {
       console.error(error);
       showNotification('Unable to load lesson manager data.', 'error');
     } finally {
-      setLoading(false);
+      if (initial) setLoading(false);
     }
   };
 
@@ -169,7 +174,7 @@ export default function LessonQuestionManager() {
       return;
     }
     setUser({ ...loggedInUser, role });
-    loadFilesAndFolders();
+    loadFilesAndFolders({ initial: true });
   }, [navigate]);
 
   const folderView = useMemo(() => getQuestionFolderView(files, {
@@ -337,13 +342,13 @@ export default function LessonQuestionManager() {
         }
         throw new Error(data.error || 'Upload failed.');
       }
-      const uploadedFile = {
+      const uploadedFile = normalizeManagedLearningFile({
         ...data.learningFile,
         folder_name: getQuestionFolderPath(data.learningFile?.grade_level || form.grade_level, data.learningFile?.difficulty || form.difficulty),
         uploaded_by_name: user?.name || user?.email || 'Unknown',
         difficulty: data.learningFile?.difficulty || form.difficulty,
         published: Boolean(data.learningFile?.published),
-      };
+      });
       setFiles((current) => [uploadedFile, ...current.filter((file) => file.id !== uploadedFile.id)]);
       setSelectedFolder({ grade_level: uploadedFile.grade_level || form.grade_level, difficulty: uploadedFile.difficulty || form.difficulty });
       await loadFilesAndFolders();
@@ -383,7 +388,7 @@ export default function LessonQuestionManager() {
       const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}/restore`), { method: 'POST' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Restore failed');
-      const restoredFile = data.learningFile || file;
+      const restoredFile = normalizeManagedLearningFile(data.learningFile || file);
       setTrashFiles((current) => current.filter((item) => item.id !== file.id));
       setFiles((current) => [{
         ...restoredFile,
@@ -428,21 +433,17 @@ export default function LessonQuestionManager() {
     link.remove();
   };
 
-  const closePreview = () => {
-    setPreviewFile(null);
-    setPreviewContent('');
-    setPreviewLoading(false);
-  };
-
   const closeQuestionPreview = () => {
     setQuestionPreviewFile(null);
+    setQuestionPreviewDetails(null);
     setPreviewQuestions([]);
     setPreviewValidation(null);
     setPreviewQuestionsLoading(false);
   };
 
-  const previewGeneratedQuestions = async (file) => {
+  const openQuestionSetPreview = async (file) => {
     setQuestionPreviewFile(file);
+    setQuestionPreviewDetails(null);
     setPreviewQuestions([]);
     setPreviewValidation(null);
     setPreviewQuestionsLoading(true);
@@ -450,6 +451,7 @@ export default function LessonQuestionManager() {
       const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}/questions`));
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to preview generated questions.');
+      setQuestionPreviewDetails(data.file || file);
       setPreviewQuestions(Array.isArray(data.questions) ? data.questions : []);
       setPreviewValidation(data.validation || null);
     } catch (error) {
@@ -457,34 +459,6 @@ export default function LessonQuestionManager() {
       showNotification(error.message || 'Unable to preview generated questions.', 'error');
     } finally {
       setPreviewQuestionsLoading(false);
-    }
-  };
-
-  const previewLearningFile = async (file) => {
-    const previewKind = getLearningFilePreviewKind(file);
-    setPreviewContent('');
-    setPreviewFile({ ...file, previewKind, publicUrl: getPublicUrl(file.file_url) });
-
-    if (previewKind !== 'text') return;
-
-    try {
-      setPreviewLoading(true);
-      const previewResponse = file.id ? await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}/preview`)) : null;
-      if (previewResponse?.ok) {
-        const previewData = await previewResponse.json();
-        setPreviewContent(formatLearningPreviewText(previewData.content || '', file));
-        return;
-      }
-
-      if (!file.file_url) return;
-      const response = await fetch(getPublicUrl(file.file_url));
-      if (!response.ok) throw new Error('Preview fetch failed');
-      setPreviewContent(formatLearningPreviewText(await response.text(), file));
-    } catch (error) {
-      console.error(error);
-      setPreviewContent('');
-    } finally {
-      setPreviewLoading(false);
     }
   };
 
@@ -562,13 +536,26 @@ export default function LessonQuestionManager() {
     setShowNewMenu(false);
   };
 
-  const pushFileToGame = async (file) => {
+  const pushFileToGame = async (file, { confirmReplacement = false } = {}) => {
     try {
-      const response = await fetchLessonManagerApi(apiUrl(`/api/questions/publish/${file.id}`), { method: 'POST' });
+      const response = await fetchLessonManagerApi(apiUrl(`/api/questions/publish/${file.id}`), {
+        method: 'POST',
+        ...(confirmReplacement ? {
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm_replacement: true }),
+        } : {}),
+      });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Push to Game failed');
+      if (!response.ok) {
+        if (data.code === 'ACTIVE_SET_REPLACEMENT_CONFIRMATION_REQUIRED' && data.replacement) {
+          setReplacementConfirmation({ file, replacement: data.replacement });
+          return;
+        }
+        throw new Error(data.error || 'Push to Game failed');
+      }
 
       await loadFilesAndFolders();
+      setReplacementConfirmation(null);
       showNotification(data.message || 'Content pushed to game.');
     } catch (error) {
       console.error(error);
@@ -609,7 +596,7 @@ export default function LessonQuestionManager() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Rename failed');
-      const renamedFile = data.learningFile || data || { ...renamingFile, title };
+      const renamedFile = normalizeManagedLearningFile(data.learningFile || data || { ...renamingFile, title });
       setFiles((current) => current.map((file) => (file.id === renamedFile.id ? { ...file, ...renamedFile } : file)));
       setRenamingFile(null);
       showNotification('File renamed successfully.');
@@ -628,7 +615,7 @@ export default function LessonQuestionManager() {
         <div className="drive-file-name">
           <FileText size={18} aria-hidden="true" />
           <div className="file-name-cell">
-            <button type="button" className="file-name-title file-preview-trigger" onClick={() => previewLearningFile(row)}>
+            <button type="button" className="file-name-title file-preview-trigger" onClick={() => openQuestionSetPreview(row)}>
               {row.generated_question_set_name || row.title}
             </button>
             <span className="file-meta">
@@ -697,8 +684,14 @@ export default function LessonQuestionManager() {
       render: (_, row) => (
         <div className="drive-row-actions">
           <button type="button" className="drive-action-button" onClick={() => setRenamingFile(row)}><FilePenLine size={16} />Rename</button>
-          <button type="button" className="drive-action-button" onClick={() => previewGeneratedQuestions(row)}><FileText size={16} />Preview</button>
-          <button type="button" className="drive-action-button" onClick={() => moveFileToTrash(row)}><Trash2 size={16} />Delete</button>
+          <button type="button" className="drive-action-button" onClick={() => openQuestionSetPreview(row)}><FileText size={16} />Preview</button>
+          <button
+            type="button"
+            className="drive-action-button"
+            onClick={() => moveFileToTrash(row)}
+            disabled={row.published || row.lifecycle?.tone === 'active'}
+            title={row.published || row.lifecycle?.tone === 'active' ? 'Active question sets cannot be deleted. Publish a confirmed replacement first.' : undefined}
+          ><Trash2 size={16} />Delete</button>
           <button
             type="button"
             className="drive-action-button primary"
@@ -784,8 +777,7 @@ export default function LessonQuestionManager() {
             )}
 
             <div className="drive-workspace">
-              <aside className="drive-manager-sidebar">
-                <h2>Lesson &amp; Question Files</h2>
+              <div className="drive-manager-toolbar" aria-label="Lesson manager actions">
                 <div className="drive-new-wrap">
                   <button type="button" className="drive-new-button" onClick={() => setShowNewMenu((value) => !value)}>
                     <Plus size={20} />New
@@ -813,7 +805,7 @@ export default function LessonQuestionManager() {
                     <span>{formatLearningFileSize(managedStorageBytes)} used</span>
                   </div>
                 </div>
-              </aside>
+              </div>
 
               <div className="drive-manager-surface">
                 {managerView === 'files' && (
@@ -1144,7 +1136,7 @@ export default function LessonQuestionManager() {
                   <div className="manager-modal-header">
                     <div>
                       <h2 id="generated-questions-preview-title">Question Review</h2>
-                      <p className="empty-text">{questionPreviewFile.title} — Grade {questionPreviewFile.grade_level} · {questionPreviewFile.difficulty} · {questionPreviewFile.math_topic}</p>
+                      <p className="empty-text">{questionPreviewDetails?.title || questionPreviewFile.title} — Grade {questionPreviewDetails?.grade_level || questionPreviewFile.grade_level} · {questionPreviewDetails?.difficulty || questionPreviewFile.difficulty} · {questionPreviewDetails?.math_topic || questionPreviewFile.math_topic}</p>
                     </div>
                     <button type="button" className="icon-button" aria-label="Close generated questions preview" onClick={closeQuestionPreview}>x</button>
                   </div>
@@ -1152,9 +1144,13 @@ export default function LessonQuestionManager() {
                     {previewQuestionsLoading ? (
                       <p className="empty-text">Loading questions...</p>
                     ) : previewQuestions.length === 0 ? (
-                      <p className="empty-text">No questions are available for review yet.</p>
+                      <>
+                        {previewValidation?.is_valid === false && <p className="manager-inline-error" role="alert">Needs Correction — review the validation details before this set can be pushed to the game.</p>}
+                        <p className="empty-text">No questions are available for review yet.</p>
+                      </>
                     ) : (
                       <>
+                        <p className="question-review-metadata">Requested: {questionPreviewDetails?.requested_question_count ?? questionPreviewFile.requested_question_count ?? 'Not specified'} · Available: {previewQuestions.length}</p>
                         {previewValidation?.is_valid === false && <p className="manager-inline-error" role="alert">Needs Correction — every question must have four distinct choices, a mapped correct answer, and matching metadata.</p>}
                         {previewValidation?.is_valid !== false && <p className="question-validation-valid">Valid — this question set is ready for manual Push to Game.</p>}
                         {previewQuestions.map((question, index) => (
@@ -1175,44 +1171,41 @@ export default function LessonQuestionManager() {
                     )}
                   </div>
                   <div className="preview-actions">
+                    <button type="button" className="btn btn-primary" onClick={() => downloadFile(questionPreviewDetails || questionPreviewFile)} disabled={!(questionPreviewDetails || questionPreviewFile).file_url}>
+                      <Download size={16} />Download Source
+                    </button>
                     <button type="button" className="btn btn-secondary" onClick={closeQuestionPreview}>Close</button>
                   </div>
                 </div>
               </div>
             )}
 
-            {previewFile && (
-              <div className="manager-modal-backdrop" role="presentation" onMouseDown={closePreview}>
-                <div className="manager-modal file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="preview-file-title" onMouseDown={(event) => event.stopPropagation()}>
+            {replacementConfirmation && (
+              <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setReplacementConfirmation(null)}>
+                <div className="manager-modal replacement-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="replace-active-question-set-title" onMouseDown={(event) => event.stopPropagation()}>
                   <div className="manager-modal-header">
-                    <h2 id="preview-file-title">{previewFile.file_name || previewFile.title || 'File Preview'}</h2>
-                    <button type="button" className="icon-button" aria-label="Close preview" onClick={closePreview}>x</button>
+                    <div>
+                      <h2 id="replace-active-question-set-title">Replace Active Question Set?</h2>
+                      <p className="empty-text">This scope already has an Active question set. Replacing it supersedes the current set while preserving its history.</p>
+                    </div>
+                    <button type="button" className="icon-button" aria-label="Cancel replacement" onClick={() => setReplacementConfirmation(null)}>x</button>
                   </div>
-                  <div className="file-preview-body">
-                    {previewFile.previewKind === 'pdf' && previewFile.publicUrl && (
-                      <iframe title={`${previewFile.title || previewFile.file_name} preview`} src={previewFile.publicUrl} className="pdf-preview-frame" />
-                    )}
-                    {previewFile.previewKind === 'image' && previewFile.publicUrl && (
-                      <img className="image-preview" src={previewFile.publicUrl} alt={previewFile.title || previewFile.file_name || 'Uploaded file preview'} />
-                    )}
-                    {previewFile.previewKind === 'text' && (
-                      previewLoading ? (
-                        <p className="empty-text">Loading preview...</p>
-                      ) : previewContent ? (
-                        <pre className="text-file-preview">{previewContent}</pre>
-                      ) : (
-                        <p className="empty-text">Preview not available for this file type. Use the Download button.</p>
-                      )
-                    )}
-                    {(previewFile.previewKind === 'unsupported' || !previewFile.publicUrl) && (
-                      <p className="empty-text">Preview not available for this file type. Use the Download button.</p>
-                    )}
+                  <div className="replacement-summary-grid">
+                    {[
+                      ['Current Active', replacementConfirmation.replacement.current_active],
+                      ['New Set', replacementConfirmation.replacement.new_set],
+                    ].map(([label, set]) => (
+                      <section key={label} className="replacement-summary-card">
+                        <h3>{label}</h3>
+                        <p><strong>{set.title}</strong></p>
+                        <p className="question-review-metadata">Grade {set.grade_level} · {set.difficulty} · {set.math_topic}</p>
+                        <p className="question-review-metadata">Questions: {set.question_count ?? 'Not available'}</p>
+                      </section>
+                    ))}
                   </div>
                   <div className="preview-actions">
-                    <button type="button" className="btn btn-primary" onClick={() => downloadFile(previewFile)}>
-                      <Download size={16} />Download
-                    </button>
-                    <button type="button" className="btn btn-secondary" onClick={closePreview}>Close</button>
+                    <button type="button" className="btn btn-secondary" onClick={() => setReplacementConfirmation(null)}>Cancel</button>
+                    <button type="button" className="btn btn-primary" onClick={() => pushFileToGame(replacementConfirmation.file, { confirmReplacement: true })}>Replace &amp; Push to Game</button>
                   </div>
                 </div>
               </div>
