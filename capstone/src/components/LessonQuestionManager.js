@@ -185,6 +185,31 @@ export default function LessonQuestionManager() {
     }
   }, [questionPreviewFile?.id]);
 
+  useLayoutEffect(() => {
+    if (!questionPreviewFile) return undefined;
+
+    const pageContent = document.querySelector('.page-content');
+    const documentScrollRoot = document.scrollingElement || document.documentElement;
+    const savedPageScroll = pageContent
+      ? { left: pageContent.scrollLeft, top: pageContent.scrollTop }
+      : null;
+    const savedDocumentScroll = { left: documentScrollRoot.scrollLeft, top: documentScrollRoot.scrollTop };
+
+    document.body.classList.add('lesson-preview-open');
+    pageContent?.classList.add('lesson-preview-scroll-locked');
+
+    return () => {
+      document.body.classList.remove('lesson-preview-open');
+      pageContent?.classList.remove('lesson-preview-scroll-locked');
+      if (savedPageScroll && pageContent) {
+        pageContent.scrollLeft = savedPageScroll.left;
+        pageContent.scrollTop = savedPageScroll.top;
+      }
+      documentScrollRoot.scrollLeft = savedDocumentScroll.left;
+      documentScrollRoot.scrollTop = savedDocumentScroll.top;
+    };
+  }, [Boolean(questionPreviewFile)]);
+
   const loadFilesAndFolders = async ({ initial = false } = {}) => {
     try {
       if (initial) setLoading(true);
@@ -1192,7 +1217,7 @@ export default function LessonQuestionManager() {
               document.body,
             )}
 
-            {questionPreviewFile && (
+            {questionPreviewFile && createPortal(
               <div className="manager-modal-backdrop generated-questions-preview-backdrop" role="presentation" onMouseDown={closeQuestionPreview}>
                 <div className="manager-modal generated-questions-preview-modal" role="dialog" aria-modal="true" aria-labelledby="generated-questions-preview-title" onMouseDown={(event) => event.stopPropagation()}>
                   <div className="manager-modal-header generated-questions-preview-header">
@@ -1250,7 +1275,8 @@ export default function LessonQuestionManager() {
                     <button type="button" className="btn btn-secondary" onClick={closeQuestionPreview}>Close</button>
                   </div>
                 </div>
-              </div>
+              </div>,
+              document.body,
             )}
 
             {replacementConfirmation && (

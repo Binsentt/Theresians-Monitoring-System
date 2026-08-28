@@ -540,10 +540,10 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/77/questions', {
       headers: { Authorization: 'Bearer lesson-manager-token' },
     });
-    expect(container.textContent).toContain('Question Review');
-    expect(container.textContent).toContain('What is 2 + 3?');
-    expect(container.textContent).toContain('5 (Correct)');
-    expect(container.textContent).toContain('ready for manual Push to Game');
+    expect(document.body.textContent).toContain('Question Review');
+    expect(document.body.textContent).toContain('What is 2 + 3?');
+    expect(document.body.textContent).toContain('5 (Correct)');
+    expect(document.body.textContent).toContain('ready for manual Push to Game');
   });
 
   test('shows structured fixed-question validation feedback and disables Push to Game for an invalid set', async () => {
@@ -571,9 +571,9 @@ describe('LessonQuestionManager upload and trash controls', () => {
       clickByText(container, 'Preview');
     });
 
-    expect(container.textContent).toContain('Question Review');
-    expect(container.textContent).toContain('Needs Correction');
-    expect(container.textContent).toContain('Exactly four answer choices are required.');
+    expect(document.body.textContent).toContain('Question Review');
+    expect(document.body.textContent).toContain('Needs Correction');
+    expect(document.body.textContent).toContain('Exactly four answer choices are required.');
   });
 
   test('labels a valid multi-topic document as ineligible without generic publication-ready messaging', async () => {
@@ -690,6 +690,51 @@ describe('LessonQuestionManager upload and trash controls', () => {
       closeButton.click();
     });
     expect(document.body.querySelector('.generated-questions-preview-modal')).toBeNull();
+  });
+
+  test('ports Preview to the viewport and restores the dashboard scroll position after Close', async () => {
+    fixtures.files = [{
+      id: 77,
+      title: 'viewport-preview.docx',
+      file_name: 'viewport-preview.docx',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      document_topic: 'Basic Addition',
+      math_topic: 'Basic Addition',
+      file_type: 'fixed_questions',
+      published: false,
+      file_url: '/uploads/viewport-preview.docx',
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    const pageContent = container.querySelector('.page-content');
+    pageContent.scrollTop = 215;
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+
+    await act(async () => {
+      clickByText(container, 'Preview');
+    });
+
+    const previewBackdrop = document.body.querySelector('.generated-questions-preview-backdrop');
+    const previewBody = document.body.querySelector('.generated-questions-preview-body');
+    const firstQuestion = previewBody.querySelector('.generated-question-card');
+
+    expect(previewBackdrop.parentElement).toBe(document.body);
+    expect(document.body.classList.contains('lesson-preview-open')).toBe(true);
+    expect(pageContent.classList.contains('lesson-preview-scroll-locked')).toBe(true);
+    expect(pageContent.scrollTop).toBe(215);
+    expect(previewBody.scrollTop).toBe(0);
+    expect(firstQuestion.querySelector('strong').textContent).toBe('1. What is 2 + 3?');
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Close').click();
+    });
+
+    expect(document.body.classList.contains('lesson-preview-open')).toBe(false);
+    expect(pageContent.classList.contains('lesson-preview-scroll-locked')).toBe(false);
+    expect(pageContent.scrollTop).toBe(215);
   });
 
   test('resets Preview body scroll position when reopening or switching files', async () => {
