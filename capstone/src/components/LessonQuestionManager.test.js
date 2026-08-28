@@ -107,15 +107,15 @@ describe('LessonQuestionManager upload and trash controls', () => {
         return okJson({
           file: currentFile,
           validation: { is_valid: !isInvalid, invalid_question_count: isInvalid ? 1 : 0 },
-          questions: [{
-            id: 500 + previewFileId,
-            question: `What is ${previewFileId - 75} + 3?`,
+          questions: Array.from({ length: 5 }, (_, index) => ({
+            id: (previewFileId * 10) + index,
+            question: index === 0 ? 'What is 2 + 3?' : `Question ${index + 1} for preview ${previewFileId}`,
             options: isInvalid ? ['4', '5', '6'] : ['4', '5', '6', '7'],
             correct_answer: '5',
             published: false,
             is_valid: !isInvalid,
             validation_errors: isInvalid ? ['Exactly four answer choices are required.'] : [],
-          }],
+          })),
         });
       }
       if (value.includes('/api/learning-files/77') && options.method === 'DELETE') {
@@ -734,6 +734,13 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     let previewBody = document.body.querySelector('.generated-questions-preview-body');
     expect(previewBody.scrollTop).toBe(0);
+    expect(Array.from(previewBody.querySelectorAll('.generated-question-card strong')).map((heading) => heading.textContent)).toEqual([
+      '1. What is 2 + 3?',
+      '2. Question 2 for preview 77',
+      '3. Question 3 for preview 77',
+      '4. Question 4 for preview 77',
+      '5. Question 5 for preview 77',
+    ]);
     previewBody.scrollTop = 180;
 
     await act(async () => {
@@ -746,13 +753,21 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
     previewBody = document.body.querySelector('.generated-questions-preview-body');
     expect(previewBody.scrollTop).toBe(0);
+    expect(previewBody.querySelector('.generated-question-card strong').textContent).toBe('1. What is 2 + 3?');
     previewBody.scrollTop = 180;
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Close').click();
+    });
+    expect(document.body.querySelector('.generated-questions-preview-modal')).toBeNull();
 
     await act(async () => {
       previewButtons[1].click();
     });
     expect(document.body.textContent).toContain('preview-two.docx');
-    expect(document.body.querySelector('.generated-questions-preview-body').scrollTop).toBe(0);
+    previewBody = document.body.querySelector('.generated-questions-preview-body');
+    expect(previewBody.scrollTop).toBe(0);
+    expect(previewBody.querySelector('.generated-question-card strong').textContent).toBe('1. What is 2 + 3?');
   });
 
   test('Push to Game activates the staged file only after the button is clicked', async () => {
