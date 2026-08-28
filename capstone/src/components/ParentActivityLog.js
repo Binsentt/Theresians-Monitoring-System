@@ -5,7 +5,7 @@ import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import ActivityLog from './ActivityLog';
 import logoImage from '../assets/images/STS_Logo.png';
-import { normalizeRole } from './manageUsers.utils';
+import { isParentRole, normalizeRole } from './manageUsers.utils';
 import { getStoredUserSession } from './session.utils';
 import '../styles/activitylog.css';
 
@@ -21,7 +21,7 @@ export default function ParentActivityLog() {
         document.documentElement.setAttribute('data-theme', savedTheme);
 
         const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser'));
-        if (!loggedInUser || normalizeRole(loggedInUser.role) !== 'parent' || !loggedInUser.id) {
+        if (!loggedInUser || !isParentRole(loggedInUser.role) || !loggedInUser.id) {
           navigate('/login');
           return;
         }

@@ -5536,7 +5536,22 @@ app.post('/api/verify-password-change-otp', requireWebsiteManagedAccount, async 
 // --- NEW: Get User Profile (fetch from database) ---
 app.get('/api/user/:id', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM accounts WHERE id = $1', [req.params.id]);
+    if (!req.authenticatedUser) {
+      return res.status(401).json({ error: 'Authentication is required.' });
+    }
+
+    const requestedUserId = resolvePositiveInteger(req.params.id);
+    if (!requestedUserId || Number.isNaN(requestedUserId)) {
+      return res.status(400).json({ error: 'A valid user ID is required.' });
+    }
+
+    const authenticatedUserId = Number(req.authenticatedUser.id);
+    const authenticatedRole = normalizeAccountRole(req.authenticatedUser.role);
+    if (authenticatedRole !== 'admin' && authenticatedUserId !== requestedUserId) {
+      return res.status(403).json({ error: 'You can only access your own profile.' });
+    }
+
+    const result = await pool.query('SELECT * FROM accounts WHERE id = $1', [requestedUserId]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     if (result.rows[0].is_archived) return res.status(401).json({ error: 'Session expired. Please log in again.' });
     

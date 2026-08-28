@@ -34,7 +34,9 @@ export default function AdminDashboard() {
 
 
         try {
-          const userResponse = await fetch(apiUrl(`/api/user/${loggedInUser.id}`));
+          const userResponse = await fetch(apiUrl(`/api/user/${loggedInUser.id}`), {
+            headers: buildAuthHeaders(),
+          });
           if (userResponse.ok) {
             const freshUserData = await userResponse.json();
             delete freshUserData.password;

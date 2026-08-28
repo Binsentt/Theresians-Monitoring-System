@@ -168,6 +168,26 @@ test('private analytics routes reject unauthenticated, invalid, and expired sess
   }
 });
 
+test('profile reads require authentication and allow only the account owner or an Admin', async (t) => {
+  reset();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  queryHandler = async (sql, params) => {
+    if (sql.startsWith('select * from accounts where id = $1')) {
+      const account = authenticatedAccounts[Number(params[0])];
+      return account ? resultRows([account]) : emptyResult;
+    }
+    return emptyResult;
+  };
+
+  assert.equal((await requestJson(baseUrl, '/api/user/4')).status, 401);
+  assert.equal((await requestJson(baseUrl, '/api/user/4', { headers: authHeaders('parent') })).status, 200);
+  assert.equal((await requestJson(baseUrl, '/api/user/4', { headers: authHeaders('teacher') })).status, 403);
+  assert.equal((await requestJson(baseUrl, '/api/user/4', { headers: authHeaders('admin') })).status, 200);
+});
+
 test('admin and teacher analytics scopes are derived from the authenticated session', async (t) => {
   reset();
   const server = await listen();

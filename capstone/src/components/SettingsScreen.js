@@ -103,7 +103,9 @@ export default function SettingsScreen() {
 
         try {
           console.log('📥 Fetching fresh user data for ID:', loggedInUser.id);
-          const response = await fetch(apiUrl(`/api/user/${loggedInUser.id}`));
+          const response = await fetch(apiUrl(`/api/user/${loggedInUser.id}`), {
+            headers: buildAuthHeaders(),
+          });
           if (response.ok) {
             freshUserData = await response.json();
             console.log('✅ Fresh user data received:', { id: freshUserData.id, name: freshUserData.name, email: freshUserData.email, phone: freshUserData.mobile_number, address: freshUserData.address, birthday: freshUserData.birthday, gender: freshUserData.gender });
@@ -171,7 +173,9 @@ export default function SettingsScreen() {
     // FIX: Re-fetch fresh user data when Edit is clicked to ensure we have latest DB values
     try {
       console.log('📥 Re-fetching user data before edit for ID:', user?.id);
-      const response = await fetch(apiUrl(`/api/user/${user.id}`));
+      const response = await fetch(apiUrl(`/api/user/${user.id}`), {
+        headers: buildAuthHeaders(),
+      });
       let freshUserData = user;  // fallback to current user state
       
       if (response.ok) {
@@ -309,7 +313,9 @@ export default function SettingsScreen() {
         if (!updatedUserData.id) {
           console.log('⏳ Fetching fresh user data from database...');
           try {
-            const freshResponse = await fetch(apiUrl(`/api/user/${user.id}`));
+            const freshResponse = await fetch(apiUrl(`/api/user/${user.id}`), {
+              headers: buildAuthHeaders(),
+            });
             if (freshResponse.ok) {
               updatedUserData = await freshResponse.json();
               console.log('✅ Fresh user data fetched successfully:', { phone: updatedUserData.mobile_number, address: updatedUserData.address, birthday: updatedUserData.birthday, gender: updatedUserData.gender });

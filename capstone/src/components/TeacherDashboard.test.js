@@ -55,6 +55,18 @@ describe('TeacherDashboard route protection', () => {
     root = createRoot(container);
     mockNavigate.mockReset();
     localStorage.clear();
+    global.fetch = jest.fn((url) => {
+      if (url === '/api/students/progress?lifecycle=active') {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url === '/api/analytics/overview') {
+        return Promise.resolve({ ok: true, json: async () => ({ studentCount: 0, averageAccuracy: null, averageProgress: null }) });
+      }
+      if (url === '/api/top-achievers') {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
   });
 
   afterEach(() => {
@@ -62,6 +74,7 @@ describe('TeacherDashboard route protection', () => {
       root.unmount();
     });
     container.remove();
+    delete global.fetch;
   });
 
   test('redirects to login when no authenticated teacher session exists', async () => {
@@ -83,5 +96,55 @@ describe('TeacherDashboard route protection', () => {
     expect(mockNavigate).not.toHaveBeenCalledWith('/login');
     expect(container.textContent).toContain('Teacher Dashboard');
     expect(container.textContent).toContain('Welcome, Pat Dual');
+  });
+
+  test('uses only the authenticated teacher scope to render live classroom metrics', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 5, role: 'teacher', name: 'Teacher Cruz' }));
+    localStorage.setItem('token', 'teacher-dashboard-token');
+    const requests = [];
+    global.fetch = jest.fn((url, options) => {
+      requests.push({ url, options });
+      if (url === '/api/students/progress?lifecycle=active') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [{
+            student_id: 44,
+            student_name: 'Ava Santos',
+            grade_level: 'Grade 3',
+            section: 'Rizal',
+            total_questions: null,
+            accuracy_rate: null,
+            performance_percentage: null,
+            current_quest: null,
+          }],
+        });
+      }
+      if (url === '/api/analytics/overview') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ studentCount: 1, averageAccuracy: null, averageProgress: null }),
+        });
+      }
+      if (url === '/api/top-achievers') {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    await act(async () => {
+      root.render(<TeacherDashboard />);
+    });
+
+    expect(container.textContent).toContain('Assigned Students');
+    expect(container.textContent).toContain('Ava Santos');
+    expect(container.textContent).toContain('No activity yet');
+    expect(container.textContent).not.toContain('QUESTS COMPLETED');
+    expect(container.textContent).not.toContain('Grade 10');
+    expect(requests.map((request) => request.url)).toEqual(expect.arrayContaining([
+      '/api/students/progress?lifecycle=active',
+      '/api/analytics/overview',
+      '/api/top-achievers',
+    ]));
+    expect(requests.every((request) => request.options?.headers?.Authorization === 'Bearer teacher-dashboard-token')).toBe(true);
   });
 });
