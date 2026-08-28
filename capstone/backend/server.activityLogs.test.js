@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');
+const crypto = require('node:crypto');
 
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
@@ -176,4 +177,146 @@ test('activity log API accepts Godot session aliases and scoped child filters', 
     assert.match(countQuery, /left join public\.accounts account on account\.id = al\.student_id/);
     assert.match(mainQuery, /al\.student_id in \(/);
   });
+});
+
+test('canonical game quest events use the active lease, canonical profile data, and idempotent event keys', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const credential = 'c'.repeat(64);
+  let insertCalls = 0;
+  let insertedValues = null;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select ps.id') && sql.includes('from public.playtime_sessions ps')) {
+      return resultRows([{
+        id: 77,
+        student_id: 44,
+        session_credential_hash: crypto.createHash('sha256').update(credential).digest('hex'),
+        learning_cycle_version: 3,
+        current_learning_cycle_version: 3,
+        student_name: 'Canonical Student',
+        grade_level: 'Grade 1',
+        section: null,
+      }]);
+    }
+    if (sql.startsWith('insert into public.activity_logs')) {
+      insertCalls += 1;
+      insertedValues = params;
+      return resultRows(insertCalls === 1 ? [{ id: 909 }] : []);
+    }
+    return emptyResult;
+  });
+
+  const payload = {
+    session_id: 77,
+    session_credential: credential,
+    learning_cycle_version: 3,
+    event_type: 'task_triggered',
+    event_key: 'teacher-house:task-triggered:v1',
+    task_id: 'teacher-house',
+  };
+  const first = await requestJson(baseUrl, '/api/game/activity', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  const retry = await requestJson(baseUrl, '/api/game/activity', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+  assert.equal(first.status, 201);
+  assert.equal(first.body.duplicate, false);
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.duplicate, true);
+  assert.equal(insertCalls, 2);
+  assert.ok(insertedValues.includes('Canonical Student'));
+  assert.equal(insertedValues.includes('Forged Student'), false);
+
+  const forgedIdentity = await requestJson(baseUrl, '/api/game/activity', {
+    method: 'POST',
+    body: JSON.stringify({ ...payload, student_name: 'Forged Student' }),
+  });
+  assert.equal(forgedIdentity.status, 400);
+});
+
+test('game leaderboard requires a current lease and exposes only ranked aggregate display data', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const credential = 'l'.repeat(64);
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select ps.id') && sql.includes('from public.playtime_sessions ps')) {
+      return resultRows([{
+        id: 77,
+        student_id: 44,
+        session_credential_hash: crypto.createHash('sha256').update(credential).digest('hex'),
+        learning_cycle_version: 3,
+        current_learning_cycle_version: 3,
+      }]);
+    }
+    if (sql.includes('from public.student_game_progress p') && sql.includes('ranked_progress')) {
+      return resultRows([{
+        progress_percentage: 82,
+        accuracy_rate: 91,
+        correct_answers: 9,
+        total_questions: 10,
+        total_quests_completed: 2,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/leaderboard', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 77,
+      session_credential: credential,
+      learning_cycle_version: 3,
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.entries, [{
+    rank: 1,
+    display_name: 'Player 1',
+    progress_percentage: 82,
+    accuracy_rate: 91,
+    correct_answers: 9,
+    total_questions: 10,
+    quests_completed: 2,
+  }]);
+  assert.equal(JSON.stringify(response.body).includes('student_id'), false);
+  assert.equal(JSON.stringify(response.body).includes('email'), false);
+
+  const missingLease = await requestJson(baseUrl, '/api/game/leaderboard', { method: 'POST', body: '{}' });
+  assert.equal(missingLease.status, 400);
+
+  const invalidLease = await requestJson(baseUrl, '/api/game/leaderboard', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 77,
+      session_credential: 'x'.repeat(64),
+      learning_cycle_version: 3,
+    }),
+  });
+  assert.equal(invalidLease.status, 403);
+
+  const staleCycle = await requestJson(baseUrl, '/api/game/leaderboard', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 77,
+      session_credential: credential,
+      learning_cycle_version: 2,
+    }),
+  });
+  assert.equal(staleCycle.status, 409);
+  assert.equal(staleCycle.body.code, 'LEARNING_CYCLE_CHANGED');
 });

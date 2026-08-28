@@ -61,6 +61,7 @@ const {
 const {
   isValidDifficulty,
   isValidGradeLevel,
+  isValidMathTopicForGradeDifficulty,
   validateLearningMetadata,
   normalizeDifficultyValue,
   parseLessonQuestionCount,
@@ -684,6 +685,38 @@ const accountHasParentAccess = (role) => ['parent', 'parent_teacher'].includes(n
 const PLAYTIME_DAILY_LIMIT_MINUTES = 60;
 const PLAYTIME_DAILY_LIMIT_SECONDS = PLAYTIME_DAILY_LIMIT_MINUTES * 60;
 const PLAYTIME_SESSION_CREDENTIAL_BYTES = 32;
+// A session is only considered present while the game continues to prove it is
+// alive. This is deliberately shorter than the 15-second client heartbeat so a
+// disconnected client cannot remain "Playing" or consume the daily cap forever.
+const PLAYTIME_HEARTBEAT_FRESHNESS_SECONDS = 45;
+const PLAYTIME_HEARTBEAT_FRESHNESS_INTERVAL_SQL = `INTERVAL '${PLAYTIME_HEARTBEAT_FRESHNESS_SECONDS} seconds'`;
+
+const getPlaytimeHeartbeatReferenceSql = (tableAlias = '') => (
+  `COALESCE(${tableAlias}last_heartbeat_at, ${tableAlias}server_started_at, ${tableAlias}start_time, NOW())`
+);
+
+const getPlaytimeHeartbeatStaleSql = (tableAlias = '') => (
+  `${getPlaytimeHeartbeatReferenceSql(tableAlias)} < NOW() - ${PLAYTIME_HEARTBEAT_FRESHNESS_INTERVAL_SQL}`
+);
+
+const getPlaytimeEffectiveEndSql = (tableAlias = '') => (
+  `LEAST(
+    NOW(),
+    COALESCE(${tableAlias}expires_at, NOW()),
+    ${getPlaytimeHeartbeatReferenceSql(tableAlias)} + ${PLAYTIME_HEARTBEAT_FRESHNESS_INTERVAL_SQL}
+  )`
+);
+
+const getPlaytimePresenceStatusSql = (tableAlias = '') => (
+  `CASE
+    WHEN ${tableAlias}status = 'Playing'
+     AND ${tableAlias}end_time IS NULL
+     AND COALESCE(${tableAlias}expires_at, NOW()) > NOW()
+     AND NOT (${getPlaytimeHeartbeatStaleSql(tableAlias)})
+    THEN 'Playing'
+    ELSE 'Offline'
+  END`
+);
 
 const createPlaytimeSessionCredential = () => crypto
   .randomBytes(PLAYTIME_SESSION_CREDENTIAL_BYTES)
@@ -947,7 +980,10 @@ const validateProgressLearningCycleLease = async (client, { studentId, sessionId
     };
   }
   const sessionResult = await client.query(
-    `SELECT id, session_credential_hash, COALESCE(learning_cycle_version, 0) AS learning_cycle_version
+    `SELECT id,
+            session_credential_hash,
+            COALESCE(learning_cycle_version, 0) AS learning_cycle_version,
+            (${getPlaytimeHeartbeatStaleSql()}) AS heartbeat_stale
      FROM public.playtime_sessions
      WHERE id = $1
        AND student_id = $2
@@ -959,6 +995,17 @@ const validateProgressLearningCycleLease = async (client, { studentId, sessionId
   const session = sessionResult.rows[0];
   if (!session || !hasMatchingPlaytimeSessionCredential(sessionCredential, session.session_credential_hash)) {
     return { ok: false, status: 403, body: { error: 'The active playtime session is invalid.' } };
+  }
+  if (session.heartbeat_stale) {
+    return {
+      ok: false,
+      status: 409,
+      staleSessionId: sessionId,
+      body: {
+        code: 'PLAYTIME_HEARTBEAT_STALE',
+        error: 'The playtime session is no longer active. Start a new session to continue.',
+      },
+    };
   }
   if (Number(session.learning_cycle_version ?? 0) !== currentVersion) {
     return {
@@ -1230,6 +1277,7 @@ const normalizeGameGradeLevel = (value) => {
 
 const QUESTION_GRADE_LEVELS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
 const QUESTION_DIFFICULTIES = ['Easy', 'Normal', 'Difficult'];
+const GAME_QUESTION_SET_SIZE = 5;
 
 const buildQuestionFolderStructure = () => ({
   root: { name: 'Questions', path: 'Questions/' },
@@ -1933,10 +1981,60 @@ const getQuestionSetPublicationValidation = async (queryClient, learningFile, { 
   });
 };
 
-const buildQuestionSetValidationSummary = (validation) => ({
+const buildQuestionSetPublicationEligibility = (learningFile = {}, validation = {}) => {
+  if (learningFile.file_type !== 'fixed_questions') {
+    return {
+      eligible: Boolean(validation?.isValid),
+      code: validation?.isValid ? 'ELIGIBLE' : 'STRUCTURAL_VALIDATION_FAILED',
+      message: validation?.isValid ? 'Eligible for Game publication.' : 'Review and correct this question set before Push to Game.',
+    };
+  }
+
+  const documentTopic = String(learningFile.document_topic || '').trim();
+  const gameTopic = String(learningFile.math_topic || '').trim();
+  if (!documentTopic) {
+    return {
+      eligible: false,
+      code: 'MISSING_DOCUMENT_TOPIC',
+      message: 'The Fixed Question document does not provide a topic. Review the document topic before Push to Game.',
+    };
+  }
+  if (/[,;&]|\band\b/i.test(documentTopic)) {
+    return {
+      eligible: false,
+      code: 'MULTI_TOPIC_DOCUMENT',
+      message: 'This Fixed Question document contains multiple topics. Game publication requires one controlled encounter topic.',
+    };
+  }
+  if (!isValidMathTopicForGradeDifficulty(learningFile.grade_level, normalizeDifficultyValue(learningFile.difficulty), documentTopic)) {
+    return {
+      eligible: false,
+      code: 'UNCONTROLLED_DOCUMENT_TOPIC',
+      message: 'The Fixed Question document topic is not an approved topic for the selected Grade and Difficulty.',
+    };
+  }
+  if (documentTopic !== gameTopic) {
+    return {
+      eligible: false,
+      code: 'DOCUMENT_TOPIC_MISMATCH',
+      message: 'The Fixed Question document topic does not match its controlled game publication topic.',
+    };
+  }
+  if (!validation?.isValid) {
+    return {
+      eligible: false,
+      code: 'STRUCTURAL_VALIDATION_FAILED',
+      message: 'Review and correct this question set before Push to Game.',
+    };
+  }
+  return { eligible: true, code: 'ELIGIBLE', message: 'Eligible for Game publication.' };
+};
+
+const buildQuestionSetValidationSummary = (validation, learningFile = {}) => ({
   is_valid: Boolean(validation?.isValid),
   invalid_question_count: (validation?.questions || []).filter((question) => !question.is_valid).length,
   document_errors: validation?.document_errors || [],
+  publication_eligibility: buildQuestionSetPublicationEligibility(learningFile, validation),
 });
 
 const buildQuestionSetReplacementSummary = (learningFile, questionCount = null) => ({
@@ -1971,10 +2069,12 @@ const publishLearningFile = async (fileId, publisherId, { confirmReplacement = f
     }
 
     const publicationValidation = await getQuestionSetPublicationValidation(client, learningFile, { lockRows: true });
-    if (!publicationValidation.isValid) {
+    const publicationEligibility = buildQuestionSetPublicationEligibility(learningFile, publicationValidation);
+    if (!publicationEligibility.eligible) {
       const error = createLifecycleHttpError('Every question must have four distinct choices, a mapped correct answer, and matching controlled metadata before publication.', 422);
       error.code = 'QUESTION_SET_VALIDATION_FAILED';
       error.questionValidation = publicationValidation;
+      error.publicationEligibility = publicationEligibility;
       throw error;
     }
 
@@ -4210,7 +4310,7 @@ app.get('/api/learning-files', requireLessonQuestionManagerAccess, async (req, r
       const validation = await getQuestionSetPublicationValidation(pool, row);
       return normalizeLearningFileRow({
         ...row,
-        validation_summary: buildQuestionSetValidationSummary(validation),
+        validation_summary: buildQuestionSetValidationSummary(validation, row),
       });
     }));
     res.json(files);
@@ -4274,8 +4374,11 @@ app.get('/api/learning-files/:id/questions', requireLessonQuestionManagerAccess,
     const validation = await getQuestionSetPublicationValidation(pool, fileResult.rows[0]);
 
     res.json({
-      file: normalizeLearningFileRow(fileResult.rows[0]),
-      validation: buildQuestionSetValidationSummary(validation),
+      file: normalizeLearningFileRow({
+        ...fileResult.rows[0],
+        validation_summary: buildQuestionSetValidationSummary(validation, fileResult.rows[0]),
+      }),
+      validation: buildQuestionSetValidationSummary(validation, fileResult.rows[0]),
       questions: validation.questions.map((question) => ({
         ...question,
         difficulty: normalizeDifficultyValue(question.difficulty),
@@ -4505,6 +4608,7 @@ app.post('/api/questions/publish/:id', requireLessonQuestionManagerAccess, async
       error: err.statusCode === 404 || err.statusCode === 422 ? err.message : 'Failed to publish content',
       ...(err.code ? { code: err.code } : {}),
       ...(err.questionValidation ? { validation: err.questionValidation } : {}),
+      ...(err.publicationEligibility ? { publication_eligibility: err.publicationEligibility } : {}),
       ...(err.replacement ? { replacement: err.replacement } : {}),
     });
   }
@@ -4532,7 +4636,31 @@ app.get('/api/game/questions', async (req, res) => {
     if (gameQuestions.length > 0) {
       await markLearningFilesFetchedByGame(gameQuestions);
     }
-    res.json({ learning_files: learningFiles, questions: gameQuestions });
+    const availableQuestionCount = gameQuestions.length;
+    const availability = availableQuestionCount >= GAME_QUESTION_SET_SIZE
+      ? {
+        available: true,
+        code: 'QUESTION_POOL_READY',
+        message: 'Published questions are available for this Grade, Difficulty, and Topic.',
+        expected_question_count: GAME_QUESTION_SET_SIZE,
+        available_question_count: availableQuestionCount,
+      }
+      : availableQuestionCount === 0
+        ? {
+          available: false,
+          code: 'QUESTION_POOL_EXHAUSTED',
+          message: 'No published questions are available for this Grade, Difficulty, and Topic yet.',
+          expected_question_count: GAME_QUESTION_SET_SIZE,
+          available_question_count: 0,
+        }
+        : {
+          available: false,
+          code: 'QUESTION_POOL_UNDERSIZED',
+          message: 'The published question pool has fewer questions than this encounter requires.',
+          expected_question_count: GAME_QUESTION_SET_SIZE,
+          available_question_count: availableQuestionCount,
+        };
+    res.json({ learning_files: learningFiles, questions: gameQuestions, availability });
   } catch (err) {
     console.error('Fetch game questions failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch game content' });
@@ -5025,6 +5153,9 @@ app.post('/api/game/progress', async (req, res) => {
     });
     if (!lifecycleLease.ok) {
       await client.query('ROLLBACK');
+      if (lifecycleLease.staleSessionId) {
+        await finalizeStalePlaytimeSession(lifecycleLease.staleSessionId);
+      }
       return res.status(lifecycleLease.status).json(lifecycleLease.body);
     }
 
@@ -5293,7 +5424,8 @@ app.post('/api/game/result', async (req, res) => {
               COALESCE(learning_cycle_version, 0) AS learning_cycle_version,
               (SELECT COALESCE(a.current_learning_cycle_version, 0)
                  FROM public.accounts a
-                WHERE a.id = public.playtime_sessions.student_id) AS current_learning_cycle_version
+                WHERE a.id = public.playtime_sessions.student_id) AS current_learning_cycle_version,
+              (${getPlaytimeHeartbeatStaleSql()}) AS heartbeat_stale
        FROM public.playtime_sessions
        WHERE id = $1
          AND student_id = $2
@@ -5309,6 +5441,13 @@ app.post('/api/game/result', async (req, res) => {
     }
     if (!hasMatchingPlaytimeSessionCredential(playtimeSessionCredential, playtimeSession.session_credential_hash)) {
       return res.status(403).json({ error: 'The active playtime session credential is invalid.' });
+    }
+    if (playtimeSession.heartbeat_stale) {
+      await finalizeStalePlaytimeSession(playtimeSessionId);
+      return res.status(409).json({
+        code: 'PLAYTIME_HEARTBEAT_STALE',
+        error: 'The playtime session is no longer active. Start a new session to continue.',
+      });
     }
     if (Number(playtimeSession.learning_cycle_version ?? 0) !== Number(playtimeSession.current_learning_cycle_version ?? 0)) {
       return res.status(409).json({
@@ -5358,6 +5497,209 @@ app.post('/api/game/result', async (req, res) => {
   } catch (err) {
     console.error('Save game result failed:', err.message);
     res.status(500).json({ error: 'Failed to save game result', details: err.message });
+  }
+});
+
+const CANONICAL_GAME_ACTIVITY_TYPES = Object.freeze({
+  task_triggered: 'Task Triggered',
+  task_completed: 'Task Completed',
+  quest_completed: 'Quest Completed',
+});
+
+const normalizeCanonicalGameActivityKey = (value) => {
+  const key = String(value || '').trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9._:-]{0,191}$/.test(key) ? key : null;
+};
+
+const normalizeCanonicalGameTaskId = (value) => {
+  const taskId = String(value || '').trim();
+  return /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,95}$/.test(taskId) ? taskId : null;
+};
+
+app.post('/api/game/activity', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const forbiddenIdentityFields = ['student_id', 'student_name', 'grade', 'grade_level', 'section', 'parent_id'];
+    if (forbiddenIdentityFields.some((field) => Object.prototype.hasOwnProperty.call(body, field))) {
+      return res.status(400).json({ error: 'Canonical student identity is resolved from the active playtime session.' });
+    }
+
+    const sessionId = resolvePositiveInteger(body.session_id);
+    const sessionCredential = String(body.session_credential || '').trim();
+    const learningCycleVersion = Number(body.learning_cycle_version);
+    const eventType = String(body.event_type || '').trim().toLowerCase();
+    const eventKey = normalizeCanonicalGameActivityKey(body.event_key);
+    const taskId = normalizeCanonicalGameTaskId(body.task_id);
+    if (!sessionId || Number.isNaN(sessionId) || !sessionCredential || !Number.isInteger(learningCycleVersion)) {
+      return res.status(400).json({ error: 'A valid current playtime lease and learning cycle are required.' });
+    }
+    if (!Object.prototype.hasOwnProperty.call(CANONICAL_GAME_ACTIVITY_TYPES, eventType)) {
+      return res.status(400).json({ error: 'Unsupported canonical game activity type.' });
+    }
+    if (!eventKey || !taskId) {
+      return res.status(400).json({ error: 'A valid task ID and stable event key are required.' });
+    }
+
+    const sessionResult = await pool.query(
+      `SELECT ps.id,
+              ps.student_id,
+              ps.session_credential_hash,
+              COALESCE(ps.learning_cycle_version, 0) AS learning_cycle_version,
+              COALESCE(a.current_learning_cycle_version, 0) AS current_learning_cycle_version,
+              a.name AS student_name,
+              a.grade_level,
+              a.section
+       FROM public.playtime_sessions ps
+       JOIN public.accounts a ON a.id = ps.student_id
+       WHERE ps.id = $1
+         AND ps.status = 'Playing'
+         AND ps.end_time IS NULL
+         AND ps.expires_at > NOW()
+         AND NOT (${getPlaytimeHeartbeatStaleSql('ps.')})
+         AND COALESCE(a.is_archived, false) = false
+       LIMIT 1`,
+      [sessionId]
+    );
+    const session = sessionResult.rows[0];
+    if (!session || !hasMatchingPlaytimeSessionCredential(sessionCredential, session.session_credential_hash)) {
+      return res.status(403).json({ error: 'The active playtime session is invalid.' });
+    }
+    if (Number(session.learning_cycle_version) !== Number(session.current_learning_cycle_version)
+      || Number(session.learning_cycle_version) !== learningCycleVersion) {
+      return res.status(409).json({
+        code: 'LEARNING_CYCLE_CHANGED',
+        error: 'This activity belongs to a previous learning cycle. Start a new game for the current cycle.',
+      });
+    }
+
+    const displayLabel = CANONICAL_GAME_ACTIVITY_TYPES[eventType];
+    const insertResult = await pool.query(
+      `INSERT INTO public.activity_logs (
+         student_id, student_name, grade_level, section, activity_description,
+         current_quest, role, status, activity_timestamp, event_key
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'student', 'Active', CURRENT_TIMESTAMP, $7)
+       ON CONFLICT (student_id, event_key) WHERE event_key IS NOT NULL DO NOTHING
+       RETURNING id`,
+      [
+        session.student_id,
+        String(session.student_name || 'Student').trim() || 'Student',
+        session.grade_level || null,
+        session.section || null,
+        `${displayLabel} — ${taskId}`,
+        taskId,
+        eventKey,
+      ]
+    );
+
+    return res.status(insertResult.rows.length ? 201 : 200).json({
+      success: true,
+      duplicate: insertResult.rows.length === 0,
+      event_type: eventType,
+    });
+  } catch (err) {
+    console.error('Canonical game activity failed:', err.message);
+    return res.status(500).json({ error: 'Failed to record canonical game activity.' });
+  }
+});
+
+app.post('/api/game/leaderboard', async (req, res) => {
+  try {
+    const sessionId = resolvePositiveInteger(req.body?.session_id);
+    const sessionCredential = String(req.body?.session_credential || '').trim();
+    const learningCycleVersion = Number(req.body?.learning_cycle_version);
+    if (!sessionId || Number.isNaN(sessionId) || !sessionCredential || !Number.isInteger(learningCycleVersion)) {
+      return res.status(400).json({ error: 'A valid current playtime lease and learning cycle are required.' });
+    }
+
+    const sessionResult = await pool.query(
+      `SELECT ps.id,
+              ps.student_id,
+              ps.session_credential_hash,
+              COALESCE(ps.learning_cycle_version, 0) AS learning_cycle_version,
+              COALESCE(a.current_learning_cycle_version, 0) AS current_learning_cycle_version,
+              (${getPlaytimeHeartbeatStaleSql('ps.')}) AS heartbeat_stale
+       FROM public.playtime_sessions ps
+       JOIN public.accounts a ON a.id = ps.student_id
+       WHERE ps.id = $1
+         AND ps.status = 'Playing'
+         AND ps.end_time IS NULL
+         AND ps.expires_at > NOW()
+         AND COALESCE(a.is_archived, false) = false
+       LIMIT 1`,
+      [sessionId]
+    );
+    const session = sessionResult.rows[0];
+    if (!session || !hasMatchingPlaytimeSessionCredential(sessionCredential, session.session_credential_hash)) {
+      return res.status(403).json({ error: 'The active playtime session is invalid.' });
+    }
+    if (session.heartbeat_stale) {
+      await finalizeStalePlaytimeSession(sessionId);
+      return res.status(409).json({
+        code: 'PLAYTIME_HEARTBEAT_STALE',
+        error: 'The playtime session is no longer active. Start a new session to continue.',
+      });
+    }
+    if (Number(session.learning_cycle_version) !== Number(session.current_learning_cycle_version)
+      || Number(session.learning_cycle_version) !== learningCycleVersion) {
+      return res.status(409).json({
+        code: 'LEARNING_CYCLE_CHANGED',
+        error: 'This leaderboard request belongs to a previous learning cycle. Start a new game for the current cycle.',
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT progress_percentage,
+              accuracy_rate,
+              correct_answers,
+              total_questions,
+              total_quests_completed
+       FROM (
+         SELECT p.student_id,
+                p.progress_percentage,
+                p.accuracy_rate,
+                p.correct_answers,
+                p.total_questions,
+                COALESCE(p.total_quests_completed, 0) AS total_quests_completed,
+                ROW_NUMBER() OVER (
+                  PARTITION BY p.student_id
+                  ORDER BY p.progress_percentage DESC NULLS LAST,
+                           p.accuracy_rate DESC NULLS LAST,
+                           p.correct_answers DESC NULLS LAST,
+                           COALESCE(p.total_quests_completed, 0) DESC,
+                           p.updated_at DESC NULLS LAST,
+                           p.id DESC
+                ) AS student_rank
+         FROM public.student_game_progress p
+         JOIN public.accounts a ON a.id = p.student_id
+         WHERE COALESCE(a.is_archived, false) = false
+           AND a.progress_archived_at IS NULL
+           AND (
+             a.current_learning_cycle_started_at IS NULL
+             OR p.updated_at >= a.current_learning_cycle_started_at
+           )
+       ) ranked_progress
+       WHERE student_rank = 1
+       ORDER BY progress_percentage DESC NULLS LAST,
+                accuracy_rate DESC NULLS LAST,
+                correct_answers DESC NULLS LAST,
+                total_quests_completed DESC
+       LIMIT 10`
+    );
+
+    return res.json({
+      entries: result.rows.map((row, index) => ({
+        rank: index + 1,
+        display_name: `Player ${index + 1}`,
+        progress_percentage: row.progress_percentage ?? null,
+        accuracy_rate: row.accuracy_rate ?? null,
+        correct_answers: row.correct_answers ?? null,
+        total_questions: row.total_questions ?? null,
+        quests_completed: row.total_quests_completed ?? 0,
+      })),
+    });
+  } catch (err) {
+    console.error('Fetch game leaderboard failed:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch the game leaderboard.' });
   }
 });
 
@@ -5992,7 +6334,7 @@ const getDailyPlaytimeTotals = async (studentId) => {
          WHEN status = 'Playing' AND end_time IS NULL THEN GREATEST(
            0,
            FLOOR(EXTRACT(EPOCH FROM (
-             LEAST(NOW(), COALESCE(expires_at, NOW()))
+              ${getPlaytimeEffectiveEndSql()}
              - COALESCE(server_started_at, start_time)
            )))::INTEGER
          )
@@ -6004,7 +6346,7 @@ const getDailyPlaytimeTotals = async (studentId) => {
          WHEN status = 'Playing' AND end_time IS NULL THEN GREATEST(
            0,
            FLOOR(EXTRACT(EPOCH FROM (
-             LEAST(NOW(), COALESCE(expires_at, NOW()))
+              ${getPlaytimeEffectiveEndSql()}
              - COALESCE(server_started_at, start_time)
            )))::INTEGER
          )
@@ -6024,6 +6366,26 @@ const getDailyPlaytimeTotals = async (studentId) => {
     totalPlaytimeSeconds: Math.max(0, totalPlaytimeSeconds),
     totalPlaytimeMinutes: Math.max(0, Number(row.total_playtime_today || Math.floor(totalPlaytimeSeconds / 60))),
   };
+};
+
+const finalizeStalePlaytimeSession = async (sessionId) => {
+  const effectiveEndSql = getPlaytimeEffectiveEndSql();
+  return pool.query(
+    `UPDATE public.playtime_sessions
+     SET end_time = ${effectiveEndSql},
+         total_playtime_seconds = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+           ${effectiveEndSql} - COALESCE(server_started_at, start_time)
+         )))::INTEGER),
+         total_playtime_minutes = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+           ${effectiveEndSql} - COALESCE(server_started_at, start_time)
+         )) / 60)::INTEGER),
+         status = 'Offline',
+         updated_at = NOW()
+     WHERE id = $1
+       AND status = 'Playing'
+     RETURNING *`,
+    [sessionId]
+  );
 };
 
 const getDailyPlaytimeTotal = async (studentId) => {
@@ -6133,7 +6495,13 @@ const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
   if (studentName) filters.push(`LOWER(ps.student_name) LIKE ${addParam(`%${studentName}%`)}`);
 
   const status = String(req.query.status || '').trim();
-  if (status) filters.push(`ps.status = ${addParam(normalizePlaytimeStatus(status, status))}`);
+  if (status) {
+    const normalizedStatus = normalizePlaytimeStatus(status, status);
+    const statusFilter = addParam(normalizedStatus);
+    filters.push(['Playing', 'Offline'].includes(normalizedStatus)
+      ? `(${getPlaytimePresenceStatusSql('ps.')}) = ${statusFilter}`
+      : `ps.status = ${statusFilter}`);
+  }
 
   const search = String(req.query.search || '').trim().toLowerCase();
   if (search) {
@@ -6194,11 +6562,25 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
               ps.section,
               ps.date_played,
               ps.start_time,
-              ps.end_time,
-              COALESCE(ps.total_playtime_minutes, 0) AS total_playtime_minutes,
-              ps.status,
-              ps.created_at,
-              ps.updated_at
+               ps.end_time,
+               COALESCE(ps.total_playtime_minutes, 0) AS total_playtime_minutes,
+               ps.status,
+               ps.last_heartbeat_at,
+               ps.expires_at,
+               (${getPlaytimePresenceStatusSql('ps.')}) AS presence_status,
+               CASE
+                 WHEN ps.status = 'Playing'
+                  AND ps.end_time IS NULL
+                  AND ${getPlaytimeHeartbeatStaleSql('ps.')}
+                 THEN 'heartbeat_stale'
+                 WHEN ps.status = 'Playing'
+                  AND ps.end_time IS NULL
+                  AND COALESCE(ps.expires_at, NOW()) <= NOW()
+                 THEN 'lease_expired'
+                 ELSE NULL
+               END AS presence_reason,
+               ps.created_at,
+               ps.updated_at
        FROM public.playtime_sessions ps
        LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
        WHERE 1=1${filterResult.whereSql}
@@ -6211,7 +6593,7 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
     res.json({
       data: result.rows.map((row) => ({
         ...row,
-        status: normalizePlaytimeStatus(row.status, 'Offline'),
+        status: normalizePlaytimeStatus(row.presence_status || row.status, 'Offline'),
       })),
       pagination: {
         page,
@@ -6330,10 +6712,11 @@ app.post('/api/playtime/start', async (req, res) => {
     // database.
     let { totalPlaytimeSeconds } = await getDailyPlaytimeTotals(studentId);
     const activeSessionResult = await pool.query(
-      `SELECT *,
-              GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
-                COALESCE(expires_at, NOW()) - NOW()
-              )))::INTEGER) AS remaining_seconds
+       `SELECT *,
+               GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+                 COALESCE(expires_at, NOW()) - NOW()
+               )))::INTEGER) AS remaining_seconds,
+               (${getPlaytimeHeartbeatStaleSql()}) AS heartbeat_stale
        FROM public.playtime_sessions
        WHERE student_id = $1
          AND status = 'Playing'
@@ -6344,20 +6727,24 @@ app.post('/api/playtime/start', async (req, res) => {
 
     if (activeSessionResult.rows.length > 0) {
       const activeSession = activeSessionResult.rows[0];
-      await pool.query(
-        `UPDATE public.playtime_sessions
-         SET end_time = LEAST(NOW(), COALESCE(expires_at, NOW())),
-             total_playtime_seconds = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
-               LEAST(NOW(), COALESCE(expires_at, NOW())) - COALESCE(server_started_at, start_time)
-             )))::INTEGER),
-             total_playtime_minutes = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
-               LEAST(NOW(), COALESCE(expires_at, NOW())) - COALESCE(server_started_at, start_time)
-             )) / 60)::INTEGER),
-             status = CASE WHEN COALESCE(expires_at, NOW()) <= NOW() THEN 'Timed Out' ELSE 'Interrupted' END,
-             updated_at = NOW()
-         WHERE id = $1`,
-        [activeSession.id]
-      );
+      if (activeSession.heartbeat_stale) {
+        await finalizeStalePlaytimeSession(activeSession.id);
+      } else {
+        await pool.query(
+          `UPDATE public.playtime_sessions
+           SET end_time = LEAST(NOW(), COALESCE(expires_at, NOW())),
+               total_playtime_seconds = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+                 LEAST(NOW(), COALESCE(expires_at, NOW())) - COALESCE(server_started_at, start_time)
+               )))::INTEGER),
+               total_playtime_minutes = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+                 LEAST(NOW(), COALESCE(expires_at, NOW())) - COALESCE(server_started_at, start_time)
+               )) / 60)::INTEGER),
+               status = CASE WHEN COALESCE(expires_at, NOW()) <= NOW() THEN 'Timed Out' ELSE 'Interrupted' END,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [activeSession.id]
+        );
+      }
       ({ totalPlaytimeSeconds } = await getDailyPlaytimeTotals(studentId));
     }
 
@@ -6485,11 +6872,12 @@ app.post('/api/playtime/heartbeat', async (req, res) => {
 
     const sessionResult = await pool.query(
       `SELECT *,
-              (SELECT COALESCE(a.current_learning_cycle_version, 0)
-                 FROM public.accounts a
-                WHERE a.id = public.playtime_sessions.student_id) AS current_learning_cycle_version,
-              GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
-                COALESCE(expires_at, NOW()) - NOW()
+               (SELECT COALESCE(a.current_learning_cycle_version, 0)
+                  FROM public.accounts a
+                 WHERE a.id = public.playtime_sessions.student_id) AS current_learning_cycle_version,
+               (${getPlaytimeHeartbeatStaleSql()}) AS heartbeat_stale,
+               GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+                 COALESCE(expires_at, NOW()) - NOW()
               )))::INTEGER) AS remaining_seconds
        FROM public.playtime_sessions
        WHERE id = $1
@@ -6536,6 +6924,22 @@ app.post('/api/playtime/heartbeat', async (req, res) => {
           totalPlaytimeSeconds,
           remainingSeconds: 0,
           message: 'Daily playtime limit reached.',
+        }),
+      });
+    }
+
+    if (session.heartbeat_stale) {
+      await finalizeStalePlaytimeSession(sessionId);
+      const { totalPlaytimeSeconds } = await getDailyPlaytimeTotals(session.student_id);
+      return res.status(409).json({
+        code: 'PLAYTIME_HEARTBEAT_STALE',
+        error: 'The playtime session is no longer active. Start a new session to continue.',
+        can_play: false,
+        ...toPlaytimeResponse({
+          session: { ...session, status: 'Offline' },
+          totalPlaytimeSeconds,
+          remainingSeconds: 0,
+          message: 'The playtime session expired after a missed heartbeat.',
         }),
       });
     }

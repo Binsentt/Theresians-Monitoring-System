@@ -1286,6 +1286,63 @@ test('game result endpoint rejects missing, expired, and forged playtime leases'
   assert.equal(expiredLease.status, 403);
 });
 
+test('game result endpoint rejects a heartbeat-stale lease before inserting a result', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let gameResultInserted = false;
+  let staleLeaseFinalized = false;
+  t.after(async () => {
+    useDefaultGameResultLease = true;
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  useDefaultGameResultLease = false;
+  setQueryHandler(async (sql) => {
+    if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+      return resultRows([{ id: 19, parent_id: '123456' }]);
+    }
+    if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+      return resultRows([{ id: 44, name: 'Canonical Student', grade_level: 'Grade 1', section: null }]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('expires_at > now()')) {
+      return resultRows([{
+        id: GAME_RESULT_SESSION_ID,
+        student_id: 44,
+        parent_id: '123456',
+        session_credential_hash: crypto.createHash('sha256').update(GAME_RESULT_SESSION_CREDENTIAL).digest('hex'),
+        learning_cycle_version: 0,
+        current_learning_cycle_version: 0,
+        heartbeat_stale: true,
+      }]);
+    }
+    if (sql.startsWith('update public.playtime_sessions') && sql.includes("status = 'offline'")) {
+      staleLeaseFinalized = true;
+      return emptyResult;
+    }
+    if (sql.startsWith('insert into public.game_results')) gameResultInserted = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/result', {
+    method: 'POST',
+    body: JSON.stringify({
+      parent_id: '123456',
+      student_id: '001234',
+      grade_level: 'Grade 1',
+      difficulty: 'Hard',
+      math_topic: 'Problem Solving (Addition and Subtraction)',
+      score: 1,
+      total_items: 1,
+    }),
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'PLAYTIME_HEARTBEAT_STALE');
+  assert.equal(staleLeaseFinalized, true);
+  assert.equal(gameResultInserted, false);
+});
+
 test('student monitoring keeps the external six-digit game Student ID beside the internal route key', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;

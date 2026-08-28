@@ -1175,5 +1175,54 @@ test('empty Godot question responses do not mark a question set as fetched', asy
 
   assert.equal(response.status, 200);
   assert.deepEqual(response.body.questions, []);
+  assert.deepEqual(response.body.availability, {
+    available: false,
+    code: 'QUESTION_POOL_EXHAUSTED',
+    message: 'No published questions are available for this Grade, Difficulty, and Topic yet.',
+    expected_question_count: 5,
+    available_question_count: 0,
+  });
   assert.equal(fetchMetadataUpdate, false);
+});
+
+test('undersized Godot question pools are explicitly reported without discarding the remote questions', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select lf.* from public.learning_files')) {
+      return resultRows([{ id: 71, title: 'Small Basic Addition', published: true }]);
+    }
+    if (sql.startsWith('select q.*') && sql.includes('from public.questions q')) {
+      return resultRows([{
+        id: 901,
+        learning_file_id: 71,
+        question: 'What is 1 + 1?',
+        options: ['1', '2', '3', '4'],
+        correct_answer: '2',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+        source: 'fixed',
+      }]);
+    }
+    if (sql.startsWith('update public.learning_files set last_fetched_at')) return emptyResult;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=1&difficulty=Easy&topic=Basic%20Addition');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.questions.length, 1);
+  assert.deepEqual(response.body.availability, {
+    available: false,
+    code: 'QUESTION_POOL_UNDERSIZED',
+    message: 'The published question pool has fewer questions than this encounter requires.',
+    expected_question_count: 5,
+    available_question_count: 1,
+  });
 });

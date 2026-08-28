@@ -14,3 +14,16 @@ test('document-topic migration is additive and permits an unscoped fixed-questio
   assert.doesNotMatch(migration, /UPDATE\s+public\.learning_files/i);
   assert.doesNotMatch(migration, /DELETE\s+FROM/i);
 });
+
+test('activity-event-key migration is additive and protects canonical quest-event retries without rewriting history', () => {
+  const migration = fs.readFileSync(
+    path.join(__dirname, 'migrations', '012_add_activity_log_event_idempotency.sql'),
+    'utf8'
+  );
+
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS event_key/i);
+  assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS[\s\S]*activity_logs_student_event_key_unique/i);
+  assert.match(migration, /\(student_id, event_key\)[\s\S]*WHERE event_key IS NOT NULL/i);
+  assert.doesNotMatch(migration, /UPDATE\s+public\.activity_logs/i);
+  assert.doesNotMatch(migration, /DELETE\s+FROM/i);
+});

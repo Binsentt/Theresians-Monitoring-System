@@ -831,6 +831,131 @@ test('playtime heartbeat expires the lease server-side and blocks additional gam
   assert.equal(timeoutUpdate, true);
 });
 
+test('playtime heartbeat finalizes a stale lease instead of accepting an offline gap', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const sessionCredential = 'f'.repeat(64);
+  let staleFinalized = false;
+  let heartbeatUpdated = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, _params, rawSql) => {
+    if (sql.startsWith('select *,') && sql.includes('from public.playtime_sessions')) {
+      return resultRows([{
+        id: 77,
+        student_id: 44,
+        status: 'Playing',
+        remaining_seconds: 120,
+        heartbeat_stale: true,
+        session_credential_hash: crypto.createHash('sha256').update(sessionCredential).digest('hex'),
+      }]);
+    }
+    if (sql.startsWith('update public.playtime_sessions') && sql.includes("status = 'offline'")) {
+      staleFinalized = true;
+      assert.match(String(rawSql), /last_heartbeat_at.*interval '45 seconds'/i);
+      return resultRows([{ id: 77, status: 'Offline' }]);
+    }
+    if (sql.startsWith('update public.playtime_sessions') && sql.includes('last_heartbeat_at = now()')) {
+      heartbeatUpdated = true;
+      return resultRows([]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime/heartbeat', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: 77, session_credential: sessionCredential }),
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'PLAYTIME_HEARTBEAT_STALE');
+  assert.equal(response.body.can_play, false);
+  assert.equal(staleFinalized, true);
+  assert.equal(heartbeatUpdated, false);
+});
+
+test('screen time projects stale open sessions as Offline with a heartbeat cutoff', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let playtimeSelectSql = '';
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, _params, rawSql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
+    }
+    if (sql.startsWith('select count(*)::integer as total from public.playtime_sessions ps')) {
+      return resultRows([{ total: 1 }]);
+    }
+    if (sql.startsWith('select ps.id')) {
+      playtimeSelectSql = String(rawSql);
+      return resultRows([{
+        id: 77,
+        student_id: 44,
+        student_name: 'Ava Santos',
+        status: 'Playing',
+        presence_status: 'Offline',
+        presence_reason: 'heartbeat_stale',
+        total_playtime_minutes: 1,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime', {
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(playtimeSelectSql, /last_heartbeat_at/i);
+  assert.match(playtimeSelectSql, /interval '45 seconds'/i);
+  assert.equal(response.body.data[0].status, 'Offline');
+  assert.equal(response.body.data[0].presence_reason, 'heartbeat_stale');
+});
+
+test('screen time Offline filtering uses authoritative presence instead of a stale raw Playing status', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let countSql = '';
+  let listSql = '';
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, _params, rawSql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
+    }
+    if (sql.startsWith('select count(*)::integer as total from public.playtime_sessions ps')) {
+      countSql = String(rawSql);
+      return resultRows([{ total: 1 }]);
+    }
+    if (sql.startsWith('select ps.id')) {
+      listSql = String(rawSql);
+      return resultRows([{ id: 77, student_id: 44, status: 'Playing', presence_status: 'Offline' }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime?status=Offline', {
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(countSql, /last_heartbeat_at/i);
+  assert.match(listSql, /last_heartbeat_at/i);
+  assert.equal(response.body.data[0].status, 'Offline');
+});
+
 test('all-student playtime rejects parent sessions and allows admin scoped filters', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;

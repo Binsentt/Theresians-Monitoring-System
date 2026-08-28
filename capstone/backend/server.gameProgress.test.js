@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');
+const crypto = require('node:crypto');
 
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
@@ -212,6 +213,65 @@ test('game progress persists linked child identity, grade, and section from the 
   assert.equal(response.status, 201);
   assert.deepEqual(progressValues.slice(0, 4), [44, 'Ava Santos', 'Grade 3', 'Section A']);
   assert.deepEqual(activityValues.slice(0, 4), [44, 'Ava Santos', 'Grade 3', 'Section A']);
+});
+
+test('game progress rejects a heartbeat-stale current-cycle lease before writing progress', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const credential = 'p'.repeat(64);
+  let progressWritten = false;
+  let staleLeaseFinalized = false;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql === 'begin' || sql === 'rollback') return emptyResult;
+    if (sql.startsWith('select id, name, parent_id from public.accounts')) {
+      return resultRows([{ id: 19, name: 'Parent User', parent_id: '123456' }]);
+    }
+    if (sql.startsWith('select s.* from public.accounts s join public.teacher_student_relationships')) {
+      return resultRows([{ id: 44, name: 'Canonical Student', grade_level: 'Grade 1', section: null }]);
+    }
+    if (sql.startsWith('select coalesce(current_learning_cycle_version')) {
+      return resultRows([{ current_learning_cycle_version: 1 }]);
+    }
+    if (sql.startsWith('select id, session_credential_hash') && sql.includes('from public.playtime_sessions')) {
+      return resultRows([{
+        id: 700,
+        session_credential_hash: crypto.createHash('sha256').update(credential).digest('hex'),
+        learning_cycle_version: 1,
+        heartbeat_stale: true,
+      }]);
+    }
+    if (sql.startsWith('update public.playtime_sessions') && sql.includes("status = 'offline'")) {
+      staleLeaseFinalized = true;
+      return emptyResult;
+    }
+    if (sql.includes('student_game_progress') || sql.startsWith('insert into public.activity_logs')) progressWritten = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/progress', {
+    method: 'POST',
+    body: JSON.stringify({
+      parent_id: '123456',
+      student_id: '001234',
+      student_name: 'Caller Name',
+      current_quest: 'Teacher House',
+      score: 1,
+      correct_answers: 1,
+      total_questions: 1,
+      playtime_session_id: 700,
+      playtime_session_credential: credential,
+    }),
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'PLAYTIME_HEARTBEAT_STALE');
+  assert.equal(staleLeaseFinalized, true);
+  assert.equal(progressWritten, false);
 });
 
 test('game progress preserves a linked child\'s canonical null Section instead of caller metadata', async (t) => {
