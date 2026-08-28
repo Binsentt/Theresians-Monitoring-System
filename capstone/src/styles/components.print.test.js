@@ -8,7 +8,8 @@ describe('print reporting styles', () => {
 
   test('keeps dashboard chrome out of dedicated print reports', () => {
     expect(styles).toContain('body *');
-    expect(styles).toContain('.print-only *');
+    expect(styles).toContain('#print-report-root *');
+    expect(styles).toContain('#root,');
     expect(styles).toContain('visibility: hidden');
     expect(styles).toContain('visibility: visible !important');
   });
@@ -19,7 +20,8 @@ describe('print reporting styles', () => {
     expect(styles).toContain('display: table-header-group');
     expect(styles).toContain('break-inside: avoid');
     expect(styles).toContain('printable-report-landscape');
-    expect(styles).toContain('.student-analytics-print-report dl');
+    expect(styles).toContain('printable-report-portrait');
+    expect(styles).toContain('.printable-report-empty td');
   });
 
   test('gives the four Student Analytics summary cards the full profile width on desktop', () => {

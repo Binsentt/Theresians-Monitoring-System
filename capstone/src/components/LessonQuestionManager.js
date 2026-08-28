@@ -107,6 +107,17 @@ function getQuestionSetStatus(row) {
 }
 
 function getPublicationEligibility(file = {}) {
+  const serverEligibility = file?.validation_summary?.publication_eligibility;
+  if (serverEligibility && typeof serverEligibility === 'object') {
+    return {
+      eligible: Boolean(serverEligibility.eligible),
+      label: serverEligibility.eligible
+        ? `Eligible — ${String(file.math_topic || '').trim() || 'Ready for Game'}`
+        : 'Not Eligible for Game',
+      reason: String(serverEligibility.message || '').trim(),
+      code: String(serverEligibility.code || '').trim(),
+    };
+  }
   const gameTopic = String(file.math_topic || '').trim();
   if (file.file_type !== 'fixed_questions') {
     return {
@@ -719,7 +730,12 @@ export default function LessonQuestionManager() {
       key: 'file_type',
       header: 'File Type',
       className: 'drive-type-column',
-      render: (value) => (value === 'lesson' ? 'Lesson PDF File' : 'Fixed Question File'),
+      render: (value, row) => (
+        <div className="manager-file-type-cell">
+          <span>{value === 'lesson' ? 'Lesson PDF File' : 'Fixed Question File'}</span>
+          {row.source_label && <span className="file-meta">{row.source_label}</span>}
+        </div>
+      ),
     },
     {
       key: 'question_count',
@@ -1020,7 +1036,6 @@ export default function LessonQuestionManager() {
                         reportContext={formatReportContext({ scope: selectedFolderPath, recordCount: displayedFiles.length })}
                         label="Print Report"
                         showPrintHeading={false}
-                        disabled={!displayedFiles.length}
                       />
                     </div>
                     <DataTable columns={tableColumns} data={paginatedFiles.rows} emptyMessage={tableEmptyMessage} className="drive-table" />

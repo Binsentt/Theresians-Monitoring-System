@@ -826,7 +826,6 @@ export default function ManageUsers() {
                     reportContext={formatReportContext({ scope: reportScope, recordCount: filteredUsers.length })}
                     label="Print User List"
                     showPrintHeading={false}
-                    disabled={!filteredUsers.length}
                   />
                 </>
               }

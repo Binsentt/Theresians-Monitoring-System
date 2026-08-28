@@ -42,7 +42,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
   const [childrenLoaded, setChildrenLoaded] = useState(role !== 'parent');
   const [selectedChildId, setSelectedChildId] = useState('');
   const [reportError, setReportError] = useState('');
-  const { preparedRows, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
+  const { preparedRows, hasPreparedReport, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
   const requiresScopedUser = role === 'teacher' || role === 'parent';
   const scopedUserReady = !requiresScopedUser || Boolean(userId);
   const showFilters = shouldShowActivityLogFilters(role);
@@ -171,7 +171,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
   const availableSections = selectedGrade ? GRADE_SECTIONS[selectedGrade] || [] : [];
   const totalPages = Math.max(1, pagination.pages || 1);
   const latestActivity = activities[0] || null;
-  const reportRows = preparedRows.length ? preparedRows : activities;
+  const reportRows = hasPreparedReport ? preparedRows : activities;
   const reportScope = [selectedGrade, selectedSection, debouncedSearch ? `Search: ${debouncedSearch}` : '']
     .filter(Boolean)
     .join(' / ') || (isParentView ? 'Selected child' : 'All authorised activity records');
@@ -198,7 +198,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
 
   const prepareActivityReport = async () => {
     setReportError('');
-    const printed = await prepareAndPrint(async () => {
+    await prepareAndPrint(async () => {
       try {
         return await collectAuthorizedReportRows({
           pageSize: 200,
@@ -225,10 +225,9 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
         });
       } catch (err) {
         setReportError('Unable to prepare the activity report right now.');
-        return [];
+        throw err;
       }
     });
-    if (!printed && !reportError) setReportError('No activity records are available to print.');
   };
 
   const summaryCards = useMemo(() => ([
@@ -365,7 +364,6 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
             reportContext={formatReportContext({ scope: reportScope, recordCount: pagination.total || activities.length })}
             label={reportLabel}
             showPrintHeading={false}
-            disabled={!activities.length}
             preparing={reportPreparing}
             onPrint={prepareActivityReport}
           />

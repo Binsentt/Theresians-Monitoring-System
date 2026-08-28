@@ -10,6 +10,7 @@ import { buildAuthHeaders, getStoredUserSession } from './session.utils';
 import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext, matchesTableSearch, paginateTableRows } from './tableReporting.utils';
+import { BulkStudentProgressLifecycleAction } from './StudentProgressLifecycleActions';
 import '../styles/topachievers.css';
 
 export default function TeacherTopAchievers() {
@@ -22,6 +23,7 @@ export default function TeacherTopAchievers() {
   const [selectedSection, setSelectedSection] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
+  const [refreshToken, setRefreshToken] = useState(0);
   const pageSize = 10;
 
   useEffect(() => {
@@ -58,7 +60,7 @@ export default function TeacherTopAchievers() {
     };
 
     initializeComponent();
-  }, [navigate]);
+  }, [navigate, refreshToken]);
 
   // Extract unique grades and sections from teacher's assigned students
   const grades = [...new Set(topAchievers.map(a => a.grade_level).filter(Boolean))].sort();
@@ -228,12 +230,18 @@ export default function TeacherTopAchievers() {
 
             <ContentSection title={`Top Achievers (${filteredAchievers.length} found)`}>
               <div className="table-report-controls">
+                <BulkStudentProgressLifecycleAction
+                  operation="reset"
+                  role={user?.role || 'teacher'}
+                  label="Reset Top Achievers"
+                  warning="Resetting Top Achievers starts a new learning cycle for the affected students. Their current progress and leaderboard ranking will restart, while historical results and Screen Time remain preserved."
+                  onComplete={() => setRefreshToken((value) => value + 1)}
+                />
                 <TablePrintButton
                   reportTitle="Top Achievers Report"
                   reportContext={formatReportContext({ scope: reportScope, recordCount: filteredAchievers.length })}
                   label="Print Top Achievers"
                   showPrintHeading={false}
-                  disabled={!filteredAchievers.length}
                 />
               </div>
               {error ? (

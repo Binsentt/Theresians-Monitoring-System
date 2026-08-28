@@ -1,6 +1,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import LessonQuestionManager from './LessonQuestionManager';
+import { clearPreparedReport, openPreparedReport } from './PrintReportPortal';
 
 const mockNavigate = jest.fn();
 
@@ -127,6 +128,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
   });
 
   afterEach(() => {
+    act(() => clearPreparedReport());
     act(() => {
       root.unmount();
     });
@@ -617,6 +619,38 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.querySelector('.generated-questions-preview-footer').textContent).toContain('Close');
   });
 
+  test('shows the server-controlled Fixed Question publication diagnostic in the status column', async () => {
+    fixtures.files = [{
+      id: 77,
+      title: 'uncontrolled-topic.docx',
+      file_name: 'uncontrolled-topic.docx',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      document_topic: 'Unapproved Topic',
+      math_topic: 'Basic Addition',
+      file_type: 'fixed_questions',
+      published: false,
+      validation_summary: {
+        is_valid: true,
+        invalid_question_count: 0,
+        publication_eligibility: {
+          eligible: false,
+          code: 'UNCONTROLLED_DOCUMENT_TOPIC',
+          message: 'The Fixed Question document topic is not an approved topic for the selected Grade and Difficulty.',
+        },
+      },
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+
+    expect(container.textContent).toContain('The Fixed Question document topic is not an approved topic for the selected Grade and Difficulty.');
+    const pushButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Not Eligible for Game'));
+    expect(pushButton.disabled).toBe(true);
+  });
+
   test('keeps Push to Game available for a valid single-topic Fixed Question document', async () => {
     fixtures.files = [{
       id: 77,
@@ -1082,7 +1116,10 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.querySelectorAll('.drive-table tbody tr')).toHaveLength(10);
     expect(container.textContent).toContain('Page 1 of 2');
     expect(container.querySelector('button[aria-label="Print Report"]')).not.toBeNull();
-    expect(container.querySelectorAll('.printable-table-report tbody tr')).toHaveLength(11);
+    let opened = false;
+    act(() => { opened = openPreparedReport(); });
+    expect(opened).toBe(true);
+    expect(document.querySelectorAll('#print-report-root .printable-table-report tbody tr')).toHaveLength(11);
   });
 
   test('paginates the Trash Bin without exposing a separate destructive-item print flow', async () => {

@@ -230,7 +230,6 @@ export default function AdminStudentProgress() {
                   reportContext={formatReportContext({ scope: reportScope, recordCount: filteredStudents.length })}
                   label="Print Student List"
                   showPrintHeading={false}
-                  disabled={!filteredStudents.length}
                 />
                 {lifecycle === 'active' && (
                   <div className="student-lifecycle-bulk-actions no-print">

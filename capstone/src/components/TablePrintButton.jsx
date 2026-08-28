@@ -1,14 +1,14 @@
 import React from 'react';
 import { Printer } from 'lucide-react';
+import { openPreparedReport } from './PrintReportPortal';
 
 export function TablePrintButton({
   reportTitle,
-  reportContext = '',
   label,
   disabled = false,
   preparing = false,
   onPrint,
-  showPrintHeading = true,
+  showPrintHeading: _showPrintHeading = true,
   className = '',
 }) {
   const title = String(reportTitle || 'Report').trim() || 'Report';
@@ -20,17 +20,10 @@ export function TablePrintButton({
       onPrint();
       return;
     }
-    window.print();
+    openPreparedReport();
   };
 
   return (
-    <>
-      {showPrintHeading && (
-        <div className="print-only table-print-heading">
-          <h1>{title}</h1>
-          {reportContext ? <p>{reportContext}</p> : null}
-        </div>
-      )}
       <button
         type="button"
         className={`table-print-button no-print ${className}`.trim()}
@@ -41,6 +34,5 @@ export function TablePrintButton({
         <Printer size={16} aria-hidden="true" />
         {preparing ? 'Preparing report...' : buttonLabel}
       </button>
-    </>
   );
 }

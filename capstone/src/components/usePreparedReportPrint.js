@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
+import { openPreparedReport } from './PrintReportPortal';
 
 export function usePreparedReportPrint(initialRows = []) {
   const [preparedRows, setPreparedRows] = useState(Array.isArray(initialRows) ? initialRows : []);
+  const [hasPreparedReport, setHasPreparedReport] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [printRequested, setPrintRequested] = useState(false);
 
   useEffect(() => {
     if (!printRequested) return undefined;
     const timer = window.setTimeout(() => {
-      window.print();
+      openPreparedReport();
       setPrintRequested(false);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -20,10 +22,12 @@ export function usePreparedReportPrint(initialRows = []) {
     try {
       const rows = await loadRows();
       const safeRows = Array.isArray(rows) ? rows : [];
-      if (!safeRows.length) return false;
       setPreparedRows(safeRows);
+      setHasPreparedReport(true);
       setPrintRequested(true);
       return true;
+    } catch {
+      return false;
     } finally {
       setPreparing(false);
     }
@@ -31,6 +35,7 @@ export function usePreparedReportPrint(initialRows = []) {
 
   return {
     preparedRows,
+    hasPreparedReport,
     preparing,
     prepareAndPrint,
   };

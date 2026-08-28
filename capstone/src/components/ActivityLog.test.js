@@ -1,6 +1,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import ActivityLog from './ActivityLog';
+import { clearPreparedReport, openPreparedReport } from './PrintReportPortal';
 
 const jsonResponse = (payload) => Promise.resolve({
   ok: true,
@@ -27,9 +28,12 @@ describe('ActivityLog table', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     localStorage.setItem('token', 'activity-log-token');
+    jest.spyOn(window, 'print').mockImplementation(() => {});
   });
 
   afterEach(() => {
+    act(() => clearPreparedReport());
+    window.print.mockRestore();
     act(() => {
       root.unmount();
     });
@@ -65,7 +69,10 @@ describe('ActivityLog table', () => {
     expect(container.textContent).toContain('Fractions Gate');
     expect(container.textContent).toContain('2m 5s');
     expect(container.querySelector('button[aria-label="Print Filtered Activity Log"]')).not.toBeNull();
-    const report = container.querySelector('.printable-table-report');
+    let opened = false;
+    act(() => { opened = openPreparedReport(); });
+    expect(opened).toBe(true);
+    const report = document.querySelector('#print-report-root .printable-table-report');
     expect(report.querySelectorAll('tbody tr')).toHaveLength(1);
     expect(report.textContent).toContain('May 27, 2026');
     expect(report.querySelector('tbody tr td').textContent).toMatch(/^May 27, 2026\s+.+/);
@@ -136,8 +143,6 @@ describe('ActivityLog table', () => {
         ? { total: 11, pages: 1, current_page: 1 }
         : { total: 11, pages: 2, current_page: 1 },
     }));
-    const printSpy = jest.spyOn(window, 'print').mockImplementation(() => {});
-
     await act(async () => {
       root.render(<ActivityLog role="admin" limit={10} />);
     });
@@ -153,8 +158,10 @@ describe('ActivityLog table', () => {
     });
 
     expect(container.querySelectorAll('.al-table tbody tr')).toHaveLength(10);
-    expect(container.querySelectorAll('.printable-table-report tbody tr')).toHaveLength(11);
+    expect(document.querySelectorAll('#print-report-root .printable-table-report tbody tr')).toHaveLength(11);
     expect(global.fetch.mock.calls.some(([url]) => String(url).includes('limit=200'))).toBe(true);
-    expect(printSpy).toHaveBeenCalledTimes(1);
+    // The shared portal regression covers browser invocation; this view test
+    // verifies the complete authorized dataset reaches that portal.
+    expect(document.querySelector('#print-report-root')).not.toBeNull();
   });
 });

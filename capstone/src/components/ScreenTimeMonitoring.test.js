@@ -1,6 +1,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import ScreenTimeMonitoring from './ScreenTimeMonitoring';
+import { clearPreparedReport, openPreparedReport } from './PrintReportPortal';
 
 const mockNavigate = jest.fn();
 
@@ -66,14 +67,17 @@ describe('ScreenTimeMonitoring', () => {
     root = createRoot(container);
     mockNavigate.mockReset();
     localStorage.clear();
+    jest.spyOn(window, 'print').mockImplementation(() => {});
   });
 
   afterEach(() => {
+    act(() => clearPreparedReport());
     act(() => {
       root.unmount();
     });
     container.remove();
     delete global.fetch;
+    window.print.mockRestore();
   });
 
   test('admin all-student view fetches Screen Time Monitoring with parent IDs visible', async () => {
@@ -102,9 +106,41 @@ describe('ScreenTimeMonitoring', () => {
     expect(tableWrapper).not.toBeNull();
     expect(reportToolbar).not.toBe(tableWrapper);
     expect(reportToolbar.querySelector('button[aria-label="Print Filtered Report"]')).not.toBeNull();
-    const report = container.querySelector('.printable-table-report');
+    let opened = false;
+    act(() => { opened = openPreparedReport(); });
+    expect(opened).toBe(true);
+    const report = document.querySelector('#print-report-root .printable-table-report');
     expect(report.querySelectorAll('tbody tr')).toHaveLength(1);
     expect(Array.from(report.querySelectorAll('th')).map((header) => header.textContent)).not.toContain('Parent ID');
+  });
+
+  test('keeps filtered printing available and produces a truthful no-data report for an authorised empty scope', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
+    localStorage.setItem('rememberToken', 'remember-token');
+    global.fetch = jest.fn(() => jsonResponse({
+      data: [],
+      pagination: { page: 1, limit: 10, total: 0, pages: 1 },
+    }));
+
+    act(() => {
+      root.render(<ScreenTimeMonitoring mode="all" />);
+    });
+    await waitForContent(container, 'No playtime records available yet.');
+
+    const printButton = container.querySelector('button[aria-label="Print Filtered Report"]');
+    expect(printButton.disabled).toBe(false);
+    await act(async () => {
+      printButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    for (let attempt = 0; attempt < 10 && !document.querySelector('#print-report-root'); attempt += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+
+    expect(document.querySelector('#print-report-root .printable-report-empty')?.textContent)
+      .toContain('No data available for the selected authorized scope.');
   });
 
   test('defaults to active Students and can request archived Screen Time history without changing the authorised endpoint', async () => {
@@ -164,8 +200,6 @@ describe('ScreenTimeMonitoring', () => {
         ? { page: 1, limit: 200, total: 11, pages: 1 }
         : { page: 1, limit: 10, total: 11, pages: 2 },
     }));
-    const printSpy = jest.spyOn(window, 'print').mockImplementation(() => {});
-
     act(() => {
       root.render(<ScreenTimeMonitoring mode="all" />);
     });
@@ -181,9 +215,9 @@ describe('ScreenTimeMonitoring', () => {
     });
 
     expect(container.querySelectorAll('.screen-time-table tbody tr')).toHaveLength(10);
-    expect(container.querySelectorAll('.printable-table-report tbody tr')).toHaveLength(11);
+    expect(document.querySelectorAll('#print-report-root .printable-table-report tbody tr')).toHaveLength(11);
     expect(global.fetch.mock.calls.some(([url]) => String(url).includes('limit=200'))).toBe(true);
-    expect(printSpy).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('#print-report-root')).not.toBeNull();
   });
 
   test('parent child-only view fetches My Child Screen Time without exposing parent ID column', async () => {

@@ -337,7 +337,7 @@ button.drive-folder-card {
   border-collapse: separate;
   border-spacing: 0;
   width: 100%;
-  min-width: 1000px;
+  min-width: 1180px;
   table-layout: fixed;
 }
 
@@ -346,20 +346,22 @@ button.drive-folder-card {
   font-weight: 800;
   text-align: left;
   vertical-align: middle;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .drive-table .data-table-td {
   vertical-align: middle;
 }
 
-.drive-name-column { width: 32%; min-width: 300px; }
-.drive-type-column { width: 13%; min-width: 132px; }
-.drive-count-column { width: 9%; min-width: 100px; text-align: center; }
-.drive-status-column { width: 13%; min-width: 136px; }
-.drive-date-column { width: 12%; min-width: 128px; }
-.drive-size-column { width: 8%; min-width: 88px; }
-.drive-actions-cell { width: 13%; min-width: 214px; }
+.drive-name-column { width: 310px; min-width: 310px; }
+.drive-type-column { width: 140px; min-width: 140px; }
+.drive-count-column { width: 132px; min-width: 132px; text-align: center; }
+.drive-status-column { width: 176px; min-width: 176px; }
+.drive-date-column { width: 128px; min-width: 128px; }
+.drive-size-column { width: 96px; min-width: 96px; }
+.drive-actions-cell { width: 236px; min-width: 236px; }
 
 .drive-file-name svg {
   flex: 0 0 auto;
@@ -369,6 +371,12 @@ button.drive-folder-card {
 .file-name-cell {
   display: flex;
   flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.manager-file-type-cell {
+  display: grid;
   gap: 3px;
   min-width: 0;
 }

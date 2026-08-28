@@ -194,7 +194,7 @@ export const StudentProgressPermanentDeleteAction = ({ studentId, onComplete, cl
   );
 };
 
-export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete }) => {
+export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete, label: labelOverride, warning: warningOverride }) => {
   const [open, setOpen] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [affectedCount, setAffectedCount] = useState(null);
@@ -204,7 +204,7 @@ export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const isArchive = operation === 'archive';
-  const label = isArchive ? 'Delete All' : 'Reset All';
+  const label = labelOverride || (isArchive ? 'Delete All' : 'Reset All');
   const requiredPhrase = isArchive ? 'ARCHIVE' : 'RESET';
   const reasons = isArchive ? ARCHIVE_REASONS : ['New Lesson', 'Completed Current Lesson', 'New Grading Period', 'Testing Data Cleanup', 'Other'];
 
@@ -254,7 +254,7 @@ export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete
         <LifecycleDialog onClose={close}>
           <form onSubmit={submit} onPointerDown={stopModalEvent} onClick={stopModalEvent}>
             <h2>{label}</h2>
-            <p>{isArchive ? 'Delete all currently authorized active Students by moving them to Archived Progress. Historical records remain preserved. New Lesson is not an archive reason.' : 'Start a fresh learning cycle for all currently authorized active Students.'}</p>
+            <p>{warningOverride || (isArchive ? 'Delete all currently authorized active Students by moving them to Archived Progress. Historical records remain preserved. New Lesson is not an archive reason.' : 'Start a fresh learning cycle for all currently authorized active Students.')}</p>
             <p><strong>{summaryLoading ? 'Preparing affected count…' : `${affectedCount ?? 0} Students will be affected.`}</strong></p>
             <label htmlFor={`bulk-${operation}-reason`}>Reason</label>
             <select id={`bulk-${operation}-reason`} name={`bulk-${operation}-reason`} value={reason} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setReason(event.target.value); setError(''); }} disabled={submitting || summaryLoading}>

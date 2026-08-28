@@ -124,7 +124,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   const [reportError, setReportError] = useState('');
   const [reportTitle, setReportTitle] = useState('Screen Time Report');
   const [reportScope, setReportScope] = useState('All authorised records');
-  const { preparedRows, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
+  const { preparedRows, hasPreparedReport, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
   const isChildView = mode === 'children';
   const pageSize = 10;
   const visibleRange = {
@@ -132,7 +132,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     start: records.length ? (page - 1) * pageSize + 1 : 0,
     end: records.length ? (page - 1) * pageSize + records.length : 0,
   };
-  const reportRows = preparedRows.length ? preparedRows : records;
+  const reportRows = hasPreparedReport ? preparedRows : records;
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') || 'light';
@@ -240,15 +240,14 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     setReportError('');
     setReportTitle(nextTitle);
     setReportScope(nextScope);
-    const printed = await prepareAndPrint(async () => {
+    await prepareAndPrint(async () => {
       try {
         return await loadRows();
       } catch (err) {
         setReportError('Unable to prepare the screen time report right now.');
-        return [];
+        throw err;
       }
     });
-    if (!printed) setReportError('No screen time records are available to print.');
   };
 
   const prepareFilteredScreenTimeReport = () => prepareScreenTimeReport(
@@ -463,7 +462,6 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                       reportContext={formatReportContext({ scope: activeReportScope, recordCount: pagination.total || records.length })}
                       label="Print Filtered Report"
                       showPrintHeading={false}
-                      disabled={!records.length}
                       preparing={reportPreparing}
                       onPrint={prepareFilteredScreenTimeReport}
                     />

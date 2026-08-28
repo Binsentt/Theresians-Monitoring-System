@@ -1192,8 +1192,7 @@ label {
   margin: 0 0 1rem;
 }
 
-.printable-table-report,
-.student-analytics-print-report {
+.printable-table-report {
   color: #111827;
   background: #fff;
 }
@@ -1220,6 +1219,12 @@ label {
 .printable-report-header h1 {
   font-size: 1.42rem;
   line-height: 1.2;
+}
+
+.printable-report-empty td {
+  padding: 1.1rem;
+  text-align: center;
+  font-style: italic;
 }
 
 @media (max-width: 640px) {
@@ -1262,20 +1267,26 @@ label {
     visibility: hidden;
   }
 
+  #root,
   .print-only {
+    display: none !important;
+  }
+
+  #print-report-root,
+  #print-report-root * {
+    visibility: visible !important;
+  }
+
+  #print-report-root {
     display: block !important;
-    visibility: visible !important;
+    width: 100%;
+    padding: 0;
+    color: #111 !important;
+    background: #fff !important;
   }
 
-  .print-only * {
-    visibility: visible !important;
-  }
-
-  .printable-table-report,
-  .student-analytics-print-report {
-    position: absolute;
-    top: 0;
-    left: 0;
+  #print-report-root .printable-table-report {
+    position: static;
     width: 100%;
     padding: 0;
     overflow: visible !important;
@@ -1288,7 +1299,7 @@ label {
     page: landscape-report;
   }
 
-  .student-analytics-print-report {
+  .printable-report-portrait {
     page: portrait-report;
   }
 
@@ -1306,46 +1317,24 @@ label {
         display: none !important;
       }
 
-  .table-print-heading {
-    margin: 0 0 1rem;
-    color: #111827;
-  }
-
-  .table-print-heading h1 {
-    margin: 0;
-    font-size: 1.25rem;
-  }
-
-  .table-print-heading p {
-    margin: 0.25rem 0 0;
-    color: #4b5563;
-  }
-
-  .printable-table-report table,
-  .student-analytics-print-report table {
+  #print-report-root .printable-table-report table {
     width: 100%;
     border-collapse: collapse;
     color: #111 !important;
     font-size: 9pt;
   }
 
-  .printable-table-report thead,
-  .student-analytics-print-report thead {
+  #print-report-root .printable-table-report thead {
     display: table-header-group;
   }
 
-  .printable-table-report tr,
-  .student-analytics-print-report tr,
-  .student-analytics-print-report section,
-  .student-analytics-print-report article {
+  #print-report-root .printable-table-report tr {
     break-inside: avoid;
     page-break-inside: avoid;
   }
 
-  .printable-table-report th,
-  .printable-table-report td,
-  .student-analytics-print-report th,
-  .student-analytics-print-report td {
+  #print-report-root .printable-table-report th,
+  #print-report-root .printable-table-report td {
     padding: 0.38rem 0.42rem;
     border: 1px solid #6b7280 !important;
     background: #fff !important;
@@ -1354,10 +1343,14 @@ label {
     vertical-align: top;
   }
 
-  .printable-table-report th,
-  .student-analytics-print-report th {
+  #print-report-root .printable-table-report th {
     font-weight: 700;
     background: #e5e7eb !important;
+  }
+
+  #print-report-root .printable-report-empty td {
+    text-align: center;
+    font-style: italic;
   }
 
   .printable-report-header {
@@ -1365,46 +1358,6 @@ label {
     page-break-after: avoid;
   }
 
-  .student-analytics-print-report .student-analytics-print-header,
-  .student-analytics-print-report .student-analytics-print-section {
-    display: block !important;
-    margin: 0 0 0.95rem;
-  }
-
-  .student-analytics-print-report .student-analytics-print-header p,
-  .student-analytics-print-report .student-analytics-print-header h1,
-  .student-analytics-print-report .student-analytics-print-header span {
-    display: block;
-    margin: 0 0 0.22rem;
-  }
-
-  .student-analytics-print-report .student-analytics-print-section h2 {
-    margin: 0 0 0.45rem;
-    font-size: 11pt;
-  }
-
-  .student-analytics-print-report dl {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.35rem 0.75rem;
-    margin: 0;
-  }
-
-  .student-analytics-print-report dl > div {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
-    gap: 0.4rem;
-    padding: 0.28rem 0.35rem;
-    border: 1px solid #9ca3af;
-  }
-
-  .student-analytics-print-report dt {
-    font-weight: 700;
-  }
-
-  .student-analytics-print-report dd {
-    margin: 0;
-  }
 
   .data-table-wrapper,
   .top-achievers-container,

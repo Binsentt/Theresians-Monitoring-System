@@ -1,6 +1,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import AdminStudentProgress from './AdminStudentProgress';
+import { clearPreparedReport, openPreparedReport } from './PrintReportPortal';
 
 const mockNavigate = jest.fn();
 
@@ -45,6 +46,7 @@ describe('Student Progress summary cards', () => {
   });
 
   afterEach(() => {
+    act(() => clearPreparedReport());
     act(() => {
       root.unmount();
     });
@@ -79,7 +81,10 @@ describe('Student Progress summary cards', () => {
     expect(container.textContent).not.toMatch(/Grade groups/i);
     expect(container.querySelector('button[aria-label="Print Student List"]')).not.toBeNull();
     expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Reset Progress')).toBe(true);
-    expect(container.querySelectorAll('.printable-table-report tbody tr')).toHaveLength(1);
+    let opened = false;
+    act(() => { opened = openPreparedReport(); });
+    expect(opened).toBe(true);
+    expect(document.querySelectorAll('#print-report-root .printable-table-report tbody tr')).toHaveLength(1);
     expect(container.querySelector('.student-progress-table thead th')?.textContent).toBe('No.');
     expect(global.fetch.mock.calls.every(([, options]) => (
       options?.headers?.Authorization === 'Bearer analytics-test-token'

@@ -1,6 +1,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import ManageUsers from './ManageUsers';
+import { clearPreparedReport, openPreparedReport } from './PrintReportPortal';
 
 const mockNavigate = jest.fn();
 
@@ -110,6 +111,7 @@ describe('ManageUsers edit flow', () => {
   });
 
   afterEach(() => {
+    act(() => clearPreparedReport());
     act(() => {
       root.unmount();
     });
@@ -145,7 +147,10 @@ describe('ManageUsers edit flow', () => {
     expect(container.textContent).toContain('PARENT ID');
     expect(container.textContent).toContain('482915');
     expect(container.querySelector('button[aria-label="Print User List"]')).not.toBeNull();
-    const report = container.querySelector('.printable-table-report');
+    let opened = false;
+    act(() => { opened = openPreparedReport(); });
+    expect(opened).toBe(true);
+    const report = document.querySelector('#print-report-root .printable-table-report');
     expect(report.querySelectorAll('tbody tr')).toHaveLength(3);
     expect(Array.from(report.querySelectorAll('th')).map((header) => header.textContent)).toEqual([
       'User Name', 'Email', 'Role', 'Account Status',

@@ -221,7 +221,6 @@ export default function StudentProgress() {
                   reportContext={formatReportContext({ scope: reportScope, recordCount: filteredStudents.length })}
                   label="Print Student List"
                   showPrintHeading={false}
-                  disabled={!filteredStudents.length}
                 />
               </div>
               <div className="table-wrapper">

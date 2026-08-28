@@ -18,6 +18,8 @@ import { normalizeRole } from './manageUsers.utils';
 import { buildAuthHeaders } from './session.utils';
 import { normalizeDifficultyDisplay, normalizeDisplayList, safeDisplayText } from './studentProgress.utils';
 import { TablePrintButton } from './TablePrintButton';
+import { PrintableTableReport } from './PrintableTableReport';
+import { usePreparedReportPrint } from './usePreparedReportPrint';
 import '../styles/studentprogress.css';
 
 const toNullableNumber = (value) => {
@@ -62,6 +64,7 @@ export default function StudentAnalytics() {
   const [error, setError] = useState('');
   const [insightError, setInsightError] = useState('');
   const [userRole, setUserRole] = useState('admin');
+  const { preparedRows, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
 
   const loadDetail = async () => {
     setLoading(true);
@@ -184,10 +187,26 @@ export default function StudentAnalytics() {
     { label: 'Total Progress', value: formatPercent(metrics?.totalProgress) },
     { label: 'Completed Quests', value: formatCount(metrics?.completedQuests) },
   ];
-  const printedAt = new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date());
+  const analyticsPrintRows = [
+    ['Student Information', 'Student Name', studentName],
+    ['Student Information', 'Student ID', resolvedStudentId],
+    ['Student Information', 'Grade', grade],
+    ['Student Information', 'Section', section],
+    ['Student Information', 'Current Quest', currentQuest],
+    ['Student Information', 'Current Difficulty', currentDifficulty],
+    ...reportSummary.map((metric) => ['Performance Summary', metric.label, metric.value]),
+    ...difficultyRows.map((row) => ['Difficulty Performance', row.label, formatPercent(row.value)]),
+    ...topicRows.map((row) => ['Topic Performance', row.topic, formatPercent(row.accuracy)]),
+    ['Analysis', 'Performance Insight', insight?.performance_insight || insightMessage],
+    ['Analysis', 'Strengths', strengths.length ? strengths.join('; ') : 'Analysis not available.'],
+    ['Analysis', 'Weaknesses', weaknesses.length ? weaknesses.join('; ') : 'Analysis not available.'],
+    ['Analysis', 'Recommendations', recommendations.length ? recommendations.join('; ') : 'Analysis not available.'],
+  ].map(([sectionLabel, metric, value], index) => ({ id: `${sectionLabel}-${metric}-${index}`, sectionLabel, metric, value }));
+  const analyticsPrintColumns = [
+    { header: 'Section', value: (row) => row.sectionLabel },
+    { header: 'Metric', value: (row) => row.metric },
+    { header: 'Value', value: (row) => row.value },
+  ];
 
   return (
     <>
@@ -218,6 +237,8 @@ export default function StudentAnalytics() {
                 label="Print Student Analytics"
                 showPrintHeading={false}
                 disabled={!progress}
+                preparing={reportPreparing}
+                onPrint={() => prepareAndPrint(async () => analyticsPrintRows)}
               />
             </div>
             <div className="student-profile-meta">
@@ -321,61 +342,14 @@ export default function StudentAnalytics() {
       )}
     </div>
     {!loading && !error && progress && (
-      <section className="print-only student-analytics-print-report" aria-label="Student Analytics Report">
-        <header className="student-analytics-print-header">
-          <p>Theresian's Quest</p>
-          <h1>Student Analytics Report</h1>
-          <span>Records: 1</span>
-          <span>Printed: {printedAt}</span>
-        </header>
-
-        <section className="student-analytics-print-section">
-          <h2>Student Information</h2>
-          <dl>
-            <div><dt>Student Name</dt><dd>{studentName}</dd></div>
-            <div><dt>Student ID</dt><dd>{resolvedStudentId}</dd></div>
-            <div><dt>Grade</dt><dd>{grade}</dd></div>
-            <div><dt>Section</dt><dd>{section}</dd></div>
-            <div><dt>Current Quest</dt><dd>{currentQuest}</dd></div>
-            <div><dt>Current Difficulty</dt><dd>{currentDifficulty}</dd></div>
-          </dl>
-        </section>
-
-        <section className="student-analytics-print-section">
-          <h2>Performance Summary</h2>
-          <dl>
-            {reportSummary.map((metric) => <div key={metric.label}><dt>{metric.label}</dt><dd>{metric.value}</dd></div>)}
-          </dl>
-        </section>
-
-        <section className="student-analytics-print-section">
-          <h2>Difficulty Performance</h2>
-          <dl>
-            {difficultyRows.map((row) => <div key={row.label}><dt>{row.label}</dt><dd>{formatPercent(row.value)}</dd></div>)}
-          </dl>
-          {difficultyRows.every((row) => row.value === null) && <p>No recorded difficulty results.</p>}
-        </section>
-
-        <section className="student-analytics-print-section">
-          <h2>Topic Performance</h2>
-          {topicRows.length > 0 ? (
-            <table>
-              <thead><tr><th>Topic</th><th>Accuracy</th></tr></thead>
-              <tbody>{topicRows.map((row) => <tr key={row.topic}><td>{row.topic}</td><td>{formatPercent(row.accuracy)}</td></tr>)}</tbody>
-            </table>
-          ) : <p>No recorded topic performance.</p>}
-        </section>
-
-        <section className="student-analytics-print-section">
-          <h2>Analysis</h2>
-          <dl>
-            <div><dt>Performance Insight</dt><dd>{insight?.performance_insight || insightMessage}</dd></div>
-            <div><dt>Strengths</dt><dd>{strengths.length ? strengths.join('; ') : 'Analysis not available.'}</dd></div>
-            <div><dt>Weaknesses</dt><dd>{weaknesses.length ? weaknesses.join('; ') : 'Analysis not available.'}</dd></div>
-            <div><dt>Recommendations</dt><dd>{recommendations.length ? recommendations.join('; ') : 'Analysis not available.'}</dd></div>
-          </dl>
-        </section>
-      </section>
+      <PrintableTableReport
+        title="Student Analytics Report"
+        context={`Student: ${studentName}`}
+        rows={preparedRows}
+        columns={analyticsPrintColumns}
+        orientation="portrait"
+        recordCount={1}
+      />
     )}
     </>
   );

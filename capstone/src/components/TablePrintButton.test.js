@@ -1,6 +1,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { TablePrintButton } from './TablePrintButton';
+import { clearPreparedReport, registerPreparedReport } from './PrintReportPortal';
 
 describe('TablePrintButton', () => {
   let container;
@@ -11,25 +12,33 @@ describe('TablePrintButton', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
+    jest.useFakeTimers();
+    registerPreparedReport({
+      title: 'Student Progress',
+      rows: [{ id: 1, name: 'Ava Santos' }],
+      columns: [{ header: 'Student', value: (row) => row.name }],
+    });
   });
 
   afterEach(() => {
     act(() => root.unmount());
+    act(() => clearPreparedReport());
     container.remove();
+    jest.useRealTimers();
   });
 
-  test('prints the visible report with a print-only title and context', () => {
+  test('keeps the live control accessible without rendering a duplicate printable heading', () => {
     const printSpy = jest.spyOn(window, 'print').mockImplementation(() => {});
 
     act(() => {
-      root.render(<TablePrintButton reportTitle="Student Progress" reportContext="Grade 1 · 2 records" />);
+      root.render(<TablePrintButton reportTitle="Student Progress" />);
     });
 
-    expect(container.textContent).toContain('Student Progress');
-    expect(container.textContent).toContain('Grade 1 · 2 records');
-    expect(container.querySelector('.print-only')).not.toBeNull();
+    expect(container.textContent).toContain('Print Student Progress');
+    expect(container.querySelector('.print-only')).toBeNull();
     act(() => {
       container.querySelector('button').click();
+      jest.runAllTimers();
     });
     expect(printSpy).toHaveBeenCalledTimes(1);
 

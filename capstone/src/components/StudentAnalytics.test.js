@@ -1,6 +1,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import StudentAnalytics from './StudentAnalytics';
+import { clearPreparedReport } from './PrintReportPortal';
 
 const mockNavigate = jest.fn();
 
@@ -32,6 +33,7 @@ describe('StudentAnalytics defensive rendering', () => {
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin' }));
     localStorage.setItem('token', 'student-detail-token');
     jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.useFakeTimers();
   });
 
   afterEach(() => {
@@ -39,6 +41,8 @@ describe('StudentAnalytics defensive rendering', () => {
       root.unmount();
     });
     container.remove();
+    clearPreparedReport();
+    jest.useRealTimers();
     delete global.fetch;
     console.error.mockRestore();
   });
@@ -171,7 +175,13 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.querySelector('button[aria-label="Print Student Analytics"]')).toBeTruthy();
     expect(container.querySelectorAll('.student-profile-meta > div')).toHaveLength(4);
     expect(container.querySelectorAll('.student-performance-meta > div')).toHaveLength(4);
-    const report = container.querySelector('.student-analytics-print-report');
+    const printSpy = jest.spyOn(window, 'print').mockImplementation(() => {});
+    await act(async () => {
+      container.querySelector('button[aria-label="Print Student Analytics"]').click();
+      await Promise.resolve();
+    });
+    act(() => jest.runAllTimers());
+    const report = document.querySelector('#print-report-root .printable-table-report');
     expect(report).toBeTruthy();
     expect(report.textContent).toContain('Ava Santos');
     expect(report.textContent).toContain('001234');
@@ -180,5 +190,6 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(report.textContent).not.toContain('0%');
     expect(report.textContent).toContain('Not enough gameplay data yet to generate a reliable analysis.');
     expect(report.querySelector('.student-analytics-back')).toBeFalsy();
+    printSpy.mockRestore();
   });
 });
