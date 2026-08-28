@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Download, FilePenLine, FileText, Folder, HardDrive, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -163,6 +163,7 @@ export default function LessonQuestionManager() {
   const [previewQuestions, setPreviewQuestions] = useState([]);
   const [previewValidation, setPreviewValidation] = useState(null);
   const [previewQuestionsLoading, setPreviewQuestionsLoading] = useState(false);
+  const previewBodyRef = useRef(null);
   const [fixedUploadValidation, setFixedUploadValidation] = useState(null);
   const [selectedFolder, setSelectedFolder] = useState({ grade_level: '', difficulty: '' });
   const [renamingFile, setRenamingFile] = useState(null);
@@ -177,6 +178,12 @@ export default function LessonQuestionManager() {
     setNotification({ message, type });
     window.setTimeout(() => setNotification(null), 5000);
   };
+
+  useLayoutEffect(() => {
+    if (questionPreviewFile && previewBodyRef.current) {
+      previewBodyRef.current.scrollTop = 0;
+    }
+  }, [questionPreviewFile?.id]);
 
   const loadFilesAndFolders = async ({ initial = false } = {}) => {
     try {
@@ -1204,7 +1211,7 @@ export default function LessonQuestionManager() {
                     </div>
                     <button type="button" className="icon-button" aria-label="Close generated questions preview" onClick={closeQuestionPreview}>x</button>
                   </div>
-                  <div className="generated-questions-preview-body">
+                  <div className="generated-questions-preview-body" ref={previewBodyRef}>
                     <div className="generated-questions-list">
                     {previewQuestionsLoading ? (
                       <p className="empty-text">Loading questions...</p>

@@ -99,14 +99,17 @@ describe('LessonQuestionManager upload and trash controls', () => {
         ));
         return okJson({ success: true, message: 'Content pushed to game.', learningFile: fixtures.files[0] });
       }
-      if (value.includes('/api/learning-files/77/questions')) {
-        const currentFile = fixtures.files.find((file) => file.id === 77);
+      const questionPreviewMatch = value.match(/\/api\/learning-files\/(\d+)\/questions/);
+      if (questionPreviewMatch) {
+        const previewFileId = Number(questionPreviewMatch[1]);
+        const currentFile = fixtures.files.find((file) => file.id === previewFileId);
         const isInvalid = currentFile?.validation_summary?.is_valid === false;
         return okJson({
+          file: currentFile,
           validation: { is_valid: !isInvalid, invalid_question_count: isInvalid ? 1 : 0 },
           questions: [{
-            id: 501,
-            question: 'What is 2 + 3?',
+            id: 500 + previewFileId,
+            question: `What is ${previewFileId - 75} + 3?`,
             options: isInvalid ? ['4', '5', '6'] : ['4', '5', '6', '7'],
             correct_answer: '5',
             published: false,
@@ -687,6 +690,69 @@ describe('LessonQuestionManager upload and trash controls', () => {
       closeButton.click();
     });
     expect(document.body.querySelector('.generated-questions-preview-modal')).toBeNull();
+  });
+
+  test('resets Preview body scroll position when reopening or switching files', async () => {
+    fixtures.files = [
+      {
+        id: 77,
+        title: 'preview-one.docx',
+        file_name: 'preview-one.docx',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        document_topic: 'Basic Addition',
+        math_topic: 'Basic Addition',
+        file_type: 'fixed_questions',
+        published: false,
+        file_url: '/uploads/preview-one.docx',
+      },
+      {
+        id: 78,
+        title: 'preview-two.docx',
+        file_name: 'preview-two.docx',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        document_topic: 'Basic Addition',
+        math_topic: 'Basic Addition',
+        file_type: 'fixed_questions',
+        published: false,
+        file_url: '/uploads/preview-two.docx',
+      },
+    ];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+
+    const previewButtons = Array.from(container.querySelectorAll('button')).filter((button) => button.textContent.includes('Preview'));
+    expect(previewButtons).toHaveLength(2);
+
+    await act(async () => {
+      previewButtons[0].click();
+    });
+
+    let previewBody = document.body.querySelector('.generated-questions-preview-body');
+    expect(previewBody.scrollTop).toBe(0);
+    previewBody.scrollTop = 180;
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Close').click();
+    });
+    expect(document.body.querySelector('.generated-questions-preview-modal')).toBeNull();
+
+    await act(async () => {
+      previewButtons[0].click();
+    });
+    previewBody = document.body.querySelector('.generated-questions-preview-body');
+    expect(previewBody.scrollTop).toBe(0);
+    previewBody.scrollTop = 180;
+
+    await act(async () => {
+      previewButtons[1].click();
+    });
+    expect(document.body.textContent).toContain('preview-two.docx');
+    expect(document.body.querySelector('.generated-questions-preview-body').scrollTop).toBe(0);
   });
 
   test('Push to Game activates the staged file only after the button is clicked', async () => {
