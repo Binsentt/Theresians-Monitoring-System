@@ -97,15 +97,18 @@ const sidebarItems = {
     { key: 'logout', label: 'Logout', icon: <IconLogout />, actionKey: 'logout' },
   ],
   parent_teacher: [
-    { key: 'dashboard', label: 'Dashboard', icon: <IconDashboard />, actionKey: 'dashboard', route: '/teacher-dashboard' },
-    { key: 'student-progress', label: 'Student Progress', icon: <IconProgress />, route: '/teacher/student-progress' },
-    { key: 'learning-manager', label: 'Lesson & Question Manager', icon: <IconActivity />, route: '/lesson-question-manager' },
-    { key: 'announcements', label: 'Announcements', icon: <IconAnnouncement />, route: '/teacher/announcements' },
-    { key: 'top-achievers', label: 'Top Achievers', icon: <IconAchievers />, route: '/teacher/top-achievers' },
-    { key: 'screen-time', label: 'Screen Time Monitoring', icon: <IconActivity />, route: '/teacher/screen-time' },
-    { key: 'activity-log', label: 'Activity Log', icon: <IconActivity />, route: '/teacher/activity-log' },
-    { key: 'child-progress', label: 'Child Progress', icon: <IconChild />, route: '/parent/child-progress' },
-    { key: 'my-child-screen-time', label: 'My Child Screen Time', icon: <IconActivity />, route: '/parent/screen-time' },
+    { key: 'teacher-dashboard', scope: 'teacher', label: 'Teacher Dashboard', icon: <IconDashboard />, route: '/teacher-dashboard' },
+    { key: 'student-progress', scope: 'teacher', label: 'Student Progress', icon: <IconProgress />, route: '/teacher/student-progress' },
+    { key: 'learning-manager', scope: 'teacher', label: 'Lesson & Question Manager', icon: <IconActivity />, route: '/lesson-question-manager' },
+    { key: 'teacher-announcements', scope: 'teacher', label: 'Teacher Announcements', icon: <IconAnnouncement />, route: '/teacher/announcements' },
+    { key: 'top-achievers', scope: 'teacher', label: 'Top Achievers', icon: <IconAchievers />, route: '/teacher/top-achievers' },
+    { key: 'teacher-screen-time', scope: 'teacher', label: 'Teacher Screen Time', icon: <IconActivity />, route: '/teacher/screen-time' },
+    { key: 'teacher-activity-log', scope: 'teacher', label: 'Teacher Activity Log', icon: <IconActivity />, route: '/teacher/activity-log' },
+    { key: 'parent-dashboard', scope: 'parent', label: 'Parent Dashboard', icon: <IconDashboard />, route: '/parent-dashboard' },
+    { key: 'child-progress', scope: 'parent', label: 'Child Progress', icon: <IconChild />, route: '/parent/child-progress' },
+    { key: 'parent-screen-time', scope: 'parent', label: 'Parent Screen Time', icon: <IconActivity />, route: '/parent/screen-time' },
+    { key: 'parent-announcements', scope: 'parent', label: 'Parent Announcements', icon: <IconAnnouncement />, route: '/parent/announcements' },
+    { key: 'parent-activity-log', scope: 'parent', label: 'Parent Activity', icon: <IconActivity />, route: '/parent/activity-log' },
     { key: 'settings', label: 'Settings', icon: <IconSettings />, route: '/settings' },
     { key: 'logout', label: 'Logout', icon: <IconLogout />, actionKey: 'logout' },
   ],
@@ -116,7 +119,25 @@ const normalizeSidebarRole = (role) => {
   return ['parent/teacher', 'parent teacher', 'parent-teacher'].includes(roleValue) ? 'parent_teacher' : roleValue;
 };
 
-export const getSidebarItemsForRole = (role) => sidebarItems[normalizeSidebarRole(role)] || sidebarItems.admin;
+export const getParentTeacherNavigationScope = (pathname = '') => (
+  String(pathname).startsWith('/parent') ? 'parent' : 'teacher'
+);
+
+export const getSidebarItemsForRole = (role, parentTeacherScope = 'teacher') => {
+  const normalizedRole = normalizeSidebarRole(role);
+  if (normalizedRole !== 'parent_teacher') {
+    return sidebarItems[normalizedRole] || sidebarItems.admin;
+  }
+
+  const activeScope = parentTeacherScope === 'parent' ? 'parent' : 'teacher';
+  const scopedItems = sidebarItems.parent_teacher.filter((item) => item.scope === activeScope);
+  const scopeSwitch = activeScope === 'parent'
+    ? { key: 'switch-to-teacher-dashboard', label: 'Teacher Dashboard', icon: <IconDashboard />, route: '/teacher-dashboard' }
+    : { key: 'switch-to-parent-dashboard', label: 'Parent Dashboard', icon: <IconDashboard />, route: '/parent-dashboard' };
+  const commonItems = sidebarItems.parent_teacher.filter((item) => !item.scope);
+
+  return [...scopedItems, scopeSwitch, ...commonItems];
+};
 
 const RESPONSIVE_SIDEBAR_MAX_WIDTH = 991;
 
@@ -139,8 +160,11 @@ export default function AnalyticsSidebar({ role = 'admin', activeItem, onSelect,
   }, []);
 
   const items = useMemo(() => {
-    return getSidebarItemsForRole(role);
-  }, [role]);
+    const parentTeacherScope = normalizeSidebarRole(role) === 'parent_teacher'
+      ? getParentTeacherNavigationScope(location.pathname)
+      : undefined;
+    return getSidebarItemsForRole(role, parentTeacherScope);
+  }, [location.pathname, role]);
 
   const handleClick = (item) => {
     if (item.actionKey === 'logout') {

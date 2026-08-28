@@ -1,5 +1,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import fs from 'fs';
+import path from 'path';
 import TeacherDashboard from './TeacherDashboard';
 
 const mockNavigate = jest.fn();
@@ -139,6 +141,8 @@ describe('TeacherDashboard route protection', () => {
     expect(container.textContent).toContain('Ava Santos');
     expect(container.textContent).toContain('No activity yet');
     expect(container.textContent).not.toContain('QUESTS COMPLETED');
+    expect(container.textContent).not.toContain('STUDENTS ENGAGED');
+    expect(container.textContent).not.toContain('ACHIEVEMENTS UNLOCKED');
     expect(container.textContent).not.toContain('Grade 10');
     expect(requests.map((request) => request.url)).toEqual(expect.arrayContaining([
       '/api/students/progress?lifecycle=active',
@@ -146,5 +150,9 @@ describe('TeacherDashboard route protection', () => {
       '/api/top-achievers',
     ]));
     expect(requests.every((request) => request.options?.headers?.Authorization === 'Bearer teacher-dashboard-token')).toBe(true);
+  });
+
+  test('keeps no legacy teacher dashboard source alongside the live route component', () => {
+    expect(fs.existsSync(path.join(__dirname, 'TeacherDashboard_minimal.js'))).toBe(false);
   });
 });

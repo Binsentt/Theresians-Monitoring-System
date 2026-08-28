@@ -25,6 +25,15 @@ describe('analytics endpoint helpers', () => {
     );
   });
 
+  test('keeps Parent/Teacher parent and teacher route requests isolated', () => {
+    expect(buildScopedApiUrl('/api/students/progress?lifecycle=active', 'parent')).toBe(
+      '/api/students/progress?lifecycle=active&scope=parent'
+    );
+    expect(buildScopedApiUrl('/api/students/progress?lifecycle=active', 'parent_teacher')).toBe(
+      '/api/students/progress?lifecycle=active'
+    );
+  });
+
   test('builds parent-scoped student detail URLs', () => {
     expect(buildStudentProgressDetailUrl(20, 'parent', 19)).toBe(
       '/api/student-progress/20?scope=parent'

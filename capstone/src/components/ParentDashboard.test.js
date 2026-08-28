@@ -121,6 +121,34 @@ describe('ParentDashboard defensive game data rendering', () => {
     expect(container.textContent).toContain('Completion: 42%');
   });
 
+  test('keeps Parent/Teacher in the parent-scoped dashboard with Add Child available', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 19, role: 'Parent/Teacher', name: 'Dual Role User' }));
+    global.fetch = jest.fn((url) => {
+      if (url.startsWith('/api/user/19')) return jsonResponse({ id: 19, role: 'parent_teacher', name: 'Dual Role User' });
+      if (url.startsWith('/api/top-achievers?scope=parent')) return jsonResponse([]);
+      if (url.startsWith('/api/analytics/overview?scope=parent')) return jsonResponse({ studentCount: 1, averageAccuracy: null, averageProgress: null });
+      if (url.startsWith('/api/analytics/recommendations?scope=parent')) return jsonResponse({ recommendations: [] });
+      if (url.startsWith('/api/parent/children?scope=parent')) return jsonResponse({
+        children: [{ id: 44, student_name: 'Ava Santos', game_student_id: '001234', grade_level: 'Grade 3', section: null, accuracy: null, completion_percentage: null }],
+      });
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    await act(async () => {
+      root.render(<ParentDashboard />);
+    });
+
+    expect(container.textContent).toContain('Parent Dashboard');
+    expect(container.textContent).toContain('Add Child');
+    expect(container.textContent).toContain('Ava Santos');
+    expect(global.fetch.mock.calls.map(([url]) => url)).toEqual(expect.arrayContaining([
+      '/api/top-achievers?scope=parent',
+      '/api/analytics/overview?scope=parent',
+      '/api/analytics/recommendations?scope=parent',
+      '/api/parent/children?scope=parent',
+    ]));
+  });
+
   test('renders a canonical null Section as Not assigned', async () => {
     global.fetch = jest.fn((url) => {
       if (url.startsWith('/api/user/19')) return jsonResponse({ id: 19, role: 'parent', name: 'Parent User' });

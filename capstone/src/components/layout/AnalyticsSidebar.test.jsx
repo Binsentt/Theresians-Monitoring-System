@@ -1,6 +1,6 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import AnalyticsSidebar, { getSidebarItemsForRole } from './AnalyticsSidebar';
+import AnalyticsSidebar, { getParentTeacherNavigationScope, getSidebarItemsForRole } from './AnalyticsSidebar';
 
 const mockNavigate = jest.fn();
 
@@ -24,35 +24,57 @@ describe('AnalyticsSidebar role items', () => {
     expect(getSidebarItemsForRole('teacher').map((item) => item.label)).toContain('Screen Time Monitoring');
     expect(getSidebarItemsForRole('parent').map((item) => item.label)).toContain('My Child Screen Time');
 
-    const parentTeacherLabels = getSidebarItemsForRole('parent_teacher').map((item) => item.label);
-    expect(parentTeacherLabels).toContain('Screen Time Monitoring');
-    expect(parentTeacherLabels).toContain('My Child Screen Time');
+    const parentTeacherTeacherLabels = getSidebarItemsForRole('parent_teacher', 'teacher').map((item) => item.label);
+    const parentTeacherParentLabels = getSidebarItemsForRole('parent_teacher', 'parent').map((item) => item.label);
+    expect(parentTeacherTeacherLabels).toContain('Teacher Screen Time');
+    expect(parentTeacherParentLabels).toContain('Parent Screen Time');
   });
 
-  test('Parent/Teacher keeps every teacher module and adds child-only parent views', () => {
-    const labels = getSidebarItemsForRole('parent_teacher').map((item) => item.label);
-    const routes = getSidebarItemsForRole('Parent/Teacher').map((item) => item.route);
+  test('Parent/Teacher exposes separate teacher and parent navigation scopes', () => {
+    const parentScopeLabels = getSidebarItemsForRole('parent_teacher', 'parent').map((item) => item.label);
+    const teacherScopeLabels = getSidebarItemsForRole('Parent/Teacher', 'teacher').map((item) => item.label);
 
-    expect(labels).toEqual([
-      'Dashboard',
+    expect(teacherScopeLabels).toEqual([
+      'Teacher Dashboard',
       'Student Progress',
       'Lesson & Question Manager',
-      'Announcements',
+      'Teacher Announcements',
       'Top Achievers',
-      'Screen Time Monitoring',
-      'Activity Log',
-      'Child Progress',
-      'My Child Screen Time',
+      'Teacher Screen Time',
+      'Teacher Activity Log',
+      'Parent Dashboard',
       'Settings',
       'Logout',
     ]);
-    expect(routes).toContain('/teacher-dashboard');
-    expect(routes).toContain('/teacher/screen-time');
-    expect(routes).toContain('/parent/child-progress');
-    expect(routes).toContain('/parent/screen-time');
-    expect(routes).not.toContain('/parent-dashboard');
-    expect(routes).not.toContain('/parent/announcements');
-    expect(routes).not.toContain('/parent/activity-log');
+    expect(parentScopeLabels).toEqual([
+      'Parent Dashboard',
+      'Child Progress',
+      'Parent Screen Time',
+      'Parent Announcements',
+      'Parent Activity',
+      'Teacher Dashboard',
+      'Settings',
+      'Logout',
+    ]);
+    expect(parentScopeLabels).not.toContain('Lesson & Question Manager');
+    expect(teacherScopeLabels).toContain('Lesson & Question Manager');
+  });
+
+  test('uses route-derived Parent/Teacher scope so navigation cannot retain the prior portal menu', () => {
+    expect(getParentTeacherNavigationScope('/parent-dashboard')).toBe('parent');
+    expect(getParentTeacherNavigationScope('/parent/child-progress')).toBe('parent');
+    expect(getParentTeacherNavigationScope('/teacher-dashboard')).toBe('teacher');
+    expect(getParentTeacherNavigationScope('/lesson-question-manager')).toBe('teacher');
+  });
+
+  test('pure Teacher and Parent navigation remains privilege-isolated', () => {
+    const teacherRoutes = getSidebarItemsForRole('teacher').map((item) => item.route);
+    const parentRoutes = getSidebarItemsForRole('parent').map((item) => item.route);
+
+    expect(teacherRoutes).not.toContain('/parent-dashboard');
+    expect(teacherRoutes).not.toContain('/parent/child-progress');
+    expect(parentRoutes).not.toContain('/teacher-dashboard');
+    expect(parentRoutes).not.toContain('/lesson-question-manager');
   });
 
   test('adds Logout as the last sidebar item after Settings for every role', () => {
