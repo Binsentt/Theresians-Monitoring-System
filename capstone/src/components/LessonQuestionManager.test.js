@@ -227,6 +227,24 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.querySelector('.drive-manager-sidebar')).toBeNull();
   });
 
+  test('uses explicit Teacher scope for Parent/Teacher Lesson Manager API requests', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 9, role: 'parent_teacher', name: 'Parent Teacher User' }));
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/learning-files?scope=teacher', {
+      headers: { Authorization: 'Bearer lesson-manager-token' },
+    });
+    expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/trash?scope=teacher', {
+      headers: { Authorization: 'Bearer lesson-manager-token' },
+    });
+    expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/storage-summary?scope=teacher', {
+      headers: { Authorization: 'Bearer lesson-manager-token' },
+    });
+  });
+
   test('opens the same structured read-only question preview from a DOCX filename as from the Preview action', async () => {
     fixtures.files = [{
       id: 77,
@@ -347,6 +365,47 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     expect(document.body.textContent).toContain('Question Count is required for Lesson PDF files.');
     expect(global.fetch).not.toHaveBeenCalledWith('/api/learning-files/upload', expect.anything());
+  });
+
+  test('sends one stable idempotency key for a Lesson PDF submit and blocks a duplicate immediate submit', async () => {
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await act(async () => {
+      clickByText(container, 'New');
+    });
+    await act(async () => {
+      clickByText(container, 'Upload File');
+    });
+
+    await act(async () => {
+      setSelectValue(getUploadModalSelects()[2], 'lesson');
+      const selects = getUploadModalSelects();
+      setSelectValue(selects[0], 'Grade 1');
+      setSelectValue(selects[1], 'Easy');
+      setSelectValue(selects[3], 'Basic Addition');
+      const countField = document.body.querySelector('input[name="expected_question_count"]');
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(countField, '2');
+      countField.dispatchEvent(new Event('change', { bubbles: true }));
+      const fileInput = document.body.querySelector('input[type="file"]');
+      const file = new File(['%PDF-1.4 lesson'], 'addition-lesson.pdf', { type: 'application/pdf' });
+      Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    await act(async () => {
+      getUploadModal().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      getUploadModal().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    const lessonRequests = global.fetch.mock.calls.filter(([url, options]) => (
+      String(url).endsWith('/api/learning-files/upload') && options?.method === 'POST'
+    ));
+    expect(lessonRequests).toHaveLength(1);
+    expect(lessonRequests[0][1].headers).toEqual(expect.objectContaining({
+      Authorization: 'Bearer lesson-manager-token',
+      'Idempotency-Key': expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/),
+    }));
   });
 
   test('prioritizes DOCX and PDF documents for Teacher Fixed Questions uploads', async () => {

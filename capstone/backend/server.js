@@ -786,7 +786,21 @@ const requireAuthenticatedRoles = (allowedRoles) => (req, res, next) => {
   next();
 };
 
-const requireLessonQuestionManagerAccess = requireAuthenticatedRoles(['admin', 'teacher', 'parent_teacher']);
+const requireLessonQuestionManagerAccess = (req, res, next) => {
+  requireAuthenticatedRoles(['admin', 'teacher', 'parent_teacher'])(req, res, () => {
+    if (req.authenticatedRole !== 'parent_teacher') return next();
+
+    const scope = String(req.query?.scope || '').trim().toLowerCase();
+    if (scope !== 'teacher') {
+      return res.status(403).json({
+        error: 'Lesson and Question Manager is available only in Teacher scope.',
+        code: 'LESSON_MANAGER_TEACHER_SCOPE_REQUIRED',
+      });
+    }
+
+    next();
+  });
+};
 const requireAnalyticsAccess = requireAuthenticatedRoles(['admin', 'teacher', 'parent', 'parent_teacher']);
 const requireParentAnalyticsAccess = requireAuthenticatedRoles(['parent', 'parent_teacher']);
 
@@ -1908,6 +1922,87 @@ const generateUploadFileName = (originalName) => {
 };
 
 const buildFileUrl = (fileName) => `/uploads/${fileName}`;
+const MAX_LESSON_UPLOAD_BYTES = 30 * 1024 * 1024;
+const LESSON_GENERATION_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
+
+const getLessonGenerationIdempotencyKey = (req) => {
+  const key = String(req.get('Idempotency-Key') || '').trim();
+  return LESSON_GENERATION_IDEMPOTENCY_KEY_PATTERN.test(key) ? key : null;
+};
+
+const buildLessonGenerationRequestFingerprint = ({
+  actorId,
+  sourceContentFingerprint,
+  gradeLevel,
+  difficulty,
+  mathTopic,
+  questionCount,
+}) => crypto.createHash('sha256').update(JSON.stringify({
+  actor_id: Number(actorId),
+  source_content_fingerprint: sourceContentFingerprint,
+  grade_level: gradeLevel,
+  difficulty,
+  math_topic: mathTopic,
+  requested_question_count: questionCount,
+})).digest('hex');
+
+const getLessonGenerationWithQuestionCount = async (whereClause, params) => {
+  const result = await pool.query(
+    `SELECT lf.*, COUNT(q.id)::INTEGER AS question_count
+     FROM public.learning_files lf
+     LEFT JOIN public.questions q ON q.learning_file_id = lf.id
+     WHERE ${whereClause}
+     GROUP BY lf.id
+     ORDER BY lf.id DESC
+     LIMIT 1`,
+    params
+  );
+  return result.rows[0] || null;
+};
+
+const getLessonGenerationByIdempotencyKey = (actorId, idempotencyKey) => getLessonGenerationWithQuestionCount(
+  `lf.uploaded_by = $1
+   AND lf.source = 'lesson'
+   AND lf.generation_idempotency_key = $2`,
+  [actorId, idempotencyKey]
+);
+
+const getInProgressLessonGenerationByFingerprint = (actorId, requestFingerprint) => getLessonGenerationWithQuestionCount(
+  `lf.uploaded_by = $1
+   AND lf.source = 'lesson'
+   AND lf.generation_request_fingerprint = $2
+   AND lf.generation_status = 'generating'`,
+  [actorId, requestFingerprint]
+);
+
+const buildLessonGenerationResponse = (learningFile, { idempotent = false } = {}) => ({
+  success: true,
+  ...(idempotent ? { idempotent: true } : {}),
+  learningFile: normalizeLearningFileRow(learningFile),
+});
+
+const respondToExistingLessonGeneration = ({ res, learningFile, requestFingerprint }) => {
+  if (learningFile.generation_request_fingerprint !== requestFingerprint) {
+    return res.status(409).json({
+      error: 'This upload request key is already associated with a different lesson generation request.',
+      code: 'AI_GENERATION_IDEMPOTENCY_CONFLICT',
+    });
+  }
+  if (learningFile.generation_status === 'generating') {
+    return res.status(202).json({
+      ...buildLessonGenerationResponse(learningFile, { idempotent: true }),
+      code: 'AI_GENERATION_IN_PROGRESS',
+      message: 'Question generation is already in progress for this lesson.',
+    });
+  }
+  if (learningFile.generation_status === 'ready_for_review') {
+    return res.status(200).json(buildLessonGenerationResponse(learningFile, { idempotent: true }));
+  }
+  return res.status(409).json({
+    error: 'The previous question generation attempt failed. Submit again to start a new attempt.',
+    code: 'AI_GENERATION_RETRY_REQUIRED',
+  });
+};
 
 const generateQuestionTextFromLesson = async (filePath, title, grade_level, difficulty, math_topic, questionCount) => {
   const buffer = fs.readFileSync(filePath);
@@ -3974,12 +4069,36 @@ const resolveLearningFolderId = async (rawFolderId) => {
   return { folderId };
 };
 
-app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, upload.single('file'), async (req, res) => {
+const uploadLearningFile = (req, res, next) => upload.single('file')(req, res, (error) => {
+  if (!error) return next();
+  if (error.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      error: 'Uploaded files must be 30 MB or smaller.',
+      code: 'LESSON_FILE_TOO_LARGE',
+    });
+  }
+  return res.status(400).json({
+    error: 'The uploaded file could not be processed.',
+    code: 'LEARNING_FILE_UPLOAD_INVALID',
+  });
+});
+
+app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploadLearningFile, async (req, res) => {
   let storedFilePath = null;
   let persistedLearningFileId = null;
+  let lessonGenerationIdempotencyKey = null;
+  let lessonGenerationRequestFingerprint = null;
+  let lessonSourceContentFingerprint = null;
   try {
     const { title, grade_level, difficulty, math_topic, file_type, folder_id, expected_question_count } = req.body;
     if (!req.file) return res.status(400).json({ error: 'File is required' });
+    if (Number(req.file.size) > MAX_LESSON_UPLOAD_BYTES) {
+      cleanTemporaryUpload(req.file.path);
+      return res.status(413).json({
+        error: 'Uploaded files must be 30 MB or smaller.',
+        code: 'LESSON_FILE_TOO_LARGE',
+      });
+    }
     if (!title || !grade_level || !difficulty || !file_type) {
       return res.status(400).json({ error: 'Missing required metadata' });
     }
@@ -4031,6 +4150,14 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         return res.status(400).json({ error: parsedCount.error });
       }
       requestedQuestionCount = parsedCount.value;
+      lessonGenerationIdempotencyKey = getLessonGenerationIdempotencyKey(req);
+      if (!lessonGenerationIdempotencyKey) {
+        cleanTemporaryUpload(req.file.path);
+        return res.status(400).json({
+          error: 'A valid upload request key is required for AI question generation.',
+          code: 'AI_GENERATION_IDEMPOTENCY_REQUIRED',
+        });
+      }
     } else {
       if (String(expected_question_count ?? '').trim()) {
         cleanTemporaryUpload(req.file.path);
@@ -4078,6 +4205,45 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
       fixedQuestions = fixedQuestionValidation.questions;
     }
 
+    if (normalizedType === 'lesson') {
+      const sourceFileBytes = fs.readFileSync(req.file.path);
+      lessonSourceContentFingerprint = crypto.createHash('sha256').update(sourceFileBytes).digest('hex');
+      lessonGenerationRequestFingerprint = buildLessonGenerationRequestFingerprint({
+        actorId: req.authenticatedUser.id,
+        sourceContentFingerprint: lessonSourceContentFingerprint,
+        gradeLevel: normalizedGrade,
+        difficulty: normalizedDifficulty,
+        mathTopic: normalizedTopic,
+        questionCount: requestedQuestionCount,
+      });
+
+      const existingGeneration = await getLessonGenerationByIdempotencyKey(
+        req.authenticatedUser.id,
+        lessonGenerationIdempotencyKey
+      );
+      if (existingGeneration) {
+        cleanTemporaryUpload(req.file.path);
+        return respondToExistingLessonGeneration({
+          res,
+          learningFile: existingGeneration,
+          requestFingerprint: lessonGenerationRequestFingerprint,
+        });
+      }
+
+      const inProgressGeneration = await getInProgressLessonGenerationByFingerprint(
+        req.authenticatedUser.id,
+        lessonGenerationRequestFingerprint
+      );
+      if (inProgressGeneration) {
+        cleanTemporaryUpload(req.file.path);
+        return res.status(202).json({
+          ...buildLessonGenerationResponse(inProgressGeneration, { idempotent: true }),
+          code: 'AI_GENERATION_IN_PROGRESS',
+          message: 'Question generation is already in progress for this lesson.',
+        });
+      }
+    }
+
     const fileName = generateUploadFileName(req.file.originalname);
     const destinationPath = path.join(uploadsDir, fileName);
     fs.renameSync(req.file.path, destinationPath);
@@ -4089,8 +4255,9 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         `INSERT INTO public.learning_files (
           title, file_name, file_url, grade_level, difficulty, math_topic, document_topic,
           file_type, subject, folder_id, published, source, uploaded_by,
-          file_size, requested_question_count, generation_status, publish_status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Mathematics', $9, false, $10, $11, $12, $13, $14, 'staged')
+          file_size, requested_question_count, generation_status, publish_status,
+          source_content_fingerprint, generation_idempotency_key, generation_request_fingerprint
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Mathematics', $9, false, $10, $11, $12, $13, $14, 'staged', $15, $16, $17)
          RETURNING *`,
         [
           String(title).trim(),
@@ -4107,6 +4274,9 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
           req.file.size || null,
           requestedQuestionCount,
           generationStatus,
+          normalizedType === 'lesson' ? lessonSourceContentFingerprint : null,
+          normalizedType === 'lesson' ? lessonGenerationIdempotencyKey : null,
+          normalizedType === 'lesson' ? lessonGenerationRequestFingerprint : null,
         ]
       );
       persistedLearningFileId = insertResult.rows[0].id;
@@ -4114,10 +4284,34 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     };
 
     if (normalizedType === 'lesson') {
-      let learningFile = await createLearningFile('generating');
+      let learningFile;
+      try {
+        learningFile = await createLearningFile('generating');
+      } catch (error) {
+        if (error?.code === '23505') {
+          const existingGeneration = await getLessonGenerationByIdempotencyKey(
+            req.authenticatedUser.id,
+            lessonGenerationIdempotencyKey
+          );
+          const inProgressGeneration = existingGeneration || await getInProgressLessonGenerationByFingerprint(
+            req.authenticatedUser.id,
+            lessonGenerationRequestFingerprint
+          );
+          if (inProgressGeneration) {
+            cleanTemporaryUpload(storedFilePath);
+            storedFilePath = null;
+            return respondToExistingLessonGeneration({
+              res,
+              learningFile: inProgressGeneration,
+              requestFingerprint: lessonGenerationRequestFingerprint,
+            });
+          }
+        }
+        throw error;
+      }
       try {
         if (!String(process.env.OPENAI_API_KEY || '').trim()) {
-          throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured. Set OPENAI_API_KEY on the backend service.');
+          throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
         }
         const questions = await generateQuestionTextFromLesson(
           storedFilePath,
@@ -4231,12 +4425,19 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     }
     if (err instanceof QuestionGenerationError) {
       const status = err.code === 'QUESTION_AI_NOT_CONFIGURED' ? 503
-        : err.code === 'QUESTION_AI_EMPTY_LESSON' || err.code === 'QUESTION_AI_INVALID_REQUEST' ? 422
-          : 502;
+        : err.code === 'QUESTION_AI_TIMEOUT' ? 504
+          : err.code === 'QUESTION_AI_EMPTY_LESSON' || err.code === 'QUESTION_AI_INVALID_REQUEST' || err.code === 'QUESTION_AI_INVALID_RESPONSE' ? 422
+            : 502;
       const error = err.code === 'QUESTION_AI_NOT_CONFIGURED'
-        ? err.message
-        : 'Question generation could not be completed. Please review the Lesson PDF and try again.';
-      return res.status(status).json({ error });
+        ? 'Question AI is temporarily unavailable. Please contact the administrator.'
+        : err.code === 'QUESTION_AI_TIMEOUT'
+          ? 'Question generation timed out. Please try again.'
+          : err.code === 'QUESTION_AI_EMPTY_LESSON'
+            ? 'The Lesson PDF does not contain readable text for question generation.'
+            : err.code === 'QUESTION_AI_INVALID_RESPONSE'
+              ? 'Question generation returned unusable question data. Please try again.'
+              : 'Question generation could not be completed. Please review the Lesson PDF and try again.';
+      return res.status(status).json({ error, code: err.code });
     }
     res.status(500).json({ error: 'Upload failed' });
   }

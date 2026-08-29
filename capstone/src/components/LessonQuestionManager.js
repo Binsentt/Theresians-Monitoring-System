@@ -51,6 +51,7 @@ const initialFilterState = {
 };
 
 const MAX_LESSON_QUESTION_COUNT = 50;
+const LESSON_GENERATION_IDEMPOTENCY_STORAGE_PREFIX = 'theresians.lesson-generation.';
 
 const fetchLessonManagerApi = (url, options = {}) => fetch(url, {
   ...options,
@@ -59,6 +60,40 @@ const fetchLessonManagerApi = (url, options = {}) => fetch(url, {
     ...(options.headers || {}),
   },
 });
+
+const withLessonManagerScope = (url, role) => {
+  if (normalizeRole(role) !== 'parent_teacher') return url;
+  return `${url}${url.includes('?') ? '&' : '?'}scope=teacher`;
+};
+
+const buildLessonGenerationStorageKey = ({ file, gradeLevel, difficulty, mathTopic, questionCount }) => (
+  `${LESSON_GENERATION_IDEMPOTENCY_STORAGE_PREFIX}${JSON.stringify({
+    name: file?.name || '',
+    size: Number(file?.size) || 0,
+    last_modified: Number(file?.lastModified) || 0,
+    grade_level: gradeLevel,
+    difficulty,
+    math_topic: mathTopic,
+    question_count: questionCount,
+  })}`
+);
+
+const createLessonGenerationIdempotencyKey = () => (
+  globalThis.crypto?.randomUUID?.()
+  || `lesson-${Date.now()}-${Math.random().toString(36).slice(2).padEnd(16, '0')}`
+);
+
+const getOrCreateLessonGenerationIdempotencyKey = (storageKey) => {
+  const existingKey = window.sessionStorage?.getItem(storageKey);
+  if (existingKey) return existingKey;
+  const idempotencyKey = createLessonGenerationIdempotencyKey();
+  window.sessionStorage?.setItem(storageKey, idempotencyKey);
+  return idempotencyKey;
+};
+
+const clearLessonGenerationIdempotencyKey = (storageKey) => {
+  if (storageKey) window.sessionStorage?.removeItem(storageKey);
+};
 
 function formatUploadDate(dateString) {
   if (!dateString) return '-';
@@ -175,6 +210,7 @@ export default function LessonQuestionManager() {
   const [previewValidation, setPreviewValidation] = useState(null);
   const [previewQuestionsLoading, setPreviewQuestionsLoading] = useState(false);
   const previewBodyRef = useRef(null);
+  const uploadInFlightRef = useRef(false);
   const [fixedUploadValidation, setFixedUploadValidation] = useState(null);
   const [selectedFolder, setSelectedFolder] = useState({ grade_level: '', difficulty: '' });
   const [renamingFile, setRenamingFile] = useState(null);
@@ -221,13 +257,15 @@ export default function LessonQuestionManager() {
     };
   }, [Boolean(questionPreviewFile)]);
 
-  const loadFilesAndFolders = async ({ initial = false } = {}) => {
+  const lessonManagerApiUrl = (path, role = user?.role) => withLessonManagerScope(apiUrl(path), role);
+
+  const loadFilesAndFolders = async ({ initial = false, role } = {}) => {
     try {
       if (initial) setLoading(true);
       const [filesRes, trashFilesRes, storageRes] = await Promise.all([
-        fetchLessonManagerApi(apiUrl('/api/learning-files')),
-        fetchLessonManagerApi(apiUrl('/api/learning-files/trash')),
-        fetchLessonManagerApi(apiUrl('/api/learning-files/storage-summary')),
+        fetchLessonManagerApi(lessonManagerApiUrl('/api/learning-files', role)),
+        fetchLessonManagerApi(lessonManagerApiUrl('/api/learning-files/trash', role)),
+        fetchLessonManagerApi(lessonManagerApiUrl('/api/learning-files/storage-summary', role)),
       ]);
       if (!filesRes.ok) throw new Error('Failed to load files');
       if (!trashFilesRes.ok) throw new Error('Failed to load trashed files');
@@ -251,7 +289,7 @@ export default function LessonQuestionManager() {
       return;
     }
     setUser({ ...loggedInUser, role });
-    loadFilesAndFolders({ initial: true });
+    loadFilesAndFolders({ initial: true, role });
   }, [navigate]);
 
   const folderView = useMemo(() => getQuestionFolderView(files, {
@@ -376,6 +414,7 @@ export default function LessonQuestionManager() {
 
   const handleUpload = async (event) => {
     event.preventDefault();
+    if (uploading || uploadInFlightRef.current) return;
     if (!form.grade_level || !form.difficulty || !form.file) {
       showNotification('Grade level, difficulty, and file are required.', 'error');
       return;
@@ -417,14 +456,34 @@ export default function LessonQuestionManager() {
     }
     payload.append('file', form.file);
 
+    const lessonGenerationStorageKey = uploadType === 'lesson'
+      ? buildLessonGenerationStorageKey({
+        file: form.file,
+        gradeLevel: form.grade_level,
+        difficulty: form.difficulty,
+        mathTopic: form.math_topic.trim(),
+        questionCount: requestedCount,
+      })
+      : null;
+    const lessonGenerationIdempotencyKey = lessonGenerationStorageKey
+      ? getOrCreateLessonGenerationIdempotencyKey(lessonGenerationStorageKey)
+      : null;
+
     try {
+      uploadInFlightRef.current = true;
       setUploading(true);
-      const response = await fetchLessonManagerApi(apiUrl('/api/learning-files/upload'), {
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl('/api/learning-files/upload'), {
         method: 'POST',
         body: payload,
+        ...(lessonGenerationIdempotencyKey ? {
+          headers: { 'Idempotency-Key': lessonGenerationIdempotencyKey },
+        } : {}),
       });
       const data = await response.json();
       if (!response.ok) {
+        if (lessonGenerationStorageKey && data.code !== 'AI_GENERATION_IN_PROGRESS') {
+          clearLessonGenerationIdempotencyKey(lessonGenerationStorageKey);
+        }
         if (data.code === 'FIXED_QUESTION_VALIDATION_FAILED') {
           setFixedUploadValidation({
             document_errors: Array.isArray(data.document_errors) ? data.document_errors : [],
@@ -433,6 +492,11 @@ export default function LessonQuestionManager() {
           return;
         }
         throw new Error(data.error || 'Upload failed.');
+      }
+      if (data.code === 'AI_GENERATION_IN_PROGRESS') {
+        await loadFilesAndFolders();
+        showNotification('Question generation is already in progress for this lesson.', 'info');
+        return;
       }
       const uploadedFile = normalizeManagedLearningFile({
         ...data.learningFile,
@@ -445,12 +509,14 @@ export default function LessonQuestionManager() {
       setSelectedFolder({ grade_level: uploadedFile.grade_level || form.grade_level, difficulty: uploadedFile.difficulty || form.difficulty });
       await loadFilesAndFolders();
       showNotification(uploadType === 'lesson' ? 'Lesson questions are Ready for Review.' : 'File uploaded successfully');
+      clearLessonGenerationIdempotencyKey(lessonGenerationStorageKey);
       resetForm();
       setShowUploadForm(false);
     } catch (error) {
       console.error(error);
       showNotification(error.message || 'Upload failed. Please try again.', 'error');
     } finally {
+      uploadInFlightRef.current = false;
       setUploading(false);
     }
   };
@@ -463,7 +529,7 @@ export default function LessonQuestionManager() {
     const confirmMessage = `Delete "${file.title}" from Pending question sets?`;
     if (!window.confirm(confirmMessage)) return;
     try {
-      const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}`), { method: 'DELETE' });
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}`), { method: 'DELETE' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Delete failed');
       setFiles((current) => current.filter((item) => item.id !== file.id));
@@ -477,7 +543,7 @@ export default function LessonQuestionManager() {
 
   const restoreFile = async (file) => {
     try {
-      const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}/restore`), { method: 'POST' });
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/restore`), { method: 'POST' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Restore failed');
       const restoredFile = normalizeManagedLearningFile(data.learningFile || file);
@@ -498,7 +564,7 @@ export default function LessonQuestionManager() {
   const permanentDeleteFile = async (file) => {
     if (!window.confirm(`Permanently delete "${file.title}"?`)) return;
     try {
-      const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}/permanent`), { method: 'DELETE' });
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/permanent`), { method: 'DELETE' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Permanent delete failed');
       showNotification('File permanently deleted.');
@@ -540,7 +606,7 @@ export default function LessonQuestionManager() {
     setPreviewValidation(null);
     setPreviewQuestionsLoading(true);
     try {
-      const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}/questions`));
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/questions`));
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to preview generated questions.');
       setQuestionPreviewDetails(data.file || file);
@@ -568,7 +634,7 @@ export default function LessonQuestionManager() {
       return;
     }
     try {
-      const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${editingFile.id}`), {
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${editingFile.id}`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -597,7 +663,7 @@ export default function LessonQuestionManager() {
     try {
       await Promise.all(
         trashFiles.map(async (file) => {
-          const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${file.id}/permanent`), { method: 'DELETE' });
+          const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/permanent`), { method: 'DELETE' });
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || 'Permanent file delete failed');
         })
@@ -630,7 +696,7 @@ export default function LessonQuestionManager() {
 
   const pushFileToGame = async (file, { confirmReplacement = false } = {}) => {
     try {
-      const response = await fetchLessonManagerApi(apiUrl(`/api/questions/publish/${file.id}`), {
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/questions/publish/${file.id}`), {
         method: 'POST',
         ...(confirmReplacement ? {
           headers: { 'Content-Type': 'application/json' },
@@ -681,7 +747,7 @@ export default function LessonQuestionManager() {
     }
 
     try {
-      const response = await fetchLessonManagerApi(apiUrl(`/api/learning-files/${renamingFile.id}/rename`), {
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${renamingFile.id}/rename`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title }),

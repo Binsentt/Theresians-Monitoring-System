@@ -8,6 +8,7 @@ const path = require('node:path');
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
 let parsedPdfText = '';
+let pdfParseFailure = null;
 const authenticatedTeacher = { id: 1, role: 'admin', is_archived: false, session_version: 0 };
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -40,10 +41,12 @@ require.cache[dbPath] = {
 };
 
 let nextUploadedFile = null;
+let queuedUploadedFiles = [];
 const createMiddleware = () => (req, res, next) => next();
 const multerStub = () => ({
   single: () => (req, res, next) => {
-    if (nextUploadedFile) req.file = nextUploadedFile;
+    if (queuedUploadedFiles.length > 0) req.file = queuedUploadedFiles.shift();
+    else if (nextUploadedFile) req.file = nextUploadedFile;
     next();
   },
   array: createMiddleware,
@@ -60,7 +63,10 @@ const serverDependencyStubs = {
     verify: () => ({ userId: 1, sessionVersion: 0 }),
   },
   multer: multerStub,
-  'pdf-parse': async () => ({ text: parsedPdfText }),
+  'pdf-parse': async () => {
+    if (pdfParseFailure) throw pdfParseFailure;
+    return { text: parsedPdfText };
+  },
 };
 
 const originalLoad = Module._load;
@@ -550,6 +556,7 @@ test('lesson upload fails gracefully and persists a failed source record without
 
   const response = await requestJson(baseUrl, '/api/learning-files/upload', {
     method: 'POST',
+    headers: { 'Idempotency-Key': 'missing-key-generation' },
     body: JSON.stringify({
       title: 'Addition lesson',
       grade_level: 'Grade 1',
@@ -561,9 +568,272 @@ test('lesson upload fails gracefully and persists a failed source record without
   });
 
   assert.equal(response.status, 503);
-  assert.equal(response.body.error, 'Question AI is not configured. Set OPENAI_API_KEY on the backend service.');
+  assert.equal(response.body.error, 'Question AI is temporarily unavailable. Please contact the administrator.');
+  assert.equal(response.body.code, 'QUESTION_AI_NOT_CONFIGURED');
   assert.equal(insertCalled, true);
   assert.equal(failedStatusPersisted, true);
+});
+
+test('a failed AI generation key cannot replay, while a deliberate new key creates one new attempt', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lesson-retry-key-test-'));
+  const uploadNames = ['first.pdf', 'replay.pdf', 'new-key.pdf'];
+  const uploadPaths = uploadNames.map((name) => path.join(tempDir, name));
+  const uploadsDir = path.join(__dirname, 'uploads');
+  const uploadsBefore = new Set(fs.readdirSync(uploadsDir));
+  for (const uploadPath of uploadPaths) fs.writeFileSync(uploadPath, '%PDF-1.4\nLesson about basic addition');
+  const priorKey = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  const records = [];
+  setQueryHandler(async (sql, params) => {
+    if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return emptyResult;
+    if (sql.includes('generation_idempotency_key') && sql.startsWith('select')) {
+      const [actorId, idempotencyKey] = params;
+      return resultRows(records.filter((record) => record.uploaded_by === actorId && record.generation_idempotency_key === idempotencyKey));
+    }
+    if (sql.includes('generation_request_fingerprint') && sql.startsWith('select')) {
+      const [actorId, fingerprint] = params;
+      return resultRows(records.filter((record) => record.uploaded_by === actorId && record.generation_request_fingerprint === fingerprint && record.generation_status === 'generating'));
+    }
+    if (sql.startsWith('insert into public.learning_files')) {
+      const record = {
+        id: 600 + records.length,
+        title: 'Addition lesson',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+        file_type: 'lesson',
+        source: 'lesson',
+        uploaded_by: params[10],
+        generation_idempotency_key: params[15],
+        generation_request_fingerprint: params[16],
+        generation_status: 'generating',
+      };
+      records.push(record);
+      return resultRows([record]);
+    }
+    if (sql.startsWith('update public.learning_files') && sql.includes("generation_status = 'failed'")) {
+      const record = records.find((item) => item.id === params[0]);
+      record.generation_status = 'failed';
+      return emptyResult;
+    }
+    return emptyResult;
+  });
+  t.after(async () => {
+    nextUploadedFile = null;
+    if (priorKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = priorKey;
+    for (const uploadPath of uploadPaths) {
+      if (fs.existsSync(uploadPath)) fs.unlinkSync(uploadPath);
+    }
+    if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir);
+    for (const entry of fs.readdirSync(uploadsDir)) {
+      if (!uploadsBefore.has(entry) && uploadNames.some((name) => entry.endsWith(`_${name}`))) {
+        const candidate = path.join(uploadsDir, entry);
+        if (fs.existsSync(candidate)) fs.unlinkSync(candidate);
+      }
+    }
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  const body = {
+    title: 'Addition lesson',
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    math_topic: 'Basic Addition',
+    file_type: 'lesson',
+    expected_question_count: '2',
+  };
+  const requestWithKey = async (pathIndex, idempotencyKey) => {
+    nextUploadedFile = {
+      path: uploadPaths[pathIndex],
+      originalname: uploadNames[pathIndex],
+      mimetype: 'application/pdf',
+      size: fs.statSync(uploadPaths[pathIndex]).size,
+    };
+    return requestJson(baseUrl, '/api/learning-files/upload', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(body),
+    });
+  };
+
+  const firstResponse = await requestWithKey(0, 'failed-attempt-key');
+  const replayResponse = await requestWithKey(1, 'failed-attempt-key');
+  const newAttemptResponse = await requestWithKey(2, 'deliberate-new-key');
+
+  assert.equal(firstResponse.status, 503);
+  assert.equal(replayResponse.status, 409);
+  assert.equal(replayResponse.body.code, 'AI_GENERATION_RETRY_REQUIRED');
+  assert.equal(newAttemptResponse.status, 503);
+  assert.equal(records.length, 2);
+});
+
+test('lesson upload rejects malformed and oversized PDFs before a provider call', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lesson-upload-safety-test-'));
+  const malformedPdf = path.join(tempDir, 'malformed.pdf');
+  const validPdf = path.join(tempDir, 'oversized.pdf');
+  fs.writeFileSync(malformedPdf, 'not a PDF');
+  fs.writeFileSync(validPdf, '%PDF-1.4\nLesson about basic addition');
+  const originalFetch = global.fetch;
+  let providerCalls = 0;
+  global.fetch = async (url, options) => {
+    if (url === 'https://api.openai.com/v1/responses') providerCalls += 1;
+    return originalFetch(url, options);
+  };
+  t.after(async () => {
+    nextUploadedFile = null;
+    global.fetch = originalFetch;
+    if (fs.existsSync(malformedPdf)) fs.unlinkSync(malformedPdf);
+    if (fs.existsSync(validPdf)) fs.unlinkSync(validPdf);
+    if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir);
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  nextUploadedFile = {
+    path: malformedPdf,
+    originalname: 'malformed.pdf',
+    mimetype: 'application/pdf',
+    size: fs.statSync(malformedPdf).size,
+  };
+  const malformedResponse = await requestJson(baseUrl, '/api/learning-files/upload', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: 'Malformed lesson',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      file_type: 'lesson',
+      expected_question_count: '2',
+    }),
+  });
+
+  nextUploadedFile = {
+    path: validPdf,
+    originalname: 'oversized.pdf',
+    mimetype: 'application/pdf',
+    size: (30 * 1024 * 1024) + 1,
+  };
+  const oversizedResponse = await requestJson(baseUrl, '/api/learning-files/upload', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: 'Oversized lesson',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      file_type: 'lesson',
+      expected_question_count: '2',
+    }),
+  });
+
+  assert.equal(malformedResponse.status, 400);
+  assert.equal(oversizedResponse.status, 413);
+  assert.equal(oversizedResponse.body.code, 'LESSON_FILE_TOO_LARGE');
+  assert.equal(providerCalls, 0);
+});
+
+test('lesson upload rejects unsupported, empty, and unreadable PDFs without readying a generated set or calling the provider', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lesson-upload-content-safety-test-'));
+  const unsupportedFile = path.join(tempDir, 'lesson.txt');
+  const emptyPdf = path.join(tempDir, 'empty.pdf');
+  const unreadablePdf = path.join(tempDir, 'unreadable.pdf');
+  const uploadsDir = path.join(__dirname, 'uploads');
+  const uploadsBefore = new Set(fs.readdirSync(uploadsDir));
+  fs.writeFileSync(unsupportedFile, 'not a lesson PDF');
+  fs.writeFileSync(emptyPdf, '%PDF-1.4\nNo extracted lesson content');
+  fs.writeFileSync(unreadablePdf, '%PDF-1.4\nUnreadable lesson content');
+  const priorKey = process.env.OPENAI_API_KEY;
+  const originalFetch = global.fetch;
+  process.env.OPENAI_API_KEY = 'server-test-key';
+  let providerCalls = 0;
+  let readyForReview = false;
+  global.fetch = async (url, options) => {
+    if (url === 'https://api.openai.com/v1/responses') providerCalls += 1;
+    return originalFetch(url, options);
+  };
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('insert into public.learning_files')) return resultRows([{ id: 701 }]);
+    if (sql.startsWith('update public.learning_files') && sql.includes("generation_status = 'ready_for_review'")) {
+      readyForReview = true;
+    }
+    return emptyResult;
+  });
+  t.after(async () => {
+    nextUploadedFile = null;
+    parsedPdfText = '';
+    pdfParseFailure = null;
+    global.fetch = originalFetch;
+    if (priorKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = priorKey;
+    for (const sourcePath of [unsupportedFile, emptyPdf, unreadablePdf]) {
+      if (fs.existsSync(sourcePath)) fs.unlinkSync(sourcePath);
+    }
+    if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir);
+    for (const entry of fs.readdirSync(uploadsDir)) {
+      if (!uploadsBefore.has(entry) && ['empty.pdf', 'unreadable.pdf'].some((name) => entry.endsWith(`_${name}`))) {
+        const candidate = path.join(uploadsDir, entry);
+        if (fs.existsSync(candidate)) fs.unlinkSync(candidate);
+      }
+    }
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  const upload = async ({ filePath, originalname, mimetype, idempotencyKey }) => {
+    nextUploadedFile = {
+      path: filePath,
+      originalname,
+      mimetype,
+      size: fs.statSync(filePath).size,
+    };
+    return requestJson(baseUrl, '/api/learning-files/upload', {
+      method: 'POST',
+      headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {},
+      body: JSON.stringify({
+        title: 'Lesson safety test',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+        file_type: 'lesson',
+        expected_question_count: '2',
+      }),
+    });
+  };
+
+  const unsupportedResponse = await upload({
+    filePath: unsupportedFile,
+    originalname: 'lesson.txt',
+    mimetype: 'text/plain',
+  });
+  parsedPdfText = '';
+  const emptyResponse = await upload({
+    filePath: emptyPdf,
+    originalname: 'empty.pdf',
+    mimetype: 'application/pdf',
+    idempotencyKey: 'empty-lesson-request',
+  });
+  pdfParseFailure = new Error('unreadable PDF fixture');
+  const unreadableResponse = await upload({
+    filePath: unreadablePdf,
+    originalname: 'unreadable.pdf',
+    mimetype: 'application/pdf',
+    idempotencyKey: 'unreadable-lesson-request',
+  });
+
+  assert.equal(unsupportedResponse.status, 400);
+  assert.equal(emptyResponse.status, 422);
+  assert.equal(emptyResponse.body.code, 'QUESTION_AI_EMPTY_LESSON');
+  assert.equal(unreadableResponse.status, 422);
+  assert.equal(unreadableResponse.body.code, 'QUESTION_AI_EMPTY_LESSON');
+  assert.equal(providerCalls, 0);
+  assert.equal(readyForReview, false);
 });
 
 test('lesson upload generates exactly the requested staged questions through the server-side OpenAI call', async (t) => {
@@ -644,6 +914,7 @@ test('lesson upload generates exactly the requested staged questions through the
 
   const response = await requestJson(baseUrl, '/api/learning-files/upload', {
     method: 'POST',
+    headers: { 'Idempotency-Key': 'successful-generation' },
     body: JSON.stringify({
       title: 'Addition lesson',
       grade_level: 'Grade 1',
@@ -664,6 +935,173 @@ test('lesson upload generates exactly the requested staged questions through the
   assert.equal(learningFileInsertParams[6], null);
   assert.equal(learningFileInsertParams[9], 'lesson');
   assert.equal(learningFileInsertParams[10], 1);
+});
+
+test('lesson generation coalesces concurrent duplicate uploads and replays the completed idempotency key', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lesson-idempotency-test-'));
+  const uploadNames = ['lesson-a.pdf', 'lesson-b.pdf', 'lesson-replay.pdf', 'lesson-conflict.pdf'];
+  const uploadPaths = uploadNames.map((name) => path.join(tempDir, name));
+  const uploadsDir = path.join(__dirname, 'uploads');
+  const uploadsBefore = new Set(fs.readdirSync(uploadsDir));
+  for (const uploadPath of uploadPaths) fs.writeFileSync(uploadPath, '%PDF-1.4\nLesson about basic addition');
+  const priorKey = process.env.OPENAI_API_KEY;
+  const originalFetch = global.fetch;
+  process.env.OPENAI_API_KEY = 'server-test-key';
+  parsedPdfText = 'Addition combines quantities using counters.';
+  queuedUploadedFiles = uploadPaths.slice(0, 2).map((uploadPath, index) => ({
+    path: uploadPath,
+    originalname: uploadNames[index],
+    mimetype: 'application/pdf',
+    size: fs.statSync(uploadPath).size,
+  }));
+
+  t.after(async () => {
+    nextUploadedFile = null;
+    queuedUploadedFiles = [];
+    parsedPdfText = '';
+    global.fetch = originalFetch;
+    if (priorKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = priorKey;
+    for (const uploadPath of uploadPaths) {
+      if (fs.existsSync(uploadPath)) fs.unlinkSync(uploadPath);
+    }
+    if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir);
+    for (const entry of fs.readdirSync(uploadsDir)) {
+      if (!uploadsBefore.has(entry) && uploadNames.some((name) => entry.endsWith(`_${name}`))) {
+        const candidate = path.join(uploadsDir, entry);
+        if (fs.existsSync(candidate)) fs.unlinkSync(candidate);
+      }
+    }
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  const records = [];
+  let providerCalls = 0;
+  let releaseFirstProvider;
+  let notifyFirstProviderStarted;
+  const firstProviderStarted = new Promise((resolve) => {
+    notifyFirstProviderStarted = resolve;
+  });
+  global.fetch = async (url, requestOptions) => {
+    if (url !== 'https://api.openai.com/v1/responses') return originalFetch(url, requestOptions);
+    providerCalls += 1;
+    if (providerCalls === 1) {
+      notifyFirstProviderStarted();
+      return new Promise((resolve) => {
+        releaseFirstProvider = () => resolve({
+          ok: true,
+          json: async () => ({ output_text: JSON.stringify({
+            questions: [
+              { question: 'What is 1 + 1?', options: ['1', '2', '3', '4'], correct_answer: '2' },
+              { question: 'What is 2 + 1?', options: ['2', '3', '4', '5'], correct_answer: '3' },
+            ],
+          }) }),
+        });
+      });
+    }
+    return {
+      ok: true,
+      json: async () => ({ output_text: JSON.stringify({
+        questions: [
+          { question: 'What is 1 + 1?', options: ['1', '2', '3', '4'], correct_answer: '2' },
+          { question: 'What is 2 + 1?', options: ['2', '3', '4', '5'], correct_answer: '3' },
+        ],
+      }) }),
+    };
+  };
+  setQueryHandler(async (sql, params) => {
+    if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return emptyResult;
+    if (sql.includes('generation_idempotency_key') && sql.startsWith('select')) {
+      const [actorId, key] = params;
+      return resultRows(records.filter((record) => record.uploaded_by === actorId && record.generation_idempotency_key === key));
+    }
+    if (sql.includes('generation_request_fingerprint') && sql.startsWith('select')) {
+      const [actorId, fingerprint] = params;
+      return resultRows(records.filter((record) => record.uploaded_by === actorId && record.generation_request_fingerprint === fingerprint && record.generation_status === 'generating'));
+    }
+    if (sql.startsWith('insert into public.learning_files')) {
+      const record = {
+        id: 800 + records.length,
+        title: 'Addition lesson',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+        file_type: 'lesson',
+        source: 'lesson',
+        published: false,
+        uploaded_by: params[10],
+        generation_status: 'generating',
+        generation_idempotency_key: params[15],
+        generation_request_fingerprint: params[16],
+      };
+      records.push(record);
+      return resultRows([record]);
+    }
+    if (sql.startsWith('update public.learning_files') && sql.includes("generation_status = 'ready_for_review'")) {
+      const record = records.find((item) => item.id === params[0]);
+      record.generation_status = 'ready_for_review';
+      return resultRows([record]);
+    }
+    if (sql.startsWith('insert into public.questions')) return emptyResult;
+    return emptyResult;
+  });
+
+  const body = {
+    title: 'Addition lesson',
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    math_topic: 'Basic Addition',
+    file_type: 'lesson',
+    expected_question_count: '2',
+  };
+  const options = {
+    method: 'POST',
+    headers: { 'Idempotency-Key': 'same-logical-generation' },
+    body: JSON.stringify(body),
+  };
+  const firstRequest = requestJson(baseUrl, '/api/learning-files/upload', options);
+  await Promise.race([
+    firstProviderStarted,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('First provider call did not start.')), 2_000)),
+  ]);
+  const secondRequest = requestJson(baseUrl, '/api/learning-files/upload', options);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  releaseFirstProvider();
+  const [firstResponse, secondResponse] = await Promise.all([firstRequest, secondRequest]);
+
+  assert.equal(firstResponse.status, 201);
+  assert.ok([200, 202].includes(secondResponse.status));
+  assert.equal(providerCalls, 1);
+  assert.equal(records.length, 1);
+
+  nextUploadedFile = {
+    path: uploadPaths[2],
+    originalname: uploadNames[2],
+    mimetype: 'application/pdf',
+    size: fs.statSync(uploadPaths[2]).size,
+  };
+  const replayResponse = await requestJson(baseUrl, '/api/learning-files/upload', options);
+  assert.equal(replayResponse.status, 200);
+  assert.equal(providerCalls, 1);
+  assert.equal(records.length, 1);
+
+  nextUploadedFile = {
+    path: uploadPaths[3],
+    originalname: uploadNames[3],
+    mimetype: 'application/pdf',
+    size: fs.statSync(uploadPaths[3]).size,
+  };
+  const conflictResponse = await requestJson(baseUrl, '/api/learning-files/upload', {
+    ...options,
+    body: JSON.stringify({ ...body, math_topic: 'Shapes' }),
+  });
+  assert.equal(conflictResponse.status, 409);
+  assert.equal(conflictResponse.body.code, 'AI_GENERATION_IDEMPOTENCY_CONFLICT');
+  assert.equal(providerCalls, 1);
+  assert.equal(records.length, 1);
 });
 
 test('relationship lookup returns the authoritative game Student ID for linked students', async (t) => {

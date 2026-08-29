@@ -1,6 +1,7 @@
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const QUESTION_GENERATION_MODEL = 'gpt-5-mini';
 const MAX_LESSON_TEXT_CHARS = 24000;
+const QUESTION_GENERATION_TIMEOUT_MS = 30000;
 
 class QuestionGenerationError extends Error {
   constructor(code, message, providerDiagnostics = null) {
@@ -175,6 +176,7 @@ const generateLessonQuestions = async ({
   questionCount,
   apiKey = process.env.OPENAI_API_KEY,
   fetchImpl = global.fetch,
+  timeoutMs = QUESTION_GENERATION_TIMEOUT_MS,
 }) => {
   if (!asTrimmedString(apiKey)) {
     throw new QuestionGenerationError(
@@ -189,7 +191,15 @@ const generateLessonQuestions = async ({
     throw new QuestionGenerationError('QUESTION_AI_UNAVAILABLE', 'Question AI is unavailable on this backend.');
   }
 
+  const boundedTimeoutMs = Number.isInteger(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : QUESTION_GENERATION_TIMEOUT_MS;
+  const input = buildGenerationInput({ lessonText, title, gradeLevel, difficulty, mathTopic, questionCount });
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), boundedTimeoutMs);
+
   let response;
+  let responseBody = null;
   try {
     response = await fetchImpl(OPENAI_RESPONSES_URL, {
       method: 'POST',
@@ -197,9 +207,10 @@ const generateLessonQuestions = async ({
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
+      signal: controller.signal,
       body: JSON.stringify({
         model: QUESTION_GENERATION_MODEL,
-        input: buildGenerationInput({ lessonText, title, gradeLevel, difficulty, mathTopic, questionCount }),
+        input,
         text: {
           format: {
             type: 'json_schema',
@@ -210,19 +221,27 @@ const generateLessonQuestions = async ({
         },
       }),
     });
-  } catch {
+    try {
+      responseBody = await response.json();
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+      // The response status below still determines the safe public error.
+    }
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new QuestionGenerationError(
+        'QUESTION_AI_TIMEOUT',
+        'Question generation timed out. Please try again.',
+        { category: 'timeout' }
+      );
+    }
     throw new QuestionGenerationError(
       'QUESTION_AI_GENERATION_FAILED',
       'Question AI could not generate questions right now.',
       { category: 'network_error' }
     );
-  }
-
-  let responseBody = null;
-  try {
-    responseBody = await response.json();
-  } catch {
-    // The response status below still determines the safe public error.
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 
   if (!response.ok) {
@@ -255,6 +274,7 @@ module.exports = {
   MAX_LESSON_TEXT_CHARS,
   OPENAI_RESPONSES_URL,
   QUESTION_GENERATION_MODEL,
+  QUESTION_GENERATION_TIMEOUT_MS,
   QuestionGenerationError,
   buildProviderDiagnostics,
   generateLessonQuestions,

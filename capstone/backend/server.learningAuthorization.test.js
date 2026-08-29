@@ -124,6 +124,7 @@ const requestJson = async (baseUrl, path, options = {}) => {
 };
 
 const authHeaders = (token) => ({ Authorization: `Bearer ${token}` });
+const withScope = (path, scope) => `${path}${path.includes('?') ? '&' : '?'}scope=${encodeURIComponent(scope)}`;
 
 const protectedLearningRoutes = [
   { method: 'GET', path: '/api/folders' },
@@ -137,6 +138,7 @@ const protectedLearningRoutes = [
   { method: 'GET', path: '/api/question-folders' },
   { method: 'GET', path: '/api/learning-files/folder?grade_level=Grade%201&difficulty=Easy' },
   { method: 'GET', path: '/api/learning-files' },
+  { method: 'GET', path: '/api/learning-files/storage-summary' },
   { method: 'GET', path: '/api/learning-files/77/questions' },
   { method: 'GET', path: '/api/learning-files/77/preview' },
   { method: 'PUT', path: '/api/learning-files/77/rename' },
@@ -164,7 +166,7 @@ test('every Lesson and Question Manager route rejects an unauthenticated request
   }
 });
 
-test('Lesson and Question Manager routes allow Admin, Teacher, and existing Parent/Teacher sessions', async (t) => {
+test('Lesson and Question Manager routes allow Admin, Teacher, and Parent/Teacher Teacher-scope sessions', async (t) => {
   resetTestState();
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -173,9 +175,47 @@ test('Lesson and Question Manager routes allow Admin, Teacher, and existing Pare
     await close(server);
   });
 
-  for (const token of ['admin-token', 'teacher-token', 'parent-teacher-token']) {
+  for (const token of ['admin-token', 'teacher-token']) {
     const response = await requestJson(baseUrl, '/api/question-folders', { headers: authHeaders(token) });
     assert.equal(response.status, 200, token);
+  }
+
+  const response = await requestJson(baseUrl, '/api/question-folders?scope=teacher', {
+    headers: authHeaders('parent-teacher-token'),
+  });
+  assert.equal(response.status, 200);
+});
+
+test('Lesson and Question Manager routes reject Parent/Teacher Parent scope before every route handler', async (t) => {
+  resetTestState();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  for (const route of protectedLearningRoutes) {
+    const response = await requestJson(baseUrl, withScope(route.path, 'parent'), {
+      method: route.method,
+      headers: authHeaders('parent-teacher-token'),
+    });
+    assert.equal(response.status, 403, `${route.method} ${route.path}`);
+  }
+});
+
+test('Lesson and Question Manager routes reject missing and invalid Parent/Teacher scopes', async (t) => {
+  resetTestState();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  for (const path of ['/api/question-folders', '/api/question-folders?scope=admin']) {
+    const response = await requestJson(baseUrl, path, { headers: authHeaders('parent-teacher-token') });
+    assert.equal(response.status, 403, path);
   }
 });
 
