@@ -45,6 +45,32 @@ const openQuestionFolder = async (container, gradeLevel, difficulty) => {
   });
 };
 
+const buildReviewRequiredFile = (overrides = {}) => ({
+  id: 91,
+  title: 'review-required-addition.docx',
+  file_name: 'review-required-addition.docx',
+  file_url: '/uploads/review-required-addition.docx',
+  grade_level: 'Grade 1',
+  difficulty: 'Easy',
+  math_topic: 'Basic Addition',
+  document_topic: 'Basic Addition',
+  file_type: 'fixed_questions',
+  question_count: 5,
+  published: false,
+  approval_status: 'review_required',
+  validation_summary: {
+    is_valid: true,
+    invalid_question_count: 0,
+    review_eligibility: { eligible: true, code: 'ELIGIBLE', message: 'Ready for review approval.' },
+    publication_eligibility: {
+      eligible: false,
+      code: 'REVIEW_APPROVAL_REQUIRED',
+      message: 'Approve this reviewed question set before Push to Game.',
+    },
+  },
+  ...overrides,
+});
+
 describe('LessonQuestionManager upload and trash controls', () => {
   let container;
   let root;
@@ -69,13 +95,14 @@ describe('LessonQuestionManager upload and trash controls', () => {
     };
     global.fetch = jest.fn((url, options = {}) => {
       const value = String(url);
-      if (value.endsWith('/api/learning-files/storage-summary')) {
+      const scopedValue = value.replace(/\?scope=teacher$/, '');
+      if (scopedValue.endsWith('/api/learning-files/storage-summary')) {
         return okJson({ used_bytes: 601, source_file_bytes: 480, question_content_bytes: 121 });
       }
-      if (value.endsWith('/api/learning-files')) return okJson(fixtures.files);
-      if (value.endsWith('/api/folders')) return okJson(fixtures.folders);
-      if (value.endsWith('/api/learning-files/trash')) return okJson(fixtures.trashFiles);
-      if (value.endsWith('/api/folders/trash')) return okJson(fixtures.trashFolders);
+      if (scopedValue.endsWith('/api/learning-files')) return okJson(fixtures.files);
+      if (scopedValue.endsWith('/api/folders')) return okJson(fixtures.folders);
+      if (scopedValue.endsWith('/api/learning-files/trash')) return okJson(fixtures.trashFiles);
+      if (scopedValue.endsWith('/api/folders/trash')) return okJson(fixtures.trashFolders);
       if (value.includes('/api/learning-files/31/restore') && options.method === 'POST') {
         fixtures.trashFiles = [];
         fixtures.files = [{ id: 31, title: 'Deleted Quiz', file_name: 'deleted.csv', folder_name: 'Addition Folder' }];
@@ -1220,30 +1247,85 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.querySelector('button[aria-label="Print Question Library Trash"]')).toBeNull();
   });
 
-  test('requires an explicit review approval before a valid question set can be pushed to the game', async () => {
-    fixtures.files = [{
-      id: 91,
-      title: 'review-required-addition.docx',
-      file_name: 'review-required-addition.docx',
-      grade_level: 'Grade 1',
-      difficulty: 'Easy',
-      math_topic: 'Basic Addition',
-      document_topic: 'Basic Addition',
-      file_type: 'fixed_questions',
-      question_count: 5,
-      published: false,
-      approval_status: 'review_required',
-      validation_summary: {
-        is_valid: true,
-        invalid_question_count: 0,
-        review_eligibility: { eligible: true, code: 'ELIGIBLE' },
-        publication_eligibility: {
-          eligible: false,
-          code: 'REVIEW_APPROVAL_REQUIRED',
-          message: 'Approve this reviewed question set before Push to Game.',
+  test('shows Approve to each authorized Teacher-scope role from the authoritative review status', async () => {
+    const authorizedRoles = [
+      { id: 1, role: 'admin', name: 'Admin User' },
+      { id: 8, role: 'teacher', name: 'Teacher User' },
+      { id: 9, role: 'parent_teacher', name: 'Parent Teacher User' },
+    ];
+
+    for (const [index, account] of authorizedRoles.entries()) {
+      fixtures.files = [buildReviewRequiredFile({
+        validation_summary: {
+          ...buildReviewRequiredFile().validation_summary,
+          publication_eligibility: {
+            eligible: false,
+            code: 'STALE_PUBLICATION_SUMMARY',
+            message: 'Approval is still required before publication.',
+          },
         },
-      },
-    }];
+      })];
+      localStorage.setItem('loggedInUser', JSON.stringify(account));
+      localStorage.setItem('rememberToken', 'lesson-manager-token');
+
+      await act(async () => {
+        root.render(<LessonQuestionManager />);
+      });
+      await openQuestionFolder(container, 'Grade 1', 'Easy');
+      await act(async () => {
+        clickByText(container, 'Preview');
+      });
+
+      const approveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve');
+      expect(approveButton).toBeTruthy();
+      expect(approveButton.disabled).toBe(true);
+
+      if (account.role === 'parent_teacher') {
+        expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/91/questions?scope=teacher', {
+          headers: { Authorization: 'Bearer lesson-manager-token' },
+        });
+      }
+
+      await act(async () => {
+        Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Close').click();
+      });
+
+      if (index < authorizedRoles.length - 1) {
+        await act(async () => {
+          root.unmount();
+        });
+        root = createRoot(container);
+      }
+    }
+  });
+
+  test('denies Parent and Student roles before any approval UI can render', async () => {
+    const deniedRoles = ['parent', 'student'];
+
+    for (const [index, role] of deniedRoles.entries()) {
+      mockNavigate.mockClear();
+      localStorage.setItem('loggedInUser', JSON.stringify({ id: index + 20, role, name: `${role} user` }));
+      localStorage.setItem('rememberToken', 'lesson-manager-token');
+
+      await act(async () => {
+        root.render(<LessonQuestionManager />);
+      });
+
+      expect(mockNavigate).toHaveBeenCalledWith('/login');
+      expect(container.querySelector('.drive-manager-toolbar')).toBeNull();
+      expect(document.body.querySelector('.generated-questions-preview-modal')).toBeNull();
+
+      if (index < deniedRoles.length - 1) {
+        await act(async () => {
+          root.unmount();
+        });
+        root = createRoot(container);
+      }
+    }
+  });
+
+  test('requires an explicit review approval before a valid question set can be pushed to the game', async () => {
+    fixtures.files = [buildReviewRequiredFile()];
 
     await act(async () => {
       root.render(<LessonQuestionManager />);
@@ -1258,7 +1340,11 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
 
     expect(document.body.textContent).toContain('Review required before Push to Game.');
-    const approveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.includes('Approve Question Set'));
+    const previewModal = document.body.querySelector('.generated-questions-preview-modal');
+    const footerControls = Array.from(previewModal.querySelectorAll('.generated-questions-preview-footer button')).map((button) => button.textContent.trim());
+    expect(footerControls).toEqual(['Download Source', 'Approve', 'Close']);
+    expect(previewModal.querySelector('[aria-label="Close generated questions preview"]')).toBeNull();
+    const approveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve');
     expect(approveButton).toBeTruthy();
     expect(approveButton.disabled).toBe(true);
 
@@ -1279,6 +1365,53 @@ describe('LessonQuestionManager upload and trash controls', () => {
       method: 'POST',
       headers: { Authorization: 'Bearer lesson-manager-token' },
     });
-    expect(pushButton.disabled).toBe(false);
+    expect(document.body.textContent).toContain('Game Publication: Eligible — Basic Addition');
+    expect(document.body.querySelector('.generated-questions-preview-footer').textContent).not.toContain('Approve');
+    const refreshedPushButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Push to Game'));
+    expect(refreshedPushButton.disabled).toBe(false);
+  });
+
+  test('keeps Push to Game disabled when the approval response reports a mixed-topic blocker', async () => {
+    fixtures.files = [buildReviewRequiredFile()];
+    fixtures.approvalResponse = () => {
+      const approvedFile = buildReviewRequiredFile({
+        approval_status: 'approved',
+        document_topic: 'Basic Addition, Subtraction',
+        validation_summary: {
+          ...buildReviewRequiredFile().validation_summary,
+          publication_eligibility: {
+            eligible: false,
+            code: 'MULTIPLE_DOCUMENT_TOPICS',
+            message: 'Game publication requires a single-topic Fixed Question document.',
+          },
+        },
+      });
+      fixtures.files = [approvedFile];
+      return okJson({ success: true, learningFile: approvedFile, validation: approvedFile.validation_summary });
+    };
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+    await act(async () => {
+      clickByText(container, 'Preview');
+    });
+
+    const reviewBoxes = Array.from(document.body.querySelectorAll('.question-review-confirmation input[type="checkbox"]'));
+    for (const reviewBox of reviewBoxes) {
+      await act(async () => {
+        reviewBox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+    }
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve').click();
+    });
+
+    expect(document.body.textContent).toContain('Game publication requires a single-topic Fixed Question document.');
+    expect(document.body.querySelector('.generated-questions-preview-footer').textContent).not.toContain('Approve');
+    const pushButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Not Eligible for Game'));
+    expect(pushButton.disabled).toBe(true);
   });
 });
