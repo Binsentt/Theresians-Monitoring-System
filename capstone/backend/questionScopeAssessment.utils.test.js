@@ -62,6 +62,33 @@ test('keeps scope diagnostics publication-only for a structurally valid mixed se
   }]);
 });
 
+test('preserves the audited fifteen-question Addition/Subtraction document as mixed-topic publication-only evidence', () => {
+  const additionQuestions = new Set([1, 2, 4, 6, 8, 10, 11, 13, 15]);
+  const questions = Array.from({ length: 15 }, (_, index) => {
+    const source_index = index + 1;
+    return {
+      source_index,
+      question: additionQuestions.has(source_index) ? `What is ${source_index} + 1?` : `What is ${source_index} - 1?`,
+    };
+  });
+
+  const perQuestionScope = validateQuestionSetScope({
+    selected_scope: BASIC_ADDITION_SCOPE,
+    document_topic: 'Basic Addition',
+    questions,
+  });
+  const mixedDocumentScope = validateQuestionSetScope({
+    selected_scope: BASIC_ADDITION_SCOPE,
+    document_topic: 'Basic Addition, Subtraction',
+    questions,
+  });
+
+  assert.equal(perQuestionScope.code, 'QUESTION_TOPIC_MISMATCH');
+  assert.deepEqual(perQuestionScope.question_errors.map((error) => error.source_index), [3, 5, 7, 9, 12, 14]);
+  assert.equal(mixedDocumentScope.code, 'MULTI_TOPIC_DOCUMENT');
+  assert.equal(mixedDocumentScope.isValid, false);
+});
+
 test('validates generated questions without requiring a fixed-document topic heading', () => {
   const validation = validateQuestionSetScope({
     selected_scope: BASIC_ADDITION_SCOPE,
