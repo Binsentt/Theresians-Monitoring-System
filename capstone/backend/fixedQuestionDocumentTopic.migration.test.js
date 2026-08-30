@@ -62,3 +62,22 @@ test('question-set approval migration adds review state without rewriting questi
   assert.doesNotMatch(migration, /DELETE\s+FROM/i);
   assert.doesNotMatch(migration, /TRUNCATE/i);
 });
+
+test('lesson-source lineage migration is additive and preserves legacy question sets', () => {
+  const migration = fs.readFileSync(
+    path.join(__dirname, 'migrations', '015_add_lesson_source_lineage.sql'),
+    'utf8'
+  );
+
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS content_role/i);
+  assert.match(migration, /DEFAULT 'question_set'/i);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS source_learning_file_id/i);
+  assert.match(migration, /REFERENCES public\.learning_files\(id\) ON DELETE RESTRICT/i);
+  assert.match(migration, /lesson_source/i);
+  assert.match(migration, /question_set/i);
+  assert.match(migration, /CREATE INDEX IF NOT EXISTS[\s\S]*source_learning_file_id/i);
+  assert.doesNotMatch(migration, /DROP\s+/i);
+  assert.doesNotMatch(migration, /TRUNCATE/i);
+  assert.doesNotMatch(migration, /DELETE\s+FROM/i);
+  assert.doesNotMatch(migration, /UPDATE\s+public\.questions/i);
+});

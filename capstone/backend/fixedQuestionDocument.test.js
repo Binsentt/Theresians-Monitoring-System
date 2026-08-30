@@ -253,6 +253,35 @@ test('extracts DOCX and fixed-question PDF text through server-side extractors w
   assert.equal(pdf.questions[1].correct_answer, '5');
 });
 
+test('keeps fixed-question parsing and selected-scope evidence independent of filename', async () => {
+  const first = await extractFixedQuestionDocument({
+    path: 'different-name-one.docx',
+    originalname: 'different-name-one.docx',
+    mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    buffer: Buffer.from('PK\x03\x04word/document.xml'),
+  }, { extractDocxText: async () => VALID_DOCUMENT_TEXT });
+  const second = await extractFixedQuestionDocument({
+    path: 'another-name-two.docx',
+    originalname: 'another-name-two.docx',
+    mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    buffer: Buffer.from('PK\x03\x04word/document.xml'),
+  }, { extractDocxText: async () => VALID_DOCUMENT_TEXT });
+
+  assert.deepEqual(second.questions, first.questions);
+  assert.deepEqual(
+    resolveFixedQuestionDocumentMetadata({
+      documentText: first.document_text,
+      selectedGradeLevel: 'Grade 1',
+      selectedDifficulty: 'Easy',
+    }),
+    resolveFixedQuestionDocumentMetadata({
+      documentText: second.document_text,
+      selectedGradeLevel: 'Grade 1',
+      selectedDifficulty: 'Easy',
+    })
+  );
+});
+
 test('extracts both prepared Teacher Set DOCX files into five valid four-choice questions', async () => {
   for (const fileName of [
     'grade1-easy-basic-addition-set-a.docx',
@@ -437,7 +466,6 @@ test('keeps invalid question structure and controlled metadata as structural rev
     'The correct answer must match one of the four choices.',
     'Question grade must match the selected Grade.',
     'Question difficulty must match the selected Difficulty.',
-    'Question topic must match the selected Topic.',
   ]);
 });
 
@@ -478,4 +506,36 @@ test('blocks a mixed fixed-question document if a caller tries to assign it an a
     document_topic: null,
     math_topic: 'Basic Addition',
   }), '');
+});
+
+test('keeps a topic-scope mismatch out of structural review while blocking publication', () => {
+  const input = {
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    math_topic: 'Basic Addition',
+    questions: [{
+      source_index: 3,
+      question: 'What is 9 - 2?',
+      options: ['5', '6', '7', '8'],
+      correct_answer: '7',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Subtraction',
+    }],
+  };
+
+  const review = validateQuestionSetForReview(input);
+  const publication = validateQuestionSetForPublication({
+    ...input,
+    scope_validation: {
+      isValid: false,
+      code: 'QUESTION_TOPIC_MISMATCH',
+      message: 'Question 3 is Subtraction but the selected Topic is Basic Addition.',
+    },
+  });
+
+  assert.equal(review.isValid, true);
+  assert.equal(publication.isValid, false);
+  assert.equal(publication.scope_validation.code, 'QUESTION_TOPIC_MISMATCH');
+  assert.match(publication.document_errors.join(' '), /Question 3 is Subtraction/i);
 });

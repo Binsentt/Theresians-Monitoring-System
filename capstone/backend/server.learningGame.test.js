@@ -1319,6 +1319,27 @@ test('Godot question endpoint accepts grade and topic query aliases', async (t) 
   assert.deepEqual(queryCalls[1], ['Mathematics', 'Grade 1', 'Easy', 'Basic Addition']);
 });
 
+test('Godot question endpoint rejects an incomplete dynamic scope without widening the query', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let queryCount = 0;
+  setQueryHandler(async () => {
+    queryCount += 1;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201&difficulty=Easy');
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.code, 'QUESTION_SCOPE_REQUIRED');
+  assert.equal(queryCount, 0);
+});
+
 test('Godot question endpoint remains available without a Lesson Manager session', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -1385,7 +1406,7 @@ test('Godot question endpoint normalizes numeric grade aliases and scopes to one
   assert.match(queryCalls[1].sql, /order by active_lf\.uploaded_at desc, active_lf\.id desc limit 1/);
 });
 
-test('Godot question endpoint exposes a published restored-import record in the provider shape', async (t) => {
+test('Godot question endpoint does not widen an unscoped restored-import record into an exact request', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -1424,20 +1445,10 @@ test('Godot question endpoint exposes a published restored-import record in the 
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201');
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201&difficulty=Easy&topic=Basic%20Addition');
 
   assert.equal(response.status, 200);
-  assert.deepEqual(response.body.questions, [{
-    id: 91,
-    learning_file_id: 42,
-    question: '5 + 2 = ?',
-    options: ['8', '7', '6', '9'],
-    correct_answer: '7',
-    grade_level: 'Grade 1',
-    difficulty: 'Easy',
-    math_topic: null,
-    source: 'restored_import',
-  }]);
+  assert.deepEqual(response.body.questions, []);
 });
 
 test('Lesson and Question Manager receives restored-import learning files through its existing endpoint', async (t) => {
@@ -1669,7 +1680,7 @@ test('Godot question responses record an active set fetch only after active ques
       return resultRows([{
         id: 71,
         grade_level: 'Grade 1',
-        difficulty: 'Easy',
+        difficulty: 'Normal',
         math_topic: 'Addition',
         file_type: 'fixed_questions',
         source: 'fixed',
@@ -1684,7 +1695,7 @@ test('Godot question responses record an active set fetch only after active ques
         options: ['1', '2', '3'],
         correct_answer: '2',
         grade_level: 'Grade 1',
-        difficulty: 'Easy',
+        difficulty: 'Normal',
         math_topic: 'Addition',
         source: 'fixed',
       }]);
@@ -1695,7 +1706,7 @@ test('Godot question responses record an active set fetch only after active ques
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/game/questions?grade=1&difficulty=Easy&topic=Addition');
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=1&difficulty=Normal&topic=Addition');
 
   assert.equal(response.status, 200);
   assert.equal(response.body.questions.length, 1);
@@ -1717,7 +1728,7 @@ test('empty Godot question responses do not mark a question set as fetched', asy
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/game/questions?grade=1&difficulty=Easy');
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=1&difficulty=Easy&topic=Basic%20Addition');
 
   assert.equal(response.status, 200);
   assert.deepEqual(response.body.questions, []);
@@ -1771,4 +1782,119 @@ test('undersized Godot question pools are explicitly reported without discarding
     expected_question_count: 5,
     available_question_count: 1,
   });
+});
+
+test('a reusable Lesson PDF source creates isolated exact-scope generated children without a live provider call', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const sourceFileName = `lesson-source-${Date.now()}.pdf`;
+  const sourceFilePath = path.join(__dirname, 'uploads', sourceFileName);
+  const source = {
+    id: 801,
+    title: 'Reusable arithmetic lesson',
+    file_name: 'reusable-arithmetic.pdf',
+    file_url: `/uploads/${sourceFileName}`,
+    file_size: 42,
+    folder_id: null,
+    source_content_fingerprint: 'a'.repeat(64),
+    source_file_mime_type: 'application/pdf',
+    content_role: 'lesson_source',
+    deleted_at: null,
+  };
+  const priorKey = process.env.OPENAI_API_KEY;
+  const originalFetch = global.fetch;
+  const generationRequests = [];
+  const insertedChildren = [];
+  fs.writeFileSync(sourceFilePath, '%PDF-1.4\nReusable arithmetic lesson');
+  process.env.OPENAI_API_KEY = 'server-test-key';
+  parsedPdfText = 'Use addition and subtraction examples from this lesson.';
+  global.fetch = async (url, options) => {
+    if (String(url).startsWith('http://127.0.0.1:')) return originalFetch(url, options);
+    assert.equal(url, 'https://api.openai.com/v1/responses');
+    const request = JSON.parse(options.body);
+    generationRequests.push(request);
+    const scopeText = request.input[1].content[0].text;
+    const isSubtraction = scopeText.includes('Topic identifier: Subtraction.');
+    return {
+      ok: true,
+      headers: { get: () => null },
+      json: async () => ({ output_text: JSON.stringify({
+        questions: [{
+          question: isSubtraction ? 'What is 6 - 2?' : 'What is 2 + 3?',
+          options: isSubtraction ? ['2', '3', '4', '5'] : ['4', '5', '6', '7'],
+          correct_answer: isSubtraction ? '4' : '5',
+        }],
+      }) }),
+    };
+  };
+  setQueryHandler(async (sql, params) => {
+    if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return emptyResult;
+    if (sql.startsWith('select * from public.learning_files') && sql.includes("content_role = 'lesson_source'")) {
+      return resultRows([source]);
+    }
+    if (sql.startsWith('select lf.*, count(q.id)::integer as question_count')) return emptyResult;
+    if (sql.startsWith('insert into public.learning_files')) {
+      const child = {
+        id: 900 + insertedChildren.length,
+        title: params[0],
+        file_name: params[1],
+        file_url: params[2],
+        grade_level: params[3],
+        difficulty: params[4],
+        math_topic: params[5],
+        requested_question_count: params[9],
+        source_learning_file_id: params[10],
+        source_content_fingerprint: params[11],
+        generation_idempotency_key: params[12],
+        generation_request_fingerprint: params[13],
+        content_role: 'question_set',
+      };
+      insertedChildren.push(child);
+      return resultRows([child]);
+    }
+    if (sql.startsWith('insert into public.questions')) return emptyResult;
+    if (sql.startsWith('update public.learning_files') && sql.includes("generation_status = 'ready_for_review'")) {
+      return resultRows([{ ...insertedChildren.at(-1), generation_status: 'ready_for_review' }]);
+    }
+    return emptyResult;
+  });
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    parsedPdfText = '';
+    global.fetch = originalFetch;
+    if (priorKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = priorKey;
+    if (fs.existsSync(sourceFilePath)) fs.unlinkSync(sourceFilePath);
+    await close(server);
+  });
+
+  const addition = await requestJson(baseUrl, '/api/learning-files/lesson-sources/801/generate', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': 'lesson-source-addition-key-0001' },
+    body: JSON.stringify({
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      expected_question_count: 1,
+    }),
+  });
+  const subtraction = await requestJson(baseUrl, '/api/learning-files/lesson-sources/801/generate', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': 'lesson-source-subtract-key-0001' },
+    body: JSON.stringify({
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Subtraction',
+      expected_question_count: 1,
+    }),
+  });
+
+  assert.equal(addition.status, 201);
+  assert.equal(subtraction.status, 201);
+  assert.equal(insertedChildren.length, 2);
+  assert.deepEqual(insertedChildren.map((child) => child.source_learning_file_id), [801, 801]);
+  assert.deepEqual(insertedChildren.map((child) => child.math_topic), ['Basic Addition', 'Subtraction']);
+  assert.equal(generationRequests.length, 2);
+  assert.match(generationRequests[0].input[1].content[0].text, /Grade: Grade 1\.\nDifficulty: Easy\.\nTopic identifier: Basic Addition\./);
+  assert.match(generationRequests[1].input[1].content[0].text, /Topic identifier: Subtraction\./);
 });

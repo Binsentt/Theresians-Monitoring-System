@@ -89,6 +89,9 @@ const {
   isApprovalCurrent,
 } = require('./learningFileApproval.utils');
 const {
+  validateQuestionSetScope,
+} = require('./questionScopeAssessment.utils');
+const {
   buildMailDiagnostics,
   buildResendEmailConfig,
   resolveAppUrl,
@@ -450,6 +453,8 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS source_content_fingerprint VARCHAR(64)');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS source_file_bytes BYTEA');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS source_file_mime_type VARCHAR(100)');
+    await pool.query("ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS content_role VARCHAR(32) NOT NULL DEFAULT 'question_set'");
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS source_learning_file_id INTEGER REFERENCES public.learning_files(id) ON DELETE RESTRICT');
     await pool.query(`UPDATE public.learning_files
       SET generation_status = CASE WHEN LOWER(file_type) = 'lesson' THEN 'ready_for_review' ELSE 'not_applicable' END
       WHERE generation_status IS NULL OR BTRIM(generation_status) = ''`);
@@ -493,6 +498,7 @@ const ensureSchema = async () => {
     await pool.query('CREATE INDEX IF NOT EXISTS idx_questions_published ON public.questions(published)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_grade_difficulty_topic ON public.learning_files(grade_level, difficulty, math_topic)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_lifecycle ON public.learning_files(generation_status, publish_status)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_source_learning_file_id ON public.learning_files(source_learning_file_id) WHERE source_learning_file_id IS NOT NULL');
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_learning_files_client_provided_fingerprint
       ON public.learning_files (source_content_fingerprint)
       WHERE source_content_fingerprint IS NOT NULL
@@ -1336,7 +1342,7 @@ const normalizeLearningFileRow = (row) => {
   return toQuestionSetResponse({
     ...safeRow,
     difficulty,
-    folder_name: buildQuestionFolderPath(safeRow.grade_level, difficulty),
+    folder_name: isLessonSourceRecord(safeRow) ? null : buildQuestionFolderPath(safeRow.grade_level, difficulty),
   });
 };
 
@@ -1938,6 +1944,7 @@ const getLessonGenerationIdempotencyKey = (req) => {
 
 const buildLessonGenerationRequestFingerprint = ({
   actorId,
+  sourceLearningFileId = null,
   sourceContentFingerprint,
   gradeLevel,
   difficulty,
@@ -1945,6 +1952,9 @@ const buildLessonGenerationRequestFingerprint = ({
   questionCount,
 }) => crypto.createHash('sha256').update(JSON.stringify({
   actor_id: Number(actorId),
+  source_learning_file_id: Number.isSafeInteger(Number(sourceLearningFileId))
+    ? Number(sourceLearningFileId)
+    : null,
   source_content_fingerprint: sourceContentFingerprint,
   grade_level: gradeLevel,
   difficulty,
@@ -2056,7 +2066,17 @@ const createLifecycleHttpError = (message, statusCode) => {
   return error;
 };
 
+const isLessonSourceRecord = (learningFile = {}) => String(learningFile.content_role || 'question_set').trim().toLowerCase() === 'lesson_source';
+
+const requireQuestionSetRecord = (learningFile) => {
+  if (!isLessonSourceRecord(learningFile)) return;
+  const error = createLifecycleHttpError('Lesson source files must generate a scoped question set before they can be reviewed or published.', 409);
+  error.code = 'LESSON_SOURCE_NOT_A_QUESTION_SET';
+  throw error;
+};
+
 const getQuestionSetValidationState = async (queryClient, learningFile, { lockRows = false } = {}) => {
+  requireQuestionSetRecord(learningFile);
   const questionResult = await queryClient.query(
     `SELECT id, learning_file_id, question, options, correct_answer, grade_level, difficulty, math_topic
      FROM public.questions
@@ -2066,15 +2086,24 @@ const getQuestionSetValidationState = async (queryClient, learningFile, { lockRo
   );
   const canonicalDifficulty = normalizeDifficultyValue(learningFile.difficulty);
   const documentScopeError = validateFixedQuestionDocumentPublicationScope(learningFile);
+  const scopedQuestions = questionResult.rows.map((question, index) => ({
+    ...question,
+    source_index: index + 1,
+    difficulty: normalizeDifficultyValue(question.difficulty),
+  }));
   const validationInput = {
     grade_level: learningFile.grade_level,
     difficulty: canonicalDifficulty,
     math_topic: learningFile.math_topic,
-    questions: questionResult.rows.map((question) => ({
-      ...question,
-      difficulty: normalizeDifficultyValue(question.difficulty),
-    })),
+    questions: scopedQuestions,
   };
+  const scopeValidation = learningFile.file_type === 'fixed_questions'
+    ? validateQuestionSetScope({
+      selected_scope: validationInput,
+      document_topic: learningFile.document_topic,
+      questions: scopedQuestions,
+    })
+    : null;
   return {
     structural: validateQuestionSetForReview(validationInput),
     publication: validateQuestionSetForPublication({
@@ -2084,6 +2113,7 @@ const getQuestionSetValidationState = async (queryClient, learningFile, { lockRo
         difficulty: canonicalDifficulty,
         math_topic: learningFile.math_topic,
       }),
+      scope_validation: scopeValidation,
     }),
   };
 };
@@ -2098,6 +2128,13 @@ const buildQuestionSetReviewEligibility = (learningFile = {}, validation = {}) =
 };
 
 const buildQuestionSetPublicationBaseEligibility = (learningFile = {}, validation = {}) => {
+  if (validation?.scope_validation && validation.scope_validation.isValid === false) {
+    return {
+      eligible: false,
+      code: validation.scope_validation.code || 'QUESTION_SCOPE_VALIDATION_FAILED',
+      message: validation.scope_validation.message || 'Question scope must match the selected game publication topic.',
+    };
+  }
   if (learningFile.file_type === 'fixed_questions') {
     const documentTopic = String(learningFile.document_topic || '').trim();
     const gameTopic = String(learningFile.math_topic || '').trim();
@@ -2160,6 +2197,8 @@ const buildQuestionSetValidationSummary = (validationState, learningFile = {}) =
     is_valid: Boolean(structuralValidation?.isValid),
     invalid_question_count: (structuralValidation?.questions || []).filter((question) => !question.is_valid).length,
     document_errors: structuralValidation?.document_errors || [],
+    publication_errors: publicationValidation?.document_errors || [],
+    scope_validation: publicationValidation?.scope_validation || null,
     review_eligibility: reviewEligibility,
     publication_eligibility: buildQuestionSetPublicationEligibility(learningFile, {
       structural: structuralValidation,
@@ -2197,6 +2236,7 @@ const publishLearningFile = async (fileId, publisherId, { confirmReplacement = f
     if (!learningFile) {
       throw createLifecycleHttpError('Uploaded file not found', 404);
     }
+    requireQuestionSetRecord(learningFile);
 
     if (learningFile.generation_status === 'generating') {
       throw createLifecycleHttpError('Question generation is still in progress.', 409);
@@ -2357,6 +2397,7 @@ const approveLearningFile = async (fileId, approver) => {
     );
     const learningFile = fileResult.rows[0];
     if (!learningFile) throw createLifecycleHttpError('Uploaded file not found', 404);
+    requireQuestionSetRecord(learningFile);
     if (learningFile.published || learningFile.publish_status === 'active') {
       throw createLifecycleHttpError('Active question sets cannot be re-approved. Publish a reviewed replacement instead.', 409);
     }
@@ -2651,17 +2692,23 @@ const getGameQuestions = async ({ grade_level, difficulty, math_topic }) => {
      ORDER BY q.created_at DESC`,
     params
   );
-  return result.rows.map((row) => ({
-    id: row.id,
-    learning_file_id: row.learning_file_id,
-    question: row.question,
-    options: row.options,
-    correct_answer: row.correct_answer,
-    grade_level: row.grade_level,
-    difficulty: normalizeDifficultyValue(row.difficulty),
-    math_topic: row.math_topic,
-    source: row.source,
-  }));
+  return result.rows
+    .map((row) => ({
+      id: row.id,
+      learning_file_id: row.learning_file_id,
+      question: row.question,
+      options: row.options,
+      correct_answer: row.correct_answer,
+      grade_level: row.grade_level,
+      difficulty: normalizeDifficultyValue(row.difficulty),
+      math_topic: row.math_topic,
+      source: row.source,
+    }))
+    .filter((row) => (
+      row.grade_level === grade_level
+      && row.difficulty === normalizedDifficulty
+      && row.math_topic === math_topic
+    ));
 };
 
 const finalizeFileUploadRecord = async (fileId) => {
@@ -2733,16 +2780,22 @@ const getGameFiles = async ({ grade_level, difficulty, math_topic }) => {
       )`;
   }
   const result = await pool.query(`SELECT * FROM public.learning_files ${clause} ORDER BY uploaded_at DESC`, params);
-  return result.rows.map((row) => ({
-    id: row.id,
-    title: row.title,
-    file_url: row.file_url,
-    grade_level: row.grade_level,
-    difficulty: normalizeDifficultyValue(row.difficulty),
-    math_topic: row.math_topic,
-    file_type: row.file_type,
-    published: row.published,
-  }));
+  return result.rows
+    .map((row) => ({
+      id: row.id,
+      title: row.title,
+      file_url: row.file_url,
+      grade_level: row.grade_level,
+      difficulty: normalizeDifficultyValue(row.difficulty),
+      math_topic: row.math_topic,
+      file_type: row.file_type,
+      published: row.published,
+    }))
+    .filter((row) => (
+      row.grade_level === grade_level
+      && row.difficulty === normalizedDifficulty
+      && row.math_topic === math_topic
+    ));
 };
 
 const getPublishedLearningData = async (query) => ({
@@ -4202,6 +4255,298 @@ const uploadLearningFile = (req, res, next) => upload.single('file')(req, res, (
   });
 });
 
+const getLessonSourceFilePath = (lessonSource = {}) => {
+  const fileUrl = String(lessonSource.file_url || '').trim();
+  if (!fileUrl.startsWith('/uploads/')) return null;
+  const fileName = path.basename(fileUrl);
+  if (!fileName || fileName !== fileUrl.slice('/uploads/'.length)) return null;
+  return path.join(uploadsDir, fileName);
+};
+
+const validateLessonGenerationScope = ({ grade_level, difficulty, math_topic, expected_question_count }) => {
+  const gradeLevel = String(grade_level || '').trim();
+  const normalizedDifficulty = normalizeDifficultyValue(difficulty);
+  const mathTopic = String(math_topic || '').trim();
+  const metadataError = validateLearningMetadata({
+    grade_level: gradeLevel,
+    difficulty: normalizedDifficulty,
+    math_topic: mathTopic,
+  });
+  if (metadataError) return { error: metadataError };
+
+  const parsedCount = parseLessonQuestionCount(expected_question_count);
+  if (parsedCount.error) return { error: parsedCount.error };
+
+  return {
+    gradeLevel,
+    difficulty: normalizedDifficulty,
+    mathTopic,
+    questionCount: parsedCount.value,
+  };
+};
+
+app.get('/api/learning-files/lesson-sources', requireLessonQuestionManagerAccess, async (_req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT lf.*, COUNT(children.id)::INTEGER AS generated_child_count
+       FROM public.learning_files lf
+       LEFT JOIN public.learning_files children
+         ON children.source_learning_file_id = lf.id
+        AND children.deleted_at IS NULL
+       WHERE lf.deleted_at IS NULL
+         AND lf.content_role = 'lesson_source'
+       GROUP BY lf.id
+       ORDER BY lf.uploaded_at DESC, lf.id DESC`
+    );
+    return res.json(result.rows.map((source) => normalizeLearningFileRow(source)));
+  } catch (error) {
+    console.error('Fetch lesson sources failed:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch lesson sources.' });
+  }
+});
+
+app.post('/api/learning-files/lesson-sources', requireLessonQuestionManagerAccess, uploadLearningFile, async (req, res) => {
+  let storedFilePath = null;
+  try {
+    const title = String(req.body?.title || '').trim();
+    if (!req.file) return res.status(400).json({ error: 'File is required.' });
+    if (!title) {
+      cleanTemporaryUpload(req.file.path);
+      return res.status(400).json({ error: 'Lesson source title is required.' });
+    }
+    if (Number(req.file.size) > MAX_LESSON_UPLOAD_BYTES) {
+      cleanTemporaryUpload(req.file.path);
+      return res.status(413).json({ error: 'Uploaded files must be 30 MB or smaller.', code: 'LESSON_FILE_TOO_LARGE' });
+    }
+    const fileValidationError = validateUploadedLearningFile(req.file, 'lesson');
+    if (fileValidationError) {
+      cleanTemporaryUpload(req.file.path);
+      return res.status(400).json({ error: fileValidationError });
+    }
+    const folderResolution = await resolveLearningFolderId(req.body?.folder_id);
+    if (folderResolution.error) {
+      cleanTemporaryUpload(req.file.path);
+      return res.status(400).json({ error: folderResolution.error });
+    }
+
+    const sourceBytes = fs.readFileSync(req.file.path);
+    const sourceContentFingerprint = crypto.createHash('sha256').update(sourceBytes).digest('hex');
+    const storedFileName = generateUploadFileName(req.file.originalname);
+    storedFilePath = path.join(uploadsDir, storedFileName);
+    fs.renameSync(req.file.path, storedFilePath);
+    const insertResult = await pool.query(
+      `INSERT INTO public.learning_files (
+         title, file_name, file_url, grade_level, difficulty, math_topic, document_topic,
+         file_type, subject, folder_id, published, source, uploaded_by, file_size,
+         generation_status, publish_status, content_role, source_content_fingerprint,
+         source_file_mime_type
+       ) VALUES ($1, $2, $3, '', NULL, NULL, NULL, 'lesson', 'Mathematics', $4, false, 'lesson', $5, $6,
+                 'source_ready', 'staged', 'lesson_source', $7, $8)
+       RETURNING *`,
+      [
+        title,
+        req.file.originalname,
+        buildFileUrl(storedFileName),
+        folderResolution.folderId,
+        req.authenticatedUser.id,
+        req.file.size || null,
+        sourceContentFingerprint,
+        req.file.mimetype || 'application/pdf',
+      ]
+    );
+    return res.status(201).json({
+      success: true,
+      lessonSource: normalizeLearningFileRow(insertResult.rows[0]),
+    });
+  } catch (error) {
+    console.error('Lesson source upload failed:', error.message);
+    cleanTemporaryUpload(storedFilePath || req.file?.path);
+    return res.status(500).json({ error: 'Lesson source upload failed.' });
+  }
+});
+
+app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestionManagerAccess, async (req, res) => {
+  let childLearningFile = null;
+  try {
+    const sourceId = Number.parseInt(req.params.id, 10);
+    if (!Number.isSafeInteger(sourceId) || sourceId < 1) return res.status(400).json({ error: 'Invalid lesson source ID.' });
+    const scope = validateLessonGenerationScope(req.body || {});
+    if (scope.error) return res.status(400).json({ error: scope.error });
+    const idempotencyKey = getLessonGenerationIdempotencyKey(req);
+    if (!idempotencyKey) {
+      return res.status(400).json({
+        error: 'A valid generation request key is required for AI question generation.',
+        code: 'AI_GENERATION_IDEMPOTENCY_REQUIRED',
+      });
+    }
+
+    const sourceResult = await pool.query(
+      `SELECT *
+       FROM public.learning_files
+       WHERE id = $1
+         AND content_role = 'lesson_source'
+         AND deleted_at IS NULL
+       LIMIT 1`,
+      [sourceId]
+    );
+    const lessonSource = sourceResult.rows[0];
+    if (!lessonSource) return res.status(404).json({ error: 'Lesson source not found.' });
+
+    const sourceContentFingerprint = String(lessonSource.source_content_fingerprint || '').trim();
+    if (!sourceContentFingerprint) {
+      return res.status(422).json({
+        error: 'The Lesson PDF source is missing its content fingerprint. Upload the source again before generating questions.',
+        code: 'LESSON_SOURCE_FINGERPRINT_MISSING',
+      });
+    }
+    const requestFingerprint = buildLessonGenerationRequestFingerprint({
+      actorId: req.authenticatedUser.id,
+      sourceLearningFileId: lessonSource.id,
+      sourceContentFingerprint,
+      gradeLevel: scope.gradeLevel,
+      difficulty: scope.difficulty,
+      mathTopic: scope.mathTopic,
+      questionCount: scope.questionCount,
+    });
+    const existingGeneration = await getLessonGenerationByIdempotencyKey(req.authenticatedUser.id, idempotencyKey);
+    if (existingGeneration) {
+      return respondToExistingLessonGeneration({ res, learningFile: existingGeneration, requestFingerprint });
+    }
+    const inProgressGeneration = await getInProgressLessonGenerationByFingerprint(req.authenticatedUser.id, requestFingerprint);
+    if (inProgressGeneration) {
+      return res.status(202).json({
+        ...buildLessonGenerationResponse(inProgressGeneration, { idempotent: true }),
+        code: 'AI_GENERATION_IN_PROGRESS',
+        message: 'Question generation is already in progress for this lesson source and scope.',
+      });
+    }
+
+    const sourceFilePath = getLessonSourceFilePath(lessonSource);
+    if (!sourceFilePath || !fs.existsSync(sourceFilePath)) {
+      return res.status(422).json({
+        error: 'The Lesson PDF source is unavailable. Upload the source again before generating questions.',
+        code: 'LESSON_SOURCE_FILE_MISSING',
+      });
+    }
+
+    const insertResult = await pool.query(
+      `INSERT INTO public.learning_files (
+         title, file_name, file_url, grade_level, difficulty, math_topic, document_topic,
+         file_type, subject, folder_id, published, source, uploaded_by, file_size,
+         requested_question_count, generation_status, publish_status, content_role,
+         source_learning_file_id, source_content_fingerprint, generation_idempotency_key,
+         generation_request_fingerprint, source_file_mime_type
+       ) VALUES ($1, $2, $3, $4, $5, $6, NULL, 'lesson', 'Mathematics', $7, false, 'lesson', $8, $9,
+                 $10, 'generating', 'staged', 'question_set', $11, $12, $13, $14, $15)
+       RETURNING *`,
+      [
+        `${lessonSource.title} — ${scope.gradeLevel} / ${scope.difficulty} / ${scope.mathTopic}`,
+        lessonSource.file_name,
+        lessonSource.file_url,
+        scope.gradeLevel,
+        scope.difficulty,
+        scope.mathTopic,
+        lessonSource.folder_id || null,
+        req.authenticatedUser.id,
+        lessonSource.file_size || null,
+        scope.questionCount,
+        lessonSource.id,
+        sourceContentFingerprint,
+        idempotencyKey,
+        requestFingerprint,
+        lessonSource.source_file_mime_type || 'application/pdf',
+      ]
+    );
+    childLearningFile = insertResult.rows[0];
+
+    if (!String(process.env.OPENAI_API_KEY || '').trim()) {
+      throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
+    }
+    const questions = await generateQuestionTextFromLesson(
+      sourceFilePath,
+      lessonSource.title,
+      scope.gradeLevel,
+      scope.difficulty,
+      scope.mathTopic,
+      scope.questionCount
+    );
+    const scopeValidation = validateQuestionSetScope({
+      selected_scope: {
+        grade_level: scope.gradeLevel,
+        difficulty: scope.difficulty,
+        math_topic: scope.mathTopic,
+      },
+      require_document_topic: false,
+      questions: questions.map((question, index) => ({ ...question, source_index: index + 1 })),
+    });
+    if (!scopeValidation.isValid) {
+      throw new QuestionGenerationError(
+        scopeValidation.code || 'QUESTION_AI_SCOPE_VALIDATION_FAILED',
+        scopeValidation.message || 'Question generation returned questions outside the selected scope.'
+      );
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await saveQuestionsForFile(childLearningFile.id, questions.map((question) => ({
+        ...question,
+        grade_level: scope.gradeLevel,
+        difficulty: scope.difficulty,
+        math_topic: scope.mathTopic,
+        source: 'ai',
+      })), client);
+      const completed = await client.query(
+        `UPDATE public.learning_files
+         SET generation_status = 'ready_for_review',
+             generated_at = CURRENT_TIMESTAMP,
+             generation_failed_at = NULL,
+             generation_error_code = NULL
+         WHERE id = $1
+         RETURNING *`,
+        [childLearningFile.id]
+      );
+      childLearningFile = completed.rows[0] || childLearningFile;
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    return res.status(201).json({
+      success: true,
+      learningFile: normalizeLearningFileRow({ ...childLearningFile, question_count: questions.length }),
+    });
+  } catch (error) {
+    if (childLearningFile?.id) {
+      await pool.query(
+        `UPDATE public.learning_files
+         SET generation_status = 'failed',
+             generation_failed_at = CURRENT_TIMESTAMP,
+             generation_error_code = $2
+         WHERE id = $1`,
+        [childLearningFile.id, error instanceof QuestionGenerationError ? error.code : 'QUESTION_GENERATION_FAILED']
+      ).catch((persistError) => console.error('Failed to persist lesson source generation status:', persistError.message));
+    }
+    if (error instanceof QuestionGenerationError) {
+      const status = error.code === 'QUESTION_AI_NOT_CONFIGURED' ? 503
+        : error.code === 'QUESTION_AI_TIMEOUT' ? 504
+          : error.code === 'QUESTION_TOPIC_MISMATCH' || error.code === 'QUESTION_TOPIC_UNVERIFIED' ? 422
+            : 502;
+      const message = error.code === 'QUESTION_AI_NOT_CONFIGURED'
+        ? 'Question AI is temporarily unavailable. Please contact the administrator.'
+        : error.code === 'QUESTION_TOPIC_MISMATCH' || error.code === 'QUESTION_TOPIC_UNVERIFIED'
+          ? 'Question generation returned questions outside the selected Grade, Difficulty, and Topic scope.'
+          : 'Question generation could not be completed. Please review the Lesson PDF and try again.';
+      return res.status(status).json({ error: message, code: error.code });
+    }
+    console.error('Lesson source generation failed:', error.message);
+    return res.status(500).json({ error: 'Question generation could not be completed.' });
+  }
+});
+
 app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploadLearningFile, async (req, res) => {
   let storedFilePath = null;
   let persistedLearningFileId = null;
@@ -4218,7 +4563,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         code: 'LESSON_FILE_TOO_LARGE',
       });
     }
-    if (!title || !grade_level || !difficulty || !file_type) {
+    if (!title || !grade_level || !difficulty || !math_topic || !file_type) {
       return res.status(400).json({ error: 'Missing required metadata' });
     }
 
@@ -4227,17 +4572,11 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     let normalizedTopic = String(math_topic || '').trim();
     const normalizedType = String(file_type).trim().toLowerCase();
 
-    const learningMetadataError = normalizedType === 'lesson'
-      ? validateLearningMetadata({
-        grade_level: normalizedGrade,
-        difficulty: normalizedDifficulty,
-        math_topic: normalizedTopic,
-      })
-      : !isValidGradeLevel(normalizedGrade)
-        ? 'Grade level must be one of Grade 1 through Grade 6.'
-        : !isValidDifficulty(normalizedDifficulty)
-          ? 'Difficulty must be Easy, Normal, or Difficult.'
-          : '';
+    const learningMetadataError = validateLearningMetadata({
+      grade_level: normalizedGrade,
+      difficulty: normalizedDifficulty,
+      math_topic: normalizedTopic,
+    });
     if (learningMetadataError) {
       cleanTemporaryUpload(req.file.path);
       return res.status(400).json({ error: learningMetadataError });
@@ -4320,7 +4659,6 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         });
       }
       fixedDocumentTopic = fixedQuestionMetadata.document_topic;
-      normalizedTopic = fixedQuestionMetadata.math_topic || '';
       fixedQuestions = fixedQuestionValidation.questions;
     }
 
@@ -4440,6 +4778,24 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
           normalizedTopic,
           requestedQuestionCount
         );
+        const generatedScopeValidation = validateQuestionSetScope({
+          selected_scope: {
+            grade_level: normalizedGrade,
+            difficulty: normalizedDifficulty,
+            math_topic: normalizedTopic,
+          },
+          require_document_topic: false,
+          questions: questions.map((question, index) => ({
+            ...question,
+            source_index: index + 1,
+          })),
+        });
+        if (!generatedScopeValidation.isValid) {
+          throw new QuestionGenerationError(
+            generatedScopeValidation.code || 'QUESTION_AI_SCOPE_VALIDATION_FAILED',
+            generatedScopeValidation.message || 'Question generation returned questions outside the selected scope.'
+          );
+        }
 
         const client = await pool.connect();
         try {
@@ -4545,7 +4901,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     if (err instanceof QuestionGenerationError) {
       const status = err.code === 'QUESTION_AI_NOT_CONFIGURED' ? 503
         : err.code === 'QUESTION_AI_TIMEOUT' ? 504
-          : err.code === 'QUESTION_AI_EMPTY_LESSON' || err.code === 'QUESTION_AI_INVALID_REQUEST' || err.code === 'QUESTION_AI_INVALID_RESPONSE' ? 422
+          : err.code === 'QUESTION_AI_EMPTY_LESSON' || err.code === 'QUESTION_AI_INVALID_REQUEST' || err.code === 'QUESTION_AI_INVALID_RESPONSE' || err.code === 'QUESTION_TOPIC_MISMATCH' || err.code === 'QUESTION_TOPIC_UNVERIFIED' ? 422
             : 502;
       const error = err.code === 'QUESTION_AI_NOT_CONFIGURED'
         ? 'Question AI is temporarily unavailable. Please contact the administrator.'
@@ -4555,6 +4911,8 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
             ? 'The Lesson PDF does not contain readable text for question generation.'
             : err.code === 'QUESTION_AI_INVALID_RESPONSE'
               ? 'Question generation returned unusable question data. Please try again.'
+              : err.code === 'QUESTION_TOPIC_MISMATCH' || err.code === 'QUESTION_TOPIC_UNVERIFIED'
+                ? 'Question generation returned questions outside the selected Grade, Difficulty, and Topic scope.'
               : 'Question generation could not be completed. Please review the Lesson PDF and try again.';
       return res.status(status).json({ error, code: err.code });
     }
@@ -4626,7 +4984,7 @@ app.get('/api/learning-files', requireLessonQuestionManagerAccess, async (req, r
          AND (f.id IS NULL OR f.deleted_at IS NULL)
        ORDER BY lf.uploaded_at DESC`
     );
-    const files = await Promise.all(result.rows.map(async (row) => {
+    const files = await Promise.all(result.rows.filter((row) => !isLessonSourceRecord(row)).map(async (row) => {
       const validation = await getQuestionSetValidationState(pool, row);
       return normalizeLearningFileRow({
         ...row,
@@ -4976,8 +5334,21 @@ app.post('/api/questions/unpublish/:id', requireLessonQuestionManagerAccess, asy
 app.get('/api/game/questions', async (req, res) => {
   try {
     const grade_level = normalizeGameGradeLevel(req.query.grade_level || req.query.grade);
-    const difficulty = req.query.difficulty || null;
-    const math_topic = req.query.math_topic || req.query.topic || null;
+    const difficulty = normalizeDifficultyValue(req.query.difficulty || '');
+    const math_topic = String(req.query.math_topic || req.query.topic || '').trim();
+    if (!grade_level || !difficulty || !math_topic) {
+      return res.status(400).json({
+        error: 'Grade, Difficulty, and Topic are required for game questions.',
+        code: 'QUESTION_SCOPE_REQUIRED',
+      });
+    }
+    const scopeError = validateLearningMetadata({ grade_level, difficulty, math_topic });
+    if (scopeError) {
+      return res.status(400).json({
+        error: scopeError,
+        code: 'QUESTION_SCOPE_INVALID',
+      });
+    }
     const learningFiles = await getGameFiles({ grade_level, difficulty, math_topic });
     const gameQuestions = await getGameQuestions({ grade_level, difficulty, math_topic });
     if (gameQuestions.length > 0) {

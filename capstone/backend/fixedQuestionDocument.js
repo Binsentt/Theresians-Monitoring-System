@@ -258,7 +258,6 @@ const validateQuestionSetForReview = ({
     const validationErrors = [...question.validation_errors];
     if (normalizeText(question.grade_level) !== normalizedGrade) validationErrors.push('Question grade must match the selected Grade.');
     if (normalizeDifficultyValue(question.difficulty) !== normalizedDifficulty) validationErrors.push('Question difficulty must match the selected Difficulty.');
-    if (normalizedTopic && normalizeText(question.math_topic) !== normalizedTopic) validationErrors.push('Question topic must match the selected Topic.');
     return {
       ...question,
       validation_errors: validationErrors,
@@ -279,6 +278,7 @@ const validateQuestionSetForPublication = ({
   difficulty,
   math_topic,
   metadata_error = '',
+  scope_validation: scopeValidation = null,
 } = {}) => {
   const reviewValidation = validateQuestionSetForReview({
     questions,
@@ -292,13 +292,19 @@ const validateQuestionSetForPublication = ({
     math_topic: normalizeText(math_topic),
   });
 
+  const scopeError = scopeValidation && scopeValidation.isValid === false
+    ? String(scopeValidation.message || 'Question scope must match the selected game publication topic.')
+    : '';
+
   return {
-    isValid: reviewValidation.isValid && !publicationMetadataError,
+    isValid: reviewValidation.isValid && !publicationMetadataError && !scopeError,
     document_errors: [
       ...reviewValidation.document_errors,
       ...(publicationMetadataError ? [publicationMetadataError] : []),
+      ...(scopeError ? [scopeError] : []),
     ],
     questions: reviewValidation.questions,
+    scope_validation: scopeValidation,
   };
 };
 
