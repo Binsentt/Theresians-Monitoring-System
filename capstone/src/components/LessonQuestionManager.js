@@ -78,6 +78,16 @@ const buildLessonGenerationStorageKey = ({ file, gradeLevel, difficulty, mathTop
   })}`
 );
 
+const buildLessonSourceGenerationStorageKey = ({ sourceId, gradeLevel, difficulty, mathTopic, questionCount }) => (
+  `${LESSON_GENERATION_IDEMPOTENCY_STORAGE_PREFIX}${JSON.stringify({
+    source_learning_file_id: Number(sourceId),
+    grade_level: gradeLevel,
+    difficulty,
+    math_topic: mathTopic,
+    question_count: questionCount,
+  })}`
+);
+
 const createLessonGenerationIdempotencyKey = () => (
   globalThis.crypto?.randomUUID?.()
   || `lesson-${Date.now()}-${Math.random().toString(36).slice(2).padEnd(16, '0')}`
@@ -216,6 +226,7 @@ export default function LessonQuestionManager() {
   const [uploading, setUploading] = useState(false);
   const [notification, setNotification] = useState(null);
   const [files, setFiles] = useState([]);
+  const [lessonSources, setLessonSources] = useState([]);
   const [trashFiles, setTrashFiles] = useState([]);
   const [storageSummary, setStorageSummary] = useState({ used_bytes: 0, source_file_bytes: 0, question_content_bytes: 0 });
   const [form, setForm] = useState(initialFormState);
@@ -239,6 +250,8 @@ export default function LessonQuestionManager() {
   const [trashPage, setTrashPage] = useState(1);
   const [formErrors, setFormErrors] = useState({});
   const [replacementConfirmation, setReplacementConfirmation] = useState(null);
+  const [selectedLessonSourceId, setSelectedLessonSourceId] = useState('');
+  const [savingLessonSource, setSavingLessonSource] = useState(false);
   const pageSize = 10;
 
   const showNotification = (message, type = 'success') => {
@@ -301,6 +314,18 @@ export default function LessonQuestionManager() {
     }
   };
 
+  const loadLessonSources = async ({ role } = {}) => {
+    try {
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl('/api/learning-files/lesson-sources', role));
+      if (!response.ok) throw new Error('Failed to load lesson sources');
+      const sources = await response.json();
+      setLessonSources(Array.isArray(sources) ? sources.map(normalizeManagedLearningFile) : []);
+    } catch (error) {
+      console.error(error);
+      setLessonSources([]);
+    }
+  };
+
   useEffect(() => {
     const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
     const role = normalizeRole(loggedInUser?.role);
@@ -310,6 +335,7 @@ export default function LessonQuestionManager() {
     }
     setUser({ ...loggedInUser, role });
     loadFilesAndFolders({ initial: true, role });
+    loadLessonSources({ role });
   }, [navigate]);
 
   const folderView = useMemo(() => getQuestionFolderView(files, {
@@ -332,7 +358,6 @@ export default function LessonQuestionManager() {
     [selectedFolder.difficulty, selectedFolder.grade_level]
   );
   const uploadType = form.file_type;
-  const isFixedQuestionUpload = uploadType === 'fixed_questions';
   const isDifficultyFolderOpen = Boolean(selectedFolder.grade_level && selectedFolder.difficulty);
   const selectedFolderPath = selectedFolder.grade_level
     ? `Questions / ${selectedFolder.grade_level}${selectedFolder.difficulty ? ` / ${selectedFolder.difficulty}` : ''}`
@@ -391,6 +416,7 @@ export default function LessonQuestionManager() {
   const handleFormChange = (field, value) => {
     setFormErrors((current) => ({ ...current, [field]: '' }));
     if (field === 'file' || field === 'file_type') setFixedUploadValidation(null);
+    if (field === 'file_type' && value !== 'lesson') setSelectedLessonSourceId('');
     setForm((prev) => {
       if (field === 'grade_level' || field === 'difficulty') {
         const gradeLevel = field === 'grade_level' ? value : prev.grade_level;
@@ -399,14 +425,14 @@ export default function LessonQuestionManager() {
           ...prev,
           grade_level: gradeLevel,
           difficulty,
-          math_topic: prev.file_type === 'lesson' ? buildNextTopicValue(gradeLevel, difficulty, prev.math_topic) : '',
+          math_topic: buildNextTopicValue(gradeLevel, difficulty, prev.math_topic),
         };
       }
       if (field === 'file_type') {
         return {
           ...prev,
           file_type: value,
-          math_topic: value === 'lesson' ? buildNextTopicValue(prev.grade_level, prev.difficulty, prev.math_topic) : '',
+          math_topic: buildNextTopicValue(prev.grade_level, prev.difficulty, prev.math_topic),
           expected_question_count: value === 'lesson' ? prev.expected_question_count : '',
         };
       }
@@ -435,29 +461,120 @@ export default function LessonQuestionManager() {
 
   const resetForm = () => {
     setForm(initialFormState);
+    setSelectedLessonSourceId('');
     setFormErrors({});
     setFixedUploadValidation(null);
+  };
+
+  const saveLessonSource = async () => {
+    if (uploading || savingLessonSource || uploadInFlightRef.current) return;
+    if (uploadType !== 'lesson' || !form.file) {
+      showNotification('Choose a Lesson PDF before saving a reusable source.', 'error');
+      return;
+    }
+    if (!isSupportedLearningUpload(form.file.name, 'lesson')) {
+      showNotification('Lesson sources must be PDF files.', 'error');
+      return;
+    }
+    const payload = new FormData();
+    payload.append('title', deriveUploadTitle(form.file));
+    payload.append('uploaded_by', user.id);
+    payload.append('file', form.file);
+    try {
+      setSavingLessonSource(true);
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl('/api/learning-files/lesson-sources'), {
+        method: 'POST',
+        body: payload,
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to save the Lesson PDF source.');
+      const source = normalizeManagedLearningFile(data.lessonSource || {});
+      setLessonSources((current) => [source, ...current.filter((item) => item.id !== source.id)]);
+      setSelectedLessonSourceId(String(source.id));
+      showNotification('Lesson PDF saved as a reusable source. Select its Grade, Difficulty, Topic, and Question Count to generate a child set.');
+    } catch (error) {
+      console.error(error);
+      showNotification(error.message || 'Unable to save the Lesson PDF source.', 'error');
+    } finally {
+      setSavingLessonSource(false);
+    }
+  };
+
+  const generateQuestionSetFromLessonSource = async (requestedCount) => {
+    const sourceId = Number(selectedLessonSourceId);
+    if (!Number.isSafeInteger(sourceId) || sourceId < 1) {
+      showNotification('Select a reusable Lesson PDF source first.', 'error');
+      return;
+    }
+    const storageKey = buildLessonSourceGenerationStorageKey({
+      sourceId,
+      gradeLevel: form.grade_level,
+      difficulty: form.difficulty,
+      mathTopic: form.math_topic.trim(),
+      questionCount: requestedCount,
+    });
+    const idempotencyKey = getOrCreateLessonGenerationIdempotencyKey(storageKey);
+    try {
+      uploadInFlightRef.current = true;
+      setUploading(true);
+      const response = await fetchLessonManagerApi(
+        lessonManagerApiUrl(`/api/learning-files/lesson-sources/${sourceId}/generate`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+          body: JSON.stringify({
+            grade_level: form.grade_level,
+            difficulty: form.difficulty,
+            math_topic: form.math_topic.trim(),
+            expected_question_count: requestedCount,
+          }),
+        }
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        if (data.code !== 'AI_GENERATION_IN_PROGRESS') clearLessonGenerationIdempotencyKey(storageKey);
+        throw new Error(data.error || 'Question generation failed.');
+      }
+      await loadFilesAndFolders();
+      if (data.code === 'AI_GENERATION_IN_PROGRESS') {
+        showNotification('Question generation is already in progress for this Lesson PDF source.', 'info');
+        return;
+      }
+      clearLessonGenerationIdempotencyKey(storageKey);
+      showNotification('Generated question set is Ready for Review.');
+      resetForm();
+      setShowUploadForm(false);
+    } catch (error) {
+      console.error(error);
+      showNotification(error.message || 'Question generation failed. Please try again.', 'error');
+    } finally {
+      uploadInFlightRef.current = false;
+      setUploading(false);
+    }
   };
 
   const handleUpload = async (event) => {
     event.preventDefault();
     if (uploading || uploadInFlightRef.current) return;
-    if (!form.grade_level || !form.difficulty || !form.file) {
-      showNotification('Grade level, difficulty, and file are required.', 'error');
+    const usingReusableLessonSource = uploadType === 'lesson' && Boolean(selectedLessonSourceId);
+    if (!form.grade_level || !form.difficulty || (!usingReusableLessonSource && !form.file)) {
+      showNotification(usingReusableLessonSource
+        ? 'Grade level and difficulty are required.'
+        : 'Grade level, difficulty, and file are required.', 'error');
       return;
     }
-    if (uploadType === 'lesson' && !form.math_topic.trim()) {
-      showNotification('Grade level, difficulty, topic, and file are required for Lesson PDF files.', 'error');
+    if (!form.math_topic.trim()) {
+      showNotification('Grade level, difficulty, topic, and file are required.', 'error');
       return;
     }
-    if (!uploadType || !isSupportedLearningUpload(form.file.name, uploadType)) {
+    if (!uploadType || (!usingReusableLessonSource && !isSupportedLearningUpload(form.file.name, uploadType))) {
       showNotification('Lesson files must be PDF. Fixed Questions support DOCX or PDF documents.', 'error');
       return;
     }
     if (
       !isValidGradeLevel(form.grade_level)
       || !isValidDifficulty(form.difficulty)
-      || (uploadType === 'lesson' && !isValidMathTopicForGradeDifficulty(form.grade_level, form.difficulty, form.math_topic))
+      || !isValidMathTopicForGradeDifficulty(form.grade_level, form.difficulty, form.math_topic)
     ) {
       showNotification('Invalid grade level, difficulty, or topic for this Mathematics content.', 'error');
       return;
@@ -470,12 +587,16 @@ export default function LessonQuestionManager() {
       }
       return;
     }
+    if (usingReusableLessonSource) {
+      await generateQuestionSetFromLessonSource(requestedCount);
+      return;
+    }
 
     const payload = new FormData();
     payload.append('title', deriveUploadTitle(form.file));
     payload.append('grade_level', form.grade_level);
     payload.append('difficulty', form.difficulty);
-    if (uploadType === 'lesson') payload.append('math_topic', form.math_topic.trim());
+    payload.append('math_topic', form.math_topic.trim());
     payload.append('file_type', uploadType);
     payload.append('uploaded_by', user.id);
     if (uploadType === 'lesson') {
@@ -743,6 +864,7 @@ export default function LessonQuestionManager() {
       difficulty,
       math_topic: '',
     });
+    setSelectedLessonSourceId('');
     setShowUploadForm(true);
   };
 
@@ -1265,21 +1387,39 @@ export default function LessonQuestionManager() {
                         <option value="fixed_questions">Fixed Question File</option>
                       </select>
                     </div>
-                    {!isFixedQuestionUpload && (
+                    <div className="form-group">
+                      <label className="form-label required">Topic Identifier</label>
+                      <select
+                        className="select-field"
+                        value={form.math_topic}
+                        disabled={!form.grade_level || !form.difficulty}
+                        onChange={(event) => handleFormChange('math_topic', event.target.value)}
+                      >
+                        {!form.grade_level || !form.difficulty ? (
+                          <option value="">Select grade and difficulty first</option>
+                        ) : (
+                          uploadTopicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)
+                        )}
+                      </select>
+                    </div>
+                    {form.file_type === 'lesson' && (
                       <div className="form-group">
-                        <label className="form-label required">Topic Identifier</label>
+                        <label className="form-label">Reusable Lesson PDF Source</label>
                         <select
                           className="select-field"
-                          value={form.math_topic}
-                          disabled={!form.grade_level || !form.difficulty}
-                          onChange={(event) => handleFormChange('math_topic', event.target.value)}
+                          value={selectedLessonSourceId}
+                          onChange={(event) => setSelectedLessonSourceId(event.target.value)}
                         >
-                          {!form.grade_level || !form.difficulty ? (
-                            <option value="">Select grade and difficulty first</option>
-                          ) : (
-                            uploadTopicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)
-                          )}
+                          <option value="">Upload a Lesson PDF for this generation</option>
+                          {lessonSources.map((source) => (
+                            <option key={source.id} value={source.id}>
+                              {source.title}{source.generated_child_count ? ` (${source.generated_child_count} generated sets)` : ''}
+                            </option>
+                          ))}
                         </select>
+                        {selectedLessonSourceId && (
+                          <p className="fixed-question-upload-help">The selected source will be reused; only the exact Grade, Difficulty, Topic, and Question Count create the new child set.</p>
+                        )}
                       </div>
                     )}
                     <div className="form-group">
@@ -1308,14 +1448,21 @@ export default function LessonQuestionManager() {
                       </div>
                     )}
                     <div className="form-group">
-                      <label className="form-label required">File</label>
-                      <input
-                        type="file"
-                        accept={form.file_type === 'lesson'
-                          ? '.pdf,application/pdf'
-                          : '.docx,.pdf,.json,.csv,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,application/json,text/csv'}
-                        onChange={(event) => handleFormChange('file', event.target.files[0] || null)}
-                      />
+                      <label className={`form-label ${selectedLessonSourceId ? '' : 'required'}`}>File</label>
+                      {!selectedLessonSourceId && (
+                        <input
+                          type="file"
+                          accept={form.file_type === 'lesson'
+                            ? '.pdf,application/pdf'
+                            : '.docx,.pdf,.json,.csv,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,application/json,text/csv'}
+                          onChange={(event) => handleFormChange('file', event.target.files[0] || null)}
+                        />
+                      )}
+                      {form.file_type === 'lesson' && !selectedLessonSourceId && form.file && (
+                        <button type="button" className="secondary-button" onClick={saveLessonSource} disabled={savingLessonSource || uploading}>
+                          {savingLessonSource ? 'Saving Lesson Source...' : 'Save as Reusable Lesson Source'}
+                        </button>
+                      )}
                       {form.file_type === 'fixed_questions' && (
                         <p className="fixed-question-upload-help">Fixed Questions supported: DOCX, PDF. JSON/CSV remain available for developer compatibility.</p>
                       )}
@@ -1346,7 +1493,7 @@ export default function LessonQuestionManager() {
                   )}
                   <div className="upload-actions">
                     <button type="submit" className="btn btn-primary" disabled={uploading}>
-                      {uploading ? 'Uploading...' : 'Upload File'}
+                      {uploading ? 'Uploading...' : selectedLessonSourceId ? 'Generate Question Set' : 'Upload File'}
                     </button>
                     <button type="button" className="btn btn-secondary" onClick={() => { resetForm(); setShowUploadForm(false); }} disabled={uploading}>Cancel</button>
                   </div>

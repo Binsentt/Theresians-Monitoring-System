@@ -87,6 +87,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     localStorage.setItem('rememberToken', 'lesson-manager-token');
     fixtures = {
       files: [],
+      lessonSources: [],
       folders: [],
       trashFiles: [{ id: 31, title: 'Deleted Quiz', file_name: 'deleted.csv', deleted_at: '2026-05-20T00:00:00.000Z' }],
       trashFolders: [],
@@ -98,6 +99,25 @@ describe('LessonQuestionManager upload and trash controls', () => {
       const scopedValue = value.replace(/\?scope=teacher$/, '');
       if (scopedValue.endsWith('/api/learning-files/storage-summary')) {
         return okJson({ used_bytes: 601, source_file_bytes: 480, question_content_bytes: 121 });
+      }
+      if (scopedValue.endsWith('/api/learning-files/lesson-sources')) return okJson(fixtures.lessonSources);
+      const lessonSourceGenerationMatch = value.match(/\/api\/learning-files\/lesson-sources\/(\d+)\/generate/);
+      if (lessonSourceGenerationMatch && options.method === 'POST') {
+        const request = JSON.parse(options.body);
+        const generated = {
+          id: 801,
+          title: 'Reusable lesson — Grade 1 / Easy / Basic Addition',
+          file_name: 'reusable.pdf',
+          file_url: '/uploads/reusable.pdf',
+          grade_level: request.grade_level,
+          difficulty: request.difficulty,
+          math_topic: request.math_topic,
+          file_type: 'lesson',
+          source_learning_file_id: Number(lessonSourceGenerationMatch[1]),
+          published: false,
+        };
+        fixtures.files = [generated, ...fixtures.files];
+        return okJson({ success: true, learningFile: generated });
       }
       if (scopedValue.endsWith('/api/learning-files')) return okJson(fixtures.files);
       if (scopedValue.endsWith('/api/folders')) return okJson(fixtures.folders);
@@ -183,7 +203,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     delete global.fetch;
   });
 
-  test('Fixed Question uploads keep Grade and Difficulty but hide the manual Topic selector', async () => {
+  test('Fixed Question uploads require the dependent Grade, Difficulty, and Topic scope', async () => {
     await act(async () => {
       root.render(<LessonQuestionManager />);
     });
@@ -202,8 +222,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).toContain('Grade 6');
     expect(document.body.textContent).not.toContain('Grade 1-2');
     expect(document.body.textContent).toContain('Difficulty');
-    expect(getUploadModal().textContent).not.toContain('Topic Identifier');
-    expect(selects).toHaveLength(3);
+    expect(getUploadModal().textContent).toContain('Topic Identifier');
+    expect(selects).toHaveLength(4);
 
     await act(async () => {
       setSelectValue(selects[0], 'Grade 3');
@@ -216,6 +236,10 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).not.toContain('New Folder');
     expect(document.body.textContent).toContain('Lesson PDF File');
     expect(document.body.textContent).toContain('Fixed Question File');
+    expect(getUploadModalSelects()[3].disabled).toBe(false);
+    expect(getUploadModalSelects()[3].textContent).toContain('Multiplication');
+    expect(getUploadModalSelects()[3].textContent).toContain('Division');
+    expect(getUploadModalSelects()[3].textContent).toContain('Fractions');
 
     await act(async () => {
       setSelectValue(getUploadModalSelects()[2], 'lesson');
@@ -353,12 +377,12 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).toContain('Replace Active Question Set?');
     expect(document.body.textContent).toContain('Current Addition');
     expect(document.body.textContent).toContain('replacement-addition.docx');
-    expect(global.fetch).toHaveBeenCalledTimes(4);
+    expect(global.fetch).toHaveBeenCalledTimes(5);
 
     await act(async () => {
       clickByText(document.body, 'Cancel');
     });
-    expect(global.fetch).toHaveBeenCalledTimes(4);
+    expect(global.fetch).toHaveBeenCalledTimes(5);
 
     await act(async () => {
       clickByText(container, 'Push to Game');
@@ -405,6 +429,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     await act(async () => {
       setSelectValue(selects[0], 'Grade 1');
       setSelectValue(selects[1], 'Easy');
+      setSelectValue(getUploadModalSelects()[3], 'Basic Addition');
       const fileInput = document.body.querySelector('input[type="file"]');
       const file = new File(['%PDF-1.4 lesson'], 'addition-lesson.pdf', { type: 'application/pdf' });
       Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
@@ -453,6 +478,52 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(lessonRequests).toHaveLength(1);
     expect(lessonRequests[0][1].headers).toEqual(expect.objectContaining({
       Authorization: 'Bearer lesson-manager-token',
+      'Idempotency-Key': expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/),
+    }));
+  });
+
+  test('reuses a Lesson PDF source to generate an independent exact-scope child set', async () => {
+    fixtures.lessonSources = [{
+      id: 701,
+      title: 'Reusable arithmetic lesson',
+      file_name: 'reusable.pdf',
+      file_url: '/uploads/reusable.pdf',
+      content_role: 'lesson_source',
+      generated_child_count: 1,
+    }];
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await act(async () => {
+      clickByText(container, 'New');
+    });
+    await act(async () => {
+      clickByText(container, 'Upload File');
+    });
+
+    await act(async () => {
+      setSelectValue(getUploadModalSelects()[2], 'lesson');
+      setSelectValue(getUploadModalSelects()[0], 'Grade 1');
+      setSelectValue(getUploadModalSelects()[1], 'Easy');
+      setSelectValue(getUploadModalSelects()[3], 'Basic Addition');
+      setSelectValue(getUploadModalSelects()[4], '701');
+      const countField = document.body.querySelector('input[name="expected_question_count"]');
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(countField, '5');
+      countField.dispatchEvent(new Event('change', { bubbles: true }));
+      getUploadModal().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    const generationRequest = global.fetch.mock.calls.find(([url, options]) => (
+      String(url).includes('/api/learning-files/lesson-sources/701/generate') && options?.method === 'POST'
+    ));
+    expect(generationRequest).toBeTruthy();
+    expect(JSON.parse(generationRequest[1].body)).toEqual({
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      expected_question_count: '5',
+    });
+    expect(generationRequest[1].headers).toEqual(expect.objectContaining({
       'Idempotency-Key': expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/),
     }));
   });
@@ -513,6 +584,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     await act(async () => {
       setSelectValue(selects[0], 'Grade 1');
       setSelectValue(selects[1], 'Normal');
+      setSelectValue(getUploadModalSelects()[3], 'Addition');
       Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
       fileInput.dispatchEvent(new Event('change', { bubbles: true }));
     });
@@ -526,6 +598,10 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('Normal');
     expect(container.textContent).toContain('Pending');
     expect(getUploadModal()).toBeNull();
+    const uploadRequest = global.fetch.mock.calls.find(([url, options]) => (
+      String(url).endsWith('/api/learning-files/upload') && options?.method === 'POST'
+    ));
+    expect(uploadRequest[1].body.get('math_topic')).toBe('Addition');
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/questions/publish/77'), expect.anything());
   });
 
