@@ -317,6 +317,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(global.fetch).not.toHaveBeenCalledWith('/api/learning-files/77/preview', expect.anything());
     expect(document.body.textContent).toContain('Question Review');
     expect(document.body.textContent).toContain('What is 2 + 3?');
+    expect(document.body.textContent).toContain('Grade 1 · Easy');
+    expect(document.body.textContent).not.toContain('Grade Grade 1');
   });
 
   test('requires a teacher to explicitly confirm server-reported same-scope Active replacement', async () => {
@@ -717,6 +719,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     expect(document.body.textContent).toContain('Document Lesson/Topic: Basic Addition, Subtraction, Shapes, and Place Value');
     expect(document.body.textContent).toContain('Game Publication: Not Eligible — Multi-topic document');
+    expect(document.body.textContent).not.toContain('Needs Correction');
     expect(document.body.textContent).not.toContain('ready for manual Push to Game');
     expect(document.body.querySelector('.generated-questions-preview-header')).toBeTruthy();
     expect(document.body.querySelector('.generated-questions-preview-body')).toBeTruthy();
@@ -1278,7 +1281,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
       const approveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve');
       expect(approveButton).toBeTruthy();
-      expect(approveButton.disabled).toBe(true);
+      expect(approveButton.disabled).toBe(false);
 
       if (account.role === 'parent_teacher') {
         expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/91/questions?scope=teacher', {
@@ -1297,6 +1300,39 @@ describe('LessonQuestionManager upload and trash controls', () => {
         root = createRoot(container);
       }
     }
+  });
+
+  test('shows disabled Approve with structural errors and no reviewed-checkbox control', async () => {
+    fixtures.files = [buildReviewRequiredFile({
+      validation_summary: {
+        is_valid: false,
+        invalid_question_count: 1,
+        review_eligibility: {
+          eligible: false,
+          code: 'STRUCTURAL_VALIDATION_FAILED',
+          message: 'Review and correct the structural question errors before approval.',
+        },
+        publication_eligibility: {
+          eligible: false,
+          code: 'STRUCTURAL_VALIDATION_FAILED',
+          message: 'Review and correct this question set before Push to Game.',
+        },
+      },
+    })];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+    await act(async () => {
+      clickByText(container, 'Preview');
+    });
+
+    const approveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve');
+    expect(approveButton).toBeTruthy();
+    expect(approveButton.disabled).toBe(true);
+    expect(document.body.querySelector('.question-review-confirmation')).toBeNull();
+    expect(document.body.textContent).toContain('Needs Correction');
   });
 
   test('denies Parent and Student roles before any approval UI can render', async () => {
@@ -1346,17 +1382,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(previewModal.querySelector('[aria-label="Close generated questions preview"]')).toBeNull();
     const approveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve');
     expect(approveButton).toBeTruthy();
-    expect(approveButton.disabled).toBe(true);
-
-    const reviewBoxes = Array.from(document.body.querySelectorAll('.question-review-confirmation input[type="checkbox"]'));
-    expect(reviewBoxes).toHaveLength(5);
-    for (const reviewBox of reviewBoxes) {
-      await act(async () => {
-        reviewBox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      });
-    }
-
     expect(approveButton.disabled).toBe(false);
+    expect(document.body.querySelector('.question-review-confirmation')).toBeNull();
     await act(async () => {
       approveButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
@@ -1381,7 +1408,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
           ...buildReviewRequiredFile().validation_summary,
           publication_eligibility: {
             eligible: false,
-            code: 'MULTIPLE_DOCUMENT_TOPICS',
+            code: 'MULTI_TOPIC_DOCUMENT',
             message: 'Game publication requires a single-topic Fixed Question document.',
           },
         },
@@ -1397,13 +1424,6 @@ describe('LessonQuestionManager upload and trash controls', () => {
     await act(async () => {
       clickByText(container, 'Preview');
     });
-
-    const reviewBoxes = Array.from(document.body.querySelectorAll('.question-review-confirmation input[type="checkbox"]'));
-    for (const reviewBox of reviewBoxes) {
-      await act(async () => {
-        reviewBox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      });
-    }
 
     await act(async () => {
       Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve').click();

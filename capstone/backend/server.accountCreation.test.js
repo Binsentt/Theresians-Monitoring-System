@@ -1318,7 +1318,7 @@ test('permanent account deletion requires an archived account and typed DELETE c
   assert.equal(permanentlyDeleted, true);
 });
 
-test('a reviewed valid question set receives an approval record before publication', async (t) => {
+test('a structurally valid mixed-topic question set receives approval but remains publication-gated', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const statements = [];
@@ -1329,27 +1329,33 @@ test('a reviewed valid question set receives an approval record before publicati
 
   const reviewedFile = {
     id: 91,
-    title: 'reviewed-addition.docx',
-    file_name: 'reviewed-addition.docx',
+    title: 'reviewed-addition-subtraction.docx',
+    file_name: 'reviewed-addition-subtraction.docx',
     file_type: 'fixed_questions',
     grade_level: 'Grade 1',
     difficulty: 'Easy',
-    math_topic: 'Basic Addition',
-    document_topic: 'Basic Addition',
+    math_topic: null,
+    document_topic: 'Addition and Subtraction',
     published: false,
     publish_status: 'staged',
     approval_status: 'review_required',
   };
-  const reviewedQuestion = {
-    id: 911,
-    learning_file_id: 91,
-    question: 'What is 2 + 3?',
-    options: ['3', '4', '5', '6'],
-    correct_answer: '5',
-    grade_level: 'Grade 1',
-    difficulty: 'Easy',
-    math_topic: 'Basic Addition',
-  };
+  const additionQuestionNumbers = new Set([1, 2, 4, 6, 8, 10, 11, 13, 15]);
+  const reviewedQuestions = Array.from({ length: 15 }, (_, index) => {
+    const number = index + 1;
+    const isAddition = additionQuestionNumbers.has(number);
+    const correctAnswer = isAddition ? String(number + 1) : '1';
+    return {
+      id: 910 + number,
+      learning_file_id: 91,
+      question: isAddition ? `What is ${number} + 1?` : `What is ${number} - ${number - 1}?`,
+      options: [String(Number(correctAnswer) - 1), correctAnswer, String(Number(correctAnswer) + 1), String(Number(correctAnswer) + 2)],
+      correct_answer: correctAnswer,
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: null,
+    };
+  });
 
   verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
   setQueryHandler(async (sql, params) => {
@@ -1358,7 +1364,7 @@ test('a reviewed valid question set receives an approval record before publicati
       return resultRows([{ id: 1, name: 'Ada Admin', email: 'ada@example.com', role: 'admin', is_archived: false, session_version: 0 }]);
     }
     if (sql.startsWith('select * from public.learning_files where id = $1')) return resultRows([reviewedFile]);
-    if (sql.includes('from public.questions') && sql.includes('where learning_file_id = $1')) return resultRows([reviewedQuestion]);
+    if (sql.includes('from public.questions') && sql.includes('where learning_file_id = $1')) return resultRows(reviewedQuestions);
     if (sql.startsWith('update public.learning_files set approval_status =')) {
       return resultRows([{ ...reviewedFile, approval_status: 'approved', approved_by: params[1], approved_content_fingerprint: params[2] }]);
     }
@@ -1374,8 +1380,66 @@ test('a reviewed valid question set receives an approval record before publicati
 
   assert.equal(response.status, 200);
   assert.equal(response.body.learningFile.approval_status, 'approved');
+  assert.equal(response.body.validation.review_eligibility.eligible, true);
+  assert.equal(response.body.validation.publication_eligibility.eligible, false);
+  assert.equal(response.body.validation.publication_eligibility.code, 'MULTI_TOPIC_DOCUMENT');
   assert.ok(statements.some((entry) => entry.sql.startsWith('update public.learning_files set approval_status =')));
   assert.ok(statements.some((entry) => entry.sql.startsWith('insert into public.admin_audit_logs')));
+});
+
+test('a structurally invalid question set cannot be approved', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let approvalUpdateAttempted = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, name: 'Ada Admin', email: 'ada@example.com', role: 'admin', is_archived: false, session_version: 0 }]);
+    }
+    if (sql.startsWith('select * from public.learning_files where id = $1')) {
+      return resultRows([{
+        id: 92,
+        file_type: 'fixed_questions',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+        document_topic: 'Basic Addition',
+        published: false,
+        publish_status: 'staged',
+        approval_status: 'review_required',
+      }]);
+    }
+    if (sql.includes('from public.questions') && sql.includes('where learning_file_id = $1')) {
+      return resultRows([{
+        id: 921,
+        learning_file_id: 92,
+        question: 'What is 2 + 3?',
+        options: ['3', '4', '5'],
+        correct_answer: '5',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+      }]);
+    }
+    if (sql.startsWith('update public.learning_files set approval_status =')) approvalUpdateAttempted = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/92/approve', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({}),
+  });
+
+  assert.equal(response.status, 422);
+  assert.equal(response.body.code, 'QUESTION_SET_REVIEW_VALIDATION_FAILED');
+  assert.equal(response.body.review_eligibility.code, 'STRUCTURAL_VALIDATION_FAILED');
+  assert.equal(approvalUpdateAttempted, false);
 });
 
 test('only Lesson Manager roles in Teacher scope can reach question-set approval', async (t) => {
@@ -1389,7 +1453,7 @@ test('only Lesson Manager roles in Teacher scope can reach question-set approval
   const deniedAccounts = [
     { id: 31, role: 'parent' },
     { id: 32, role: 'student' },
-    { id: 33, role: 'parent_teacher' },
+    { id: 33, role: 'parent_teacher', scope: 'parent' },
   ];
   for (const account of deniedAccounts) {
     authenticatedTestAccount = {
@@ -1400,12 +1464,15 @@ test('only Lesson Manager roles in Teacher scope can reach question-set approval
       session_version: 0,
     };
     verifiedTokenPayload = { userId: account.id, sessionVersion: 0 };
-    const response = await requestJson(baseUrl, '/api/learning-files/91/approve', {
+    const response = await requestJson(baseUrl, `/api/learning-files/91/approve${account.scope ? `?scope=${account.scope}` : ''}`, {
       method: 'POST',
       headers: { Authorization: 'Bearer role-token' },
       body: JSON.stringify({}),
     });
     assert.equal(response.status, 403);
+    if (account.role === 'parent_teacher') {
+      assert.equal(response.body.code, 'LESSON_MANAGER_TEACHER_SCOPE_REQUIRED');
+    }
   }
 });
 

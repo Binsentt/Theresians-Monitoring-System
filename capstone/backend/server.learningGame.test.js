@@ -470,6 +470,67 @@ test('an invalid legacy-shaped Set 13 cannot be published or mutate publication 
   assert.match(response.body.validation.questions[0].validation_errors.join(' '), /Exactly four/);
 });
 
+test('an approved structurally valid mixed-topic document remains blocked from game publication', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let publicationUpdateAttempted = false;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  const questions = [
+    {
+      id: 1401,
+      learning_file_id: 14,
+      question: 'What is 2 + 3?',
+      options: ['4', '5', '6', '7'],
+      correct_answer: '5',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: null,
+    },
+    {
+      id: 1402,
+      learning_file_id: 14,
+      question: 'What is 5 - 2?',
+      options: ['2', '3', '4', '5'],
+      correct_answer: '3',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: null,
+    },
+  ];
+  const learningFile = approvedForPublication({
+    id: 14,
+    title: 'addition-and-subtraction.docx',
+    file_type: 'fixed_questions',
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    math_topic: null,
+    document_topic: 'Addition and Subtraction',
+    subject: 'Mathematics',
+    deleted_at: null,
+    published: false,
+    publish_status: 'staged',
+  }, questions);
+
+  setQueryHandler(async (sql) => {
+    if (sql === 'begin' || sql === 'rollback') return emptyResult;
+    if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) return resultRows([learningFile]);
+    if (sql.startsWith('select id, learning_file_id') && sql.includes('from public.questions')) return resultRows(questions);
+    if (sql.startsWith('update public.learning_files') || sql.startsWith('update public.questions')) publicationUpdateAttempted = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/questions/publish/14', { method: 'POST' });
+
+  assert.equal(response.status, 422);
+  assert.equal(response.body.code, 'QUESTION_SET_VALIDATION_FAILED');
+  assert.equal(response.body.publication_eligibility.code, 'MULTI_TOPIC_DOCUMENT');
+  assert.equal(publicationUpdateAttempted, false);
+});
+
 test('question folder APIs expose system folders and legacy difficulty files by canonical folder', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;

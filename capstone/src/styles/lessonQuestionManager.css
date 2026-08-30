@@ -843,16 +843,6 @@ body.lesson-preview-open {
   font-weight: 700;
 }
 
-.question-review-confirmation {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-  color: var(--text-secondary, #475569);
-  font-size: 0.86rem;
-  font-weight: 600;
-}
-
 .question-validation-valid {
   margin: 8px 0 0;
   color: var(--success-color, #15803d);

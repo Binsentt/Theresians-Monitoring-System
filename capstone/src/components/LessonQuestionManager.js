@@ -123,6 +123,13 @@ function formatDifficultyLabel(gradeLevel, difficulty) {
   return difficulty;
 }
 
+function formatQuestionGradeLabel(value) {
+  const grade = String(value || '').trim();
+  if (!grade) return '';
+  if (/^Grade\s+/i.test(grade)) return grade.replace(/^Grade\s+(?:Grade\s+)?/i, 'Grade ');
+  return `Grade ${grade}`;
+}
+
 function formatQuestionSetStatus(value) {
   if (value === 'Staged') return 'Pending';
   if (value === 'Superseded/Replaced') return 'Replaced';
@@ -191,10 +198,6 @@ function getReviewEligibility(file = {}) {
   return getPublicationEligibility(file);
 }
 
-const getPreviewQuestionReviewKey = (question, index) => (
-  String(question?.id || `${index}:${question?.question || ''}`)
-);
-
 function getFixedQuestionPublicationBlockReason(file = {}) {
   const eligibility = getPublicationEligibility(file);
   return file.file_type === 'fixed_questions' && !eligibility.eligible
@@ -225,7 +228,6 @@ export default function LessonQuestionManager() {
   const [previewQuestions, setPreviewQuestions] = useState([]);
   const [previewValidation, setPreviewValidation] = useState(null);
   const [previewQuestionsLoading, setPreviewQuestionsLoading] = useState(false);
-  const [reviewedQuestionKeys, setReviewedQuestionKeys] = useState(() => new Set());
   const [approvingPreview, setApprovingPreview] = useState(false);
   const previewBodyRef = useRef(null);
   const uploadInFlightRef = useRef(false);
@@ -346,16 +348,11 @@ export default function LessonQuestionManager() {
   const previewFile = questionPreviewDetails || questionPreviewFile;
   const previewPublicationEligibility = getPublicationEligibility(previewFile || {});
   const previewReviewEligibility = getReviewEligibility(previewFile || {});
-  const previewAllQuestionsReviewed = previewQuestions.length > 0 && previewQuestions.every((question, index) => (
-    reviewedQuestionKeys.has(getPreviewQuestionReviewKey(question, index))
-  ));
-  const previewApprovalRequired = previewFile?.approval_status === 'review_required'
-    || previewPublicationEligibility.code === 'REVIEW_APPROVAL_REQUIRED';
+  const previewApprovalRequired = previewFile?.approval_status === 'review_required';
   const previewCanShowApprove = ['admin', 'teacher', 'parent_teacher'].includes(normalizeRole(user?.role))
     && previewApprovalRequired;
   const previewCanApprove = previewCanShowApprove
     && previewReviewEligibility.eligible
-    && previewAllQuestionsReviewed
     && !approvingPreview;
   const previewIsReadyForGame = previewValidation?.is_valid !== false && previewPublicationEligibility.eligible;
   const reportColumns = [
@@ -627,7 +624,6 @@ export default function LessonQuestionManager() {
     setPreviewQuestions([]);
     setPreviewValidation(null);
     setPreviewQuestionsLoading(false);
-    setReviewedQuestionKeys(new Set());
     setApprovingPreview(false);
   };
 
@@ -637,7 +633,6 @@ export default function LessonQuestionManager() {
     setPreviewQuestions([]);
     setPreviewValidation(null);
     setPreviewQuestionsLoading(true);
-    setReviewedQuestionKeys(new Set());
     setApprovingPreview(false);
     try {
       const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/questions`));
@@ -1395,7 +1390,7 @@ export default function LessonQuestionManager() {
                         <p className="question-review-metadata">Requested: {previewFile.requested_question_count ?? 'Not specified'} · Available: {previewQuestions.length}</p>
                         {previewValidation?.is_valid === false && <p className="manager-inline-error" role="alert">Needs Correction — every question must have four distinct choices, a mapped correct answer, and matching metadata.</p>}
                         {previewValidation?.is_valid !== false && previewIsReadyForGame && <p className="question-validation-valid">Valid — this question set is ready for manual Push to Game.</p>}
-                        {previewValidation?.is_valid !== false && previewApprovalRequired && <p className="question-review-metadata">Mark every question as reviewed, then approve the set before Push to Game.</p>}
+                        {previewValidation?.is_valid !== false && previewApprovalRequired && <p className="question-review-metadata">Approve this structurally valid set before Push to Game.</p>}
                         {previewQuestions.map((question, index) => (
                           <article key={question.id || `${question.question}-${index}`} className={`generated-question-card ${question.is_valid === false ? 'invalid' : 'valid'}`}>
                             <strong>{index + 1}. {question.question}</strong>
@@ -1406,24 +1401,8 @@ export default function LessonQuestionManager() {
                             </li>
                           ))}
                             </ol>
-                            <p className="question-review-metadata">Grade {question.grade_level || previewFile.grade_level} · {question.difficulty || previewFile.difficulty}</p>
+                            <p className="question-review-metadata">{formatQuestionGradeLabel(question.grade_level || previewFile.grade_level)} · {question.difficulty || previewFile.difficulty}</p>
                             {question.is_valid === false ? (question.validation_errors || []).map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>) : <p className="question-validation-valid">Valid</p>}
-                            <label className="question-review-confirmation">
-                              <input
-                                type="checkbox"
-                                checked={reviewedQuestionKeys.has(getPreviewQuestionReviewKey(question, index))}
-                                onChange={(event) => {
-                                  const reviewKey = getPreviewQuestionReviewKey(question, index);
-                                  setReviewedQuestionKeys((current) => {
-                                    const next = new Set(current);
-                                    if (event.target.checked) next.add(reviewKey);
-                                    else next.delete(reviewKey);
-                                    return next;
-                                  });
-                                }}
-                              />
-                              Reviewed Question {index + 1}
-                            </label>
                           </article>
                         ))}
                       </>

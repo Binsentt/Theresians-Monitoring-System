@@ -77,6 +77,7 @@ const {
   validateFixedQuestionUploadFile,
   validateFixedQuestionDocumentPublicationScope,
   validateFixedQuestions,
+  validateQuestionSetForReview,
   validateQuestionSetForPublication,
 } = require('./fixedQuestionDocument');
 const {
@@ -2055,7 +2056,7 @@ const createLifecycleHttpError = (message, statusCode) => {
   return error;
 };
 
-const getQuestionSetPublicationValidation = async (queryClient, learningFile, { lockRows = false } = {}) => {
+const getQuestionSetValidationState = async (queryClient, learningFile, { lockRows = false } = {}) => {
   const questionResult = await queryClient.query(
     `SELECT id, learning_file_id, question, options, correct_answer, grade_level, difficulty, math_topic
      FROM public.questions
@@ -2065,60 +2066,69 @@ const getQuestionSetPublicationValidation = async (queryClient, learningFile, { 
   );
   const canonicalDifficulty = normalizeDifficultyValue(learningFile.difficulty);
   const documentScopeError = validateFixedQuestionDocumentPublicationScope(learningFile);
-  return validateQuestionSetForPublication({
+  const validationInput = {
     grade_level: learningFile.grade_level,
     difficulty: canonicalDifficulty,
     math_topic: learningFile.math_topic,
-    metadata_error: documentScopeError || validateLearningMetadata({
-      grade_level: learningFile.grade_level,
-      difficulty: canonicalDifficulty,
-      math_topic: learningFile.math_topic,
-    }),
     questions: questionResult.rows.map((question) => ({
       ...question,
       difficulty: normalizeDifficultyValue(question.difficulty),
     })),
-  });
+  };
+  return {
+    structural: validateQuestionSetForReview(validationInput),
+    publication: validateQuestionSetForPublication({
+      ...validationInput,
+      metadata_error: documentScopeError || validateLearningMetadata({
+        grade_level: learningFile.grade_level,
+        difficulty: canonicalDifficulty,
+        math_topic: learningFile.math_topic,
+      }),
+    }),
+  };
 };
 
 const buildQuestionSetReviewEligibility = (learningFile = {}, validation = {}) => {
-  if (learningFile.file_type !== 'fixed_questions') {
-    return {
-      eligible: Boolean(validation?.isValid),
-      code: validation?.isValid ? 'ELIGIBLE' : 'STRUCTURAL_VALIDATION_FAILED',
-      message: validation?.isValid ? 'Eligible for Game publication.' : 'Review and correct this question set before Push to Game.',
-    };
-  }
+  if (validation?.isValid) return { eligible: true, code: 'ELIGIBLE', message: 'Eligible for review approval.' };
+  return {
+    eligible: false,
+    code: 'STRUCTURAL_VALIDATION_FAILED',
+    message: 'Review and correct the structural question errors before approval.',
+  };
+};
 
-  const documentTopic = String(learningFile.document_topic || '').trim();
-  const gameTopic = String(learningFile.math_topic || '').trim();
-  if (!documentTopic) {
-    return {
-      eligible: false,
-      code: 'MISSING_DOCUMENT_TOPIC',
-      message: 'The Fixed Question document does not provide a topic. Review the document topic before Push to Game.',
-    };
-  }
-  if (/[,;&]|\band\b/i.test(documentTopic)) {
-    return {
-      eligible: false,
-      code: 'MULTI_TOPIC_DOCUMENT',
-      message: 'This Fixed Question document contains multiple topics. Game publication requires one controlled encounter topic.',
-    };
-  }
-  if (!isValidMathTopicForGradeDifficulty(learningFile.grade_level, normalizeDifficultyValue(learningFile.difficulty), documentTopic)) {
-    return {
-      eligible: false,
-      code: 'UNCONTROLLED_DOCUMENT_TOPIC',
-      message: 'The Fixed Question document topic is not an approved topic for the selected Grade and Difficulty.',
-    };
-  }
-  if (documentTopic !== gameTopic) {
-    return {
-      eligible: false,
-      code: 'DOCUMENT_TOPIC_MISMATCH',
-      message: 'The Fixed Question document topic does not match its controlled game publication topic.',
-    };
+const buildQuestionSetPublicationBaseEligibility = (learningFile = {}, validation = {}) => {
+  if (learningFile.file_type === 'fixed_questions') {
+    const documentTopic = String(learningFile.document_topic || '').trim();
+    const gameTopic = String(learningFile.math_topic || '').trim();
+    if (!documentTopic) {
+      return {
+        eligible: false,
+        code: 'MISSING_DOCUMENT_TOPIC',
+        message: 'The Fixed Question document does not provide a topic. Review the document topic before Push to Game.',
+      };
+    }
+    if (/[,;&]|\band\b/i.test(documentTopic)) {
+      return {
+        eligible: false,
+        code: 'MULTI_TOPIC_DOCUMENT',
+        message: 'This Fixed Question document contains multiple topics. Game publication requires one controlled encounter topic.',
+      };
+    }
+    if (!isValidMathTopicForGradeDifficulty(learningFile.grade_level, normalizeDifficultyValue(learningFile.difficulty), documentTopic)) {
+      return {
+        eligible: false,
+        code: 'UNCONTROLLED_DOCUMENT_TOPIC',
+        message: 'The Fixed Question document topic is not an approved topic for the selected Grade and Difficulty.',
+      };
+    }
+    if (documentTopic !== gameTopic) {
+      return {
+        eligible: false,
+        code: 'DOCUMENT_TOPIC_MISMATCH',
+        message: 'The Fixed Question document topic does not match its controlled game publication topic.',
+      };
+    }
   }
   if (!validation?.isValid) {
     return {
@@ -2130,21 +2140,31 @@ const buildQuestionSetReviewEligibility = (learningFile = {}, validation = {}) =
   return { eligible: true, code: 'ELIGIBLE', message: 'Eligible for Game publication.' };
 };
 
-const buildQuestionSetPublicationEligibility = (learningFile = {}, validation = {}) => {
-  const reviewEligibility = buildQuestionSetReviewEligibility(learningFile, validation);
-  const fingerprint = buildLearningFileApprovalFingerprint(learningFile, validation?.questions || []);
-  return buildPublicationApprovalEligibility(learningFile, fingerprint, reviewEligibility);
+const buildQuestionSetPublicationEligibility = (learningFile = {}, validationState = {}) => {
+  const structuralValidation = validationState?.structural || validationState;
+  const publicationValidation = validationState?.publication || validationState;
+  const fingerprint = buildLearningFileApprovalFingerprint(learningFile, structuralValidation?.questions || []);
+  return buildPublicationApprovalEligibility(
+    learningFile,
+    fingerprint,
+    buildQuestionSetPublicationBaseEligibility(learningFile, publicationValidation)
+  );
 };
 
-const buildQuestionSetValidationSummary = (validation, learningFile = {}) => {
-  const reviewEligibility = buildQuestionSetReviewEligibility(learningFile, validation);
-  const fingerprint = buildLearningFileApprovalFingerprint(learningFile, validation?.questions || []);
+const buildQuestionSetValidationSummary = (validationState, learningFile = {}) => {
+  const structuralValidation = validationState?.structural || validationState || {};
+  const publicationValidation = validationState?.publication || validationState || {};
+  const reviewEligibility = buildQuestionSetReviewEligibility(learningFile, structuralValidation);
+  const fingerprint = buildLearningFileApprovalFingerprint(learningFile, structuralValidation?.questions || []);
   return {
-    is_valid: Boolean(validation?.isValid),
-    invalid_question_count: (validation?.questions || []).filter((question) => !question.is_valid).length,
-    document_errors: validation?.document_errors || [],
+    is_valid: Boolean(structuralValidation?.isValid),
+    invalid_question_count: (structuralValidation?.questions || []).filter((question) => !question.is_valid).length,
+    document_errors: structuralValidation?.document_errors || [],
     review_eligibility: reviewEligibility,
-    publication_eligibility: buildPublicationApprovalEligibility(learningFile, fingerprint, reviewEligibility),
+    publication_eligibility: buildQuestionSetPublicationEligibility(learningFile, {
+      structural: structuralValidation,
+      publication: publicationValidation,
+    }),
     approval: {
       status: String(learningFile.approval_status || 'review_required'),
       approved_at: learningFile.approved_at || null,
@@ -2185,20 +2205,19 @@ const publishLearningFile = async (fileId, publisherId, { confirmReplacement = f
       throw createLifecycleHttpError('Failed question sets must be generated successfully before publishing.', 409);
     }
 
-    const publicationValidation = await getQuestionSetPublicationValidation(client, learningFile, { lockRows: true });
-    const reviewEligibility = buildQuestionSetReviewEligibility(learningFile, publicationValidation);
-    const approvalFingerprint = buildLearningFileApprovalFingerprint(learningFile, publicationValidation.questions || []);
-    const publicationEligibility = buildPublicationApprovalEligibility(learningFile, approvalFingerprint, reviewEligibility);
+    const validationState = await getQuestionSetValidationState(client, learningFile, { lockRows: true });
+    const publicationValidation = validationState.publication;
+    const publicationEligibility = buildQuestionSetPublicationEligibility(learningFile, validationState);
     if (!publicationEligibility.eligible) {
       const requiresReviewApproval = publicationEligibility.code === 'REVIEW_APPROVAL_REQUIRED';
       const error = createLifecycleHttpError(
         requiresReviewApproval
           ? publicationEligibility.message
-          : 'Every question must have four distinct choices, a mapped correct answer, and matching controlled metadata before publication.',
+          : publicationEligibility.message,
         requiresReviewApproval ? 409 : 422
       );
       error.code = requiresReviewApproval ? 'QUESTION_SET_REVIEW_APPROVAL_REQUIRED' : 'QUESTION_SET_VALIDATION_FAILED';
-      error.questionValidation = publicationValidation;
+      error.questionValidation = validationState.structural;
       error.publicationEligibility = publicationEligibility;
       throw error;
     }
@@ -2342,10 +2361,11 @@ const approveLearningFile = async (fileId, approver) => {
       throw createLifecycleHttpError('Active question sets cannot be re-approved. Publish a reviewed replacement instead.', 409);
     }
 
-    const validation = await getQuestionSetPublicationValidation(client, learningFile, { lockRows: true });
+    const validationState = await getQuestionSetValidationState(client, learningFile, { lockRows: true });
+    const validation = validationState.structural;
     const reviewEligibility = buildQuestionSetReviewEligibility(learningFile, validation);
     if (!reviewEligibility.eligible) {
-      const error = createLifecycleHttpError('Only a valid, single-topic question set with four valid choices per question can be approved.', 422);
+      const error = createLifecycleHttpError(reviewEligibility.message, 422);
       error.code = 'QUESTION_SET_REVIEW_VALIDATION_FAILED';
       error.questionValidation = validation;
       error.reviewEligibility = reviewEligibility;
@@ -2369,9 +2389,9 @@ const approveLearningFile = async (fileId, approver) => {
     return {
       learningFile: normalizeLearningFileRow({
         ...approvedFile,
-        validation_summary: buildQuestionSetValidationSummary(validation, approvedFile),
+        validation_summary: buildQuestionSetValidationSummary(validationState, approvedFile),
       }),
-      validation: buildQuestionSetValidationSummary(validation, approvedFile),
+      validation: buildQuestionSetValidationSummary(validationState, approvedFile),
     };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
@@ -4607,7 +4627,7 @@ app.get('/api/learning-files', requireLessonQuestionManagerAccess, async (req, r
        ORDER BY lf.uploaded_at DESC`
     );
     const files = await Promise.all(result.rows.map(async (row) => {
-      const validation = await getQuestionSetPublicationValidation(pool, row);
+      const validation = await getQuestionSetValidationState(pool, row);
       return normalizeLearningFileRow({
         ...row,
         validation_summary: buildQuestionSetValidationSummary(validation, row),
@@ -4671,7 +4691,7 @@ app.get('/api/learning-files/:id/questions', requireLessonQuestionManagerAccess,
     );
     if (fileResult.rows.length === 0) return res.status(404).json({ error: 'File not found' });
 
-    const validation = await getQuestionSetPublicationValidation(pool, fileResult.rows[0]);
+    const validation = await getQuestionSetValidationState(pool, fileResult.rows[0]);
 
     res.json({
       file: normalizeLearningFileRow({
@@ -4679,7 +4699,7 @@ app.get('/api/learning-files/:id/questions', requireLessonQuestionManagerAccess,
         validation_summary: buildQuestionSetValidationSummary(validation, fileResult.rows[0]),
       }),
       validation: buildQuestionSetValidationSummary(validation, fileResult.rows[0]),
-      questions: validation.questions.map((question) => ({
+      questions: validation.structural.questions.map((question) => ({
         ...question,
         difficulty: normalizeDifficultyValue(question.difficulty),
       })),

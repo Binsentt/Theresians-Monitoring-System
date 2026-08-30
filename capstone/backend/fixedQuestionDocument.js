@@ -2,6 +2,8 @@ const QUESTION_LINE = /^\s*(?:question\s*)?(\d+)\s*[.)]\s*(.+?)\s*$/i;
 const OPTION_LINE = /^\s*([A-Z])\s*[.)]\s*(.*?)\s*$/i;
 const ANSWER_LINE = /^\s*(?:correct\s+)?answer\s*:\s*(.*?)\s*$/i;
 const {
+  isValidDifficulty,
+  isValidGradeLevel,
   isValidMathTopicForGradeDifficulty,
   normalizeDifficultyValue,
   validateLearningMetadata,
@@ -230,27 +232,33 @@ const validateFixedQuestions = (questions) => {
   };
 };
 
-const validateQuestionSetForPublication = ({
+const validateQuestionSetForReview = ({
   questions,
   grade_level,
   difficulty,
   math_topic,
-  metadata_error = '',
 } = {}) => {
   const questionValidation = validateFixedQuestions(questions);
   const normalizedGrade = normalizeText(grade_level);
   const normalizedDifficulty = normalizeDifficultyValue(difficulty);
   const normalizedTopic = normalizeText(math_topic);
-  const publicationMetadataError = metadata_error || validateLearningMetadata({
-    grade_level: normalizedGrade,
-    difficulty: normalizedDifficulty,
-    math_topic: normalizedTopic,
-  });
+  const documentErrors = [...questionValidation.document_errors];
+
+  if (!isValidGradeLevel(normalizedGrade)) {
+    documentErrors.push('Grade level must be one of Grade 1 through Grade 6.');
+  }
+  if (!isValidDifficulty(normalizedDifficulty)) {
+    documentErrors.push('Difficulty must be Easy, Normal, or Difficult.');
+  }
+  if (normalizedTopic && !isValidMathTopicForGradeDifficulty(normalizedGrade, normalizedDifficulty, normalizedTopic)) {
+    documentErrors.push('Topic must match the selected grade level and difficulty.');
+  }
+
   const validatedQuestions = questionValidation.questions.map((question) => {
     const validationErrors = [...question.validation_errors];
     if (normalizeText(question.grade_level) !== normalizedGrade) validationErrors.push('Question grade must match the selected Grade.');
     if (normalizeDifficultyValue(question.difficulty) !== normalizedDifficulty) validationErrors.push('Question difficulty must match the selected Difficulty.');
-    if (normalizeText(question.math_topic) !== normalizedTopic) validationErrors.push('Question topic must match the selected Topic.');
+    if (normalizedTopic && normalizeText(question.math_topic) !== normalizedTopic) validationErrors.push('Question topic must match the selected Topic.');
     return {
       ...question,
       validation_errors: validationErrors,
@@ -259,12 +267,38 @@ const validateQuestionSetForPublication = ({
   });
 
   return {
-    isValid: !publicationMetadataError && validatedQuestions.length > 0 && validatedQuestions.every((question) => question.is_valid),
+    isValid: documentErrors.length === 0 && validatedQuestions.length > 0 && validatedQuestions.every((question) => question.is_valid),
+    document_errors: documentErrors,
+    questions: validatedQuestions,
+  };
+};
+
+const validateQuestionSetForPublication = ({
+  questions,
+  grade_level,
+  difficulty,
+  math_topic,
+  metadata_error = '',
+} = {}) => {
+  const reviewValidation = validateQuestionSetForReview({
+    questions,
+    grade_level,
+    difficulty,
+    math_topic,
+  });
+  const publicationMetadataError = metadata_error || validateLearningMetadata({
+    grade_level: normalizeText(grade_level),
+    difficulty: normalizeDifficultyValue(difficulty),
+    math_topic: normalizeText(math_topic),
+  });
+
+  return {
+    isValid: reviewValidation.isValid && !publicationMetadataError,
     document_errors: [
-      ...questionValidation.document_errors,
+      ...reviewValidation.document_errors,
       ...(publicationMetadataError ? [publicationMetadataError] : []),
     ],
-    questions: validatedQuestions,
+    questions: reviewValidation.questions,
   };
 };
 
@@ -333,5 +367,6 @@ module.exports = {
   validateFixedQuestion,
   validateFixedQuestionUploadFile,
   validateFixedQuestions,
+  validateQuestionSetForReview,
   validateQuestionSetForPublication,
 };

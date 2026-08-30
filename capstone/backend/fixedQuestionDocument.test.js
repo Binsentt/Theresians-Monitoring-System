@@ -10,6 +10,7 @@ const {
   validateFixedQuestionDocumentPublicationScope,
   validateFixedQuestionUploadFile,
   validateFixedQuestions,
+  validateQuestionSetForReview,
   validateQuestionSetForPublication,
 } = require('./fixedQuestionDocument');
 
@@ -158,6 +159,10 @@ test('accepts only the teacher-facing DOCX and PDF file signatures for fixed-que
     originalname: 'set-a.docx',
     mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   }, Buffer.from('%PDF-1.7')), /MIME type.*content/i);
+  assert.match(validateFixedQuestionUploadFile({
+    originalname: 'set-a.doc',
+    mimetype: 'application/msword',
+  }, Buffer.from('D0CF11E0')), /valid PDF or DOCX/i);
 });
 
 test('detects fixed-question documents from matching MIME and content rather than chained suffixes', () => {
@@ -359,6 +364,81 @@ test('allows publication validation only for fully valid stored questions with m
 
   assert.equal(result.isValid, true);
   assert.equal(result.questions[0].is_valid, true);
+});
+
+test('allows structural review for a valid mixed-topic document while publication remains blocked', () => {
+  const mixedQuestions = [
+    {
+      question: 'What is 2 + 3?',
+      options: ['3', '4', '5', '6'],
+      correct_answer: '5',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: null,
+    },
+    {
+      question: 'What is 5 - 2?',
+      options: ['2', '3', '4', '5'],
+      correct_answer: '3',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: null,
+    },
+  ];
+
+  const review = validateQuestionSetForReview({
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    math_topic: null,
+    questions: mixedQuestions,
+  });
+  const publication = validateQuestionSetForPublication({
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    math_topic: null,
+    questions: mixedQuestions,
+  });
+
+  assert.equal(review.isValid, true);
+  assert.ok(review.questions.every((question) => question.is_valid));
+  assert.equal(publication.isValid, false);
+  assert.match(publication.document_errors.join(' '), /Topic must match/i);
+});
+
+test('keeps invalid question structure and controlled metadata as structural review failures', () => {
+  const review = validateQuestionSetForReview({
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    math_topic: 'Basic Addition',
+    questions: [
+      {
+        question: 'What is 2 + 3?',
+        options: ['3', '4', '5'],
+        correct_answer: '5',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        math_topic: 'Basic Addition',
+      },
+      {
+        question: 'What is 4 + 1?',
+        options: ['3', '4', '5', '5'],
+        correct_answer: '5',
+        grade_level: 'Grade 2',
+        difficulty: 'Normal',
+        math_topic: 'Subtraction',
+      },
+    ],
+  });
+
+  assert.equal(review.isValid, false);
+  assert.deepEqual(review.questions[0].validation_errors, ['Exactly four answer choices are required.']);
+  assert.deepEqual(review.questions[1].validation_errors, [
+    'Answer choices must be distinct.',
+    'The correct answer must match one of the four choices.',
+    'Question grade must match the selected Grade.',
+    'Question difficulty must match the selected Difficulty.',
+    'Question topic must match the selected Topic.',
+  ]);
 });
 
 test('blocks publication when a fixed-question document has no single controlled game topic', () => {
