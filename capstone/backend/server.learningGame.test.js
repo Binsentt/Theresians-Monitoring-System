@@ -4,6 +4,7 @@ const Module = require('node:module');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { buildLearningFileApprovalFingerprint } = require('./learningFileApproval.utils');
 
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
@@ -92,6 +93,20 @@ const setQueryHandler = (handler) => {
 
 const resultRows = (rows) => ({ rows });
 
+const normalizeApprovalTestDifficulty = (difficulty) => ({
+  Medium: 'Normal',
+  Hard: 'Difficult',
+}[difficulty] || difficulty);
+
+const approvedForPublication = (learningFile, questions) => ({
+  ...learningFile,
+  approval_status: 'approved',
+  approved_content_fingerprint: buildLearningFileApprovalFingerprint(learningFile, questions.map((question) => ({
+    ...question,
+    difficulty: normalizeApprovalTestDifficulty(question.difficulty),
+  }))),
+});
+
 const listen = () => new Promise((resolve) => {
   const server = app.listen(0, () => resolve(server));
 });
@@ -131,7 +146,7 @@ test('question publishing replaces the active Godot bundle for one grade difficu
   setQueryHandler(async (sql, params) => {
     if (sql === 'begin' || sql === 'commit') return emptyResult;
     if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) {
-      return resultRows([{
+      const learningFile = {
         id: 77,
         title: 'addition-quiz',
         grade_level: 'Grade 1',
@@ -139,7 +154,15 @@ test('question publishing replaces the active Godot bundle for one grade difficu
         math_topic: 'Addition',
         subject: 'Mathematics',
         deleted_at: null,
-      }]);
+      };
+      return resultRows([approvedForPublication(learningFile, [{
+        question: 'What is 2 + 3?',
+        options: ['4', '5', '6', '7'],
+        correct_answer: '5',
+        grade_level: 'Grade 1',
+        difficulty: 'Medium',
+        math_topic: 'Addition',
+      }])]);
     }
     if (sql.startsWith('select id, learning_file_id') && sql.includes('from public.questions')) {
       return resultRows([{
@@ -198,7 +221,7 @@ test('same-scope active content requires an explicit replacement confirmation be
   setQueryHandler(async (sql) => {
     if (sql === 'begin' || sql === 'rollback') return emptyResult;
     if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) {
-      return resultRows([{
+      const learningFile = {
         id: 78,
         title: 'Replacement Basic Addition',
         grade_level: 'Grade 1',
@@ -206,7 +229,15 @@ test('same-scope active content requires an explicit replacement confirmation be
         math_topic: 'Addition',
         subject: 'Mathematics',
         deleted_at: null,
-      }]);
+      };
+      return resultRows([approvedForPublication(learningFile, [{
+        question: 'What is 2 + 3?',
+        options: ['4', '5', '6', '7'],
+        correct_answer: '5',
+        grade_level: 'Grade 1',
+        difficulty: 'Normal',
+        math_topic: 'Addition',
+      }])]);
     }
     if (sql.startsWith('select id, learning_file_id') && sql.includes('from public.questions')) {
       return resultRows([{
@@ -260,7 +291,7 @@ test('a confirmed same-scope replacement supersedes only the active set inside o
   setQueryHandler(async (sql, params) => {
     if (sql === 'begin' || sql === 'commit') return emptyResult;
     if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) {
-      return resultRows([{
+      const learningFile = {
         id: 80,
         title: 'Confirmed Replacement',
         grade_level: 'Grade 1',
@@ -268,7 +299,15 @@ test('a confirmed same-scope replacement supersedes only the active set inside o
         math_topic: 'Addition',
         subject: 'Mathematics',
         deleted_at: null,
-      }]);
+      };
+      return resultRows([approvedForPublication(learningFile, [{
+        question: 'What is 3 + 4?',
+        options: ['5', '6', '7', '8'],
+        correct_answer: '7',
+        grade_level: 'Grade 1',
+        difficulty: 'Medium',
+        math_topic: 'Addition',
+      }])]);
     }
     if (sql.startsWith('select id, learning_file_id') && sql.includes('from public.questions')) {
       return resultRows([{
@@ -330,7 +369,7 @@ test('a confirmed same-scope replacement stays transactional when activation fai
       return emptyResult;
     }
     if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) {
-      return resultRows([{
+      const learningFile = {
         id: 79,
         title: 'Confirmed Addition Replacement',
         grade_level: 'Grade 1',
@@ -338,7 +377,15 @@ test('a confirmed same-scope replacement stays transactional when activation fai
         math_topic: 'Addition',
         subject: 'Mathematics',
         deleted_at: null,
-      }]);
+      };
+      return resultRows([approvedForPublication(learningFile, [{
+        question: 'What is 3 + 4?',
+        options: ['6', '7', '8', '9'],
+        correct_answer: '7',
+        grade_level: 'Grade 1',
+        difficulty: 'Normal',
+        math_topic: 'Addition',
+      }])]);
     }
     if (sql.startsWith('select id, learning_file_id') && sql.includes('from public.questions')) {
       return resultRows([{

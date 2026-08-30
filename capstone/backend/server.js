@@ -83,6 +83,11 @@ const {
   toQuestionSetResponse,
 } = require('./questionSetLifecycle.utils');
 const {
+  buildLearningFileApprovalFingerprint,
+  buildPublicationApprovalEligibility,
+  isApprovalCurrent,
+} = require('./learningFileApproval.utils');
+const {
   buildMailDiagnostics,
   buildResendEmailConfig,
   resolveAppUrl,
@@ -2076,7 +2081,7 @@ const getQuestionSetPublicationValidation = async (queryClient, learningFile, { 
   });
 };
 
-const buildQuestionSetPublicationEligibility = (learningFile = {}, validation = {}) => {
+const buildQuestionSetReviewEligibility = (learningFile = {}, validation = {}) => {
   if (learningFile.file_type !== 'fixed_questions') {
     return {
       eligible: Boolean(validation?.isValid),
@@ -2125,12 +2130,29 @@ const buildQuestionSetPublicationEligibility = (learningFile = {}, validation = 
   return { eligible: true, code: 'ELIGIBLE', message: 'Eligible for Game publication.' };
 };
 
-const buildQuestionSetValidationSummary = (validation, learningFile = {}) => ({
-  is_valid: Boolean(validation?.isValid),
-  invalid_question_count: (validation?.questions || []).filter((question) => !question.is_valid).length,
-  document_errors: validation?.document_errors || [],
-  publication_eligibility: buildQuestionSetPublicationEligibility(learningFile, validation),
-});
+const buildQuestionSetPublicationEligibility = (learningFile = {}, validation = {}) => {
+  const reviewEligibility = buildQuestionSetReviewEligibility(learningFile, validation);
+  const fingerprint = buildLearningFileApprovalFingerprint(learningFile, validation?.questions || []);
+  return buildPublicationApprovalEligibility(learningFile, fingerprint, reviewEligibility);
+};
+
+const buildQuestionSetValidationSummary = (validation, learningFile = {}) => {
+  const reviewEligibility = buildQuestionSetReviewEligibility(learningFile, validation);
+  const fingerprint = buildLearningFileApprovalFingerprint(learningFile, validation?.questions || []);
+  return {
+    is_valid: Boolean(validation?.isValid),
+    invalid_question_count: (validation?.questions || []).filter((question) => !question.is_valid).length,
+    document_errors: validation?.document_errors || [],
+    review_eligibility: reviewEligibility,
+    publication_eligibility: buildPublicationApprovalEligibility(learningFile, fingerprint, reviewEligibility),
+    approval: {
+      status: String(learningFile.approval_status || 'review_required'),
+      approved_at: learningFile.approved_at || null,
+      approved_by: learningFile.approved_by || null,
+      is_current: isApprovalCurrent(learningFile, fingerprint),
+    },
+  };
+};
 
 const buildQuestionSetReplacementSummary = (learningFile, questionCount = null) => ({
   id: learningFile.id,
@@ -2164,10 +2186,18 @@ const publishLearningFile = async (fileId, publisherId, { confirmReplacement = f
     }
 
     const publicationValidation = await getQuestionSetPublicationValidation(client, learningFile, { lockRows: true });
-    const publicationEligibility = buildQuestionSetPublicationEligibility(learningFile, publicationValidation);
+    const reviewEligibility = buildQuestionSetReviewEligibility(learningFile, publicationValidation);
+    const approvalFingerprint = buildLearningFileApprovalFingerprint(learningFile, publicationValidation.questions || []);
+    const publicationEligibility = buildPublicationApprovalEligibility(learningFile, approvalFingerprint, reviewEligibility);
     if (!publicationEligibility.eligible) {
-      const error = createLifecycleHttpError('Every question must have four distinct choices, a mapped correct answer, and matching controlled metadata before publication.', 422);
-      error.code = 'QUESTION_SET_VALIDATION_FAILED';
+      const requiresReviewApproval = publicationEligibility.code === 'REVIEW_APPROVAL_REQUIRED';
+      const error = createLifecycleHttpError(
+        requiresReviewApproval
+          ? publicationEligibility.message
+          : 'Every question must have four distinct choices, a mapped correct answer, and matching controlled metadata before publication.',
+        requiresReviewApproval ? 409 : 422
+      );
+      error.code = requiresReviewApproval ? 'QUESTION_SET_REVIEW_APPROVAL_REQUIRED' : 'QUESTION_SET_VALIDATION_FAILED';
       error.questionValidation = publicationValidation;
       error.publicationEligibility = publicationEligibility;
       throw error;
@@ -2275,11 +2305,80 @@ const unpublishLearningFile = async (fileId) => {
   await pool.query(
     `UPDATE public.learning_files
      SET published = false,
-         publish_status = 'staged'
+         publish_status = 'staged',
+         approval_status = 'review_required',
+         approved_at = NULL,
+         approved_by = NULL,
+         approved_content_fingerprint = NULL
      WHERE id = $1`,
     [fileId]
   );
   await pool.query('UPDATE public.questions SET published = false WHERE learning_file_id = $1', [fileId]);
+};
+
+const writeQuestionSetApprovalAudit = async (client, actor, learningFile) => {
+  const actorName = String(actor?.name || actor?.email || '').trim() || 'Unknown Reviewer';
+  const actorId = Number.isInteger(Number(actor?.id)) ? Number(actor.id) : null;
+  const target = String(learningFile?.generated_question_set_name || learningFile?.title || learningFile?.file_name || 'Question Set').trim();
+  await client.query(
+    `INSERT INTO public.admin_audit_logs (
+       admin_name, action, target_user, reason, target_account_id, operation_type, admin_account_id, created_at
+     ) VALUES ($1, 'Approve Question Set', $2, 'Reviewed question set approved for publication.', $3, 'question_set_approval', $4, NOW())`,
+    [actorName, target, Number(learningFile?.id) || null, actorId]
+  );
+};
+
+const approveLearningFile = async (fileId, approver) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const fileResult = await client.query(
+      'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      [fileId]
+    );
+    const learningFile = fileResult.rows[0];
+    if (!learningFile) throw createLifecycleHttpError('Uploaded file not found', 404);
+    if (learningFile.published || learningFile.publish_status === 'active') {
+      throw createLifecycleHttpError('Active question sets cannot be re-approved. Publish a reviewed replacement instead.', 409);
+    }
+
+    const validation = await getQuestionSetPublicationValidation(client, learningFile, { lockRows: true });
+    const reviewEligibility = buildQuestionSetReviewEligibility(learningFile, validation);
+    if (!reviewEligibility.eligible) {
+      const error = createLifecycleHttpError('Only a valid, single-topic question set with four valid choices per question can be approved.', 422);
+      error.code = 'QUESTION_SET_REVIEW_VALIDATION_FAILED';
+      error.questionValidation = validation;
+      error.reviewEligibility = reviewEligibility;
+      throw error;
+    }
+
+    const fingerprint = buildLearningFileApprovalFingerprint(learningFile, validation.questions || []);
+    const approvedResult = await client.query(
+      `UPDATE public.learning_files
+       SET approval_status = 'approved',
+           approved_at = CURRENT_TIMESTAMP,
+           approved_by = $2,
+           approved_content_fingerprint = $3
+       WHERE id = $1
+       RETURNING *`,
+      [fileId, Number(approver?.id) || null, fingerprint]
+    );
+    const approvedFile = approvedResult.rows[0] || learningFile;
+    await writeQuestionSetApprovalAudit(client, approver, approvedFile);
+    await client.query('COMMIT');
+    return {
+      learningFile: normalizeLearningFileRow({
+        ...approvedFile,
+        validation_summary: buildQuestionSetValidationSummary(validation, approvedFile),
+      }),
+      validation: buildQuestionSetValidationSummary(validation, approvedFile),
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 };
 
 const buildPublishedQueryClause = (params, { grade_level, math_topic }) => {
@@ -4591,6 +4690,25 @@ app.get('/api/learning-files/:id/questions', requireLessonQuestionManagerAccess,
   }
 });
 
+app.post('/api/learning-files/:id/approve', requireLessonQuestionManagerAccess, async (req, res) => {
+  try {
+    const fileId = parseInt(req.params.id, 10);
+    if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
+    const approved = await approveLearningFile(fileId, req.authenticatedUser);
+    return res.json({ success: true, message: 'Question set approved for publication.', ...approved });
+  } catch (err) {
+    if (err?.statusCode) {
+      return res.status(err.statusCode).json({
+        error: err.message,
+        ...(err.code ? { code: err.code } : {}),
+        ...(err.reviewEligibility ? { review_eligibility: err.reviewEligibility } : {}),
+      });
+    }
+    console.error('Approve question set failed:', err.message);
+    return res.status(500).json({ error: 'Unable to approve this question set.' });
+  }
+});
+
 app.get('/api/learning-files/:id/preview', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
@@ -4635,7 +4753,11 @@ app.put('/api/learning-files/:id/rename', requireLessonQuestionManagerAccess, as
 
     const result = await pool.query(
       `UPDATE public.learning_files
-       SET title = $1
+       SET title = $1,
+           approval_status = 'review_required',
+           approved_at = NULL,
+           approved_by = NULL,
+           approved_content_fingerprint = NULL
        WHERE id = $2
          AND deleted_at IS NULL
        RETURNING *`,
@@ -4689,7 +4811,11 @@ app.put('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (re
            published = false,
            publish_status = 'staged',
            published_at = NULL,
-           published_by = NULL
+           published_by = NULL,
+           approval_status = 'review_required',
+           approved_at = NULL,
+           approved_by = NULL,
+           approved_content_fingerprint = NULL
      WHERE id = $7
         AND deleted_at IS NULL
        RETURNING *`,
@@ -5930,6 +6056,12 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
     const reasonResult = resolveAccountRemovalReason(req.body?.reason);
     if (reasonResult.error) {
       return res.status(400).json({ error: reasonResult.error });
+    }
+    if (permanent && !targetAccount.is_archived) {
+      return res.status(409).json({ error: 'Only archived accounts can be permanently deleted.' });
+    }
+    if (permanent && req.body?.permanent_confirmation !== 'DELETE') {
+      return res.status(400).json({ error: 'Type DELETE to confirm permanent account deletion.' });
     }
     const auditOptions = {
       reason: reasonResult.reason,

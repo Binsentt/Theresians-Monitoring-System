@@ -28,6 +28,10 @@ const mockPool = {
     }
     return (await queryHandler(normalizedSql, rawParams, rawSql)) || emptyResult;
   },
+  connect: async () => ({
+    query: mockPool.query,
+    release: () => {},
+  }),
 };
 
 const dbPath = require.resolve('./database/db');
@@ -761,7 +765,7 @@ test('account management requires a deletion reason and audits authenticated act
       }]);
     }
     if (sql.startsWith('select id, email, role, is_archived from public.accounts where id = $1')) {
-      return resultRows([{ id: Number(params[0]), email: 'teacher@example.com', role: 'teacher', is_archived: false }]);
+      return resultRows([{ id: Number(params[0]), email: 'teacher@example.com', role: 'teacher', is_archived: archiveMutated }]);
     }
     if (sql.startsWith('update public.accounts set is_archived = true')) {
       archiveMutated = true;
@@ -818,7 +822,7 @@ test('account management requires a deletion reason and audits authenticated act
   const permanent = await requestJson(baseUrl, '/api/accounts/42?permanent=true', {
     method: 'DELETE',
     headers,
-    body: JSON.stringify({ reason: 'Duplicate record cleanup.' }),
+    body: JSON.stringify({ reason: 'Duplicate record cleanup.', permanent_confirmation: 'DELETE' }),
   });
   assert.equal(permanent.status, 200);
   assert.equal(permanentlyDeleted, true);
@@ -1244,6 +1248,165 @@ test('archiving an account invalidates sessions and OTP skip records', async (t)
   assert.ok(statements.some((entry) => entry.sql.includes('session_version = coalesce(session_version, 0) + 1')));
   assert.ok(statements.some((entry) => entry.sql.includes('otp_code = null') && entry.sql.includes('otp_expires_at = null')));
   assert.ok(statements.some((entry) => entry.sql.startsWith('delete from public.login_otp_device_skips')));
+});
+
+test('permanent account deletion requires an archived account and typed DELETE confirmation', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let targetArchived = false;
+  let permanentlyDeleted = false;
+
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{
+        id: 1,
+        name: 'Ada Admin',
+        email: 'ada@example.com',
+        role: 'admin',
+        is_archived: false,
+        session_version: 0,
+      }]);
+    }
+    if (sql.startsWith('select id, email, role, is_archived from public.accounts where id = $1')) {
+      return resultRows([{
+        id: Number(params[0]),
+        email: 'archived.teacher@example.com',
+        role: 'teacher',
+        is_archived: targetArchived,
+      }]);
+    }
+    if (sql.startsWith('delete from public.login_otp_device_skips')) return emptyResult;
+    if (sql.startsWith('delete from public.accounts where id = $1')) {
+      permanentlyDeleted = true;
+      return emptyResult;
+    }
+    if (sql.startsWith('insert into public.admin_audit_logs')) return resultRows([{ id: 1 }]);
+    return emptyResult;
+  });
+
+  const headers = { Authorization: 'Bearer admin-token' };
+  const activeTarget = await requestJson(baseUrl, '/api/accounts/42?permanent=true', {
+    method: 'DELETE',
+    headers,
+    body: JSON.stringify({ reason: 'Duplicate account cleanup.', permanent_confirmation: 'DELETE' }),
+  });
+  assert.equal(activeTarget.status, 409);
+  assert.equal(permanentlyDeleted, false);
+
+  targetArchived = true;
+  const missingTypedConfirmation = await requestJson(baseUrl, '/api/accounts/42?permanent=true', {
+    method: 'DELETE',
+    headers,
+    body: JSON.stringify({ reason: 'Duplicate account cleanup.' }),
+  });
+  assert.equal(missingTypedConfirmation.status, 400);
+  assert.match(missingTypedConfirmation.body.error, /type delete/i);
+  assert.equal(permanentlyDeleted, false);
+
+  const permanent = await requestJson(baseUrl, '/api/accounts/42?permanent=true', {
+    method: 'DELETE',
+    headers,
+    body: JSON.stringify({ reason: 'Duplicate account cleanup.', permanent_confirmation: 'DELETE' }),
+  });
+  assert.equal(permanent.status, 200);
+  assert.equal(permanentlyDeleted, true);
+});
+
+test('a reviewed valid question set receives an approval record before publication', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const statements = [];
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  const reviewedFile = {
+    id: 91,
+    title: 'reviewed-addition.docx',
+    file_name: 'reviewed-addition.docx',
+    file_type: 'fixed_questions',
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    math_topic: 'Basic Addition',
+    document_topic: 'Basic Addition',
+    published: false,
+    publish_status: 'staged',
+    approval_status: 'review_required',
+  };
+  const reviewedQuestion = {
+    id: 911,
+    learning_file_id: 91,
+    question: 'What is 2 + 3?',
+    options: ['3', '4', '5', '6'],
+    correct_answer: '5',
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    math_topic: 'Basic Addition',
+  };
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
+    statements.push({ sql, params });
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, name: 'Ada Admin', email: 'ada@example.com', role: 'admin', is_archived: false, session_version: 0 }]);
+    }
+    if (sql.startsWith('select * from public.learning_files where id = $1')) return resultRows([reviewedFile]);
+    if (sql.includes('from public.questions') && sql.includes('where learning_file_id = $1')) return resultRows([reviewedQuestion]);
+    if (sql.startsWith('update public.learning_files set approval_status =')) {
+      return resultRows([{ ...reviewedFile, approval_status: 'approved', approved_by: params[1], approved_content_fingerprint: params[2] }]);
+    }
+    if (sql.startsWith('insert into public.admin_audit_logs')) return resultRows([{ id: 1 }]);
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/91/approve', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({}),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.learningFile.approval_status, 'approved');
+  assert.ok(statements.some((entry) => entry.sql.startsWith('update public.learning_files set approval_status =')));
+  assert.ok(statements.some((entry) => entry.sql.startsWith('insert into public.admin_audit_logs')));
+});
+
+test('only Lesson Manager roles in Teacher scope can reach question-set approval', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  const deniedAccounts = [
+    { id: 31, role: 'parent' },
+    { id: 32, role: 'student' },
+    { id: 33, role: 'parent_teacher' },
+  ];
+  for (const account of deniedAccounts) {
+    authenticatedTestAccount = {
+      ...account,
+      name: `${account.role} account`,
+      email: `${account.role}@example.com`,
+      is_archived: false,
+      session_version: 0,
+    };
+    verifiedTokenPayload = { userId: account.id, sessionVersion: 0 };
+    const response = await requestJson(baseUrl, '/api/learning-files/91/approve', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer role-token' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(response.status, 403);
+  }
 });
 
 test('session validation rejects archived accounts and stale token versions', async (t) => {

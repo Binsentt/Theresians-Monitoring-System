@@ -89,6 +89,7 @@ export default function ManageUsers() {
   const [deleteOperation, setDeleteOperation] = useState('archive');
   const [deletionReason, setDeletionReason] = useState('');
   const [deletionReasonError, setDeletionReasonError] = useState('');
+  const [permanentDeleteConfirmation, setPermanentDeleteConfirmation] = useState('');
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [regeneratingUserId, setRegeneratingUserId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -593,21 +594,32 @@ export default function ManageUsers() {
     setDeleteOperation(operation);
     setDeletionReason('');
     setDeletionReasonError('');
+    setPermanentDeleteConfirmation('');
+    setShowDeleteConfirmation(false);
+  };
+
+  const resetDeleteDialog = () => {
+    setDeletingUser(null);
+    setDeleteOperation('archive');
+    setDeletionReason('');
+    setDeletionReasonError('');
+    setPermanentDeleteConfirmation('');
     setShowDeleteConfirmation(false);
   };
 
   const closeDeleteDialog = () => {
     if (deleting) return;
-    setDeletingUser(null);
-    setDeletionReason('');
-    setDeletionReasonError('');
-    setShowDeleteConfirmation(false);
+    resetDeleteDialog();
   };
 
   const continueDeleteDialog = () => {
     const reason = deletionReason.trim();
     if (!reason) {
-      setDeletionReasonError('Reason for deletion is required.');
+      setDeletionReasonError(
+        deleteOperation === 'permanent'
+          ? 'Reason for permanent deletion is required.'
+          : 'Reason for archiving is required.'
+      );
       return;
     }
     setDeletionReasonError('');
@@ -622,23 +634,30 @@ export default function ManageUsers() {
       return;
     }
 
+    const permanent = deleteOperation === 'permanent';
+    if (permanent && permanentDeleteConfirmation !== 'DELETE') {
+      return;
+    }
+
     setDeleting(true);
     try {
-      const permanent = deleteOperation === 'permanent';
       const response = await fetch(apiUrl(`/api/accounts/${deletingUser.id}${permanent ? '?permanent=true' : ''}`), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
-        body: JSON.stringify({ reason: deletionReason.trim() }),
+        body: JSON.stringify({
+          reason: deletionReason.trim(),
+          ...(permanent ? { permanent_confirmation: permanentDeleteConfirmation } : {}),
+        }),
       });
       const data = await response.json().catch(() => ({}));
 
       if (response.ok) {
+        resetDeleteDialog();
         setValidationModal({
           title: 'Success',
           message: permanent ? 'User permanently deleted.' : 'User archived successfully!'
         });
-        closeDeleteDialog();
-        loadUsers();
+        await loadUsers();
       } else {
         setValidationModal({
           title: 'Error',
@@ -1056,7 +1075,7 @@ export default function ManageUsers() {
                             ) : showArchived ? (
                               <>
                                 <button type="button" className="restore-action-btn manage-user-action-btn" onClick={() => handleRestoreUser(u)}>Restore</button>
-                                <button type="button" className="delete-action-btn manage-user-action-btn" onClick={() => openDeleteDialog(u, 'permanent')}>Delete</button>
+                                <button type="button" className="delete-action-btn manage-user-action-btn" onClick={() => openDeleteDialog(u, 'permanent')}>Permanent Delete</button>
                               </>
                             ) : (
                               <>
@@ -1069,7 +1088,7 @@ export default function ManageUsers() {
                                 >
                                   {regeneratingUserId === u.id ? 'Sending...' : 'Send Temporary Password'}
                                 </button>
-                                <button type="button" className="delete-action-btn manage-user-action-btn" onClick={() => openDeleteDialog(u)}>Delete</button>
+                                <button type="button" className="delete-action-btn manage-user-action-btn" onClick={() => openDeleteDialog(u)}>Archive Account</button>
                               </>
                             )}
                           </td>
@@ -1145,10 +1164,11 @@ export default function ManageUsers() {
                 <div className="modal-content delete-modal" onClick={(e) => e.stopPropagation()}>
                   {!showDeleteConfirmation ? (
                     <>
-                      <h2>Delete Account</h2>
+                      <h2>{deleteOperation === 'permanent' ? 'Permanent Delete Account' : 'Archive Account'}</h2>
                       <p>You are about to {deleteOperation === 'permanent' ? 'permanently delete' : 'archive'} <strong>{deletingUser.name || deletingUser.email}</strong>.</p>
+                      {deleteOperation === 'permanent' && <p className="error-text">This action is irreversible.</p>}
                       <p className="delete-account-role">Role: {formatRoleLabel(deletingUser.role)}</p>
-                      <label className="deletion-reason-label" htmlFor="deletion-reason">Reason for deleting this account:</label>
+                      <label className="deletion-reason-label" htmlFor="deletion-reason">Reason for {deleteOperation === 'permanent' ? 'permanently deleting' : 'archiving'} this account:</label>
                       <textarea
                         id="deletion-reason"
                         name="deletion-reason"
@@ -1170,11 +1190,31 @@ export default function ManageUsers() {
                     </>
                   ) : (
                     <>
-                      <h2>Confirm Account Removal</h2>
-                      <p>Are you sure you want to remove this account?</p>
+                      <h2>{deleteOperation === 'permanent' ? 'Confirm Permanent Delete' : 'Confirm Archive Account'}</h2>
+                      <p>{deleteOperation === 'permanent' ? 'This action is irreversible. Type DELETE to permanently delete this archived account.' : 'Are you sure you want to archive this account?'}</p>
+                      {deleteOperation === 'permanent' && (
+                        <label className="deletion-reason-label" htmlFor="permanent-delete-confirmation">
+                          Type DELETE to confirm permanent deletion.
+                          <input
+                            id="permanent-delete-confirmation"
+                            name="permanent-delete-confirmation"
+                            type="text"
+                            value={permanentDeleteConfirmation}
+                            onChange={(event) => setPermanentDeleteConfirmation(event.target.value)}
+                            autoComplete="off"
+                          />
+                        </label>
+                      )}
                       <div className="modal-actions">
                         <button type="button" className="cancel-btn" onClick={() => setShowDeleteConfirmation(false)} disabled={deleting}>No, Cancel</button>
-                        <button type="button" className="confirm-delete-btn" onClick={handleDeleteUser} disabled={deleting}>{deleting ? 'Deleting...' : 'Yes, Delete Account'}</button>
+                        <button
+                          type="button"
+                          className="confirm-delete-btn"
+                          onClick={handleDeleteUser}
+                          disabled={deleting || (deleteOperation === 'permanent' && permanentDeleteConfirmation !== 'DELETE')}
+                        >
+                          {deleting ? 'Deleting...' : (deleteOperation === 'permanent' ? 'Permanently Delete Account' : 'Yes, Archive Account')}
+                        </button>
                       </div>
                     </>
                   )}

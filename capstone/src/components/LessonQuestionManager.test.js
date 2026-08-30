@@ -65,6 +65,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       trashFiles: [{ id: 31, title: 'Deleted Quiz', file_name: 'deleted.csv', deleted_at: '2026-05-20T00:00:00.000Z' }],
       trashFolders: [],
       publishResponse: null,
+      approvalResponse: null,
     };
     global.fetch = jest.fn((url, options = {}) => {
       const value = String(url);
@@ -99,6 +100,25 @@ describe('LessonQuestionManager upload and trash controls', () => {
           file.id === 77 ? { ...file, published: true } : file
         ));
         return okJson({ success: true, message: 'Content pushed to game.', learningFile: fixtures.files[0] });
+      }
+      const approvalMatch = value.match(/\/api\/learning-files\/(\d+)\/approve/);
+      if (approvalMatch && options.method === 'POST') {
+        if (fixtures.approvalResponse) return fixtures.approvalResponse(options);
+        const approvedId = Number(approvalMatch[1]);
+        fixtures.files = fixtures.files.map((file) => (
+          file.id === approvedId
+            ? {
+              ...file,
+              approval_status: 'approved',
+              validation_summary: {
+                ...file.validation_summary,
+                publication_eligibility: { eligible: true, code: 'ELIGIBLE', message: 'Eligible for Game publication.' },
+              },
+            }
+            : file
+        ));
+        const approvedFile = fixtures.files.find((file) => file.id === approvedId);
+        return okJson({ success: true, learningFile: approvedFile, validation: approvedFile.validation_summary });
       }
       const questionPreviewMatch = value.match(/\/api\/learning-files\/(\d+)\/questions/);
       if (questionPreviewMatch) {
@@ -1198,5 +1218,67 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.querySelectorAll('.drive-table tbody tr')).toHaveLength(10);
     expect(container.textContent).toContain('Page 1 of 2');
     expect(container.querySelector('button[aria-label="Print Question Library Trash"]')).toBeNull();
+  });
+
+  test('requires an explicit review approval before a valid question set can be pushed to the game', async () => {
+    fixtures.files = [{
+      id: 91,
+      title: 'review-required-addition.docx',
+      file_name: 'review-required-addition.docx',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      document_topic: 'Basic Addition',
+      file_type: 'fixed_questions',
+      question_count: 5,
+      published: false,
+      approval_status: 'review_required',
+      validation_summary: {
+        is_valid: true,
+        invalid_question_count: 0,
+        review_eligibility: { eligible: true, code: 'ELIGIBLE' },
+        publication_eligibility: {
+          eligible: false,
+          code: 'REVIEW_APPROVAL_REQUIRED',
+          message: 'Approve this reviewed question set before Push to Game.',
+        },
+      },
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+
+    const pushButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Push to Game'));
+    expect(pushButton.disabled).toBe(true);
+
+    await act(async () => {
+      clickByText(container, 'Preview');
+    });
+
+    expect(document.body.textContent).toContain('Review required before Push to Game.');
+    const approveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.includes('Approve Question Set'));
+    expect(approveButton).toBeTruthy();
+    expect(approveButton.disabled).toBe(true);
+
+    const reviewBoxes = Array.from(document.body.querySelectorAll('.question-review-confirmation input[type="checkbox"]'));
+    expect(reviewBoxes).toHaveLength(5);
+    for (const reviewBox of reviewBoxes) {
+      await act(async () => {
+        reviewBox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+    }
+
+    expect(approveButton.disabled).toBe(false);
+    await act(async () => {
+      approveButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/91/approve', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer lesson-manager-token' },
+    });
+    expect(pushButton.disabled).toBe(false);
   });
 });

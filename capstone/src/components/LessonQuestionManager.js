@@ -179,6 +179,22 @@ function getPublicationEligibility(file = {}) {
   };
 }
 
+function getReviewEligibility(file = {}) {
+  const serverEligibility = file?.validation_summary?.review_eligibility;
+  if (serverEligibility && typeof serverEligibility === 'object') {
+    return {
+      eligible: Boolean(serverEligibility.eligible),
+      reason: String(serverEligibility.message || '').trim(),
+      code: String(serverEligibility.code || '').trim(),
+    };
+  }
+  return getPublicationEligibility(file);
+}
+
+const getPreviewQuestionReviewKey = (question, index) => (
+  String(question?.id || `${index}:${question?.question || ''}`)
+);
+
 function getFixedQuestionPublicationBlockReason(file = {}) {
   const eligibility = getPublicationEligibility(file);
   return file.file_type === 'fixed_questions' && !eligibility.eligible
@@ -209,6 +225,8 @@ export default function LessonQuestionManager() {
   const [previewQuestions, setPreviewQuestions] = useState([]);
   const [previewValidation, setPreviewValidation] = useState(null);
   const [previewQuestionsLoading, setPreviewQuestionsLoading] = useState(false);
+  const [reviewedQuestionKeys, setReviewedQuestionKeys] = useState(() => new Set());
+  const [approvingPreview, setApprovingPreview] = useState(false);
   const previewBodyRef = useRef(null);
   const uploadInFlightRef = useRef(false);
   const [fixedUploadValidation, setFixedUploadValidation] = useState(null);
@@ -327,6 +345,11 @@ export default function LessonQuestionManager() {
   const statusOptions = useMemo(() => Array.from(new Set(folderView.files.map(getQuestionSetStatus).filter(Boolean))).sort(), [folderView.files]);
   const previewFile = questionPreviewDetails || questionPreviewFile;
   const previewPublicationEligibility = getPublicationEligibility(previewFile || {});
+  const previewReviewEligibility = getReviewEligibility(previewFile || {});
+  const previewAllQuestionsReviewed = previewQuestions.length > 0 && previewQuestions.every((question, index) => (
+    reviewedQuestionKeys.has(getPreviewQuestionReviewKey(question, index))
+  ));
+  const previewCanApprove = previewReviewEligibility.eligible && previewAllQuestionsReviewed && !approvingPreview;
   const previewIsReadyForGame = previewValidation?.is_valid !== false && previewPublicationEligibility.eligible;
   const reportColumns = [
     { header: 'No.', value: (_, index) => index + 1 },
@@ -597,6 +620,8 @@ export default function LessonQuestionManager() {
     setPreviewQuestions([]);
     setPreviewValidation(null);
     setPreviewQuestionsLoading(false);
+    setReviewedQuestionKeys(new Set());
+    setApprovingPreview(false);
   };
 
   const openQuestionSetPreview = async (file) => {
@@ -605,6 +630,8 @@ export default function LessonQuestionManager() {
     setPreviewQuestions([]);
     setPreviewValidation(null);
     setPreviewQuestionsLoading(true);
+    setReviewedQuestionKeys(new Set());
+    setApprovingPreview(false);
     try {
       const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/questions`));
       const data = await response.json();
@@ -617,6 +644,28 @@ export default function LessonQuestionManager() {
       showNotification(error.message || 'Unable to preview generated questions.', 'error');
     } finally {
       setPreviewQuestionsLoading(false);
+    }
+  };
+
+  const approvePreviewQuestionSet = async () => {
+    if (!previewFile || !previewCanApprove) return;
+    try {
+      setApprovingPreview(true);
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${previewFile.id}/approve`), {
+        method: 'POST',
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to approve this question set.');
+      const approvedFile = normalizeManagedLearningFile(data.learningFile || previewFile);
+      setFiles((current) => current.map((file) => (file.id === approvedFile.id ? approvedFile : file)));
+      setQuestionPreviewDetails(approvedFile);
+      setPreviewValidation(data.validation || previewValidation);
+      showNotification('Question set approved. Push to Game remains a separate action.');
+    } catch (error) {
+      console.error(error);
+      showNotification(error.message || 'Unable to approve this question set.', 'error');
+    } finally {
+      setApprovingPreview(false);
     }
   };
 
@@ -843,7 +892,7 @@ export default function LessonQuestionManager() {
         const pushDisabled = row.generation_status === 'generating'
           || row.generation_status === 'failed'
           || row.validation_summary?.is_valid === false
-          || fixedQuestionPublicationBlocked;
+          || !publicationEligibility.eligible;
         return (
           <div className="drive-row-actions">
           <button type="button" className="drive-action-button" onClick={() => setRenamingFile(row)}><FilePenLine size={16} />Rename</button>
@@ -861,9 +910,9 @@ export default function LessonQuestionManager() {
             onClick={() => pushFileToGame(row)}
             disabled={pushDisabled}
             title={fixedQuestionPublicationBlockReason || (row.validation_summary?.is_valid === false ? 'Review and correct this question set before Push to Game.' : undefined)}
-          ><Upload size={16} />{fixedQuestionPublicationBlocked ? 'Not Eligible for Game' : 'Push to Game'}</button>
-          {fixedQuestionPublicationBlocked && (
-            <span className="manager-action-helper">{fixedQuestionPublicationBlockReason}</span>
+          ><Upload size={16} />{fixedQuestionPublicationBlocked && publicationEligibility.code !== 'REVIEW_APPROVAL_REQUIRED' ? 'Not Eligible for Game' : 'Push to Game'}</button>
+          {!publicationEligibility.eligible && (
+            <span className="manager-action-helper">{publicationEligibility.reason || fixedQuestionPublicationBlockReason}</span>
           )}
         </div>
         );
@@ -1311,6 +1360,9 @@ export default function LessonQuestionManager() {
                         <p className="question-review-metadata">Document Lesson/Topic: {previewFile.document_topic || 'Not provided'}</p>
                       )}
                       <p className="question-review-metadata">Game Publication: {previewPublicationEligibility.label}</p>
+                      {previewPublicationEligibility.code === 'REVIEW_APPROVAL_REQUIRED' && (
+                        <p className="question-review-metadata">Review required before Push to Game.</p>
+                      )}
                       {getFixedQuestionPublicationBlockReason(previewFile) && (
                         <p className="manager-inline-error" role="alert">{getFixedQuestionPublicationBlockReason(previewFile)}</p>
                       )}
@@ -1331,6 +1383,7 @@ export default function LessonQuestionManager() {
                         <p className="question-review-metadata">Requested: {previewFile.requested_question_count ?? 'Not specified'} · Available: {previewQuestions.length}</p>
                         {previewValidation?.is_valid === false && <p className="manager-inline-error" role="alert">Needs Correction — every question must have four distinct choices, a mapped correct answer, and matching metadata.</p>}
                         {previewValidation?.is_valid !== false && previewIsReadyForGame && <p className="question-validation-valid">Valid — this question set is ready for manual Push to Game.</p>}
+                        {previewValidation?.is_valid !== false && previewPublicationEligibility.code === 'REVIEW_APPROVAL_REQUIRED' && <p className="question-review-metadata">Mark every question as reviewed, then approve the set before Push to Game.</p>}
                         {previewQuestions.map((question, index) => (
                           <article key={question.id || `${question.question}-${index}`} className={`generated-question-card ${question.is_valid === false ? 'invalid' : 'valid'}`}>
                             <strong>{index + 1}. {question.question}</strong>
@@ -1343,6 +1396,22 @@ export default function LessonQuestionManager() {
                             </ol>
                             <p className="question-review-metadata">Grade {question.grade_level || previewFile.grade_level} · {question.difficulty || previewFile.difficulty}</p>
                             {question.is_valid === false ? (question.validation_errors || []).map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>) : <p className="question-validation-valid">Valid</p>}
+                            <label className="question-review-confirmation">
+                              <input
+                                type="checkbox"
+                                checked={reviewedQuestionKeys.has(getPreviewQuestionReviewKey(question, index))}
+                                onChange={(event) => {
+                                  const reviewKey = getPreviewQuestionReviewKey(question, index);
+                                  setReviewedQuestionKeys((current) => {
+                                    const next = new Set(current);
+                                    if (event.target.checked) next.add(reviewKey);
+                                    else next.delete(reviewKey);
+                                    return next;
+                                  });
+                                }}
+                              />
+                              Reviewed Question {index + 1}
+                            </label>
                           </article>
                         ))}
                       </>
@@ -1353,6 +1422,11 @@ export default function LessonQuestionManager() {
                     <button type="button" className="btn btn-primary" onClick={() => downloadFile(previewFile)} disabled={!previewFile.file_url}>
                       <Download size={16} />Download Source
                     </button>
+                    {previewPublicationEligibility.code === 'REVIEW_APPROVAL_REQUIRED' && (
+                      <button type="button" className="btn btn-primary" onClick={approvePreviewQuestionSet} disabled={!previewCanApprove}>
+                        Approve Question Set
+                      </button>
+                    )}
                     <button type="button" className="btn btn-secondary" onClick={closeQuestionPreview}>Close</button>
                   </div>
                 </div>

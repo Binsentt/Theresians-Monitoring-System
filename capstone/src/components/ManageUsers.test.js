@@ -239,7 +239,7 @@ describe('ManageUsers edit flow', () => {
     const actionButtons = Array.from(actions.querySelectorAll('button'));
 
     expect(actions.classList.contains('manage-user-actions')).toBe(true);
-    expect(actionButtons.map((button) => button.textContent)).toEqual(['Edit', 'Send Temporary Password', 'Delete']);
+    expect(actionButtons.map((button) => button.textContent)).toEqual(['Edit', 'Send Temporary Password', 'Archive Account']);
     actionButtons.forEach((button) => {
       expect(button.classList.contains('manage-user-action-btn')).toBe(true);
     });
@@ -276,6 +276,75 @@ describe('ManageUsers edit flow', () => {
 
     expect(actions.classList.contains('manage-user-actions')).toBe(true);
     expect(restoreButton.classList.contains('manage-user-action-btn')).toBe(true);
+  });
+
+  test('requires typed DELETE before permanently deleting an archived account', async () => {
+    const archivedAccount = {
+      ...accountsPayload[0],
+      id: 77,
+      name: 'Archived Teacher',
+      email: 'archived.teacher@example.com',
+    };
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).includes('/api/accounts?archived=true')) {
+        return Promise.resolve({ ok: true, json: async () => [archivedAccount] });
+      }
+      if (String(url).includes('/api/accounts/77?permanent=true') && options.method === 'DELETE') {
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, message: 'Account permanently deleted' }) });
+      }
+      if (String(url).includes('/api/accounts')) return Promise.resolve({ ok: true, json: async () => accountsPayload });
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Show Archived')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const permanentDelete = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Permanent Delete'
+    );
+    expect(permanentDelete).toBeTruthy();
+
+    await act(async () => {
+      permanentDelete.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('This action is irreversible.');
+
+    await act(async () => {
+      setFieldValue(container.querySelector('textarea[name="deletion-reason"]'), 'Duplicate account cleanup.');
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Continue')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const typedConfirmation = container.querySelector('input[name="permanent-delete-confirmation"]');
+    expect(typedConfirmation).toBeTruthy();
+    const permanentConfirm = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Permanently Delete Account'
+    );
+    expect(permanentConfirm.disabled).toBe(true);
+
+    await act(async () => {
+      setFieldValue(typedConfirmation, 'DELETE');
+    });
+    expect(permanentConfirm.disabled).toBe(false);
+    await act(async () => {
+      permanentConfirm.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const permanentRequest = global.fetch.mock.calls.filter(([url, options]) => (
+      String(url).includes('/api/accounts/77?permanent=true') && options?.method === 'DELETE'
+    ));
+    expect(permanentRequest).toHaveLength(1);
+    expect(JSON.parse(permanentRequest[0][1].body)).toEqual({
+      reason: 'Duplicate account cleanup.',
+      permanent_confirmation: 'DELETE',
+    });
   });
 
   test('marks long user identity cells for contained ellipsis instead of character wrapping', async () => {
@@ -350,14 +419,14 @@ describe('ManageUsers edit flow', () => {
       deleteButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Delete Account');
+    expect(container.textContent).toContain('Archive Account');
     expect(container.textContent).toContain('Maria Santos');
     expect(container.textContent).toContain('Teacher');
     const continueButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Continue');
     await act(async () => {
       continueButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(container.textContent).toContain('Reason for deletion is required.');
+    expect(container.textContent).toContain('Reason for archiving is required.');
     expect(global.fetch.mock.calls.some(([url, options]) => String(url).includes('/api/accounts/7') && options?.method === 'DELETE')).toBe(false);
 
     const reason = container.querySelector('textarea[name="deletion-reason"]');
@@ -368,8 +437,8 @@ describe('ManageUsers edit flow', () => {
       continueButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Are you sure you want to remove this account?');
-    const confirmButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Delete Account');
+    expect(container.textContent).toContain('Are you sure you want to archive this account?');
+    const confirmButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Archive Account');
     await act(async () => {
       confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });

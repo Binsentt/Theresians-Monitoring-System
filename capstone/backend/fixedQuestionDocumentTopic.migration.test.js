@@ -44,3 +44,21 @@ test('AI-generation idempotency migration is additive and protects both replays 
   assert.doesNotMatch(migration, /DELETE\s+FROM/i);
   assert.doesNotMatch(migration, /TRUNCATE/i);
 });
+
+test('question-set approval migration adds review state without rewriting question content or history', () => {
+  const migration = fs.readFileSync(
+    path.join(__dirname, 'migrations', '014_add_learning_file_approval.sql'),
+    'utf8'
+  );
+
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS approval_status/i);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS approved_at/i);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS approved_by/i);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS approved_content_fingerprint/i);
+  assert.match(migration, /review_required/i);
+  assert.match(migration, /legacy_active/i);
+  assert.match(migration, /UPDATE\s+public\.learning_files[\s\S]*publish_status\s*=\s*'active'/i);
+  assert.doesNotMatch(migration, /UPDATE\s+public\.questions/i);
+  assert.doesNotMatch(migration, /DELETE\s+FROM/i);
+  assert.doesNotMatch(migration, /TRUNCATE/i);
+});
