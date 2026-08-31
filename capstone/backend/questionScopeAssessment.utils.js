@@ -16,8 +16,11 @@ const getQuestionIndex = (question = {}) => {
 
 const detectArithmeticTopicId = (questionText) => {
   const text = normalizeText(questionText).toLowerCase();
-  const hasAddition = /\d\s*\+\s*\d|\b(add|adds|adding|addition|plus|sum|total)\b/.test(text);
-  const hasSubtraction = /\d\s*-\s*\d|\b(subtract|subtracts|subtracting|subtraction|minus|difference|take away)\b/.test(text);
+  // Fixed Question scope checks use only a proved, exclusive arithmetic
+  // expression. Words such as "sum" or "difference" are not a safe
+  // classifier and must not override the teacher's selected canonical scope.
+  const hasAddition = /\d\s*\+\s*\d/.test(text);
+  const hasSubtraction = /\d\s*(?:-|−)\s*\d/.test(text);
 
   if (hasAddition && !hasSubtraction) return 'basic_addition';
   if (hasSubtraction && !hasAddition) return 'subtraction';
@@ -61,43 +64,17 @@ const assessQuestionScope = (question = {}, scope = {}) => {
 
   if (selectedScope.topic_id === 'basic_addition' || selectedScope.topic_id === 'subtraction') {
     const detectedTopicId = detectArithmeticTopicId(question.question);
-    if (!detectedTopicId) {
+    if (detectedTopicId && detectedTopicId !== selectedScope.topic_id) {
       return assessmentWithSourceIndex({
-        status: 'unverified',
-        code: 'QUESTION_TOPIC_UNVERIFIED',
+        status: 'mismatch',
+        detected_topic: getTopicById(detectedTopicId).display_label,
+        code: 'QUESTION_TOPIC_MISMATCH',
       }, sourceIndex);
     }
-    if (detectedTopicId === selectedScope.topic_id) {
-      return assessmentWithSourceIndex({ status: 'match' }, sourceIndex);
-    }
-    return assessmentWithSourceIndex({
-      status: 'mismatch',
-      detected_topic: getTopicById(detectedTopicId).display_label,
-      code: 'QUESTION_TOPIC_MISMATCH',
-    }, sourceIndex);
   }
 
-  const rawTopicId = normalizeText(question.topic_id);
-  if (!rawTopicId) {
-    return assessmentWithSourceIndex({
-      status: 'unverified',
-      code: 'QUESTION_TOPIC_METADATA_REQUIRED',
-    }, sourceIndex);
-  }
-  const questionTopicId = normalizeTopicId(rawTopicId);
-  if (!questionTopicId || !isValidScope(selectedScope.grade_level, selectedScope.difficulty, questionTopicId)) {
-    return assessmentWithSourceIndex({
-      status: 'unverified',
-      code: 'QUESTION_TOPIC_METADATA_UNSUPPORTED',
-    }, sourceIndex);
-  }
-  if (questionTopicId !== selectedScope.topic_id) {
-    return assessmentWithSourceIndex({
-      status: 'mismatch',
-      detected_topic: getTopicById(questionTopicId).display_label,
-      code: 'QUESTION_TOPIC_MISMATCH',
-    }, sourceIndex);
-  }
+  // The selected set scope is authoritative. Optional source topic metadata
+  // remains readable provenance only; it is never required or classified.
   return assessmentWithSourceIndex({ status: 'match' }, sourceIndex);
 };
 
@@ -120,51 +97,14 @@ const buildQuestionScopeMessage = (assessment, selectedTopic) => {
 
 const validateQuestionSetScope = ({
   selected_scope: selectedScopeInput = {},
-  document_topic: documentTopic,
-  require_document_topic: requireDocumentTopic = true,
   questions,
 } = {}) => {
-  const normalizedDocumentTopic = normalizeText(documentTopic);
-  if (requireDocumentTopic && !normalizedDocumentTopic) {
-    return {
-      isValid: false,
-      code: 'MISSING_DOCUMENT_TOPIC',
-      message: 'The Fixed Question document does not provide a topic. Review the document topic before Push to Game.',
-      question_errors: [],
-    };
-  }
-
-  const documentGrade = normalizeGradeLevel(selectedScopeInput.grade_level || selectedScopeInput.grade);
-  const documentDifficulty = normalizeDifficulty(selectedScopeInput.difficulty);
-  const documentTopicId = resolveLegacyDisplayTopic(
-    documentGrade,
-    documentDifficulty,
-    normalizedDocumentTopic,
-  );
-  if (requireDocumentTopic && !documentTopicId && (/[,;&]/.test(normalizedDocumentTopic) || /\band\b/i.test(normalizedDocumentTopic))) {
-    return {
-      isValid: false,
-      code: 'MULTI_TOPIC_DOCUMENT',
-      message: 'This Fixed Question document contains multiple topics. Game publication requires one controlled encounter topic.',
-      question_errors: [],
-    };
-  }
-
   const selectedScope = resolveSelectedScope(selectedScopeInput);
   if (!selectedScope) {
     return {
       isValid: false,
       code: 'QUESTION_SCOPE_INVALID',
       message: 'The selected Grade, Difficulty, and Topic scope is not supported by the canonical curriculum registry.',
-      question_errors: [],
-    };
-  }
-
-  if (requireDocumentTopic && documentTopicId !== selectedScope.topic_id) {
-    return {
-      isValid: false,
-      code: 'DOCUMENT_TOPIC_MISMATCH',
-      message: 'The Fixed Question document topic does not match its selected game publication topic.',
       question_errors: [],
     };
   }

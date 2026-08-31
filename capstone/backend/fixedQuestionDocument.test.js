@@ -213,7 +213,7 @@ test('maps a matching single controlled document topic to the only game publicat
   assert.equal(metadata.metadata_error, '');
 });
 
-test('blocks Grade and Difficulty conflicts between selected metadata and the document heading', () => {
+test('retains Grade and Difficulty document headings as non-authoritative provenance', () => {
   const gradeConflict = resolveFixedQuestionDocumentMetadata({
     documentText: `GRADE 2\nEASY – Lesson: Shapes`,
     selectedGradeLevel: 'Grade 1',
@@ -225,8 +225,8 @@ test('blocks Grade and Difficulty conflicts between selected metadata and the do
     selectedDifficulty: 'Easy',
   });
 
-  assert.match(gradeConflict.metadata_error, /selected Grade/i);
-  assert.match(difficultyConflict.metadata_error, /selected Difficulty/i);
+  assert.equal(gradeConflict.metadata_error, '');
+  assert.equal(difficultyConflict.metadata_error, '');
 });
 
 test('extracts DOCX and fixed-question PDF text through server-side extractors without using OpenAI', async () => {
@@ -432,6 +432,37 @@ test('accepts a canonical topic_id as the publication metadata authority', () =>
   assert.equal(result.document_errors.length, 0);
 });
 
+test('accepts a declared non-arithmetic canonical scope without per-question topic metadata', () => {
+  const questions = [{
+    question: 'How many sides does a square have?',
+    options: ['3', '4', '5', '6'],
+    correct_answer: '4',
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+  }];
+  const scopeValidation = require('./questionScopeAssessment.utils').validateQuestionSetScope({
+    selected_scope: {
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      topic_id: 'shapes',
+    },
+    document_topic: 'Basic Addition, Subtraction, Shapes, and Place Value',
+    questions,
+  });
+  const result = validateQuestionSetForPublication({
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    topic_id: 'shapes',
+    math_topic: 'Shapes',
+    questions,
+    scope_validation: scopeValidation,
+  });
+
+  assert.equal(scopeValidation.isValid, true);
+  assert.equal(result.isValid, true);
+  assert.deepEqual(result.document_errors, []);
+});
+
 test('allows structural review for a valid mixed-topic document while publication remains blocked', () => {
   const mixedQuestions = [
     {
@@ -525,14 +556,14 @@ test('blocks publication when a fixed-question document has no single controlled
   assert.match(result.document_errors.join(' '), /Topic must match/i);
 });
 
-test('blocks a mixed fixed-question document if a caller tries to assign it an arbitrary game topic', () => {
+test('retains a mixed fixed-question document heading as non-authoritative display metadata', () => {
   const error = validateFixedQuestionDocumentPublicationScope({
     file_type: 'fixed_questions',
     document_topic: 'Basic Addition, Subtraction, Shapes, and Place Value',
     math_topic: 'Basic Addition',
   });
 
-  assert.match(error, /multiple topics/i);
+  assert.equal(error, '');
   assert.equal(validateFixedQuestionDocumentPublicationScope({
     file_type: 'fixed_questions',
     document_topic: 'Basic Addition',

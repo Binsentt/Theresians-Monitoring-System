@@ -61,25 +61,11 @@ const resolveFixedQuestionDocumentMetadata = ({
   const lines = String(documentText || '').replace(/\r\n?/g, '\n').split('\n');
   const selectedGrade = normalizeText(selectedGradeLevel);
   const selectedLevel = normalizeDifficultyValue(selectedDifficulty);
-  const extractedGradeMatch = lines.map((line) => line.match(/^\s*grade\s+([1-6])\s*$/i)).find(Boolean);
-  const extractedGrade = extractedGradeMatch ? `Grade ${extractedGradeMatch[1]}` : '';
   const extractedLessonMatch = lines.map((line) => line.match(
     /^\s*(easy|normal|medium|difficult|hard)\s*(?:[-–—]\s*)?(?:lesson|topic)\s*:\s*(.+?)\s*$/i
   )).find(Boolean);
-  const extractedDifficulty = extractedLessonMatch ? normalizeDifficultyValue(extractedLessonMatch[1]) : '';
   const documentTopic = extractedLessonMatch ? normalizeText(extractedLessonMatch[2]) : '';
-  const metadataErrors = [];
-
-  if (extractedGrade && extractedGrade !== selectedGrade) {
-    metadataErrors.push('The selected Grade must match the Grade identified in the Fixed Question document.');
-  }
-  if (extractedDifficulty && extractedDifficulty !== selectedLevel) {
-    metadataErrors.push('The selected Difficulty must match the Difficulty identified in the Fixed Question document.');
-  }
-
-  const metadataError = metadataErrors.join(' ');
-  const mathTopic = !metadataError
-    && documentTopic
+  const mathTopic = documentTopic
     && isValidMathTopicForGradeDifficulty(selectedGrade, selectedLevel, documentTopic)
     ? documentTopic
     : null;
@@ -87,27 +73,17 @@ const resolveFixedQuestionDocumentMetadata = ({
   return {
     document_topic: documentTopic || null,
     math_topic: mathTopic,
-    metadata_error: metadataError,
+    // Source headings remain readable provenance only. The explicitly chosen
+    // Grade/Difficulty/Topic scope is authoritative for this set.
+    metadata_error: '',
   };
 };
 
 const validateFixedQuestionDocumentPublicationScope = ({
-  file_type,
-  document_topic,
-  math_topic,
 } = {}) => {
-  const documentTopic = normalizeText(document_topic);
-  const gameTopic = normalizeText(math_topic);
-
-  // Legacy rows did not persist a document topic. Preserve their existing
-  // controlled scope while enforcing the new rule for reviewed documents.
-  if (file_type !== 'fixed_questions' || !documentTopic || documentTopic === gameTopic) return '';
-
-  if (/[,&]/.test(documentTopic) || /\band\b/i.test(documentTopic)) {
-    return 'This fixed-question document contains multiple topics. Game publication requires a single-topic question source for a controlled encounter scope.';
-  }
-
-  return 'The Fixed Question document topic does not match its controlled game publication topic.';
+  // Compatibility export: document headings are display metadata, never a
+  // publication precondition for a declared canonical scope.
+  return '';
 };
 
 const tokenizeFixedQuestionText = (documentText) => String(documentText || '')
@@ -287,7 +263,6 @@ const validateQuestionSetForPublication = ({
   difficulty,
   topic_id,
   math_topic,
-  metadata_error = '',
   scope_validation: scopeValidation = null,
 } = {}) => {
   const reviewValidation = validateQuestionSetForReview({
@@ -296,7 +271,7 @@ const validateQuestionSetForPublication = ({
     difficulty,
     math_topic,
   });
-  const publicationMetadataError = metadata_error || validateLearningMetadata({
+  const publicationMetadataError = validateLearningMetadata({
     grade_level: normalizeText(grade_level),
     difficulty: normalizeDifficultyValue(difficulty),
     topic_id: normalizeText(topic_id),

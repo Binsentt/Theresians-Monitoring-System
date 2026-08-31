@@ -43,28 +43,20 @@ test('reports the original question number when subtraction is selected as Basic
   );
 });
 
-test('fails closed when a question cannot be deterministically scoped', () => {
+test('keeps the selected arithmetic scope when no exclusive arithmetic conflict is proved', () => {
   assert.deepEqual(
     assessQuestionScope({ source_index: 4, question: 'Solve this problem.' }, BASIC_ADDITION_SCOPE),
-    {
-      status: 'unverified',
-      code: 'QUESTION_TOPIC_UNVERIFIED',
-      source_index: 4,
-    }
+    { status: 'match', source_index: 4 }
   );
 });
 
-test('requires explicit per-question canonical metadata for topics without an approved deterministic rule', () => {
+test('keeps a selected non-arithmetic scope without per-question metadata or keyword classification', () => {
   assert.deepEqual(
     assessQuestionScope({ source_index: 2, question: 'How many sides does a square have?' }, SHAPES_SCOPE),
-    {
-      status: 'unverified',
-      code: 'QUESTION_TOPIC_METADATA_REQUIRED',
-      source_index: 2,
-    }
+    { status: 'match', source_index: 2 }
   );
   assert.deepEqual(
-    assessQuestionScope({ source_index: 2, question: 'How many sides does a square have?', topic_id: 'shapes' }, SHAPES_SCOPE),
+    assessQuestionScope({ source_index: 2, question: 'How many sides does a square have?', topic_id: 'not_a_topic' }, SHAPES_SCOPE),
     { status: 'match', source_index: 2 }
   );
 });
@@ -85,30 +77,18 @@ test('fails closed when a supplied selected topic_id is unsupported, even if its
   assert.equal(validation.code, 'QUESTION_SCOPE_INVALID');
 });
 
-test('rejects unsupported or mismatched explicit topic metadata without decomposing composites', () => {
+test('treats optional per-question topic metadata as non-authoritative for the selected scope', () => {
   assert.deepEqual(
     assessQuestionScope({ source_index: 5, question: 'How many sides does a square have?', topic_id: 'not_a_topic' }, SHAPES_SCOPE),
-    {
-      status: 'unverified',
-      code: 'QUESTION_TOPIC_METADATA_UNSUPPORTED',
-      source_index: 5,
-    }
+    { status: 'match', source_index: 5 }
   );
   assert.deepEqual(
     assessQuestionScope({ source_index: 5, question: 'How many sides does a square have?', topic_id: 'addition' }, SHAPES_SCOPE),
-    {
-      status: 'unverified',
-      code: 'QUESTION_TOPIC_METADATA_UNSUPPORTED',
-      source_index: 5,
-    }
+    { status: 'match', source_index: 5 }
   );
   assert.deepEqual(
     assessQuestionScope({ source_index: 7, question: 'What is 4 + 3?' }, COMPOSITE_SCOPE),
-    {
-      status: 'unverified',
-      code: 'QUESTION_TOPIC_METADATA_REQUIRED',
-      source_index: 7,
-    }
+    { status: 'match', source_index: 7 }
   );
   assert.deepEqual(
     assessQuestionScope({ source_index: 7, question: 'What is 4 + 3?', topic_id: 'basic_addition_subtraction' }, COMPOSITE_SCOPE),
@@ -136,7 +116,7 @@ test('keeps scope diagnostics publication-only for a structurally valid mixed se
   }]);
 });
 
-test('preserves the audited fifteen-question Addition/Subtraction document as mixed-topic publication-only evidence', () => {
+test('treats a multi-topic-looking document heading as non-authoritative display metadata', () => {
   const additionQuestions = new Set([1, 2, 4, 6, 8, 10, 11, 13, 15]);
   const questions = Array.from({ length: 15 }, (_, index) => {
     const source_index = index + 1;
@@ -159,8 +139,8 @@ test('preserves the audited fifteen-question Addition/Subtraction document as mi
 
   assert.equal(perQuestionScope.code, 'QUESTION_TOPIC_MISMATCH');
   assert.deepEqual(perQuestionScope.question_errors.map((error) => error.source_index), [3, 5, 7, 9, 12, 14]);
-  assert.equal(mixedDocumentScope.code, 'MULTI_TOPIC_DOCUMENT');
-  assert.equal(mixedDocumentScope.isValid, false);
+  assert.equal(mixedDocumentScope.code, 'QUESTION_TOPIC_MISMATCH');
+  assert.deepEqual(mixedDocumentScope.question_errors.map((error) => error.source_index), [3, 5, 7, 9, 12, 14]);
 });
 
 test('validates generated questions without requiring a fixed-document topic heading', () => {
