@@ -147,6 +147,23 @@ describe('Student Progress summary cards', () => {
     expect(sectionCell?.textContent).toBe('Not assigned');
   });
 
+  test('renders the stored canonical Section without deriving a replacement value', async () => {
+    global.fetch = jest.fn((url) => {
+      const value = String(url);
+      if (value.startsWith('/api/students/progress')) {
+        return jsonResponse([{ student_id: 44, student_name: 'Ava Santos', game_student_id: '001234', grade_level: 'Grade 3', section: 'Jade' }]);
+      }
+      if (value.startsWith('/api/analytics/overview')) return jsonResponse({ studentCount: 1, averageAccuracy: null, averageProgress: null });
+      if (value.startsWith('/api/analytics/recommendations')) return jsonResponse({ recommendations: [] });
+      return jsonResponse({});
+    });
+
+    await act(async () => root.render(<AdminStudentProgress />));
+
+    const sectionCell = container.querySelectorAll('.student-progress-table tbody tr td')[4];
+    expect(sectionCell?.textContent).toBe('Jade');
+  });
+
   test('uses a dataset-ready empty state when no authorised student records exist', async () => {
     global.fetch = jest.fn((url) => {
       const value = String(url);
@@ -175,9 +192,9 @@ describe('Student Progress summary cards', () => {
 
     await act(async () => root.render(<AdminStudentProgress />));
     expect(container.textContent).toContain('Reset All');
-    expect(container.textContent).toContain('Delete All');
-    expect(container.textContent).toContain('Delete');
-    expect(container.textContent).not.toContain('Archive All');
+    expect(container.textContent).toContain('Archive All');
+    expect(container.textContent).toContain('Archive Student Progress');
+    expect(container.textContent).not.toContain('Delete All');
     expect(container.textContent).not.toContain('Permanent Delete');
 
     const progressView = Array.from(container.querySelectorAll('select')).find((select) => select.value === 'active');
@@ -189,10 +206,10 @@ describe('Student Progress summary cards', () => {
     expect(global.fetch.mock.calls.some(([url]) => String(url).startsWith('/api/students/progress?lifecycle=archived'))).toBe(true);
     expect(container.textContent).toContain('Archived Student Progress');
     expect(container.textContent).toContain('Permanent Delete');
-    expect(container.textContent).not.toContain('Delete All');
+    expect(container.textContent).not.toContain('Archive All');
   });
 
-  test('groups active row actions in a dedicated vertical layout without changing their labels', async () => {
+  test('groups active row actions in a dedicated vertical layout with truthful archive wording', async () => {
     global.fetch = jest.fn((url) => {
       const value = String(url);
       if (value.startsWith('/api/students/progress')) return jsonResponse([{ student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 3' }]);
@@ -208,7 +225,7 @@ describe('Student Progress summary cards', () => {
     expect(Array.from(actionStack.querySelectorAll('button')).map((button) => button.textContent)).toEqual([
       'View Analytics',
       'Reset Progress',
-      'Delete',
+      'Archive Student Progress',
     ]);
   });
 });

@@ -73,8 +73,16 @@ const buildReviewRequiredFile = (overrides = {}) => ({
 
 const curriculumRegistryFixture = {
   version: '2026-08-31',
-  grades: ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'],
-  difficulties: ['Easy', 'Normal', 'Difficult'],
+  grades: ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'].map((value) => ({
+    value,
+    display_label: value,
+    aliases: [],
+  })),
+  difficulties: ['Easy', 'Normal', 'Difficult'].map((value) => ({
+    value,
+    display_label: value,
+    aliases: [],
+  })),
   topics: [
     ['basic_addition', 'Basic Addition'], ['subtraction', 'Subtraction'], ['shapes', 'Shapes'], ['place_value', 'Place Value'],
     ['addition', 'Addition'], ['multiplication', 'Multiplication'], ['word_problems', 'Word Problems'], ['division', 'Division'],

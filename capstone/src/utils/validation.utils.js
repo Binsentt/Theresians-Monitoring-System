@@ -78,6 +78,7 @@ export const validateChildProfile = ({
   gradeLevel,
   section,
   studentId,
+  sectionOptions = [],
 } = {}) => {
   const errors = {};
   const firstNameError = validateChildName(firstName, 'First name', { required: true });
@@ -89,8 +90,11 @@ export const validateChildProfile = ({
 
   if (!String(gradeLevel || '').trim()) errors.gradeLevel = 'Grade is required.';
   else if (!PARENT_CHILD_GRADE_OPTIONS.includes(gradeLevel)) errors.gradeLevel = 'Select an available Grade.';
-  const sectionError = validateSchoolSection(section);
+  const sectionError = validateSchoolSection(section, { required: true });
   if (sectionError) errors.section = sectionError;
+  else if (Array.isArray(sectionOptions) && sectionOptions.length > 0 && !sectionOptions.includes(String(section).trim())) {
+    errors.section = 'Select a Section available for the chosen Grade.';
+  }
 
   const studentIdResult = validateGameStudentId(studentId);
   if (!studentIdResult.isValid) errors.studentId = studentIdResult.error;

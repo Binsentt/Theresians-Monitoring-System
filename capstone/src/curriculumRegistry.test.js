@@ -29,3 +29,15 @@ test('uses backend registry scope memberships and labels without a local topic m
   expect(getRegistryTopicIdForDisplayLabel(registry, 'Grade 1', 'Easy', 'Shapes')).toBe('shapes');
   expect(getRegistryScopeTopics(registry, 'Grade 2', 'Easy')).toEqual([]);
 });
+
+test('preserves canonical values and display labels from object-shaped registry dimensions', () => {
+  const registry = normalizeCurriculumRegistry({
+    ...registryFixture,
+    grades: [{ value: 'Grade 1', display_label: 'Grade 1', aliases: ['1'] }],
+    difficulties: [{ value: 'Easy', display_label: 'Easy', aliases: [] }],
+  });
+
+  expect(registry.grades).toEqual([{ value: 'Grade 1', display_label: 'Grade 1', aliases: ['1'] }]);
+  expect(registry.difficulties).toEqual([{ value: 'Easy', display_label: 'Easy', aliases: [] }]);
+  expect(JSON.stringify(registry)).not.toContain('[object Object]');
+});

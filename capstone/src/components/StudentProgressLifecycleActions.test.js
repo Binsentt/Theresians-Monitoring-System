@@ -32,18 +32,20 @@ describe('StudentProgressLifecycleActions', () => {
     delete global.fetch;
   });
 
-  test('soft-deletes only the selected Student after a required reason and keeps every modal event out of the row', async () => {
+  test('archives only the selected Student after a required reason and keeps every modal event out of the row', async () => {
     const onComplete = jest.fn();
     const rowClick = jest.fn();
     global.fetch = jest.fn(() => jsonResponse({ success: true }));
     await act(async () => root.render(<div onClick={rowClick}><StudentProgressArchiveAction studentId={44} role="teacher" onComplete={onComplete} /></div>));
 
-    const button = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Delete');
+    const button = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Archive Student Progress');
     await act(async () => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(rowClick).not.toHaveBeenCalled();
 
     const overlay = document.body.querySelector('.learning-cycle-reset-overlay');
     expect(overlay?.parentElement).toBe(document.body);
+    expect(overlay.textContent).toContain('Archive Student Progress');
+    expect(overlay.textContent).toContain('Reason for Archive');
     const select = overlay.querySelector('select[name="archive-reason"]');
     await act(async () => {
       select.dispatchEvent(new Event('pointerdown', { bubbles: true }));
@@ -53,7 +55,7 @@ describe('StudentProgressLifecycleActions', () => {
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
     expect(rowClick).not.toHaveBeenCalled();
-    const submit = Array.from(overlay.querySelectorAll('button')).find((item) => item.textContent === 'Delete (Archive)' && item.type === 'submit');
+    const submit = Array.from(overlay.querySelectorAll('button')).find((item) => item.textContent === 'Archive Student Progress' && item.type === 'submit');
     await act(async () => submit.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 
     expect(global.fetch).toHaveBeenCalledWith(
@@ -109,6 +111,39 @@ describe('StudentProgressLifecycleActions', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ reason: 'New Lesson', custom_reason: '', expected_count: 3, confirmation: 'RESET' }),
+      })
+    );
+  });
+
+  test('archives all authorized active Students only after ARCHIVE is typed', async () => {
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('lifecycle-summary')) return jsonResponse({ affected_count: 2 });
+      return jsonResponse({ success: true, affected_count: 2 });
+    });
+    await act(async () => root.render(<BulkStudentProgressLifecycleAction operation="archive" role="admin" onComplete={jest.fn()} />));
+    const open = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Archive All');
+    await act(async () => open.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const overlay = document.body.querySelector('.learning-cycle-reset-overlay');
+    expect(overlay.textContent).toContain('Archive all currently authorized active Students');
+    expect(overlay.textContent).toContain('Type ARCHIVE to confirm');
+
+    const select = overlay.querySelector('select[name="bulk-archive-reason"]');
+    await act(async () => { select.value = 'End of School Year'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    const confirmation = overlay.querySelector('input[id="bulk-archive-confirmation"]');
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      valueSetter.call(confirmation, 'ARCHIVE');
+      confirmation.dispatchEvent(new Event('input', { bubbles: true }));
+      confirmation.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const submit = Array.from(overlay.querySelectorAll('button')).find((item) => item.textContent === 'Archive All' && item.type === 'submit');
+    await act(async () => submit.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/student-progress/bulk/archive',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ reason: 'End of School Year', custom_reason: '', expected_count: 2, confirmation: 'ARCHIVE' }),
       })
     );
   });

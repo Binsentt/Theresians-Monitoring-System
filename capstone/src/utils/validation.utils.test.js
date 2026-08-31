@@ -184,7 +184,7 @@ describe('validation.utils', () => {
   });
 
   describe('validateChildProfile', () => {
-    test('requires first name, last name, Grade, and Student ID while keeping Section optional', () => {
+    test('requires first name, last name, Grade, Section, and Student ID', () => {
       expect(validateChildProfile({
         firstName: ' ',
         lastName: '',
@@ -196,18 +196,20 @@ describe('validation.utils', () => {
         firstName: 'First name is required.',
         lastName: 'Last name is required.',
         gradeLevel: 'Grade is required.',
+        section: 'Section is required.',
         studentId: 'Student ID is required.',
       });
     });
 
-    test('accepts a normalized school Section label and preserves a leading-zero Student ID', () => {
+    test('accepts an available Section and preserves a leading-zero Student ID', () => {
       expect(validateChildProfile({
         firstName: 'Ava',
         lastName: 'Santos',
         middleInitial: 'M',
         gradeLevel: 'Grade 3',
-        section: 'Rizal',
+        section: 'Jade',
         studentId: '001234',
+        sectionOptions: ['Garnet', 'Jade'],
       })).toEqual({});
       expect(PARENT_CHILD_GRADE_OPTIONS).toEqual(['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6']);
     });
@@ -227,14 +229,17 @@ describe('validation.utils', () => {
       });
     });
 
-    test('does not seed fabricated section suggestions while accepting a supplied real school Section', () => {
+    test('rejects a Section that is not available for the selected Grade', () => {
       expect(validateChildProfile({
         firstName: 'Ava',
         lastName: 'Santos',
         gradeLevel: 'Grade 1',
-        section: 'Section C',
+        section: 'Emerald',
         studentId: '001234',
-      })).toEqual({});
+        sectionOptions: ['Amethyst', 'Amber'],
+      })).toEqual({
+        section: 'Select a Section available for the chosen Grade.',
+      });
     });
   });
 

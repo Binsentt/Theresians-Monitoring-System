@@ -1,11 +1,25 @@
 import { apiUrl } from './api';
 
-const asString = (value) => String(value || '').trim();
+const asString = (value) => typeof value === 'string' ? value.trim() : '';
+
+const normalizeDimension = (entry) => {
+  const source = entry && typeof entry === 'object' && !Array.isArray(entry)
+    ? entry
+    : { value: entry, display_label: entry, aliases: [] };
+  const value = asString(source.value);
+  const displayLabel = asString(source.display_label) || value;
+  if (!value || !displayLabel) return null;
+  return {
+    value,
+    display_label: displayLabel,
+    aliases: Array.isArray(source.aliases) ? source.aliases.map(asString).filter(Boolean) : [],
+  };
+};
 
 export const normalizeCurriculumRegistry = (payload = {}) => ({
   version: asString(payload.version),
-  grades: Array.isArray(payload.grades) ? payload.grades.map(asString).filter(Boolean) : [],
-  difficulties: Array.isArray(payload.difficulties) ? payload.difficulties.map(asString).filter(Boolean) : [],
+  grades: Array.isArray(payload.grades) ? payload.grades.map(normalizeDimension).filter(Boolean) : [],
+  difficulties: Array.isArray(payload.difficulties) ? payload.difficulties.map(normalizeDimension).filter(Boolean) : [],
   topics: Array.isArray(payload.topics)
     ? payload.topics.map((topic) => ({
       topic_id: asString(topic?.topic_id),

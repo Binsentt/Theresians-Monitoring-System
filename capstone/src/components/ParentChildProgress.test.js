@@ -115,7 +115,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
         game_student_id: '001234',
         student_name: 'Ava Santos',
         grade_level: 'Grade 3',
-        section: 'Section A',
+        section: 'Jade',
         total_quizzes: 0,
       }],
       unlinked_count: 0,
@@ -128,6 +128,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('Ava Santos');
     expect(container.textContent).toContain('Student ID');
     expect(container.textContent).toContain('001234');
+    expect(container.textContent).toContain('Grade 3 - Jade');
     expect(container.textContent).toContain('Quiz Sessions');
     expect(container.textContent).toContain('No game progress data available yet.');
     expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Reset Progress')).toBe(true);

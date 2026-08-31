@@ -17,6 +17,19 @@ const setSelectValue = (input, value) => {
   input.dispatchEvent(new Event('change', { bubbles: true }));
 };
 
+const sectionRegistryFixture = {
+  grades: [
+    { grade_level: 'Grade 1', sections: ['Amethyst', 'Amber'] },
+    { grade_level: 'Grade 2', sections: ['Diamond', 'Emerald'] },
+    { grade_level: 'Grade 3', sections: ['Garnet', 'Jade'] },
+    { grade_level: 'Grade 4', sections: ['Onyx', 'Moonstone'] },
+    { grade_level: 'Grade 5', sections: ['Pearl'] },
+    { grade_level: 'Grade 6', sections: ['Sardonyx', 'Zircon'] },
+  ],
+};
+
+const okJson = (body) => Promise.resolve({ ok: true, json: async () => body });
+
 describe('ParentAddChildModal', () => {
   let container;
   let root;
@@ -48,36 +61,52 @@ describe('ParentAddChildModal', () => {
     expect(container.textContent).toContain('Last name is required.');
     expect(container.textContent).toContain('Grade is required.');
     expect(container.textContent).toContain('Student ID is required.');
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledWith('/api/sections/registry', expect.any(Object));
+    expect(global.fetch).not.toHaveBeenCalledWith('/api/parent/children', expect.any(Object));
   });
 
-  test('keeps Section optional without fabricated suggestion values', async () => {
+  test('uses the backend registry for a required Grade-filtered Section dropdown and clears stale selection', async () => {
+    global.fetch.mockImplementation((url) => {
+      if (String(url).endsWith('/api/sections/registry')) return okJson(sectionRegistryFixture);
+      return okJson({});
+    });
     await act(async () => {
       root.render(<ParentAddChildModal onClose={jest.fn()} onCreated={jest.fn()} />);
+      await Promise.resolve();
     });
 
-    expect(container.querySelector('label[for="child-section"]')?.textContent).toBe('Section (Optional)');
-    expect(container.querySelector('#child-section')?.getAttribute('list')).toBeNull();
-    expect(container.querySelector('#child-section-suggestions')).toBeNull();
-    expect(container.textContent).toContain('Leave blank until official school Section data is available.');
+    const grade = container.querySelector('#child-grade');
+    const section = container.querySelector('#child-section');
+    expect(container.querySelector('label[for="child-section"]')?.textContent).toBe('Section *');
+    expect(section.tagName).toBe('SELECT');
+    expect(section.disabled).toBe(true);
+
+    await act(async () => { setSelectValue(grade, 'Grade 1'); });
+    expect(Array.from(section.options).map((option) => option.value)).toEqual(['', 'Amethyst', 'Amber']);
+    await act(async () => { setSelectValue(section, 'Amber'); });
+    expect(section.value).toBe('Amber');
+    await act(async () => { setSelectValue(grade, 'Grade 2'); });
+    expect(section.value).toBe('');
+    expect(Array.from(section.options).map((option) => option.value)).toEqual(['', 'Diamond', 'Emerald']);
   });
 
-  test('accepts a normalized real section label and preserves the leading-zero Student ID', async () => {
+  test('submits the selected canonical Section and preserves the leading-zero Student ID', async () => {
     const onCreated = jest.fn();
-    global.fetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({
+    global.fetch.mockImplementation((url) => {
+      if (String(url).endsWith('/api/sections/registry')) return okJson(sectionRegistryFixture);
+      return okJson({
         child: {
           id: 44,
           student_name: 'Ava M Santos',
           game_student_id: '001234',
           grade_level: 'Grade 3',
-          section: 'Rizal',
+          section: 'Jade',
         },
-      }),
+      });
     });
     await act(async () => {
       root.render(<ParentAddChildModal onClose={jest.fn()} onCreated={onCreated} />);
+      await Promise.resolve();
     });
 
     const fields = {
@@ -93,8 +122,8 @@ describe('ParentAddChildModal', () => {
       setInputValue(fields.lastName, 'Santos');
       setInputValue(fields.middleInitial, 'M');
       setSelectValue(fields.gradeLevel, 'Grade 3');
-      expect(fields.section.tagName).toBe('INPUT');
-      setInputValue(fields.section, '  Rizal  ');
+      expect(fields.section.tagName).toBe('SELECT');
+      setSelectValue(fields.section, 'Jade');
       setInputValue(fields.studentId, '001234');
       container.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
@@ -107,7 +136,7 @@ describe('ParentAddChildModal', () => {
         last_name: 'Santos',
         middle_initial: 'M',
         grade_level: 'Grade 3',
-        section: 'Rizal',
+        section: 'Jade',
         student_id: '001234',
       }),
     }));

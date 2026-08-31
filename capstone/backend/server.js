@@ -78,6 +78,10 @@ const {
   resolveLegacyDisplayTopic,
 } = require('./curriculumScopeRegistry');
 const {
+  getPublicSectionRegistrySnapshot,
+  resolveCanonicalSection,
+} = require('./sectionRegistry');
+const {
   QuestionGenerationError,
   generateLessonQuestions,
 } = require('./lessonQuestionGeneration');
@@ -1179,8 +1183,10 @@ const resolveParentChildProfile = (payload = {}) => {
   if (!gradeLevel) return { error: 'Grade is required.' };
   if (!PARENT_CHILD_GRADE_LEVELS.includes(gradeLevel)) return { error: 'Grade must be between Grade 1 and Grade 6.' };
 
-  const sectionResult = normalizeSchoolSection(payload.section);
+  const sectionResult = normalizeSchoolSection(payload.section, { required: true });
   if (sectionResult.error) return sectionResult;
+  const canonicalSection = resolveCanonicalSection(gradeLevel, sectionResult.section);
+  if (!canonicalSection) return { error: `Section is not available for ${gradeLevel}.` };
 
   const studentId = normalizeStudentCode(payload.student_id ?? payload.studentId ?? payload.game_student_id);
   if (!studentId) {
@@ -1197,7 +1203,7 @@ const resolveParentChildProfile = (payload = {}) => {
     lastName: lastName.value,
     middleInitial: middleInitial.value,
     gradeLevel,
-    section: sectionResult.section,
+    section: canonicalSection,
     studentId,
     fullName,
   };
@@ -7798,6 +7804,10 @@ app.get(
   requireAuthenticatedRoles(['parent', 'parent_teacher']),
   (req, res) => handlePlaytimeListRequest(req, res, { scope: 'children' })
 );
+
+app.get('/api/sections/registry', requireParentAnalyticsAccess, (req, res) => {
+  return res.json(getPublicSectionRegistrySnapshot());
+});
 
 app.post('/api/parent/children', requireParentAnalyticsAccess, async (req, res) => {
   const childProfile = resolveParentChildProfile(req.body);

@@ -77,7 +77,7 @@ const validChild = {
   last_name: 'Santos',
   middle_initial: 'M',
   grade_level: 'Grade 3',
-  section: 'Section A',
+  section: 'Jade',
   student_id: '001234',
 };
 
@@ -119,13 +119,13 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     assert.deepEqual(relationshipInsert, [19, 44, 'parent']);
   });
 
-  await t.test('normalizes a real Section label before storing the canonical child profile', async () => {
+  await t.test('normalizes an approved Section label before storing the canonical child profile', async () => {
     let accountInsert = null;
     queryHandler = async (sql, params) => {
       if (sql.includes('from public.accounts s') && sql.includes('where s.game_student_id = $1')) return emptyResult;
       if (sql.startsWith('insert into public.accounts')) {
         accountInsert = params;
-        return { rows: [{ id: 46, game_student_id: params.at(-1), role: 'student', name: 'Ava M Santos', grade_level: 'Grade 3', section: 'Rizal' }] };
+        return { rows: [{ id: 46, game_student_id: params.at(-1), role: 'student', name: 'Ava M Santos', grade_level: 'Grade 3', section: 'Jade' }] };
       }
       if (sql.startsWith('select id from public.teacher_student_relationships')) return emptyResult;
       if (sql.startsWith('insert into public.teacher_student_relationships')) return { rows: [{ id: 11 }] };
@@ -135,24 +135,18 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     const response = await requestJson(baseUrl, '/api/parent/children', {
       method: 'POST',
       headers: { Authorization: 'Bearer parent-token' },
-      body: JSON.stringify({ ...validChild, section: '  Rizal  ', student_id: '001246' }),
+      body: JSON.stringify({ ...validChild, section: '  Jade  ', student_id: '001246' }),
     });
 
     assert.equal(response.status, 201);
-    assert.ok(accountInsert.includes('Rizal'));
-    assert.equal(accountInsert.includes('  Rizal  '), false);
+    assert.ok(accountInsert.includes('Jade'));
+    assert.equal(accountInsert.includes('  Jade  '), false);
   });
 
-  await t.test('keeps a blank optional Section as null while preserving a leading-zero Student ID', async () => {
-    let accountInsert = null;
+  await t.test('rejects a missing required Section before a child-account write', async () => {
+    let wrote = false;
     queryHandler = async (sql, params) => {
-      if (sql.includes('from public.accounts s') && sql.includes('where s.game_student_id = $1')) return emptyResult;
-      if (sql.startsWith('insert into public.accounts')) {
-        accountInsert = params;
-        return { rows: [{ id: 47, game_student_id: params.at(-1), role: 'student', name: 'Ava M Santos', grade_level: 'Grade 3', section: null }] };
-      }
-      if (sql.startsWith('select id from public.teacher_student_relationships')) return emptyResult;
-      if (sql.startsWith('insert into public.teacher_student_relationships')) return { rows: [{ id: 12 }] };
+      if (sql.startsWith('insert')) wrote = true;
       return emptyResult;
     };
 
@@ -162,9 +156,32 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
       body: JSON.stringify({ ...validChild, section: '   ', student_id: '001247' }),
     });
 
-    assert.equal(response.status, 201);
-    assert.ok(accountInsert.includes(null));
-    assert.equal(accountInsert.at(-1), '001247');
+    assert.equal(response.status, 400);
+    assert.match(response.body.error, /Section is required/i);
+    assert.equal(wrote, false);
+  });
+
+  await t.test('returns the read-only registry and rejects an invalid Grade/Section pair before a write', async () => {
+    let wrote = false;
+    queryHandler = async (sql) => {
+      if (sql.startsWith('insert')) wrote = true;
+      return emptyResult;
+    };
+
+    const registryResponse = await requestJson(baseUrl, '/api/sections/registry', {
+      headers: { Authorization: 'Bearer parent-token' },
+    });
+    const invalidResponse = await requestJson(baseUrl, '/api/parent/children', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer parent-token' },
+      body: JSON.stringify({ ...validChild, grade_level: 'Grade 1', section: 'Emerald', student_id: '001248' }),
+    });
+
+    assert.equal(registryResponse.status, 200);
+    assert.deepEqual(registryResponse.body.grades[0], { grade_level: 'Grade 1', sections: ['Amethyst', 'Amber'] });
+    assert.equal(invalidResponse.status, 400);
+    assert.match(invalidResponse.body.error, /not available for Grade 1/i);
+    assert.equal(wrote, false);
   });
 
   await t.test('allows Parent/Teacher only through the authenticated parent identity', async () => {

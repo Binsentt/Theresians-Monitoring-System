@@ -85,7 +85,7 @@ const canonicalZeroGameplayStudent = {
   student_role: 'student',
   game_student_id: '001234',
   grade_level: 'Grade 3',
-  section: 'Section A',
+  section: 'Jade',
   score: null,
   correct_answers: null,
   total_questions: null,
@@ -135,7 +135,7 @@ test('canonical students remain visible before gameplay through only their authe
   assert.equal(admin.body[0].student_id, 44);
   assert.equal(admin.body[0].game_student_id, '001234');
   assert.equal(admin.body[0].grade_level, 'Grade 3');
-  assert.equal(admin.body[0].section, 'Section A');
+  assert.equal(admin.body[0].section, 'Jade');
   assert.equal(admin.body[0].correct_answers, null);
   assert.equal(admin.body[0].total_questions, null);
   assert.equal(admin.body[0].accuracy_rate, null);
@@ -144,6 +144,7 @@ test('canonical students remain visible before gameplay through only their authe
   const teacher = await requestJson(baseUrl, '/api/students/progress?teacher_id=999', { headers: authHeaders('teacher') });
   assert.equal(teacher.status, 200);
   assert.equal(teacher.body.length, 1);
+  assert.equal(teacher.body[0].section, 'Jade');
 
   const unrelatedTeacher = await requestJson(baseUrl, '/api/students/progress?teacher_id=16', { headers: authHeaders('otherTeacher') });
   assert.equal(unrelatedTeacher.status, 200);
@@ -153,6 +154,7 @@ test('canonical students remain visible before gameplay through only their authe
   assert.equal(parent.status, 200);
   assert.equal(parent.body.length, 1);
   assert.equal(parent.body[0].game_student_id, '001234');
+  assert.equal(parent.body[0].section, 'Jade');
 
   const teacherScope = observedScopes.find((entry) => entry.params.includes(16));
   const otherTeacherScope = observedScopes.find((entry) => entry.params.includes(17));
@@ -191,6 +193,7 @@ test('Parent/Teacher keeps its teacher and parent scopes distinct for the same c
   assert.deepEqual(teacherContext.body, []);
   assert.equal(parentContext.status, 200);
   assert.equal(parentContext.body.length, 1);
+  assert.equal(parentContext.body[0].section, 'Jade');
   assert.ok(teacherScopeSql.includes("lower(tsr.relationship_type) = 'teacher'"));
   assert.ok(parentScopeSql.includes("lower(tsr.relationship_type) = 'parent'"));
 });
@@ -247,7 +250,7 @@ test('an authenticated parent can open a canonical zero-gameplay child analysis 
   assert.equal(response.status, 200);
   assert.equal(response.body.progress.game_student_id, '001234');
   assert.equal(response.body.progress.grade_level, 'Grade 3');
-  assert.equal(response.body.progress.section, 'Section A');
+  assert.equal(response.body.progress.section, 'Jade');
   assert.equal(response.body.metrics.correctAnswers, null);
   assert.equal(response.body.metrics.totalQuestions, null);
   assert.equal(response.body.metrics.accuracy, null);

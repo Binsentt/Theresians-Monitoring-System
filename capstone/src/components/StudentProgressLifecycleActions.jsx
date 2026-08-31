@@ -93,15 +93,15 @@ export const StudentProgressArchiveAction = ({ studentId, role, onComplete, clas
   return (
     <>
       <button type="button" className={className} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={(event) => { event.stopPropagation(); setOpen(true); }}>
-        Delete
+        Archive Student Progress
       </button>
       {open && (
         <LifecycleDialog onClose={close}>
           <form onSubmit={submit} onPointerDown={stopModalEvent} onClick={stopModalEvent}>
-            <h2>Delete Student Progress</h2>
+            <h2>Archive Student Progress</h2>
             <p><strong>Action type: Archive / Remove from Active Progress</strong></p>
             <p>This removes the student from Active Progress views. Historical gameplay, Screen Time, and Activity Log remain preserved.</p>
-            <label htmlFor={`archive-reason-${studentId}`}>Reason for Delete</label>
+            <label htmlFor={`archive-reason-${studentId}`}>Reason for Archive</label>
             <select
               id={`archive-reason-${studentId}`}
               name="archive-reason"
@@ -133,7 +133,7 @@ export const StudentProgressArchiveAction = ({ studentId, role, onComplete, clas
             {error && <p className="learning-cycle-reset-error" role="alert">{error}</p>}
             <div className="learning-cycle-reset-actions">
               <button type="button" className="secondary-button" onClick={close} disabled={submitting}>Cancel</button>
-              <button type="submit" className="table-action-button" disabled={submitting}>{submitting ? 'Removing…' : 'Delete (Archive)'}</button>
+              <button type="submit" className="table-action-button" disabled={submitting}>{submitting ? 'Archiving…' : 'Archive Student Progress'}</button>
             </div>
           </form>
         </LifecycleDialog>
@@ -204,7 +204,7 @@ export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const isArchive = operation === 'archive';
-  const label = labelOverride || (isArchive ? 'Delete All' : 'Reset All');
+  const label = labelOverride || (isArchive ? 'Archive All' : 'Reset All');
   const requiredPhrase = isArchive ? 'ARCHIVE' : 'RESET';
   const reasons = isArchive ? ARCHIVE_REASONS : ['New Lesson', 'Completed Current Lesson', 'New Grading Period', 'Testing Data Cleanup', 'Other'];
 
@@ -254,7 +254,7 @@ export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete
         <LifecycleDialog onClose={close}>
           <form onSubmit={submit} onPointerDown={stopModalEvent} onClick={stopModalEvent}>
             <h2>{label}</h2>
-            <p>{warningOverride || (isArchive ? 'Delete all currently authorized active Students by moving them to Archived Progress. Historical records remain preserved. New Lesson is not an archive reason.' : 'Start a fresh learning cycle for all currently authorized active Students.')}</p>
+            <p>{warningOverride || (isArchive ? 'Archive all currently authorized active Students by moving them to Archived Progress. Historical records remain preserved. New Lesson is not an archive reason.' : 'Start a fresh learning cycle for all currently authorized active Students.')}</p>
             <p><strong>{summaryLoading ? 'Preparing affected count…' : `${affectedCount ?? 0} Students will be affected.`}</strong></p>
             <label htmlFor={`bulk-${operation}-reason`}>Reason</label>
             <select id={`bulk-${operation}-reason`} name={`bulk-${operation}-reason`} value={reason} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setReason(event.target.value); setError(''); }} disabled={submitting || summaryLoading}>

@@ -17,6 +17,7 @@ import {
   normalizeMathTopicForGradeDifficulty,
   getQuestionFolderStructure,
 } from './lessonQuestionManager.utils';
+import { normalizeCurriculumRegistry } from '../curriculumRegistry';
 
 const registryFixture = {
   grades: ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'],
@@ -131,6 +132,29 @@ describe('lesson question manager helpers', () => {
     expect(getQuestionFolderPath('Grade 1')).toBe('Questions/Grade 1/');
     expect(getQuestionFolderPath('Grade 1', 'Easy')).toBe('Questions/Grade 1/Easy');
     expect(getQuestionFolderPath('Grade 6', 'Hard')).toBe('Questions/Grade 6/Difficult');
+  });
+
+  test('uses registry display labels while retaining primitive folder scopes', () => {
+    const registry = normalizeCurriculumRegistry({
+      ...registryFixture,
+      grades: [{ value: 'Grade 1', display_label: 'Grade 1', aliases: ['1'] }],
+      difficulties: [{ value: 'Easy', display_label: 'Easy', aliases: [] }],
+      scopes: [{ grade_level: 'Grade 1', difficulty: 'Easy', topic_ids: ['basic_addition'] }],
+    });
+
+    expect(getQuestionFolderStructure(registry)).toEqual([{
+      grade: 'Grade 1',
+      folderName: 'Grade 1',
+      godotFolderName: 'Grade1',
+      difficulties: ['Easy'],
+    }]);
+    expect(getQuestionFolderView([], {}, registry).childFolders).toEqual([expect.objectContaining({
+      label: 'Grade 1',
+      grade_level: 'Grade 1',
+    })]);
+    expect(getQuestionFolderView([], { grade_level: 'Grade 1' }, registry).childFolders).toEqual([
+      expect.objectContaining({ label: 'Easy', grade_level: 'Grade 1', difficulty: 'Easy' }),
+    ]);
   });
 
   test('returns fixed system folder filters and files for the selected path', () => {

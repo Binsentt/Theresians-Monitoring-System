@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { apiUrl } from '../api';
+import { fetchSectionRegistry, getSectionsForGrade } from '../sectionRegistry';
 import { buildAuthHeaders } from './session.utils';
 import {
   PARENT_CHILD_GRADE_OPTIONS,
@@ -21,23 +22,60 @@ export default function ParentAddChildModal({ onClose, onCreated }) {
   const [touched, setTouched] = useState({});
   const [requestError, setRequestError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [sectionRegistry, setSectionRegistry] = useState(null);
+  const [sectionRegistryLoading, setSectionRegistryLoading] = useState(true);
+  const [sectionRegistryError, setSectionRegistryError] = useState('');
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadSectionRegistry = async () => {
+      try {
+        const registry = await fetchSectionRegistry((url, options = {}) => fetch(url, {
+          ...options,
+          headers: { ...buildAuthHeaders(), ...(options.headers || {}) },
+        }));
+        if (mounted) setSectionRegistry(registry);
+      } catch (error) {
+        if (mounted) setSectionRegistryError('Unable to load available Sections. Please try again.');
+      } finally {
+        if (mounted) setSectionRegistryLoading(false);
+      }
+    };
+
+    loadSectionRegistry();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const sectionOptions = getSectionsForGrade(sectionRegistry, form.gradeLevel);
+  const validateForm = (candidate) => validateChildProfile({
+    ...candidate,
+    sectionOptions: getSectionsForGrade(sectionRegistry, candidate.gradeLevel),
+  });
 
   const updateField = (field, value) => {
-    const nextForm = { ...form, [field]: value };
+    const nextForm = field === 'gradeLevel'
+      ? { ...form, gradeLevel: value, section: '' }
+      : { ...form, [field]: value };
     setForm(nextForm);
     if (touched[field]) {
-      setErrors((current) => ({ ...current, [field]: validateChildProfile(nextForm)[field] }));
+      setErrors((current) => ({ ...current, [field]: validateForm(nextForm)[field] }));
+    }
+    if (field === 'gradeLevel' && touched.section) {
+      setErrors((current) => ({ ...current, section: validateForm(nextForm).section }));
     }
   };
 
   const touchField = (field) => {
     setTouched((current) => ({ ...current, [field]: true }));
-    setErrors((current) => ({ ...current, [field]: validateChildProfile(form)[field] }));
+    setErrors((current) => ({ ...current, [field]: validateForm(form)[field] }));
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    const nextErrors = validateChildProfile(form);
+    const nextErrors = validateForm(form);
     setTouched({ firstName: true, lastName: true, middleInitial: true, gradeLevel: true, section: true, studentId: true });
     setErrors(nextErrors);
     setRequestError('');
@@ -107,9 +145,12 @@ export default function ParentAddChildModal({ onClose, onCreated }) {
             {errors.gradeLevel && <span className="error-text" role="alert">{errors.gradeLevel}</span>}
           </div>
           <div className="form-group">
-            <label htmlFor="child-section">Section (Optional)</label>
-            <input id="child-section" value={form.section} onChange={(event) => updateField('section', event.target.value)} onBlur={() => touchField('section')} maxLength={50} aria-invalid={Boolean(errors.section)} />
-            <span className="field-help">Leave blank until official school Section data is available.</span>
+            <label htmlFor="child-section">Section *</label>
+            <select id="child-section" value={form.section} onChange={(event) => updateField('section', event.target.value)} onBlur={() => touchField('section')} disabled={!form.gradeLevel || sectionRegistryLoading || !sectionRegistry} aria-invalid={Boolean(errors.section)}>
+              <option value="">{sectionRegistryLoading ? 'Loading Sections...' : 'Select Section'}</option>
+              {sectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}
+            </select>
+            {sectionRegistryError && <span className="field-help" role="alert">{sectionRegistryError}</span>}
             {errors.section && <span className="error-text" role="alert">{errors.section}</span>}
           </div>
           <div className="form-group parent-add-child-student-id">

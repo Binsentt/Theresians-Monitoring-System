@@ -1,5 +1,22 @@
 import { getRegistryScopeTopics } from '../curriculumRegistry';
 
+const normalizeRegistryDimension = (entry) => {
+  if (typeof entry === 'string') {
+    const value = entry.trim();
+    return value ? { value, displayLabel: value } : null;
+  }
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const value = typeof entry.value === 'string' ? entry.value.trim() : '';
+  const displayLabel = typeof entry.display_label === 'string' ? entry.display_label.trim() : value;
+  return value && displayLabel ? { value, displayLabel } : null;
+};
+
+const getRegistryDimensionOptions = (registry, key) => (
+  Array.isArray(registry?.[key])
+    ? registry[key].map(normalizeRegistryDimension).filter(Boolean)
+    : []
+);
+
 export const getQuestionFolderPath = (gradeLevel, difficulty) => {
   const grade = normalizeLearningMetadataValue(gradeLevel);
   const level = normalizeDifficultyValue(difficulty);
@@ -18,14 +35,14 @@ export const normalizeDifficultyValue = (value) => {
   return difficulty;
 };
 
-export const getGradeLevels = (registry) => Array.isArray(registry?.grades) ? registry.grades : [];
+export const getGradeLevels = (registry) => getRegistryDimensionOptions(registry, 'grades').map((entry) => entry.value);
 
-export const getDifficultyLevels = (registry) => Array.isArray(registry?.difficulties) ? registry.difficulties : [];
+export const getDifficultyLevels = (registry) => getRegistryDimensionOptions(registry, 'difficulties').map((entry) => entry.value);
 
-export const getQuestionFolderStructure = (registry) => getGradeLevels(registry).map((grade) => ({
-  grade,
-  folderName: grade,
-  godotFolderName: grade.replace(/\s+/g, ''),
+export const getQuestionFolderStructure = (registry) => getRegistryDimensionOptions(registry, 'grades').map((grade) => ({
+  grade: grade.value,
+  folderName: grade.displayLabel,
+  godotFolderName: grade.value.replace(/\s+/g, ''),
   difficulties: getDifficultyLevels(registry),
 }));
 
@@ -226,14 +243,13 @@ export const getQuestionFolderView = (files, selection = {}, registry) => {
   }
 
   if (!difficulty) {
-    const gradeFolder = questionFolderStructure.find((folder) => folder.grade === gradeLevel);
     return {
       path,
-      childFolders: (gradeFolder?.difficulties || getDifficultyLevels(registry)).map((level) => ({
+      childFolders: getRegistryDimensionOptions(registry, 'difficulties').map((level) => ({
         type: 'difficulty',
-        label: level,
+        label: level.displayLabel,
         grade_level: gradeLevel,
-        difficulty: level,
+        difficulty: level.value,
       })),
       files: filterLearningFiles(files, {
         search: selection.search || '',
