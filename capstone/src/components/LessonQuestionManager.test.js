@@ -35,6 +35,29 @@ const setSelectValue = (field, value) => {
 
 const getUploadModal = () => document.body.querySelector('.drive-upload-modal');
 const getUploadModalSelects = () => document.body.querySelectorAll('.drive-upload-modal select');
+let previewObservers = [];
+
+class MockIntersectionObserver {
+  constructor(callback, options) {
+    this.callback = callback;
+    this.options = options;
+    this.observe = jest.fn((target) => {
+      this.target = target;
+    });
+    this.disconnect = jest.fn();
+    previewObservers.push(this);
+  }
+}
+
+const markPreviewAsReviewed = async () => {
+  const observer = previewObservers.at(-1);
+  const sentinel = document.body.querySelector('[data-testid="final-question-review-sentinel"]');
+  expect(observer).toBeTruthy();
+  expect(sentinel).toBeTruthy();
+  await act(async () => {
+    observer.callback([{ target: sentinel, isIntersecting: true }]);
+  });
+};
 
 const openQuestionFolder = async (container, gradeLevel, difficulty) => {
   await act(async () => {
@@ -104,6 +127,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
   beforeEach(() => {
     global.IS_REACT_ACT_ENVIRONMENT = true;
+    previewObservers = [];
+    global.IntersectionObserver = MockIntersectionObserver;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -201,7 +226,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
         const isInvalid = currentFile?.validation_summary?.is_valid === false;
         return okJson({
           file: currentFile,
-          validation: { is_valid: !isInvalid, invalid_question_count: isInvalid ? 1 : 0 },
+          validation: currentFile?.preview_validation || { is_valid: !isInvalid, invalid_question_count: isInvalid ? 1 : 0 },
+          review_fingerprint: `review-${previewFileId}-${currentFile?.approval_status || 'pending'}`,
           questions: Array.from({ length: 5 }, (_, index) => ({
             id: (previewFileId * 10) + index,
             question: index === 0 ? 'What is 2 + 3?' : `Question ${index + 1} for preview ${previewFileId}`,
@@ -228,6 +254,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
     container.remove();
     delete global.fetch;
+    delete global.IntersectionObserver;
   });
 
   test('Fixed Question uploads require the dependent Grade, Difficulty, and Topic scope', async () => {
@@ -261,7 +288,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(getUploadModal().querySelector('.fixed-destination-display').textContent.trim()).toBe('Questions/Grade 3/Normal');
     expect(document.body.textContent).not.toContain('Select Folder');
     expect(document.body.textContent).not.toContain('New Folder');
-    expect(document.body.textContent).toContain('Lesson PDF File');
+    expect(document.body.textContent).toContain('Lesson PDF or PPTX File');
     expect(document.body.textContent).toContain('Fixed Question File');
     expect(getUploadModalSelects()[3].disabled).toBe(false);
     expect(getUploadModalSelects()[3].textContent).toContain('Multiplication');
@@ -382,6 +409,11 @@ describe('LessonQuestionManager upload and trash controls', () => {
       math_topic: 'Addition',
       file_type: 'fixed_questions',
       published: false,
+      validation_summary: {
+        is_valid: true,
+        invalid_question_count: 0,
+        publication_eligibility: { eligible: true, code: 'ELIGIBLE', message: 'Eligible for Game publication.' },
+      },
     }];
     fixtures.publishResponse = (options) => {
       if (options.body) return okJson({ success: true, message: 'Content pushed to game.' });
@@ -428,7 +460,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
   });
 
-  test('Question Count is required only for Lesson PDF File uploads and is hidden for fixed question files', async () => {
+  test('Question Count is required only for Lesson PDF or PPTX uploads and is hidden for fixed question files', async () => {
     await act(async () => {
       root.render(<LessonQuestionManager />);
     });
@@ -464,7 +496,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       getUploadModal().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
 
-    expect(document.body.textContent).toContain('Question Count is required for Lesson PDF files.');
+    expect(document.body.textContent).toContain('Question Count is required for Lesson PDF or PPTX files.');
     expect(global.fetch).not.toHaveBeenCalledWith('/api/learning-files/upload', expect.anything());
   });
 
@@ -741,6 +773,11 @@ describe('LessonQuestionManager upload and trash controls', () => {
       file_type: 'lesson',
       question_count: 1,
       published: false,
+      validation_summary: {
+        is_valid: true,
+        invalid_question_count: 0,
+        publication_eligibility: { eligible: true, code: 'ELIGIBLE', message: 'Eligible for Game publication.' },
+      },
     }];
 
     await act(async () => {
@@ -761,6 +798,40 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).toContain('ready for manual Push to Game');
   });
 
+  test('requires the final question sentinel in the inner Preview scroll container before Approve', async () => {
+    fixtures.files = [buildReviewRequiredFile()];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+    await act(async () => {
+      clickByText(container, 'Preview');
+    });
+
+    const approveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve');
+    const previewBody = document.body.querySelector('.generated-questions-preview-body');
+    const sentinel = document.body.querySelector('[data-testid="final-question-review-sentinel"]');
+    expect(approveButton.disabled).toBe(true);
+    expect(sentinel).toBeTruthy();
+    expect(previewObservers).toHaveLength(1);
+    expect(previewObservers[0].options.root).toBe(previewBody);
+    expect(previewObservers[0].target).toBe(sentinel);
+    expect(document.body.querySelector('input[type="checkbox"]')).toBeNull();
+
+    await act(async () => {
+      previewObservers[0].callback([{ target: sentinel, isIntersecting: true }]);
+    });
+    expect(approveButton.disabled).toBe(false);
+
+    await act(async () => {
+      clickByText(document.body, 'Close');
+      clickByText(container, 'Preview');
+    });
+    const reopenedApproveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve');
+    expect(reopenedApproveButton.disabled).toBe(true);
+  });
+
   test('shows structured fixed-question validation feedback and disables Push to Game for an invalid set', async () => {
     fixtures.files = [{
       id: 77,
@@ -771,7 +842,11 @@ describe('LessonQuestionManager upload and trash controls', () => {
       math_topic: 'Basic Addition',
       file_type: 'fixed_questions',
       published: false,
-      validation_summary: { is_valid: false, invalid_question_count: 1 },
+      validation_summary: {
+        is_valid: false,
+        invalid_question_count: 1,
+        publication_eligibility: { eligible: false, code: 'STRUCTURAL_VALIDATION_FAILED', message: 'Review and correct this question set before Push to Game.' },
+      },
     }];
 
     await act(async () => {
@@ -779,7 +854,9 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
     await openQuestionFolder(container, 'Grade 1', 'Easy');
 
-    const pushButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Push to Game'));
+    const pushButton = Array.from(container.querySelectorAll('button')).find((button) => (
+      button.textContent.includes('Push to Game') || button.textContent.includes('Not Eligible for Game')
+    ));
     expect(pushButton.disabled).toBe(true);
 
     await act(async () => {
@@ -791,7 +868,54 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).toContain('Exactly four answer choices are required.');
   });
 
-  test('labels a valid multi-topic document as ineligible without generic publication-ready messaging', async () => {
+  test('shows a proved deterministic scope conflict on the affected Preview question card', async () => {
+    fixtures.files = [{
+      id: 77,
+      title: 'addition-with-subtraction.docx',
+      file_name: 'addition-with-subtraction.docx',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      file_type: 'fixed_questions',
+      published: false,
+      validation_summary: {
+        is_valid: true,
+        invalid_question_count: 0,
+        publication_eligibility: {
+          eligible: false,
+          code: 'QUESTION_TOPIC_MISMATCH',
+          message: 'Question 2 conflicts with selected Topic: Basic Addition.',
+        },
+      },
+      preview_validation: {
+        is_valid: true,
+        invalid_question_count: 0,
+        scope_validation: {
+          isValid: false,
+          code: 'QUESTION_TOPIC_MISMATCH',
+          question_errors: [{
+            source_index: 2,
+            code: 'QUESTION_TOPIC_MISMATCH',
+            message: 'Question 2 conflicts with selected Topic: Basic Addition.',
+          }],
+        },
+      },
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+    await act(async () => {
+      clickByText(container, 'Preview');
+    });
+
+    const previewCards = document.body.querySelectorAll('.generated-question-card');
+    expect(previewCards[1].classList).toContain('invalid');
+    expect(previewCards[1].textContent).toContain('Question 2 conflicts with selected Topic: Basic Addition.');
+  });
+
+  test('treats the selected canonical scope as authoritative when a Fixed Question source has composite headings', async () => {
     fixtures.files = [{
       id: 77,
       title: 'grade-1-foundations.docx',
@@ -799,10 +923,14 @@ describe('LessonQuestionManager upload and trash controls', () => {
       grade_level: 'Grade 1',
       difficulty: 'Easy',
       document_topic: 'Basic Addition, Subtraction, Shapes, and Place Value',
-      math_topic: null,
+      math_topic: 'Shapes',
       file_type: 'fixed_questions',
       published: false,
-      validation_summary: { is_valid: true, invalid_question_count: 0 },
+      validation_summary: {
+        is_valid: true,
+        invalid_question_count: 0,
+        publication_eligibility: { eligible: true, code: 'ELIGIBLE', message: 'Eligible for Game publication.' },
+      },
     }];
 
     await act(async () => {
@@ -814,18 +942,18 @@ describe('LessonQuestionManager upload and trash controls', () => {
     const pushButton = Array.from(container.querySelectorAll('button')).find((button) => (
       button.textContent.includes('Not Eligible for Game') || button.textContent.includes('Push to Game')
     ));
-    expect(pushButton.disabled).toBe(true);
-    expect(pushButton.textContent).toContain('Not Eligible for Game');
-    expect(pushButton.title).toBe('Game publication requires a single-topic Fixed Question document.');
+    expect(pushButton.disabled).toBe(false);
+    expect(pushButton.textContent).toContain('Push to Game');
 
     await act(async () => {
       clickByText(container, 'Preview');
     });
 
-    expect(document.body.textContent).toContain('Document Lesson/Topic: Basic Addition, Subtraction, Shapes, and Place Value');
-    expect(document.body.textContent).toContain('Game Publication: Not Eligible — Multi-topic document');
+    expect(document.body.textContent).toContain('Declared Topic: Shapes');
+    expect(document.body.textContent).toContain('Source heading (informational): Basic Addition, Subtraction, Shapes, and Place Value');
+    expect(document.body.textContent).toContain('Game Publication: Eligible — Shapes');
     expect(document.body.textContent).not.toContain('Needs Correction');
-    expect(document.body.textContent).not.toContain('ready for manual Push to Game');
+    expect(document.body.textContent).toContain('ready for manual Push to Game');
     expect(document.body.querySelector('.generated-questions-preview-header')).toBeTruthy();
     expect(document.body.querySelector('.generated-questions-preview-body')).toBeTruthy();
     expect(document.body.querySelector('.generated-questions-preview-footer')).toBeTruthy();
@@ -833,14 +961,13 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.querySelector('.generated-questions-preview-footer').textContent).toContain('Close');
   });
 
-  test('shows the server-controlled Fixed Question publication diagnostic in the status column', async () => {
+  test('shows an exact server-provided deterministic scope-conflict diagnostic in the status column', async () => {
     fixtures.files = [{
       id: 77,
       title: 'uncontrolled-topic.docx',
       file_name: 'uncontrolled-topic.docx',
       grade_level: 'Grade 1',
       difficulty: 'Easy',
-      document_topic: 'Unapproved Topic',
       math_topic: 'Basic Addition',
       file_type: 'fixed_questions',
       published: false,
@@ -849,8 +976,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
         invalid_question_count: 0,
         publication_eligibility: {
           eligible: false,
-          code: 'UNCONTROLLED_DOCUMENT_TOPIC',
-          message: 'The Fixed Question document topic is not an approved topic for the selected Grade and Difficulty.',
+          code: 'DETERMINISTIC_SCOPE_CONFLICT',
+          message: 'Question 4 conflicts with selected Topic: Basic Addition.',
         },
       },
     }];
@@ -860,7 +987,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
     await openQuestionFolder(container, 'Grade 1', 'Easy');
 
-    expect(container.textContent).toContain('The Fixed Question document topic is not an approved topic for the selected Grade and Difficulty.');
+    expect(container.textContent).toContain('Question 4 conflicts with selected Topic: Basic Addition.');
     const pushButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Not Eligible for Game'));
     expect(pushButton.disabled).toBe(true);
   });
@@ -876,7 +1003,11 @@ describe('LessonQuestionManager upload and trash controls', () => {
       math_topic: 'Basic Addition',
       file_type: 'fixed_questions',
       published: false,
-      validation_summary: { is_valid: true, invalid_question_count: 0 },
+      validation_summary: {
+        is_valid: true,
+        invalid_question_count: 0,
+        publication_eligibility: { eligible: true, code: 'ELIGIBLE', message: 'Eligible for Game publication.' },
+      },
     }];
 
     await act(async () => {
@@ -1074,6 +1205,11 @@ describe('LessonQuestionManager upload and trash controls', () => {
       math_topic: 'Addition',
       file_type: 'fixed_questions',
       published: false,
+      validation_summary: {
+        is_valid: true,
+        invalid_question_count: 0,
+        publication_eligibility: { eligible: true, code: 'ELIGIBLE', message: 'Eligible for Game publication.' },
+      },
     }];
 
     await act(async () => {
@@ -1386,6 +1522,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
       const approveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve');
       expect(approveButton).toBeTruthy();
+      expect(approveButton.disabled).toBe(true);
+      await markPreviewAsReviewed();
       expect(approveButton.disabled).toBe(false);
 
       if (account.role === 'parent_teacher') {
@@ -1487,6 +1625,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(previewModal.querySelector('[aria-label="Close generated questions preview"]')).toBeNull();
     const approveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve');
     expect(approveButton).toBeTruthy();
+    expect(approveButton.disabled).toBe(true);
+    await markPreviewAsReviewed();
     expect(approveButton.disabled).toBe(false);
     expect(document.body.querySelector('.question-review-confirmation')).toBeNull();
     await act(async () => {
@@ -1503,7 +1643,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(refreshedPushButton.disabled).toBe(false);
   });
 
-  test('keeps Push to Game disabled when the approval response reports a mixed-topic blocker', async () => {
+  test('keeps a composite source heading informational after approval of its declared scope', async () => {
     fixtures.files = [buildReviewRequiredFile()];
     fixtures.approvalResponse = () => {
       const approvedFile = buildReviewRequiredFile({
@@ -1512,9 +1652,9 @@ describe('LessonQuestionManager upload and trash controls', () => {
         validation_summary: {
           ...buildReviewRequiredFile().validation_summary,
           publication_eligibility: {
-            eligible: false,
-            code: 'MULTI_TOPIC_DOCUMENT',
-            message: 'Game publication requires a single-topic Fixed Question document.',
+            eligible: true,
+            code: 'ELIGIBLE',
+            message: 'Eligible for Game publication.',
           },
         },
       });
@@ -1530,13 +1670,16 @@ describe('LessonQuestionManager upload and trash controls', () => {
       clickByText(container, 'Preview');
     });
 
+    await markPreviewAsReviewed();
+
     await act(async () => {
       Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve').click();
     });
 
-    expect(document.body.textContent).toContain('Game publication requires a single-topic Fixed Question document.');
+    expect(document.body.textContent).toContain('Source heading (informational): Basic Addition, Subtraction');
+    expect(document.body.textContent).toContain('Game Publication: Eligible — Basic Addition');
     expect(document.body.querySelector('.generated-questions-preview-footer').textContent).not.toContain('Approve');
-    const pushButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Not Eligible for Game'));
-    expect(pushButton.disabled).toBe(true);
+    const pushButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Push to Game'));
+    expect(pushButton.disabled).toBe(false);
   });
 });

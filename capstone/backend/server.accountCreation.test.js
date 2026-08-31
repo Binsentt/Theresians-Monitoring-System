@@ -1318,7 +1318,7 @@ test('permanent account deletion requires an archived account and typed DELETE c
   assert.equal(permanentlyDeleted, true);
 });
 
-test('a structurally valid mixed-topic question set receives approval but remains publication-gated', async (t) => {
+test('a structurally valid set with proved arithmetic conflict receives approval but remains publication-gated', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const statements = [];
@@ -1329,12 +1329,13 @@ test('a structurally valid mixed-topic question set receives approval but remain
 
   const reviewedFile = {
     id: 91,
-    title: 'reviewed-addition-subtraction.docx',
-    file_name: 'reviewed-addition-subtraction.docx',
+    title: 'reviewed-basic-addition.docx',
+    file_name: 'reviewed-basic-addition.docx',
     file_type: 'fixed_questions',
     grade_level: 'Grade 1',
     difficulty: 'Easy',
-    math_topic: null,
+    topic_id: 'basic_addition',
+    math_topic: 'Basic Addition',
     document_topic: 'Addition and Subtraction',
     published: false,
     publish_status: 'staged',
@@ -1382,7 +1383,8 @@ test('a structurally valid mixed-topic question set receives approval but remain
   assert.equal(response.body.learningFile.approval_status, 'approved');
   assert.equal(response.body.validation.review_eligibility.eligible, true);
   assert.equal(response.body.validation.publication_eligibility.eligible, false);
-  assert.equal(response.body.validation.publication_eligibility.code, 'MULTI_TOPIC_DOCUMENT');
+  assert.equal(response.body.validation.publication_eligibility.code, 'QUESTION_TOPIC_MISMATCH');
+  assert.match(response.body.validation.publication_eligibility.message, /Question 3 conflicts with selected Topic: Basic Addition/i);
   assert.ok(statements.some((entry) => entry.sql.startsWith('update public.learning_files set approval_status =')));
   assert.ok(statements.some((entry) => entry.sql.startsWith('insert into public.admin_audit_logs')));
 });

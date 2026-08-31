@@ -175,29 +175,10 @@ function getPublicationEligibility(file = {}) {
       code: String(serverEligibility.code || '').trim(),
     };
   }
-  const gameTopic = String(file.math_topic || '').trim();
-  if (file.file_type !== 'fixed_questions') {
-    return {
-      eligible: Boolean(gameTopic),
-      label: gameTopic ? 'Eligible — ' + gameTopic : 'Not available',
-      reason: '',
-    };
-  }
-  if (gameTopic) {
-    return {
-      eligible: true,
-      label: 'Eligible — ' + gameTopic,
-      reason: '',
-    };
-  }
-
-  const documentTopic = String(file.document_topic || '').trim();
   return {
     eligible: false,
-    label: /[,;&]|\band\b/i.test(documentTopic)
-      ? 'Not Eligible — Multi-topic document'
-      : 'Not Eligible — Single-topic source required',
-    reason: 'Game publication requires a single-topic Fixed Question document.',
+    label: 'Eligibility unavailable',
+    reason: 'Publication eligibility has not been loaded for this question set.',
   };
 }
 
@@ -218,6 +199,18 @@ function getFixedQuestionPublicationBlockReason(file = {}) {
   return file.file_type === 'fixed_questions' && !eligibility.eligible
     ? eligibility.reason
     : '';
+}
+
+function getPreviewQuestionValidationErrors(question = {}, index, validation = {}) {
+  const sourceIndex = Number(question.source_index) || index + 1;
+  const structuralErrors = Array.isArray(question.validation_errors) ? question.validation_errors : [];
+  const scopeErrors = Array.isArray(validation?.scope_validation?.question_errors)
+    ? validation.scope_validation.question_errors
+      .filter((error) => Number(error?.source_index) === sourceIndex)
+      .map((error) => String(error?.message || '').trim())
+      .filter(Boolean)
+    : [];
+  return [...new Set([...structuralErrors, ...scopeErrors])];
 }
 
 function buildNextTopicSelection(registry, gradeLevel, difficulty, currentTopic) {
@@ -250,7 +243,10 @@ export default function LessonQuestionManager() {
   const [previewValidation, setPreviewValidation] = useState(null);
   const [previewQuestionsLoading, setPreviewQuestionsLoading] = useState(false);
   const [approvingPreview, setApprovingPreview] = useState(false);
+  const [reviewComplete, setReviewComplete] = useState(false);
+  const [reviewSnapshotKey, setReviewSnapshotKey] = useState('');
   const previewBodyRef = useRef(null);
+  const finalQuestionSentinelRef = useRef(null);
   const uploadInFlightRef = useRef(false);
   const [fixedUploadValidation, setFixedUploadValidation] = useState(null);
   const [selectedFolder, setSelectedFolder] = useState({ grade_level: '', difficulty: '' });
@@ -273,7 +269,32 @@ export default function LessonQuestionManager() {
     if (questionPreviewFile && previewBodyRef.current) {
       previewBodyRef.current.scrollTop = 0;
     }
-  }, [questionPreviewFile?.id]);
+  }, [questionPreviewFile?.id, reviewSnapshotKey]);
+
+  useLayoutEffect(() => {
+    if (
+      !questionPreviewFile
+      || previewQuestionsLoading
+      || previewQuestions.length === 0
+      || !reviewSnapshotKey
+      || !previewBodyRef.current
+      || !finalQuestionSentinelRef.current
+      || typeof IntersectionObserver !== 'function'
+    ) {
+      return undefined;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.target === finalQuestionSentinelRef.current && entry.isIntersecting)) {
+        setReviewComplete(true);
+      }
+    }, {
+      root: previewBodyRef.current,
+      threshold: 0.01,
+    });
+    observer.observe(finalQuestionSentinelRef.current);
+    return () => observer.disconnect();
+  }, [questionPreviewFile?.id, previewQuestions.length, previewQuestionsLoading, reviewSnapshotKey]);
 
   useLayoutEffect(() => {
     if (!questionPreviewFile) return undefined;
@@ -405,6 +426,7 @@ export default function LessonQuestionManager() {
     && previewApprovalRequired;
   const previewCanApprove = previewCanShowApprove
     && previewReviewEligibility.eligible
+    && reviewComplete
     && !approvingPreview;
   const previewIsReadyForGame = previewValidation?.is_valid !== false && previewPublicationEligibility.eligible;
   const reportColumns = [
@@ -412,7 +434,7 @@ export default function LessonQuestionManager() {
     { header: 'File / Question Set Name', value: (row) => row.generated_question_set_name || row.title || row.file_name },
     { header: 'Grade', value: (row) => row.grade_level },
     { header: 'Difficulty', value: (row) => row.difficulty },
-    { header: 'File Type / Source', value: (row) => row.source_label || (row.file_type === 'lesson' ? 'Lesson PDF File' : 'Fixed Question File') },
+    { header: 'File Type / Source', value: (row) => row.source_label || (row.file_type === 'lesson' ? 'Lesson PDF or PPTX File' : 'Fixed Question File') },
     { header: 'Question Count', value: (row) => Number.isInteger(Number(row.question_count)) ? Number(row.question_count) : (row.file_type === 'lesson' ? row.requested_question_count : null) },
     { header: 'Status', value: (row) => getQuestionSetStatus(row) },
     { header: 'Date Modified', value: (row) => formatUploadDate(row.published_at || row.generated_at || row.uploaded_at) },
@@ -503,11 +525,11 @@ export default function LessonQuestionManager() {
   const saveLessonSource = async () => {
     if (uploading || savingLessonSource || uploadInFlightRef.current) return;
     if (uploadType !== 'lesson' || !form.file) {
-      showNotification('Choose a Lesson PDF before saving a reusable source.', 'error');
+      showNotification('Choose a Lesson PDF or PPTX before saving a reusable source.', 'error');
       return;
     }
     if (!isSupportedLearningUpload(form.file.name, 'lesson')) {
-      showNotification('Lesson sources must be PDF files.', 'error');
+      showNotification('Lesson sources must be PDF or PPTX files.', 'error');
       return;
     }
     const payload = new FormData();
@@ -521,14 +543,14 @@ export default function LessonQuestionManager() {
         body: payload,
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Unable to save the Lesson PDF source.');
+      if (!response.ok) throw new Error(data.error || 'Unable to save the Lesson source.');
       const source = normalizeManagedLearningFile(data.lessonSource || {});
       setLessonSources((current) => [source, ...current.filter((item) => item.id !== source.id)]);
       setSelectedLessonSourceId(String(source.id));
-      showNotification('Lesson PDF saved as a reusable source. Select its Grade, Difficulty, Topic, and Question Count to generate a child set.');
+      showNotification('Lesson source saved. Select its Grade, Difficulty, Topic, and Question Count to generate a child set.');
     } catch (error) {
       console.error(error);
-      showNotification(error.message || 'Unable to save the Lesson PDF source.', 'error');
+      showNotification(error.message || 'Unable to save the Lesson source.', 'error');
     } finally {
       setSavingLessonSource(false);
     }
@@ -537,7 +559,7 @@ export default function LessonQuestionManager() {
   const generateQuestionSetFromLessonSource = async (requestedCount) => {
     const sourceId = Number(selectedLessonSourceId);
     if (!Number.isSafeInteger(sourceId) || sourceId < 1) {
-      showNotification('Select a reusable Lesson PDF source first.', 'error');
+      showNotification('Select a reusable Lesson PDF or PPTX source first.', 'error');
       return;
     }
     const storageKey = buildLessonSourceGenerationStorageKey({
@@ -572,7 +594,7 @@ export default function LessonQuestionManager() {
       }
       await loadFilesAndFolders();
       if (data.code === 'AI_GENERATION_IN_PROGRESS') {
-        showNotification('Question generation is already in progress for this Lesson PDF source.', 'info');
+        showNotification('Question generation is already in progress for this Lesson source.', 'info');
         return;
       }
       clearLessonGenerationIdempotencyKey(storageKey);
@@ -603,7 +625,7 @@ export default function LessonQuestionManager() {
       return;
     }
     if (!uploadType || (!usingReusableLessonSource && !isSupportedLearningUpload(form.file.name, uploadType))) {
-      showNotification('Lesson files must be PDF. Fixed Questions support DOCX or PDF documents.', 'error');
+      showNotification('Lesson files must be PDF or PPTX. Fixed Questions support DOCX or PDF documents.', 'error');
       return;
     }
     if (
@@ -618,7 +640,7 @@ export default function LessonQuestionManager() {
     if (uploadType === 'lesson' && (!/^\d+$/.test(requestedCount) || Number(requestedCount) < 1 || Number(requestedCount) > MAX_LESSON_QUESTION_COUNT)) {
       setFormErrors({ expected_question_count: `Question Count must be a whole number between 1 and ${MAX_LESSON_QUESTION_COUNT}.` });
       if (!requestedCount) {
-        setFormErrors({ expected_question_count: 'Question Count is required for Lesson PDF files.' });
+        setFormErrors({ expected_question_count: 'Question Count is required for Lesson PDF or PPTX files.' });
       }
       return;
     }
@@ -782,6 +804,8 @@ export default function LessonQuestionManager() {
     setPreviewValidation(null);
     setPreviewQuestionsLoading(false);
     setApprovingPreview(false);
+    setReviewComplete(false);
+    setReviewSnapshotKey('');
   };
 
   const openQuestionSetPreview = async (file) => {
@@ -791,6 +815,8 @@ export default function LessonQuestionManager() {
     setPreviewValidation(null);
     setPreviewQuestionsLoading(true);
     setApprovingPreview(false);
+    setReviewComplete(false);
+    setReviewSnapshotKey('');
     try {
       const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/questions`));
       const data = await response.json();
@@ -798,6 +824,7 @@ export default function LessonQuestionManager() {
       setQuestionPreviewDetails(data.file || file);
       setPreviewQuestions(Array.isArray(data.questions) ? data.questions : []);
       setPreviewValidation(data.validation || null);
+      setReviewSnapshotKey(String(data.review_fingerprint || `${file.id}:${(data.questions || []).map((question) => question.id || question.question || '').join('|')}`));
     } catch (error) {
       console.error(error);
       showNotification(error.message || 'Unable to preview generated questions.', 'error');
@@ -825,6 +852,7 @@ export default function LessonQuestionManager() {
       setFiles((current) => current.map((file) => (file.id === approvedFile.id ? approvedFile : file)));
       setQuestionPreviewDetails(approvedFile);
       setPreviewValidation(responseValidation || previewValidation);
+      await loadFilesAndFolders();
       showNotification('Question set approved. Push to Game remains a separate action.');
     } catch (error) {
       console.error(error);
@@ -1020,7 +1048,7 @@ export default function LessonQuestionManager() {
       className: 'drive-type-column',
       render: (value, row) => (
         <div className="manager-file-type-cell">
-          <span>{value === 'lesson' ? 'Lesson PDF File' : 'Fixed Question File'}</span>
+          <span>{value === 'lesson' ? 'Lesson PDF or PPTX File' : 'Fixed Question File'}</span>
           {row.source_label && <span className="file-meta">{row.source_label}</span>}
         </div>
       ),
@@ -1296,7 +1324,7 @@ export default function LessonQuestionManager() {
                         <label className="form-label">File Type</label>
                         <select className="select-field" value={filters.file_type} onChange={(event) => handleFilterChange('file_type', event.target.value)}>
                           <option value="">All file types</option>
-                          <option value="lesson">Lesson PDF File</option>
+                          <option value="lesson">Lesson PDF or PPTX File</option>
                           <option value="fixed_questions">Fixed Question File</option>
                         </select>
                       </div>
@@ -1426,7 +1454,7 @@ export default function LessonQuestionManager() {
                     <div className="form-group">
                       <label className="form-label required">File Type</label>
                       <select className="select-field" value={form.file_type} onChange={(event) => handleFormChange('file_type', event.target.value)}>
-                        <option value="lesson">Lesson PDF File</option>
+                        <option value="lesson">Lesson PDF or PPTX File</option>
                         <option value="fixed_questions">Fixed Question File</option>
                       </select>
                     </div>
@@ -1447,13 +1475,13 @@ export default function LessonQuestionManager() {
                     </div>
                     {form.file_type === 'lesson' && (
                       <div className="form-group">
-                        <label className="form-label">Reusable Lesson PDF Source</label>
+                        <label className="form-label">Reusable Lesson PDF or PPTX Source</label>
                         <select
                           className="select-field"
                           value={selectedLessonSourceId}
                           onChange={(event) => setSelectedLessonSourceId(event.target.value)}
                         >
-                          <option value="">Upload a Lesson PDF for this generation</option>
+                          <option value="">Upload a Lesson PDF or PPTX for this generation</option>
                           {lessonSources.map((source) => (
                             <option key={source.id} value={source.id}>
                               {source.title}{source.generated_child_count ? ` (${source.generated_child_count} generated sets)` : ''}
@@ -1496,7 +1524,7 @@ export default function LessonQuestionManager() {
                         <input
                           type="file"
                           accept={form.file_type === 'lesson'
-                            ? '.pdf,application/pdf'
+                            ? '.pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation'
                             : '.docx,.pdf,.json,.csv,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,application/json,text/csv'}
                           onChange={(event) => handleFormChange('file', event.target.files[0] || null)}
                         />
@@ -1552,10 +1580,11 @@ export default function LessonQuestionManager() {
                     <div>
                       <h2 id="generated-questions-preview-title">Question Review</h2>
                       <p className="question-review-metadata">File Name: {previewFile.title || previewFile.file_name}</p>
-                      <p className="question-review-metadata">File Type: {previewFile.file_type === 'lesson' ? 'Lesson PDF File' : 'Fixed Question File'}</p>
+                      <p className="question-review-metadata">File Type: {previewFile.file_type === 'lesson' ? 'Lesson PDF or PPTX File' : 'Fixed Question File'}</p>
                       <p className="question-review-metadata">Grade: {previewFile.grade_level} · Difficulty: {previewFile.difficulty}</p>
+                      <p className="question-review-metadata">Declared Topic: {previewFile.math_topic || 'Not provided'}</p>
                       {previewFile.file_type === 'fixed_questions' && (
-                        <p className="question-review-metadata">Document Lesson/Topic: {previewFile.document_topic || 'Not provided'}</p>
+                        <p className="question-review-metadata">Source heading (informational): {previewFile.document_topic || 'Not provided'}</p>
                       )}
                       <p className="question-review-metadata">Game Publication: {previewPublicationEligibility.label}</p>
                       {previewApprovalRequired && (
@@ -1578,23 +1607,30 @@ export default function LessonQuestionManager() {
                     ) : (
                       <>
                         <p className="question-review-metadata">Requested: {previewFile.requested_question_count ?? 'Not specified'} · Available: {previewQuestions.length}</p>
-                        {previewValidation?.is_valid === false && <p className="manager-inline-error" role="alert">Needs Correction — every question must have four distinct choices, a mapped correct answer, and matching metadata.</p>}
+                        {previewValidation?.is_valid === false && <p className="manager-inline-error" role="alert">Needs Correction — every question must have four distinct choices, a mapped correct answer, and no proven conflict with the declared scope.</p>}
                         {previewValidation?.is_valid !== false && previewIsReadyForGame && <p className="question-validation-valid">Valid — this question set is ready for manual Push to Game.</p>}
                         {previewValidation?.is_valid !== false && previewApprovalRequired && <p className="question-review-metadata">Approve this structurally valid set before Push to Game.</p>}
-                        {previewQuestions.map((question, index) => (
-                          <article key={question.id || `${question.question}-${index}`} className={`generated-question-card ${question.is_valid === false ? 'invalid' : 'valid'}`}>
-                            <strong>{index + 1}. {question.question}</strong>
-                            <ol type="A">
-                          {(question.options || []).map((option, optionIndex) => (
-                            <li key={`${option}-${optionIndex}`} className={option === question.correct_answer ? 'correct-option' : ''}>
-                              {option}{option === question.correct_answer ? ' (Correct)' : ''}
-                            </li>
-                          ))}
-                            </ol>
-                            <p className="question-review-metadata">{formatQuestionGradeLabel(question.grade_level || previewFile.grade_level)} · {question.difficulty || previewFile.difficulty}</p>
-                            {question.is_valid === false ? (question.validation_errors || []).map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>) : <p className="question-validation-valid">Valid</p>}
-                          </article>
-                        ))}
+                        {previewQuestions.map((question, index) => {
+                          const questionErrors = getPreviewQuestionValidationErrors(question, index, previewValidation);
+                          const questionIsValid = question.is_valid !== false && questionErrors.length === 0;
+                          return (
+                            <React.Fragment key={question.id || `${question.question}-${index}`}>
+                              <article className={`generated-question-card ${questionIsValid ? 'valid' : 'invalid'}`}>
+                                <strong>{index + 1}. {question.question}</strong>
+                                <ol type="A">
+                                  {(question.options || []).map((option, optionIndex) => (
+                                    <li key={`${option}-${optionIndex}`} className={option === question.correct_answer ? 'correct-option' : ''}>
+                                      {option}{option === question.correct_answer ? ' (Correct)' : ''}
+                                    </li>
+                                  ))}
+                                </ol>
+                                <p className="question-review-metadata">{formatQuestionGradeLabel(question.grade_level || previewFile.grade_level)} · {question.difficulty || previewFile.difficulty}</p>
+                                {questionIsValid ? <p className="question-validation-valid">Valid</p> : questionErrors.map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
+                              </article>
+                              {index === previewQuestions.length - 1 && <div ref={finalQuestionSentinelRef} data-testid="final-question-review-sentinel" aria-hidden="true" />}
+                            </React.Fragment>
+                          );
+                        })}
                       </>
                     )}
                     </div>

@@ -86,7 +86,7 @@ export const normalizeMathTopicForGrade = (gradeLevel, topic, registry) => {
 
 export const inferLearningFileUploadType = (fileName) => {
   const normalizedName = String(fileName || '').trim().toLowerCase();
-  if (normalizedName.endsWith('.pdf')) return 'lesson';
+  if (/\.(pdf|pptx)$/.test(normalizedName)) return 'lesson';
   if (normalizedName.endsWith('.json') || normalizedName.endsWith('.csv')) return 'fixed_questions';
   return '';
 };
@@ -94,7 +94,7 @@ export const inferLearningFileUploadType = (fileName) => {
 export const isSupportedLearningUpload = (fileName, fileType) => {
   const normalizedName = String(fileName || '').trim().toLowerCase();
   const normalizedType = String(fileType || '').trim().toLowerCase();
-  if (normalizedType === 'lesson') return normalizedName.endsWith('.pdf');
+  if (normalizedType === 'lesson') return /\.(pdf|pptx)$/.test(normalizedName);
   if (normalizedType === 'fixed_questions') {
     return /\.(docx|pdf|json|csv)$/.test(normalizedName);
   }

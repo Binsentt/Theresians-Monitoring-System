@@ -510,10 +510,10 @@ test('an invalid legacy-shaped Set 13 cannot be published or mutate publication 
   assert.match(response.body.validation.questions[0].validation_errors.join(' '), /Exactly four/);
 });
 
-test('an approved structurally valid mixed-topic document remains blocked from game publication', async (t) => {
+test('an approved declared Shapes set with a multi-topic-looking heading can publish its exact scope', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  let publicationUpdateAttempted = false;
+  let activatedParams = null;
   t.after(async () => {
     setQueryHandler(async () => emptyResult);
     await close(server);
@@ -523,52 +523,46 @@ test('an approved structurally valid mixed-topic document remains blocked from g
     {
       id: 1401,
       learning_file_id: 14,
-      question: 'What is 2 + 3?',
-      options: ['4', '5', '6', '7'],
-      correct_answer: '5',
+      question: 'How many sides does a square have?',
+      options: ['3', '4', '5', '6'],
+      correct_answer: '4',
       grade_level: 'Grade 1',
       difficulty: 'Easy',
-      math_topic: null,
-    },
-    {
-      id: 1402,
-      learning_file_id: 14,
-      question: 'What is 5 - 2?',
-      options: ['2', '3', '4', '5'],
-      correct_answer: '3',
-      grade_level: 'Grade 1',
-      difficulty: 'Easy',
-      math_topic: null,
+      math_topic: 'Shapes',
     },
   ];
   const learningFile = approvedForPublication({
     id: 14,
-    title: 'addition-and-subtraction.docx',
+    title: 'shapes-review.docx',
     file_type: 'fixed_questions',
     grade_level: 'Grade 1',
     difficulty: 'Easy',
-    math_topic: null,
-    document_topic: 'Addition and Subtraction',
+    topic_id: 'shapes',
+    math_topic: 'Shapes',
+    document_topic: 'Basic Addition, Subtraction, Shapes, and Place Value',
     subject: 'Mathematics',
     deleted_at: null,
     published: false,
     publish_status: 'staged',
   }, questions);
 
-  setQueryHandler(async (sql) => {
-    if (sql === 'begin' || sql === 'rollback') return emptyResult;
+  setQueryHandler(async (sql, params) => {
+    if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return emptyResult;
     if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) return resultRows([learningFile]);
     if (sql.startsWith('select id, learning_file_id') && sql.includes('from public.questions')) return resultRows(questions);
-    if (sql.startsWith('update public.learning_files') || sql.startsWith('update public.questions')) publicationUpdateAttempted = true;
+    if (sql.startsWith('select lf.id') && sql.includes('from public.learning_files lf')) return emptyResult;
+    if (sql.startsWith('update public.learning_files') && sql.includes('published = true')) {
+      activatedParams = params;
+      return resultRows([{ ...learningFile, published: true, publish_status: 'active' }]);
+    }
     return emptyResult;
   });
 
   const response = await requestJson(baseUrl, '/api/questions/publish/14', { method: 'POST' });
 
-  assert.equal(response.status, 422);
-  assert.equal(response.body.code, 'QUESTION_SET_VALIDATION_FAILED');
-  assert.equal(response.body.publication_eligibility.code, 'MULTI_TOPIC_DOCUMENT');
-  assert.equal(publicationUpdateAttempted, false);
+  assert.equal(response.status, 200);
+  assert.deepEqual(activatedParams, [14, 1]);
+  assert.equal(response.body.learningFile.topic_id, 'shapes');
 });
 
 test('question folder APIs expose system folders and legacy difficulty files by canonical folder', async (t) => {
@@ -673,6 +667,7 @@ test('lesson upload fails gracefully and persists a failed source record without
   fs.writeFileSync(tempPdf, '%PDF-1.4\nLesson about basic addition');
   const priorKey = process.env.OPENAI_API_KEY;
   delete process.env.OPENAI_API_KEY;
+  parsedPdfText = 'Addition combines quantities using counters.';
   nextUploadedFile = {
     path: tempPdf,
     originalname: 'lesson.pdf',
@@ -681,6 +676,7 @@ test('lesson upload fails gracefully and persists a failed source record without
   };
   t.after(async () => {
     nextUploadedFile = null;
+    parsedPdfText = '';
     if (priorKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = priorKey;
     if (fs.existsSync(tempPdf)) fs.unlinkSync(tempPdf);
@@ -733,6 +729,7 @@ test('a failed AI generation key cannot replay, while a deliberate new key creat
   for (const uploadPath of uploadPaths) fs.writeFileSync(uploadPath, '%PDF-1.4\nLesson about basic addition');
   const priorKey = process.env.OPENAI_API_KEY;
   delete process.env.OPENAI_API_KEY;
+  parsedPdfText = 'Addition combines quantities using counters.';
   const records = [];
   setQueryHandler(async (sql, params) => {
     if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return emptyResult;
@@ -770,6 +767,7 @@ test('a failed AI generation key cannot replay, while a deliberate new key creat
   });
   t.after(async () => {
     nextUploadedFile = null;
+    parsedPdfText = '';
     if (priorKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = priorKey;
     for (const uploadPath of uploadPaths) {
@@ -1338,6 +1336,113 @@ test('learning file question preview returns staged structured questions without
   assert.equal(response.body.file.file_url, '/uploads/basic-addition.docx');
   assert.equal(response.body.file.lifecycle.label, 'Pending');
   assert.equal(response.body.validation.is_valid, false);
+  assert.match(response.body.review_fingerprint || '', /^[a-f0-9]{64}$/);
+});
+
+test('Fixed Question upload stamps the human-selected canonical scope on every parsed question', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fixed-question-scope-test-'));
+  const uploadName = `selected-shapes-${Date.now()}.docx`;
+  const tempDocx = path.join(tempDir, uploadName);
+  const sourceDocx = path.join(__dirname, '../docs/teacher-fixed-question-documents/grade1-easy-basic-addition-set-b.docx');
+  const uploadsDir = path.join(__dirname, 'uploads');
+  const uploadsBefore = new Set(fs.readdirSync(uploadsDir));
+  fs.copyFileSync(sourceDocx, tempDocx);
+  nextUploadedFile = {
+    path: tempDocx,
+    originalname: uploadName,
+    mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    size: fs.statSync(tempDocx).size,
+  };
+  const storedQuestionParams = [];
+  let learningFileInsertParams = null;
+  setQueryHandler(async (sql, params) => {
+    if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return emptyResult;
+    if (sql.startsWith('insert into public.learning_files')) {
+      learningFileInsertParams = params;
+      return resultRows([{
+        id: 350,
+        title: 'Selected Shapes Set',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        topic_id: 'shapes',
+        math_topic: 'Shapes',
+        file_type: 'fixed_questions',
+        approval_status: 'review_required',
+        published: false,
+      }]);
+    }
+    if (sql.startsWith('insert into public.questions')) {
+      storedQuestionParams.push(params);
+      return emptyResult;
+    }
+    return emptyResult;
+  });
+  t.after(async () => {
+    nextUploadedFile = null;
+    parsedPdfText = '';
+    setQueryHandler(async () => emptyResult);
+    if (fs.existsSync(tempDocx)) fs.unlinkSync(tempDocx);
+    if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir);
+    for (const entry of fs.readdirSync(uploadsDir)) {
+      const candidate = path.join(uploadsDir, entry);
+      if (!uploadsBefore.has(entry) && entry.endsWith(`_${uploadName}`) && fs.existsSync(candidate)) fs.unlinkSync(candidate);
+    }
+    await close(server);
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/upload', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: 'Selected Shapes Set',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      topic_id: 'shapes',
+      math_topic: 'Shapes',
+      file_type: 'fixed_questions',
+    }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal(learningFileInsertParams[6], 'shapes');
+  assert.equal(storedQuestionParams.length, 5);
+  assert.deepEqual(storedQuestionParams.map((params) => params[7]), ['shapes', 'shapes', 'shapes', 'shapes', 'shapes']);
+});
+
+test('approval rejects a question set that is no longer review-required', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let approvalUpdateAttempted = false;
+  setQueryHandler(async (sql) => {
+    if (sql === 'begin' || sql === 'rollback') return emptyResult;
+    if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) {
+      return resultRows([{
+        id: 360,
+        title: 'Already approved set',
+        file_type: 'fixed_questions',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        topic_id: 'basic_addition',
+        math_topic: 'Basic Addition',
+        approval_status: 'approved',
+        published: false,
+        publish_status: 'staged',
+      }]);
+    }
+    if (sql.startsWith('update public.learning_files') && sql.includes("approval_status = 'approved'")) approvalUpdateAttempted = true;
+    return emptyResult;
+  });
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/360/approve', { method: 'POST' });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'QUESTION_SET_REVIEW_STATUS_INVALID');
+  assert.equal(approvalUpdateAttempted, false);
 });
 
 test('Godot question endpoint accepts grade and topic query aliases', async (t) => {

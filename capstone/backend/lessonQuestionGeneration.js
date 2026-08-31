@@ -135,10 +135,13 @@ const parseGeneratedQuestions = (outputText, expectedCount) => {
 };
 
 const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, topicId, mathTopic, questionCount }) => {
-  const lesson = asTrimmedString(lessonText).slice(0, MAX_LESSON_TEXT_CHARS);
+  const lesson = asTrimmedString(lessonText);
   const fallbackTitle = asTrimmedString(title);
-  if (!lesson && !fallbackTitle) {
-    throw new QuestionGenerationError('QUESTION_AI_EMPTY_LESSON', 'The lesson PDF does not contain readable text for question generation.');
+  if (!lesson) {
+    throw new QuestionGenerationError('QUESTION_AI_EMPTY_LESSON', 'No readable lesson text was found for question generation.');
+  }
+  if (lesson.length > MAX_LESSON_TEXT_CHARS) {
+    throw new QuestionGenerationError('QUESTION_AI_LESSON_TOO_LARGE', 'The readable lesson text exceeds the safe size limit.');
   }
 
   return [
@@ -161,7 +164,7 @@ const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, topic
           `Topic: ${asTrimmedString(mathTopic)}.`,
           `Lesson title: ${fallbackTitle || 'Untitled lesson'}.`,
           'Lesson content:',
-          lesson || fallbackTitle,
+          lesson,
         ].join('\n'),
       }],
     },
@@ -279,5 +282,6 @@ module.exports = {
   QUESTION_GENERATION_TIMEOUT_MS,
   QuestionGenerationError,
   buildProviderDiagnostics,
+  buildGenerationInput,
   generateLessonQuestions,
 };

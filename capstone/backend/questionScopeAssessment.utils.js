@@ -81,18 +81,12 @@ const assessQuestionScope = (question = {}, scope = {}) => {
 const buildQuestionScopeMessage = (assessment, selectedTopic) => {
   const questionLabel = assessment.source_index ? `Question ${assessment.source_index}` : 'A question';
   if (assessment.code === 'QUESTION_TOPIC_MISMATCH') {
-    return `${questionLabel} is ${assessment.detected_topic} but the selected Topic is ${selectedTopic}.`;
-  }
-  if (assessment.code === 'QUESTION_TOPIC_METADATA_REQUIRED') {
-    return `${questionLabel} requires explicit topic_id metadata for the selected Topic ${selectedTopic}.`;
-  }
-  if (assessment.code === 'QUESTION_TOPIC_METADATA_UNSUPPORTED') {
-    return `${questionLabel} has unsupported topic_id metadata for the selected Grade, Difficulty, and Topic.`;
+    return `${questionLabel} conflicts with selected Topic: ${selectedTopic}.`;
   }
   if (assessment.code === 'QUESTION_SCOPE_INVALID') {
     return 'The selected Grade, Difficulty, and Topic scope is not supported by the canonical curriculum registry.';
   }
-  return `${questionLabel} could not be verified as ${selectedTopic}.`;
+  return 'The selected Grade, Difficulty, and Topic scope is not supported by the canonical curriculum registry.';
 };
 
 const validateQuestionSetScope = ({

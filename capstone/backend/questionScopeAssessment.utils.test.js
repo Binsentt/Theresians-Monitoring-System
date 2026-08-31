@@ -112,7 +112,7 @@ test('keeps scope diagnostics publication-only for a structurally valid mixed se
   assert.deepEqual(validation.question_errors, [{
     source_index: 3,
     code: 'QUESTION_TOPIC_MISMATCH',
-    message: 'Question 3 is Subtraction but the selected Topic is Basic Addition.',
+    message: 'Question 3 conflicts with selected Topic: Basic Addition.',
   }]);
 });
 

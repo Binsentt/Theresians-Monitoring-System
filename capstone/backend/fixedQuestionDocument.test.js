@@ -598,12 +598,12 @@ test('keeps a topic-scope mismatch out of structural review while blocking publi
     scope_validation: {
       isValid: false,
       code: 'QUESTION_TOPIC_MISMATCH',
-      message: 'Question 3 is Subtraction but the selected Topic is Basic Addition.',
+      message: 'Question 3 conflicts with selected Topic: Basic Addition.',
     },
   });
 
   assert.equal(review.isValid, true);
   assert.equal(publication.isValid, false);
   assert.equal(publication.scope_validation.code, 'QUESTION_TOPIC_MISMATCH');
-  assert.match(publication.document_errors.join(' '), /Question 3 is Subtraction/i);
+  assert.match(publication.document_errors.join(' '), /Question 3 conflicts with selected Topic: Basic Addition/i);
 });

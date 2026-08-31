@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  MAX_LESSON_TEXT_CHARS,
   QUESTION_GENERATION_MODEL,
   QuestionGenerationError,
   generateLessonQuestions,
@@ -209,6 +210,32 @@ test('lesson generation rejects an empty lesson before making a provider request
     (error) => error instanceof QuestionGenerationError && error.code === 'QUESTION_AI_EMPTY_LESSON'
   );
 
+  assert.equal(called, false);
+});
+
+test('lesson generation never substitutes a title for missing lesson text or silently truncates it', async () => {
+  let called = false;
+  const input = {
+    title: 'A title is not lesson text',
+    gradeLevel: 'Grade 1',
+    difficulty: 'Easy',
+    topicId: 'basic_addition',
+    mathTopic: 'Basic Addition',
+    questionCount: 2,
+    apiKey: 'test-key',
+    fetchImpl: async () => {
+      called = true;
+    },
+  };
+
+  await assert.rejects(
+    generateLessonQuestions({ ...input, lessonText: '' }),
+    (error) => error instanceof QuestionGenerationError && error.code === 'QUESTION_AI_EMPTY_LESSON'
+  );
+  await assert.rejects(
+    generateLessonQuestions({ ...input, lessonText: 'x'.repeat(MAX_LESSON_TEXT_CHARS + 1) }),
+    (error) => error instanceof QuestionGenerationError && error.code === 'QUESTION_AI_LESSON_TOO_LARGE'
+  );
   assert.equal(called, false);
 });
 

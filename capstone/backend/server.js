@@ -61,7 +61,6 @@ const {
 const {
   isValidDifficulty,
   isValidGradeLevel,
-  isValidMathTopicForGradeDifficulty,
   validateLearningMetadata,
   normalizeDifficultyValue,
   parseLessonQuestionCount,
@@ -86,11 +85,15 @@ const {
   generateLessonQuestions,
 } = require('./lessonQuestionGeneration');
 const {
+  LessonTextExtractionError,
+  extractLessonText,
+  validateLessonUploadFile,
+} = require('./lessonTextExtraction');
+const {
   detectFixedQuestionDocumentFormat,
   extractFixedQuestionDocument,
   resolveFixedQuestionDocumentMetadata,
   validateFixedQuestionUploadFile,
-  validateFixedQuestionDocumentPublicationScope,
   validateFixedQuestions,
   validateQuestionSetForReview,
   validateQuestionSetForPublication,
@@ -1737,16 +1740,11 @@ const hasAllowedMimeType = (file, allowedTypes) => allowedTypes.includes(String(
 const validateUploadedLearningFile = (file, fileType) => {
   const originalName = String(file?.originalname || '').toLowerCase();
   if (fileType === 'lesson') {
-    if (!originalName.endsWith('.pdf') || !hasAllowedMimeType(file, ['application/pdf'])) {
-      return 'Lesson PDF files must be uploaded as a valid PDF.';
-    }
     try {
-      const signature = fs.readFileSync(file.path).subarray(0, 5).toString('utf8');
-      if (signature !== '%PDF-') return 'Lesson PDF files must be uploaded as a valid PDF.';
+      return validateLessonUploadFile(file, fs.readFileSync(file.path));
     } catch {
-      return 'The uploaded Lesson PDF could not be read.';
+      return 'The uploaded Lesson source could not be read.';
     }
-    return '';
   }
 
   if (fileType === 'fixed_questions') {
@@ -2076,21 +2074,30 @@ const respondToExistingLessonGeneration = ({ res, learningFile, requestFingerpri
   });
 };
 
-const generateQuestionTextFromLesson = async (filePath, title, grade_level, difficulty, topic_id, math_topic, questionCount) => {
-  const buffer = fs.readFileSync(filePath);
-  let pdfData;
+const extractLessonTextForGeneration = async ({ filePath, fileName, mimeType }) => {
   try {
-    pdfData = await pdfParse(buffer);
-  } catch {
-    throw new QuestionGenerationError('QUESTION_AI_EMPTY_LESSON', 'The Lesson PDF could not be read for question generation.');
+    return await extractLessonText({
+      path: filePath,
+      originalname: fileName,
+      mimetype: mimeType,
+    }, {
+      extractPdfText: async (buffer) => (await pdfParse(buffer)).text,
+    });
+  } catch (error) {
+    if (error instanceof LessonTextExtractionError) {
+      const code = error.code === 'LESSON_TEXT_TOO_LARGE' ? 'QUESTION_AI_LESSON_TOO_LARGE' : 'QUESTION_AI_EMPTY_LESSON';
+      throw new QuestionGenerationError(code, code === 'QUESTION_AI_LESSON_TOO_LARGE'
+        ? 'The readable lesson text exceeds the safe size limit.'
+        : 'No readable lesson text was found for question generation.');
+    }
+    throw new QuestionGenerationError('QUESTION_AI_EMPTY_LESSON', 'No readable lesson text was found for question generation.');
   }
-  const lessonText = String(pdfData?.text || '').trim();
-  if (!lessonText) {
-    throw new QuestionGenerationError('QUESTION_AI_EMPTY_LESSON', 'The Lesson PDF does not contain readable text for question generation.');
-  }
+};
 
+const generateQuestionTextFromLesson = async ({ filePath, fileName, mimeType, lessonText = null }, title, grade_level, difficulty, topic_id, math_topic, questionCount) => {
+  const cleanLessonText = lessonText || await extractLessonTextForGeneration({ filePath, fileName, mimeType });
   return generateLessonQuestions({
-    lessonText,
+    lessonText: cleanLessonText,
     title,
     gradeLevel: grade_level,
     difficulty,
@@ -2142,7 +2149,6 @@ const getQuestionSetValidationState = async (queryClient, learningFile, { lockRo
     [learningFile.id]
   );
   const canonicalDifficulty = normalizeDifficultyValue(learningFile.difficulty);
-  const documentScopeError = validateFixedQuestionDocumentPublicationScope(learningFile);
   const scopedQuestions = questionResult.rows.map((question, index) => ({
     ...question,
     source_index: index + 1,
@@ -2166,7 +2172,7 @@ const getQuestionSetValidationState = async (queryClient, learningFile, { lockRo
     structural: validateQuestionSetForReview(validationInput),
     publication: validateQuestionSetForPublication({
       ...validationInput,
-      metadata_error: documentScopeError || validateLearningMetadata({
+      metadata_error: validateLearningMetadata({
         grade_level: learningFile.grade_level,
         difficulty: canonicalDifficulty,
         topic_id: learningFile.topic_id,
@@ -2193,38 +2199,6 @@ const buildQuestionSetPublicationBaseEligibility = (learningFile = {}, validatio
       code: validation.scope_validation.code || 'QUESTION_SCOPE_VALIDATION_FAILED',
       message: validation.scope_validation.message || 'Question scope must match the selected game publication topic.',
     };
-  }
-  if (learningFile.file_type === 'fixed_questions') {
-    const documentTopic = String(learningFile.document_topic || '').trim();
-    const gameTopic = String(learningFile.math_topic || '').trim();
-    if (!documentTopic) {
-      return {
-        eligible: false,
-        code: 'MISSING_DOCUMENT_TOPIC',
-        message: 'The Fixed Question document does not provide a topic. Review the document topic before Push to Game.',
-      };
-    }
-    if (/[,;&]|\band\b/i.test(documentTopic)) {
-      return {
-        eligible: false,
-        code: 'MULTI_TOPIC_DOCUMENT',
-        message: 'This Fixed Question document contains multiple topics. Game publication requires one controlled encounter topic.',
-      };
-    }
-    if (!isValidMathTopicForGradeDifficulty(learningFile.grade_level, normalizeDifficultyValue(learningFile.difficulty), documentTopic)) {
-      return {
-        eligible: false,
-        code: 'UNCONTROLLED_DOCUMENT_TOPIC',
-        message: 'The Fixed Question document topic is not an approved topic for the selected Grade and Difficulty.',
-      };
-    }
-    if (documentTopic !== gameTopic) {
-      return {
-        eligible: false,
-        code: 'DOCUMENT_TOPIC_MISMATCH',
-        message: 'The Fixed Question document topic does not match its controlled game publication topic.',
-      };
-    }
   }
   if (!validation?.isValid) {
     return {
@@ -2469,6 +2443,11 @@ const approveLearningFile = async (fileId, approver) => {
     if (learningFile.published || learningFile.publish_status === 'active') {
       throw createLifecycleHttpError('Active question sets cannot be re-approved. Publish a reviewed replacement instead.', 409);
     }
+    if (String(learningFile.approval_status || 'review_required') !== 'review_required') {
+      const error = createLifecycleHttpError('This question set is no longer awaiting review approval.', 409);
+      error.code = 'QUESTION_SET_REVIEW_STATUS_INVALID';
+      throw error;
+    }
 
     const validationState = await getQuestionSetValidationState(client, learningFile, { lockRows: true });
     const validation = validationState.structural;
@@ -2571,10 +2550,15 @@ const generateQuestionsForLearningFile = async (learningFile) => {
     const requestedCount = parseLessonQuestionCount(fileRecord.requested_question_count);
     if (requestedCount.error) throw new Error(requestedCount.error);
     questions = await generateQuestionTextFromLesson(
-      path.join(uploadsDir, fileRecord.file_name),
+      {
+        filePath: path.join(uploadsDir, fileRecord.file_name),
+        fileName: fileRecord.file_name,
+        mimeType: fileRecord.source_file_mime_type || 'application/pdf',
+      },
       fileRecord.title,
       fileRecord.grade_level,
       fileRecord.difficulty,
+      fileRecord.topic_id,
       fileRecord.math_topic,
       requestedCount.value
     );
@@ -4507,6 +4491,11 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
         code: 'LESSON_SOURCE_FILE_MISSING',
       });
     }
+    const lessonText = await extractLessonTextForGeneration({
+      filePath: sourceFilePath,
+      fileName: lessonSource.file_name,
+      mimeType: lessonSource.source_file_mime_type || 'application/pdf',
+    });
 
     const insertResult = await pool.query(
       `INSERT INTO public.learning_files (
@@ -4543,7 +4532,12 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
       throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
     }
     const questions = await generateQuestionTextFromLesson(
-      sourceFilePath,
+      {
+        filePath: sourceFilePath,
+        fileName: lessonSource.file_name,
+        mimeType: lessonSource.source_file_mime_type || 'application/pdf',
+        lessonText,
+      },
       lessonSource.title,
       scope.gradeLevel,
       scope.difficulty,
@@ -4600,13 +4594,15 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
     if (error instanceof QuestionGenerationError) {
       const status = error.code === 'QUESTION_AI_NOT_CONFIGURED' ? 503
         : error.code === 'QUESTION_AI_TIMEOUT' ? 504
-          : error.code === 'QUESTION_TOPIC_MISMATCH' || error.code === 'QUESTION_TOPIC_UNVERIFIED' ? 422
+          : error.code === 'QUESTION_AI_EMPTY_LESSON' || error.code === 'QUESTION_AI_LESSON_TOO_LARGE' ? 422
             : 502;
       const message = error.code === 'QUESTION_AI_NOT_CONFIGURED'
         ? 'Question AI is temporarily unavailable. Please contact the administrator.'
-        : error.code === 'QUESTION_TOPIC_MISMATCH' || error.code === 'QUESTION_TOPIC_UNVERIFIED'
-          ? 'Question generation returned questions outside the selected Grade, Difficulty, and Topic scope.'
-          : 'Question generation could not be completed. Please review the Lesson PDF and try again.';
+        : error.code === 'QUESTION_AI_EMPTY_LESSON'
+          ? 'No readable lesson text was found in this source.'
+          : error.code === 'QUESTION_AI_LESSON_TOO_LARGE'
+            ? 'The readable lesson text exceeds the safe size limit.'
+            : 'Question generation could not be completed. Please review the lesson source and try again.';
       return res.status(status).json({ error: message, code: error.code });
     }
     console.error('Lesson source generation failed:', error.message);
@@ -4770,6 +4766,13 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     fs.renameSync(req.file.path, destinationPath);
     storedFilePath = destinationPath;
     const fileUrl = buildFileUrl(fileName);
+    const preflightLessonText = normalizedType === 'lesson'
+      ? await extractLessonTextForGeneration({
+        filePath: storedFilePath,
+        fileName: req.file.originalname,
+        mimeType: req.file.mimetype,
+      })
+      : null;
 
     const createLearningFile = async (generationStatus) => {
       const insertResult = await pool.query(
@@ -4836,7 +4839,12 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
           throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
         }
         const questions = await generateQuestionTextFromLesson(
-          storedFilePath,
+          {
+            filePath: storedFilePath,
+            fileName: req.file.originalname,
+            mimeType: req.file.mimetype,
+            lessonText: preflightLessonText,
+          },
           String(title).trim(),
           normalizedGrade,
           normalizedDifficulty,
@@ -4926,7 +4934,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         grade_level: learningFile.grade_level,
         difficulty: learningFile.difficulty,
         math_topic: learningFile.math_topic,
-        topic_id: question.topic_id || null,
+        topic_id: learningFile.topic_id,
         source: 'fixed',
       })), client);
       await client.query('COMMIT');
@@ -4952,19 +4960,19 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     if (err instanceof QuestionGenerationError) {
       const status = err.code === 'QUESTION_AI_NOT_CONFIGURED' ? 503
         : err.code === 'QUESTION_AI_TIMEOUT' ? 504
-          : err.code === 'QUESTION_AI_EMPTY_LESSON' || err.code === 'QUESTION_AI_INVALID_REQUEST' || err.code === 'QUESTION_AI_INVALID_RESPONSE' || err.code === 'QUESTION_TOPIC_MISMATCH' || err.code === 'QUESTION_TOPIC_UNVERIFIED' ? 422
+        : err.code === 'QUESTION_AI_EMPTY_LESSON' || err.code === 'QUESTION_AI_LESSON_TOO_LARGE' || err.code === 'QUESTION_AI_INVALID_REQUEST' || err.code === 'QUESTION_AI_INVALID_RESPONSE' ? 422
             : 502;
       const error = err.code === 'QUESTION_AI_NOT_CONFIGURED'
         ? 'Question AI is temporarily unavailable. Please contact the administrator.'
         : err.code === 'QUESTION_AI_TIMEOUT'
           ? 'Question generation timed out. Please try again.'
           : err.code === 'QUESTION_AI_EMPTY_LESSON'
-            ? 'The Lesson PDF does not contain readable text for question generation.'
+            ? 'No readable lesson text was found in this source.'
+            : err.code === 'QUESTION_AI_LESSON_TOO_LARGE'
+              ? 'The readable lesson text exceeds the safe size limit.'
             : err.code === 'QUESTION_AI_INVALID_RESPONSE'
               ? 'Question generation returned unusable question data. Please try again.'
-              : err.code === 'QUESTION_TOPIC_MISMATCH' || err.code === 'QUESTION_TOPIC_UNVERIFIED'
-                ? 'Question generation returned questions outside the selected Grade, Difficulty, and Topic scope.'
-              : 'Question generation could not be completed. Please review the Lesson PDF and try again.';
+              : 'Question generation could not be completed. Please review the lesson source and try again.';
       return res.status(status).json({ error, code: err.code });
     }
     res.status(500).json({ error: 'Upload failed' });
@@ -5108,6 +5116,7 @@ app.get('/api/learning-files/:id/questions', requireLessonQuestionManagerAccess,
         validation_summary: buildQuestionSetValidationSummary(validation, fileResult.rows[0]),
       }),
       validation: buildQuestionSetValidationSummary(validation, fileResult.rows[0]),
+      review_fingerprint: buildLearningFileApprovalFingerprint(fileResult.rows[0], validation.structural.questions),
       questions: validation.structural.questions.map((question) => ({
         ...question,
         difficulty: normalizeDifficultyValue(question.difficulty),
