@@ -71,6 +71,24 @@ const buildReviewRequiredFile = (overrides = {}) => ({
   ...overrides,
 });
 
+const curriculumRegistryFixture = {
+  version: '2026-08-31',
+  grades: ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'],
+  difficulties: ['Easy', 'Normal', 'Difficult'],
+  topics: [
+    ['basic_addition', 'Basic Addition'], ['subtraction', 'Subtraction'], ['shapes', 'Shapes'], ['place_value', 'Place Value'],
+    ['addition', 'Addition'], ['multiplication', 'Multiplication'], ['word_problems', 'Word Problems'], ['division', 'Division'],
+    ['fractions', 'Fractions'], ['number_theory', 'Number Theory'], ['whole_numbers', 'Whole Numbers'], ['addition_of_money', 'Addition of Money'],
+  ].map(([topic_id, display_label]) => ({ topic_id, display_label })),
+  scopes: [
+    { grade_level: 'Grade 1', difficulty: 'Easy', topic_ids: ['basic_addition', 'subtraction', 'shapes', 'place_value'] },
+    { grade_level: 'Grade 1', difficulty: 'Normal', topic_ids: ['addition', 'multiplication', 'word_problems'] },
+    { grade_level: 'Grade 2', difficulty: 'Easy', topic_ids: ['shapes'] },
+    { grade_level: 'Grade 3', difficulty: 'Easy', topic_ids: ['addition_of_money', 'whole_numbers'] },
+    { grade_level: 'Grade 3', difficulty: 'Normal', topic_ids: ['multiplication', 'division', 'fractions'] },
+  ],
+};
+
 describe('LessonQuestionManager upload and trash controls', () => {
   let container;
   let root;
@@ -97,6 +115,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     global.fetch = jest.fn((url, options = {}) => {
       const value = String(url);
       const scopedValue = value.replace(/\?scope=teacher$/, '');
+      if (scopedValue.endsWith('/api/curriculum/registry')) return okJson(curriculumRegistryFixture);
       if (scopedValue.endsWith('/api/learning-files/storage-summary')) {
         return okJson({ used_bytes: 601, source_file_bytes: 480, question_content_bytes: 121 });
       }
@@ -222,7 +241,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).toContain('Grade 6');
     expect(document.body.textContent).not.toContain('Grade 1-2');
     expect(document.body.textContent).toContain('Difficulty');
-    expect(getUploadModal().textContent).toContain('Topic Identifier');
+    expect(getUploadModal().textContent).toContain('Topic');
     expect(selects).toHaveLength(4);
 
     await act(async () => {
@@ -246,7 +265,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
 
     const lessonTopicSelect = getUploadModalSelects()[3];
-    expect(getUploadModal().textContent).toContain('Topic Identifier');
+    expect(getUploadModal().textContent).toContain('Topic');
     expect(lessonTopicSelect.disabled).toBe(false);
     expect(lessonTopicSelect.textContent).toContain('Multiplication');
     expect(lessonTopicSelect.textContent).toContain('Division');
@@ -520,6 +539,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(JSON.parse(generationRequest[1].body)).toEqual({
       grade_level: 'Grade 1',
       difficulty: 'Easy',
+      topic_id: 'basic_addition',
       math_topic: 'Basic Addition',
       expected_question_count: '5',
     });
@@ -602,6 +622,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       String(url).endsWith('/api/learning-files/upload') && options?.method === 'POST'
     ));
     expect(uploadRequest[1].body.get('math_topic')).toBe('Addition');
+    expect(uploadRequest[1].body.get('topic_id')).toBe('addition');
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/questions/publish/77'), expect.anything());
   });
 

@@ -10,22 +10,26 @@ import { DataTable } from './layout/Table';
 import { canAccessRole, normalizeRole } from './manageUsers.utils';
 import { buildAuthHeaders, getStoredUserSession } from './session.utils';
 import {
-  DIFFICULTY_LEVELS,
   formatLearningFileSize,
+  getDifficultyLevels,
+  getGradeLevels,
   getLargestLearningFiles,
   getMathTopicsForGradeDifficulty,
+  getQuestionFolderStructure,
   getQuestionFolderView,
   getQuestionFolderPath,
-  GRADE_LEVELS,
   isSupportedLearningUpload,
   isValidDifficulty,
   isValidGradeLevel,
   isValidMathTopicForGradeDifficulty,
   normalizeDifficultyValue,
   normalizeMathTopicForGradeDifficulty,
-  QUESTION_FOLDER_STRUCTURE,
 } from './lessonQuestionManager.utils';
 import { apiUrl } from '../api';
+import {
+  fetchCurriculumRegistry,
+  getRegistryTopicIdForDisplayLabel,
+} from '../curriculumRegistry';
 import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext, paginateTableRows } from './tableReporting.utils';
@@ -34,6 +38,7 @@ import '../styles/lessonQuestionManager.css';
 const initialFormState = {
   grade_level: '',
   difficulty: '',
+  topic_id: '',
   math_topic: '',
   file_type: 'fixed_questions',
   expected_question_count: '',
@@ -66,24 +71,24 @@ const withLessonManagerScope = (url, role) => {
   return `${url}${url.includes('?') ? '&' : '?'}scope=teacher`;
 };
 
-const buildLessonGenerationStorageKey = ({ file, gradeLevel, difficulty, mathTopic, questionCount }) => (
+const buildLessonGenerationStorageKey = ({ file, gradeLevel, difficulty, topicId, questionCount }) => (
   `${LESSON_GENERATION_IDEMPOTENCY_STORAGE_PREFIX}${JSON.stringify({
     name: file?.name || '',
     size: Number(file?.size) || 0,
     last_modified: Number(file?.lastModified) || 0,
     grade_level: gradeLevel,
     difficulty,
-    math_topic: mathTopic,
+    topic_id: topicId,
     question_count: questionCount,
   })}`
 );
 
-const buildLessonSourceGenerationStorageKey = ({ sourceId, gradeLevel, difficulty, mathTopic, questionCount }) => (
+const buildLessonSourceGenerationStorageKey = ({ sourceId, gradeLevel, difficulty, topicId, questionCount }) => (
   `${LESSON_GENERATION_IDEMPOTENCY_STORAGE_PREFIX}${JSON.stringify({
     source_learning_file_id: Number(sourceId),
     grade_level: gradeLevel,
     difficulty,
-    math_topic: mathTopic,
+    topic_id: topicId,
     question_count: questionCount,
   })}`
 );
@@ -215,8 +220,12 @@ function getFixedQuestionPublicationBlockReason(file = {}) {
     : '';
 }
 
-function buildNextTopicValue(gradeLevel, difficulty, currentTopic) {
-  return normalizeMathTopicForGradeDifficulty(gradeLevel, difficulty, currentTopic);
+function buildNextTopicSelection(registry, gradeLevel, difficulty, currentTopic) {
+  const mathTopic = normalizeMathTopicForGradeDifficulty(gradeLevel, difficulty, currentTopic, registry);
+  return {
+    math_topic: mathTopic,
+    topic_id: getRegistryTopicIdForDisplayLabel(registry, gradeLevel, difficulty, mathTopic),
+  };
 }
 
 export default function LessonQuestionManager() {
@@ -225,6 +234,7 @@ export default function LessonQuestionManager() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [notification, setNotification] = useState(null);
+  const [curriculumRegistry, setCurriculumRegistry] = useState(null);
   const [files, setFiles] = useState([]);
   const [lessonSources, setLessonSources] = useState([]);
   const [trashFiles, setTrashFiles] = useState([]);
@@ -292,6 +302,19 @@ export default function LessonQuestionManager() {
 
   const lessonManagerApiUrl = (path, role = user?.role) => withLessonManagerScope(apiUrl(path), role);
 
+  const loadCurriculumRegistry = async ({ role } = {}) => {
+    try {
+      const registry = await fetchCurriculumRegistry((url, options) => (
+        fetchLessonManagerApi(withLessonManagerScope(url, role), options)
+      ));
+      setCurriculumRegistry(registry);
+    } catch (error) {
+      console.error(error);
+      setCurriculumRegistry(null);
+      showNotification('Unable to load the curriculum registry. Topic selection is unavailable.', 'error');
+    }
+  };
+
   const loadFilesAndFolders = async ({ initial = false, role } = {}) => {
     try {
       if (initial) setLoading(true);
@@ -334,6 +357,7 @@ export default function LessonQuestionManager() {
       return;
     }
     setUser({ ...loggedInUser, role });
+    loadCurriculumRegistry({ role });
     loadFilesAndFolders({ initial: true, role });
     loadLessonSources({ role });
   }, [navigate]);
@@ -344,19 +368,22 @@ export default function LessonQuestionManager() {
     search: filters.search,
     math_topic: filters.math_topic,
     file_type: filters.file_type,
-  }), [files, filters.file_type, filters.math_topic, filters.search, selectedFolder.difficulty, selectedFolder.grade_level]);
+  }, curriculumRegistry), [curriculumRegistry, files, filters.file_type, filters.math_topic, filters.search, selectedFolder.difficulty, selectedFolder.grade_level]);
   const uploadTopicOptions = useMemo(
-    () => getMathTopicsForGradeDifficulty(form.grade_level, form.difficulty),
-    [form.difficulty, form.grade_level]
+    () => getMathTopicsForGradeDifficulty(form.grade_level, form.difficulty, curriculumRegistry),
+    [curriculumRegistry, form.difficulty, form.grade_level]
   );
   const editTopicOptions = useMemo(
-    () => (editingFile ? getMathTopicsForGradeDifficulty(editingFile.grade_level, editingFile.difficulty) : []),
-    [editingFile]
+    () => (editingFile ? getMathTopicsForGradeDifficulty(editingFile.grade_level, editingFile.difficulty, curriculumRegistry) : []),
+    [curriculumRegistry, editingFile]
   );
   const filterTopicOptions = useMemo(
-    () => getMathTopicsForGradeDifficulty(selectedFolder.grade_level, selectedFolder.difficulty),
-    [selectedFolder.difficulty, selectedFolder.grade_level]
+    () => getMathTopicsForGradeDifficulty(selectedFolder.grade_level, selectedFolder.difficulty, curriculumRegistry),
+    [curriculumRegistry, selectedFolder.difficulty, selectedFolder.grade_level]
   );
+  const gradeLevels = useMemo(() => getGradeLevels(curriculumRegistry), [curriculumRegistry]);
+  const difficultyLevels = useMemo(() => getDifficultyLevels(curriculumRegistry), [curriculumRegistry]);
+  const questionFolderStructure = useMemo(() => getQuestionFolderStructure(curriculumRegistry), [curriculumRegistry]);
   const uploadType = form.file_type;
   const isDifficultyFolderOpen = Boolean(selectedFolder.grade_level && selectedFolder.difficulty);
   const selectedFolderPath = selectedFolder.grade_level
@@ -425,15 +452,22 @@ export default function LessonQuestionManager() {
           ...prev,
           grade_level: gradeLevel,
           difficulty,
-          math_topic: buildNextTopicValue(gradeLevel, difficulty, prev.math_topic),
+          ...buildNextTopicSelection(curriculumRegistry, gradeLevel, difficulty, prev.math_topic),
         };
       }
       if (field === 'file_type') {
         return {
           ...prev,
           file_type: value,
-          math_topic: buildNextTopicValue(prev.grade_level, prev.difficulty, prev.math_topic),
+          ...buildNextTopicSelection(curriculumRegistry, prev.grade_level, prev.difficulty, prev.math_topic),
           expected_question_count: value === 'lesson' ? prev.expected_question_count : '',
+        };
+      }
+      if (field === 'math_topic') {
+        return {
+          ...prev,
+          math_topic: value,
+          topic_id: getRegistryTopicIdForDisplayLabel(curriculumRegistry, prev.grade_level, prev.difficulty, value),
         };
       }
       return { ...prev, [field]: value };
@@ -446,7 +480,7 @@ export default function LessonQuestionManager() {
       if (field === 'grade_level' || field === 'difficulty') {
         const gradeLevel = field === 'grade_level' ? value : prev.grade_level;
         const difficulty = field === 'difficulty' ? value : prev.difficulty;
-        const nextTopicOptions = getMathTopicsForGradeDifficulty(gradeLevel, difficulty);
+        const nextTopicOptions = getMathTopicsForGradeDifficulty(gradeLevel, difficulty, curriculumRegistry);
         return {
           ...prev,
           grade_level: gradeLevel,
@@ -510,7 +544,7 @@ export default function LessonQuestionManager() {
       sourceId,
       gradeLevel: form.grade_level,
       difficulty: form.difficulty,
-      mathTopic: form.math_topic.trim(),
+      topicId: form.topic_id,
       questionCount: requestedCount,
     });
     const idempotencyKey = getOrCreateLessonGenerationIdempotencyKey(storageKey);
@@ -525,6 +559,7 @@ export default function LessonQuestionManager() {
           body: JSON.stringify({
             grade_level: form.grade_level,
             difficulty: form.difficulty,
+            topic_id: form.topic_id,
             math_topic: form.math_topic.trim(),
             expected_question_count: requestedCount,
           }),
@@ -563,7 +598,7 @@ export default function LessonQuestionManager() {
         : 'Grade level, difficulty, and file are required.', 'error');
       return;
     }
-    if (!form.math_topic.trim()) {
+    if (!curriculumRegistry || !form.math_topic.trim() || !form.topic_id) {
       showNotification('Grade level, difficulty, topic, and file are required.', 'error');
       return;
     }
@@ -572,9 +607,9 @@ export default function LessonQuestionManager() {
       return;
     }
     if (
-      !isValidGradeLevel(form.grade_level)
-      || !isValidDifficulty(form.difficulty)
-      || !isValidMathTopicForGradeDifficulty(form.grade_level, form.difficulty, form.math_topic)
+      !isValidGradeLevel(form.grade_level, curriculumRegistry)
+      || !isValidDifficulty(form.difficulty, curriculumRegistry)
+      || !isValidMathTopicForGradeDifficulty(form.grade_level, form.difficulty, form.math_topic, curriculumRegistry)
     ) {
       showNotification('Invalid grade level, difficulty, or topic for this Mathematics content.', 'error');
       return;
@@ -596,6 +631,7 @@ export default function LessonQuestionManager() {
     payload.append('title', deriveUploadTitle(form.file));
     payload.append('grade_level', form.grade_level);
     payload.append('difficulty', form.difficulty);
+    payload.append('topic_id', form.topic_id);
     payload.append('math_topic', form.math_topic.trim());
     payload.append('file_type', uploadType);
     payload.append('uploaded_by', user.id);
@@ -609,7 +645,7 @@ export default function LessonQuestionManager() {
         file: form.file,
         gradeLevel: form.grade_level,
         difficulty: form.difficulty,
-        mathTopic: form.math_topic.trim(),
+        topicId: form.topic_id,
         questionCount: requestedCount,
       })
       : null;
@@ -799,14 +835,20 @@ export default function LessonQuestionManager() {
   };
 
   const saveFileDetails = async () => {
-    if (!editingFile.title || !editingFile.grade_level || !editingFile.difficulty || !editingFile.math_topic) {
+    const topicId = editingFile?.topic_id || getRegistryTopicIdForDisplayLabel(
+      curriculumRegistry,
+      editingFile?.grade_level,
+      editingFile?.difficulty,
+      editingFile?.math_topic
+    );
+    if (!editingFile.title || !editingFile.grade_level || !editingFile.difficulty || !editingFile.math_topic || !topicId) {
       showNotification('Complete the file details before saving.', 'error');
       return;
     }
     if (
-      !isValidGradeLevel(editingFile.grade_level)
-      || !isValidDifficulty(editingFile.difficulty)
-      || !isValidMathTopicForGradeDifficulty(editingFile.grade_level, editingFile.difficulty, editingFile.math_topic)
+      !isValidGradeLevel(editingFile.grade_level, curriculumRegistry)
+      || !isValidDifficulty(editingFile.difficulty, curriculumRegistry)
+      || !isValidMathTopicForGradeDifficulty(editingFile.grade_level, editingFile.difficulty, editingFile.math_topic, curriculumRegistry)
     ) {
       showNotification('Invalid file details for this Mathematics grade and difficulty.', 'error');
       return;
@@ -819,6 +861,7 @@ export default function LessonQuestionManager() {
           title: editingFile.title,
           grade_level: editingFile.grade_level,
           difficulty: editingFile.difficulty,
+          topic_id: topicId,
           math_topic: editingFile.math_topic,
           file_type: editingFile.file_type,
         }),
@@ -1175,7 +1218,7 @@ export default function LessonQuestionManager() {
                     </div>
 
                     <div className="drive-folder-grid fixed-question-grid">
-                      {QUESTION_FOLDER_STRUCTURE.map((gradeFolder) => {
+                      {questionFolderStructure.map((gradeFolder) => {
                         const gradeSelected = selectedFolder.grade_level === gradeFolder.grade;
                         return (
                           <div
@@ -1366,14 +1409,14 @@ export default function LessonQuestionManager() {
                       <label className="form-label required">Grade Level</label>
                       <select className="select-field" value={form.grade_level} onChange={(event) => handleFormChange('grade_level', event.target.value)}>
                         <option value="">Select grade level</option>
-                        {GRADE_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
+                        {gradeLevels.map((level) => <option key={level} value={level}>{level}</option>)}
                       </select>
                     </div>
                     <div className="form-group">
                       <label className="form-label required">Difficulty</label>
                       <select className="select-field" value={form.difficulty} onChange={(event) => handleFormChange('difficulty', event.target.value)}>
                         <option value="">Select difficulty</option>
-                        {DIFFICULTY_LEVELS.map((difficulty) => (
+                        {difficultyLevels.map((difficulty) => (
                           <option key={difficulty} value={difficulty}>
                             {formatDifficultyLabel(form.grade_level, difficulty)}
                           </option>
@@ -1388,7 +1431,7 @@ export default function LessonQuestionManager() {
                       </select>
                     </div>
                     <div className="form-group">
-                      <label className="form-label required">Topic Identifier</label>
+                      <label className="form-label required">Topic</label>
                       <select
                         className="select-field"
                         value={form.math_topic}
@@ -1652,12 +1695,12 @@ export default function LessonQuestionManager() {
                           setEditingFile((prev) => ({
                             ...prev,
                             grade_level: gradeLevel,
-                            math_topic: buildNextTopicValue(gradeLevel, prev.difficulty, prev.math_topic),
+                            ...buildNextTopicSelection(curriculumRegistry, gradeLevel, prev.difficulty, prev.math_topic),
                           }));
                         }}
                       >
                         <option value="">Select grade level</option>
-                        {GRADE_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
+                        {gradeLevels.map((level) => <option key={level} value={level}>{level}</option>)}
                       </select>
                     </div>
                     <div className="form-group">
@@ -1670,12 +1713,12 @@ export default function LessonQuestionManager() {
                           setEditingFile((prev) => ({
                             ...prev,
                             difficulty,
-                            math_topic: buildNextTopicValue(prev.grade_level, difficulty, prev.math_topic),
+                            ...buildNextTopicSelection(curriculumRegistry, prev.grade_level, difficulty, prev.math_topic),
                           }));
                         }}
                       >
                         <option value="">Select difficulty</option>
-                        {DIFFICULTY_LEVELS.map((difficulty) => (
+                        {difficultyLevels.map((difficulty) => (
                           <option key={difficulty} value={difficulty}>
                             {formatDifficultyLabel(editingFile.grade_level, difficulty)}
                           </option>
@@ -1683,12 +1726,16 @@ export default function LessonQuestionManager() {
                       </select>
                     </div>
                     <div className="form-group">
-                      <label className="form-label required">Topic Identifier</label>
+                      <label className="form-label required">Topic</label>
                       <select
                         className="select-field"
                         value={editingFile.grade_level && editingFile.difficulty ? editingFile.math_topic : ''}
                         disabled={!editingFile.grade_level || !editingFile.difficulty}
-                        onChange={(event) => setEditingFile((prev) => ({ ...prev, math_topic: event.target.value }))}
+                        onChange={(event) => setEditingFile((prev) => ({
+                          ...prev,
+                          math_topic: event.target.value,
+                          topic_id: getRegistryTopicIdForDisplayLabel(curriculumRegistry, prev.grade_level, prev.difficulty, event.target.value),
+                        }))}
                       >
                         {!editingFile.grade_level || !editingFile.difficulty ? (
                           <option value="">Select grade and difficulty first</option>

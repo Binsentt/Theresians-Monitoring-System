@@ -1,21 +1,4 @@
-import {
-  DIFFICULTY_LEVELS,
-  GRADE_LEVELS,
-  GRADE_TOPIC_MAP,
-} from '../config/gradeTopicMap';
-
-export {
-  DIFFICULTY_LEVELS,
-  GRADE_LEVELS,
-  GRADE_TOPIC_MAP,
-};
-
-export const QUESTION_FOLDER_STRUCTURE = GRADE_LEVELS.map((grade) => ({
-  grade,
-  folderName: grade,
-  godotFolderName: grade.replace(/\s+/g, ''),
-  difficulties: DIFFICULTY_LEVELS,
-}));
+import { getRegistryScopeTopics } from '../curriculumRegistry';
 
 export const getQuestionFolderPath = (gradeLevel, difficulty) => {
   const grade = normalizeLearningMetadataValue(gradeLevel);
@@ -24,10 +7,6 @@ export const getQuestionFolderPath = (gradeLevel, difficulty) => {
   if (!level) return `Questions/${grade}/`;
   return `Questions/${grade}/${level}`;
 };
-
-export const MATH_TOPICS = Array.from(new Set(
-  Object.values(GRADE_TOPIC_MAP).flatMap((difficultyMap) => Object.values(difficultyMap).flat())
-));
 
 const normalizeLearningMetadataValue = (value) => String(value || '').trim();
 
@@ -39,40 +18,51 @@ export const normalizeDifficultyValue = (value) => {
   return difficulty;
 };
 
-export const getMathTopicsForGradeDifficulty = (gradeLevel, difficulty) => {
+export const getGradeLevels = (registry) => Array.isArray(registry?.grades) ? registry.grades : [];
+
+export const getDifficultyLevels = (registry) => Array.isArray(registry?.difficulties) ? registry.difficulties : [];
+
+export const getQuestionFolderStructure = (registry) => getGradeLevels(registry).map((grade) => ({
+  grade,
+  folderName: grade,
+  godotFolderName: grade.replace(/\s+/g, ''),
+  difficulties: getDifficultyLevels(registry),
+}));
+
+export const getMathTopicsForGradeDifficulty = (gradeLevel, difficulty, registry) => {
   const grade = normalizeLearningMetadataValue(gradeLevel);
   const level = normalizeDifficultyValue(difficulty);
-  return GRADE_TOPIC_MAP[grade]?.[level] || [];
+  return getRegistryScopeTopics(registry, grade, level).map((topic) => topic.display_label);
 };
 
-export const getMathTopicsForGrade = (gradeLevel) => {
+export const getMathTopicsForGrade = (gradeLevel, registry) => {
   const grade = normalizeLearningMetadataValue(gradeLevel);
-  const difficultyMap = GRADE_TOPIC_MAP[grade];
-  return difficultyMap ? Object.values(difficultyMap).flat() : [];
+  return Array.from(new Set(getDifficultyLevels(registry)
+    .flatMap((difficulty) => getMathTopicsForGradeDifficulty(grade, difficulty, registry))));
 };
 
-export const isValidGradeLevel = (value) => GRADE_LEVELS.includes(normalizeLearningMetadataValue(value));
+export const isValidGradeLevel = (value, registry) => getGradeLevels(registry).includes(normalizeLearningMetadataValue(value));
 
-export const isValidDifficulty = (value) => DIFFICULTY_LEVELS.includes(normalizeDifficultyValue(value));
+export const isValidDifficulty = (value, registry) => getDifficultyLevels(registry).includes(normalizeDifficultyValue(value));
 
-export const isValidMathTopicForGradeDifficulty = (gradeLevel, difficulty, topic) => {
+export const isValidMathTopicForGradeDifficulty = (gradeLevel, difficulty, topic, registry) => {
   const selectedTopic = normalizeLearningMetadataValue(topic);
-  return getMathTopicsForGradeDifficulty(gradeLevel, difficulty).includes(selectedTopic);
+  return getMathTopicsForGradeDifficulty(gradeLevel, difficulty, registry).includes(selectedTopic);
 };
 
-export const isValidMathTopicForGrade = (gradeLevel, topic) => {
+export const isValidMathTopicForGrade = (gradeLevel, topic, registry) => {
   const selectedTopic = normalizeLearningMetadataValue(topic);
-  return getMathTopicsForGrade(gradeLevel).includes(selectedTopic);
+  return getMathTopicsForGrade(gradeLevel, registry).includes(selectedTopic);
 };
 
-export const normalizeMathTopicForGradeDifficulty = (gradeLevel, difficulty, topic) => {
-  const options = getMathTopicsForGradeDifficulty(gradeLevel, difficulty);
+export const normalizeMathTopicForGradeDifficulty = (gradeLevel, difficulty, topic, registry) => {
+  const options = getMathTopicsForGradeDifficulty(gradeLevel, difficulty, registry);
   const selectedTopic = normalizeLearningMetadataValue(topic);
   return options.includes(selectedTopic) ? selectedTopic : options[0] || '';
 };
 
-export const normalizeMathTopicForGrade = (gradeLevel, topic) => {
-  const options = getMathTopicsForGrade(gradeLevel);
+export const normalizeMathTopicForGrade = (gradeLevel, topic, registry) => {
+  const options = getMathTopicsForGrade(gradeLevel, registry);
   const selectedTopic = normalizeLearningMetadataValue(topic);
   return options.includes(selectedTopic) ? selectedTopic : options[0] || '';
 };
@@ -207,9 +197,10 @@ export const filterLearningFiles = (files, filters) => {
   });
 };
 
-export const getQuestionFolderView = (files, selection = {}) => {
+export const getQuestionFolderView = (files, selection = {}, registry) => {
   const gradeLevel = normalizeLearningMetadataValue(selection.grade_level);
   const difficulty = normalizeDifficultyValue(selection.difficulty);
+  const questionFolderStructure = getQuestionFolderStructure(registry);
   const path = ['Questions'];
   if (gradeLevel) path.push(gradeLevel);
   if (difficulty) path.push(difficulty);
@@ -217,7 +208,7 @@ export const getQuestionFolderView = (files, selection = {}) => {
   if (!gradeLevel) {
     return {
       path,
-      childFolders: QUESTION_FOLDER_STRUCTURE.map((folder) => ({
+      childFolders: questionFolderStructure.map((folder) => ({
         type: 'grade',
         label: folder.folderName,
         grade_level: folder.grade,
@@ -235,10 +226,10 @@ export const getQuestionFolderView = (files, selection = {}) => {
   }
 
   if (!difficulty) {
-    const gradeFolder = QUESTION_FOLDER_STRUCTURE.find((folder) => folder.grade === gradeLevel);
+    const gradeFolder = questionFolderStructure.find((folder) => folder.grade === gradeLevel);
     return {
       path,
-      childFolders: (gradeFolder?.difficulties || DIFFICULTY_LEVELS).map((level) => ({
+      childFolders: (gradeFolder?.difficulties || getDifficultyLevels(registry)).map((level) => ({
         type: 'difficulty',
         label: level,
         grade_level: gradeLevel,

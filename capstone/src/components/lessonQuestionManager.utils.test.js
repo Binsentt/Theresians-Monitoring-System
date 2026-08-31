@@ -1,8 +1,9 @@
 import {
   filterLearningFiles,
   countFixedQuestionRecords,
-  DIFFICULTY_LEVELS,
   getLargestLearningFiles,
+  getDifficultyLevels,
+  getGradeLevels,
   formatLearningFileSize,
   getFolderContents,
   getMathTopicsForGrade,
@@ -10,51 +11,77 @@ import {
   getLearningFilePreviewKind,
   getQuestionFolderPath,
   getQuestionFolderView,
-  GRADE_TOPIC_MAP,
   inferLearningFileUploadType,
   isSupportedLearningUpload,
   normalizeDifficultyValue,
   normalizeMathTopicForGradeDifficulty,
-  QUESTION_FOLDER_STRUCTURE,
+  getQuestionFolderStructure,
 } from './lessonQuestionManager.utils';
+
+const registryFixture = {
+  grades: ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'],
+  difficulties: ['Easy', 'Normal', 'Difficult'],
+  topics: [
+    ['basic_addition', 'Basic Addition'], ['subtraction', 'Subtraction'], ['shapes', 'Shapes'], ['place_value', 'Place Value'],
+    ['addition', 'Addition'], ['multiplication', 'Multiplication'], ['word_problems', 'Word Problems'], ['division', 'Division'],
+    ['fractions', 'Fractions'], ['problem_solving', 'Problem Solving'], ['addition_of_money', 'Addition of Money'], ['whole_numbers', 'Whole Numbers'],
+    ['number_theory', 'Number Theory'], ['place_value_whole_numbers', 'Place Value of Whole Numbers'],
+    ['compare_whole_numbers', 'Reading, Writing, and Comparing Whole Numbers'], ['basic_arithmetic', 'Basic Arithmetic'],
+    ['time_conversion', 'Time Conversion'], ['order_of_operations', 'Order of Operations'], ['number_sense_operations', 'Number Sense and Operations'],
+    ['rational_numbers', 'Rational Numbers'], ['geometric_measurements', 'Geometric Measurements'],
+  ].map(([topic_id, display_label]) => ({ topic_id, display_label })),
+  scopes: [
+    { grade_level: 'Grade 1', difficulty: 'Easy', topic_ids: ['basic_addition', 'subtraction', 'shapes', 'place_value'] },
+    { grade_level: 'Grade 1', difficulty: 'Normal', topic_ids: ['addition', 'multiplication', 'word_problems'] },
+    { grade_level: 'Grade 2', difficulty: 'Difficult', topic_ids: ['problem_solving', 'multiplication', 'division', 'fractions'] },
+    { grade_level: 'Grade 3', difficulty: 'Normal', topic_ids: ['multiplication', 'division', 'fractions'] },
+    { grade_level: 'Grade 4', difficulty: 'Easy', topic_ids: ['number_theory'] },
+    { grade_level: 'Grade 4', difficulty: 'Normal', topic_ids: ['place_value_whole_numbers'] },
+    { grade_level: 'Grade 4', difficulty: 'Difficult', topic_ids: ['compare_whole_numbers'] },
+    { grade_level: 'Grade 5', difficulty: 'Normal', topic_ids: ['number_theory', 'basic_arithmetic'] },
+    { grade_level: 'Grade 5', difficulty: 'Difficult', topic_ids: ['time_conversion', 'number_theory', 'word_problems', 'order_of_operations'] },
+    { grade_level: 'Grade 6', difficulty: 'Normal', topic_ids: ['number_sense_operations'] },
+    { grade_level: 'Grade 6', difficulty: 'Difficult', topic_ids: ['rational_numbers', 'geometric_measurements'] },
+  ],
+};
 
 describe('lesson question manager helpers', () => {
   test('returns configured difficulty values and grade difficulty topics', () => {
-    expect(DIFFICULTY_LEVELS).toEqual(['Easy', 'Normal', 'Difficult']);
-    expect(getMathTopicsForGradeDifficulty('Grade 1', 'Easy')).toEqual([
+    expect(getDifficultyLevels(registryFixture)).toEqual(['Easy', 'Normal', 'Difficult']);
+    expect(getMathTopicsForGradeDifficulty('Grade 1', 'Easy', registryFixture)).toEqual([
       'Basic Addition',
       'Subtraction',
       'Shapes',
       'Place Value',
     ]);
-    expect(getMathTopicsForGradeDifficulty('Grade 2', 'Hard')).toEqual([
+    expect(getMathTopicsForGradeDifficulty('Grade 2', 'Hard', registryFixture)).toEqual([
       'Problem Solving',
       'Multiplication',
       'Division',
       'Fractions',
     ]);
-    expect(getMathTopicsForGradeDifficulty('Grade 3', 'Medium')).toEqual([
+    expect(getMathTopicsForGradeDifficulty('Grade 3', 'Medium', registryFixture)).toEqual([
       'Multiplication',
       'Division',
       'Fractions',
     ]);
-    expect(getMathTopicsForGradeDifficulty('Grade 5', 'Hard')).toEqual([
+    expect(getMathTopicsForGradeDifficulty('Grade 5', 'Hard', registryFixture)).toEqual([
       'Time Conversion',
       'Number Theory',
       'Word Problems',
       'Order of Operations',
     ]);
-    expect(getMathTopicsForGradeDifficulty('Grade 6', 'Hard')).toEqual([
+    expect(getMathTopicsForGradeDifficulty('Grade 6', 'Hard', registryFixture)).toEqual([
       'Rational Numbers',
       'Geometric Measurements',
     ]);
-    expect(getMathTopicsForGradeDifficulty('Grade 6', 'Average')).toEqual([
+    expect(getMathTopicsForGradeDifficulty('Grade 6', 'Average', registryFixture)).toEqual([
       'Number Sense and Operations',
     ]);
-    expect(getMathTopicsForGradeDifficulty('Grade 6', 'Normal')).toEqual([
+    expect(getMathTopicsForGradeDifficulty('Grade 6', 'Normal', registryFixture)).toEqual([
       'Number Sense and Operations',
     ]);
-    expect(GRADE_TOPIC_MAP['Grade 5'].Normal).toEqual([
+    expect(getMathTopicsForGradeDifficulty('Grade 5', 'Normal', registryFixture)).toEqual([
       'Number Theory',
       'Basic Arithmetic',
     ]);
@@ -71,29 +98,30 @@ describe('lesson question manager helpers', () => {
   });
 
   test('keeps grade topic helpers constrained to approved map topics', () => {
-    expect(getMathTopicsForGrade('Grade 4')).toEqual([
+    expect(getMathTopicsForGrade('Grade 4', registryFixture)).toEqual([
       'Number Theory',
       'Place Value of Whole Numbers',
       'Reading, Writing, and Comparing Whole Numbers',
     ]);
-    expect(getMathTopicsForGrade('Grade 4')).not.toContain('Division');
+    expect(getMathTopicsForGrade('Grade 4', registryFixture)).not.toContain('Division');
   });
 
   test('resets topics when grade or difficulty changes', () => {
-    expect(normalizeMathTopicForGradeDifficulty('Grade 1', '', 'Addition')).toBe('');
-    expect(normalizeMathTopicForGradeDifficulty('Grade 1', 'Easy', 'Addition')).toBe(
+    expect(normalizeMathTopicForGradeDifficulty('Grade 1', '', 'Addition', registryFixture)).toBe('');
+    expect(normalizeMathTopicForGradeDifficulty('Grade 1', 'Easy', 'Addition', registryFixture)).toBe(
       'Basic Addition'
     );
     expect(normalizeMathTopicForGradeDifficulty(
       'Grade 1',
       'Medium',
-      'Addition'
+      'Addition',
+      registryFixture
     )).toBe('Addition');
   });
 
   test('builds the fixed Questions grade difficulty folder structure', () => {
-    expect(QUESTION_FOLDER_STRUCTURE).toHaveLength(6);
-    expect(QUESTION_FOLDER_STRUCTURE[0]).toEqual({
+    expect(getGradeLevels(registryFixture)).toHaveLength(6);
+    expect(getQuestionFolderStructure(registryFixture)[0]).toEqual({
       grade: 'Grade 1',
       folderName: 'Grade 1',
       godotFolderName: 'Grade1',
@@ -112,7 +140,7 @@ describe('lesson question manager helpers', () => {
       { id: 3, title: 'Hard Quiz', grade_level: 'Grade 2', difficulty: 'Difficult' },
     ];
 
-    expect(getQuestionFolderView(files, {})).toMatchObject({
+    expect(getQuestionFolderView(files, {}, registryFixture)).toMatchObject({
       path: ['Questions'],
       childFolders: expect.arrayContaining([
         expect.objectContaining({ label: 'Grade 1', type: 'grade' }),
@@ -124,7 +152,7 @@ describe('lesson question manager helpers', () => {
         expect.objectContaining({ id: 3, difficulty: 'Difficult' }),
       ],
     });
-    expect(getQuestionFolderView(files, { grade_level: 'Grade 1' })).toMatchObject({
+    expect(getQuestionFolderView(files, { grade_level: 'Grade 1' }, registryFixture)).toMatchObject({
       path: ['Questions', 'Grade 1'],
       childFolders: expect.arrayContaining([
         expect.objectContaining({ label: 'Easy', difficulty: 'Easy' }),
@@ -136,7 +164,7 @@ describe('lesson question manager helpers', () => {
         expect.objectContaining({ id: 2, difficulty: 'Normal' }),
       ],
     });
-    expect(getQuestionFolderView(files, { grade_level: 'Grade 1', difficulty: 'Normal' }).files).toEqual([
+    expect(getQuestionFolderView(files, { grade_level: 'Grade 1', difficulty: 'Normal' }, registryFixture).files).toEqual([
       expect.objectContaining({ id: 2, difficulty: 'Normal' }),
     ]);
   });
