@@ -396,12 +396,12 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).toContain('Replace Active Question Set?');
     expect(document.body.textContent).toContain('Current Addition');
     expect(document.body.textContent).toContain('replacement-addition.docx');
-    expect(global.fetch).toHaveBeenCalledTimes(5);
+    expect(global.fetch).toHaveBeenCalledTimes(6);
 
     await act(async () => {
       clickByText(document.body, 'Cancel');
     });
-    expect(global.fetch).toHaveBeenCalledTimes(5);
+    expect(global.fetch).toHaveBeenCalledTimes(6);
 
     await act(async () => {
       clickByText(container, 'Push to Game');

@@ -23,8 +23,8 @@ test('uses backend registry scope memberships and labels without a local topic m
   const registry = normalizeCurriculumRegistry(registryFixture);
 
   expect(getRegistryScopeTopics(registry, 'Grade 1', 'Easy')).toEqual([
-    { topic_id: 'basic_addition', display_label: 'Basic Addition' },
-    { topic_id: 'shapes', display_label: 'Shapes' },
+    { topic_id: 'basic_addition', display_label: 'Basic Addition', aliases: [] },
+    { topic_id: 'shapes', display_label: 'Shapes', aliases: [] },
   ]);
   expect(getRegistryTopicIdForDisplayLabel(registry, 'Grade 1', 'Easy', 'Shapes')).toBe('shapes');
   expect(getRegistryScopeTopics(registry, 'Grade 2', 'Easy')).toEqual([]);
