@@ -110,4 +110,12 @@ test('startup schema keeps nullable canonical topic IDs for learning files and q
     schemaStatements.some((sql) => sql.includes('questions_learning_file_topic_id_index')),
     'questions should index canonical question metadata'
   );
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('learning_files_source_learning_file_id_index')),
+    'startup schema should use migration 015\'s canonical source lineage index name'
+  );
+  assert.ok(
+    !schemaStatements.some((sql) => sql.includes('idx_learning_files_source_learning_file_id')),
+    'startup schema must not create a duplicate source lineage index with a second name'
+  );
 });

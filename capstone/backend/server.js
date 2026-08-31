@@ -514,7 +514,7 @@ const ensureSchema = async () => {
     await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_grade_difficulty_topic ON public.learning_files(grade_level, difficulty, math_topic)');
     await pool.query('CREATE INDEX IF NOT EXISTS learning_files_scope_topic_id_index ON public.learning_files(grade_level, difficulty, topic_id) WHERE topic_id IS NOT NULL');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_lifecycle ON public.learning_files(generation_status, publish_status)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_source_learning_file_id ON public.learning_files(source_learning_file_id) WHERE source_learning_file_id IS NOT NULL');
+    await pool.query('CREATE INDEX IF NOT EXISTS learning_files_source_learning_file_id_index ON public.learning_files(source_learning_file_id) WHERE source_learning_file_id IS NOT NULL');
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_learning_files_client_provided_fingerprint
       ON public.learning_files (source_content_fingerprint)
       WHERE source_content_fingerprint IS NOT NULL
