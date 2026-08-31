@@ -395,3 +395,21 @@ No implementation step edits a file outside these ownership boundaries without a
 ## Rollback strategy
 
 The eventual schema migration is additive and keeps legacy rows as self-contained `question_set` records. The previous application release ignores the new columns, so a code rollback is non-destructive. There is no migration that rewrites questions, remaps topics, re-approves, republishes, or deletes source/child records. If a post-release problem appears, stop new source generation, restore the previously verified application artifact, retain audit data, and ship a forward corrective migration only after review. Production content, approvals, game state, accounts, and progress are never reset as a rollback mechanism.
+
+## Approved canonical-registry successor — 2026-08-31
+
+The current approved curriculum decision replaces the duplicate-map and broad deterministic-classifier aspects of this earlier implementation plan. Follow [the backend-owned canonical curriculum registry implementation plan](2026-08-31-backend-owned-canonical-curriculum-registry.md) for every future registry, schema, Fixed Question, AI-child, frontend, game API, and Godot change.
+
+The successor plan is binding for the following decisions:
+
+- backend is the sole canonical owner of topic IDs, display labels, aliases, and valid Grade/Difficulty/Topic memberships;
+- canonical scope identity uses `grade_level + difficulty + topic_id`, with `Grade 1` through `Grade 6` and `Easy`/`Normal`/`Difficult`;
+- `Medium`/`Average` normalize to `Normal`, and `Hard` to `Difficult`, without creating another active pool;
+- frontend consumes `GET /api/curriculum/registry` and ultimately retires the independent `gradeTopicMap.js` map;
+- composites remain single canonical topics and semicolon-delimited labels remain separate scopes;
+- only `basic_addition` and `subtraction` retain deterministic Fixed Question evidence; every other topic requires explicit parsed per-question `topic_id` and fails closed if absent or unsupported;
+- AI-generated children inherit and persist the human-selected canonical `topic_id`, then receive structural—not weak topic-classification—validation;
+- legacy rows remain unchanged/readable, with only exact safe in-memory resolution and publication blocking when canonical ID cannot be resolved; and
+- nullable additive `topic_id` migration/backfill work is approval-gated and has not been created or applied.
+
+This amendment does not authorize implementation, migration creation/application, backfill, deployment, push, APK build, question publication, or production data access. The full 25-topic registry, 18-cell matrix, endpoint contract, migration proposal, expected files, and complete regression matrix are in [canonical-grade-difficulty-topic-matrix.md](../../canonical-grade-difficulty-topic-matrix.md) and the successor plan above.

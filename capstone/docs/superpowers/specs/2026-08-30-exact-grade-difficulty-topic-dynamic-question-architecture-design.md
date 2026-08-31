@@ -138,3 +138,41 @@ All manager routes retain `requireLessonQuestionManagerAccess`, including Teache
 - No Godot modification in this task.
 - No automatic splitting, content repair, metadata fabrication, or change to the audited 15-question Addition/Subtraction document.
 - No changes to account, player progress, game history, or authentication policy.
+
+## Approved canonical curriculum registry addendum — 2026-08-31
+
+This addendum is the binding curriculum contract for the exact-scope architecture. It supersedes any earlier wording in this specification that could be read as permitting a separate frontend topic map, display label as a stored scope identity, a deterministic topic classifier for every topic, or a migration/backfill without a separate review. The full approved registry and matrix are in [canonical-grade-difficulty-topic-matrix.md](../../canonical-grade-difficulty-topic-matrix.md).
+
+### Canonical exact-scope identity
+
+The canonical scope key is now:
+
+```text
+grade_level + difficulty + topic_id
+```
+
+Canonical Grades are `Grade 1` through `Grade 6`; canonical Difficulties are `Easy`, `Normal`, and `Difficult`. Boundary normalization accepts only the documented safe aliases, including `Medium`/`Average` -> `Normal` and `Hard` -> `Difficult`. Canonical topic IDs, display labels, explicit aliases, and all valid Grade/Difficulty/Topic memberships are backend-owned registry data.
+
+Every individual composite label remains one topic ID. In particular, Basic Addition/Subtraction, Problem Solving (Addition and Subtraction), Number Sense and Operations, and Geometric Measurements are not decomposed or re-routed. Semicolon-separated labels in a matrix cell remain separate scopes.
+
+### Ownership and API contract
+
+The backend registry module is the sole runtime owner. It is exposed through read-only `GET /api/curriculum/registry`; the frontend derives its cascading Grade, Difficulty, and Topic selectors from that versioned response and submits canonical `topic_id`. It must retire its independent `gradeTopicMap.js` ownership after all consumers migrate.
+
+For compatibility, request boundaries may normalize Grade/Difficulty aliases and resolve an exact legacy display label only when normalized Grade, normalized Difficulty, label, and registry membership uniquely identify one ID. New writes use `topic_id`. No route may widen an invalid or incomplete scope, use a filename, or infer a semantically similar topic.
+
+### Evidence and lifecycle policy
+
+`basic_addition` and `subtraction` retain existing deterministic arithmetic evidence. Every other Fixed Question topic must provide a parsed per-question canonical `topic_id` that equals the selected scope and is a valid matrix membership. Missing, malformed, unsupported, or mismatching metadata blocks publication truthfully; it is not fabricated from a document header, selected dropdown, filename, title, keyword, or OpenAI response.
+
+AI-generated children instead inherit the human-selected normalized canonical tuple. The child set and its questions store that ID, use registry-derived display text in the prompt/UI, and undergo structural validation. They are not weakly reclassified after generation.
+
+### Legacy, schema, and game constraints
+
+The future schema change is an additive, nullable `topic_id` proposal for participating question-set and per-question records. It is not created or applied by this design update. Legacy content stays readable and unchanged; only an exact in-memory registry bridge may resolve it, and unresolved rows are blocked from publication. A data backfill requires a separate read-only audit, review of each exact write candidate, and separate approval.
+
+Godot does not fetch the registry. It keeps only explicitly approved canonical encounter literals and normalizes legacy difficulty aliases locally before sending a request. The sole proven scope remains First Bandit: `Grade 1` / `Easy` / `basic_addition`. Other encounters remain unresolved until their pedagogical topic is explicitly approved; this addendum does not assign them a topic or change QuestionProvider history/randomization.
+
+### Status
+
+This is a documentation/design decision only. It changes no runtime source, schema, question, publication, deployment, APK, or production data. The approval-gated implementation sequence is [the dedicated backend-owned registry plan](../plans/2026-08-31-backend-owned-canonical-curriculum-registry.md).
