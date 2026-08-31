@@ -1,74 +1,52 @@
-const ALLOWED_GRADE_LEVELS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
-const ALLOWED_DIFFICULTIES = ['Easy', 'Normal', 'Difficult'];
+const {
+  CANONICAL_DIFFICULTIES,
+  CANONICAL_GRADES,
+  TOPICS,
+  getTopicById,
+  getTopicsForScope,
+  isValidScope,
+  normalizeDifficulty,
+  normalizeGradeLevel,
+  normalizeTopicId,
+  resolveLegacyDisplayTopic,
+} = require('./curriculumScopeRegistry');
+
+const ALLOWED_GRADE_LEVELS = CANONICAL_GRADES;
+const ALLOWED_DIFFICULTIES = CANONICAL_DIFFICULTIES;
 const MIN_LESSON_QUESTION_COUNT = 1;
 const MAX_LESSON_QUESTION_COUNT = 50;
 
-const GRADE_TOPIC_MAP = {
-  'Grade 1': {
-    Easy: ['Basic Addition', 'Subtraction', 'Shapes', 'Place Value'],
-    Normal: ['Addition', 'Multiplication', 'Word Problems'],
-    Difficult: ['Problem Solving (Addition and Subtraction)'],
-  },
-  'Grade 2': {
-    Easy: ['Shapes', 'Ordinal Numbers', 'Basic Addition/Subtraction'],
-    Normal: ['Multiplication', 'Division', 'Word Problems'],
-    Difficult: ['Problem Solving', 'Multiplication', 'Division', 'Fractions'],
-  },
-  'Grade 3': {
-    Easy: ['Addition of Money', 'Whole Numbers'],
-    Normal: ['Multiplication', 'Division', 'Fractions'],
-    Difficult: ['Multi-step Problem Solving'],
-  },
-  'Grade 4': {
-    Easy: ['Number Theory'],
-    Normal: ['Place Value of Whole Numbers'],
-    Difficult: ['Reading, Writing, and Comparing Whole Numbers'],
-  },
-  'Grade 5': {
-    Easy: ['Number Theory', 'Basic Arithmetic'],
-    Normal: ['Number Theory', 'Basic Arithmetic'],
-    Difficult: ['Time Conversion', 'Number Theory', 'Word Problems', 'Order of Operations'],
-  },
-  'Grade 6': {
-    Easy: ['Number Sense and Operations'],
-    Normal: ['Number Sense and Operations'],
-    Difficult: ['Rational Numbers', 'Geometric Measurements'],
-  },
-};
-
-const ALLOWED_MATH_TOPICS = Array.from(new Set(
-  Object.values(GRADE_TOPIC_MAP).flatMap((difficultyMap) => Object.values(difficultyMap).flat())
-));
+const ALLOWED_MATH_TOPICS = TOPICS.map((topic) => topic.display_label);
 
 const normalizeLearningMetadataValue = (value) => String(value || '').trim();
 
 const normalizeDifficultyValue = (value) => {
   const difficulty = normalizeLearningMetadataValue(value);
-  if (/^(normal|average|medium|normal\s*\/\s*average)$/i.test(difficulty)) return 'Normal';
-  if (/^(difficult|hard)$/i.test(difficulty)) return 'Difficult';
-  if (/^easy$/i.test(difficulty)) return 'Easy';
-  return difficulty;
+  return normalizeDifficulty(difficulty) || difficulty;
 };
 
 const getMathTopicsForGradeDifficulty = (gradeLevel, difficulty) => {
-  const grade = normalizeLearningMetadataValue(gradeLevel);
-  const level = normalizeDifficultyValue(difficulty);
-  return GRADE_TOPIC_MAP[grade]?.[level] || [];
+  return getTopicsForScope(gradeLevel, difficulty).map((topic) => topic.display_label);
+};
+
+const getTopicIdsForGradeDifficulty = (gradeLevel, difficulty) => {
+  return getTopicsForScope(gradeLevel, difficulty).map((topic) => topic.topic_id);
 };
 
 const getMathTopicsForGrade = (gradeLevel) => {
-  const grade = normalizeLearningMetadataValue(gradeLevel);
-  const difficultyMap = GRADE_TOPIC_MAP[grade];
-  return difficultyMap ? Object.values(difficultyMap).flat() : [];
+  return ALLOWED_DIFFICULTIES.flatMap((difficulty) => getMathTopicsForGradeDifficulty(gradeLevel, difficulty));
 };
 
-const isValidGradeLevel = (value) => ALLOWED_GRADE_LEVELS.includes(normalizeLearningMetadataValue(value));
+const isValidGradeLevel = (value) => Boolean(normalizeGradeLevel(value));
 
-const isValidDifficulty = (value) => ALLOWED_DIFFICULTIES.includes(normalizeDifficultyValue(value));
+const isValidDifficulty = (value) => Boolean(normalizeDifficulty(value));
+
+const isValidTopicIdForGradeDifficulty = (gradeLevel, difficulty, topicId) => {
+  return isValidScope(gradeLevel, difficulty, topicId);
+};
 
 const isValidMathTopicForGradeDifficulty = (gradeLevel, difficulty, topic) => {
-  const selectedTopic = normalizeLearningMetadataValue(topic);
-  return getMathTopicsForGradeDifficulty(gradeLevel, difficulty).includes(selectedTopic);
+  return Boolean(resolveLegacyDisplayTopic(gradeLevel, difficulty, topic));
 };
 
 const isValidMathTopicForGrade = (gradeLevel, topic) => {
@@ -76,7 +54,7 @@ const isValidMathTopicForGrade = (gradeLevel, topic) => {
   return getMathTopicsForGrade(gradeLevel).includes(selectedTopic);
 };
 
-const validateLearningMetadata = ({ grade_level: gradeLevel, difficulty, math_topic: mathTopic } = {}) => {
+const validateLearningMetadata = ({ grade_level: gradeLevel, difficulty, topic_id: topicId, math_topic: mathTopic } = {}) => {
   if (!isValidGradeLevel(gradeLevel)) {
     return 'Grade level must be one of Grade 1 through Grade 6.';
   }
@@ -85,7 +63,11 @@ const validateLearningMetadata = ({ grade_level: gradeLevel, difficulty, math_to
     return 'Difficulty must be Easy, Normal, or Difficult.';
   }
 
-  if (!isValidMathTopicForGradeDifficulty(gradeLevel, difficulty, mathTopic)) {
+  const suppliedTopicId = normalizeLearningMetadataValue(topicId);
+  const hasValidTopic = suppliedTopicId
+    ? isValidTopicIdForGradeDifficulty(gradeLevel, difficulty, suppliedTopicId)
+    : isValidMathTopicForGradeDifficulty(gradeLevel, difficulty, mathTopic);
+  if (!hasValidTopic) {
     return 'Topic must match the selected grade level and difficulty.';
   }
 
@@ -126,15 +108,18 @@ module.exports = {
   ALLOWED_DIFFICULTIES,
   MIN_LESSON_QUESTION_COUNT,
   MAX_LESSON_QUESTION_COUNT,
-  GRADE_TOPIC_MAP,
   ALLOWED_MATH_TOPICS,
   getMathTopicsForGrade,
   getMathTopicsForGradeDifficulty,
+  getTopicIdsForGradeDifficulty,
+  getTopicById,
   isValidGradeLevel,
   isValidDifficulty,
+  normalizeGradeLevel,
   normalizeDifficultyValue,
   isValidMathTopicForGrade,
   isValidMathTopicForGradeDifficulty,
+  isValidTopicIdForGradeDifficulty,
   validateLearningMetadata,
   parseExpectedQuestionCount,
   parseLessonQuestionCount,

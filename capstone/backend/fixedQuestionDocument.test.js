@@ -253,6 +253,24 @@ test('extracts DOCX and fixed-question PDF text through server-side extractors w
   assert.equal(pdf.questions[1].correct_answer, '5');
 });
 
+test('parses explicit per-question topic_id metadata without deriving it from question text', () => {
+  const parsed = parseFixedQuestionText(`1. How many sides does a square have?
+Topic ID: shapes
+A. 3
+B. 4
+C. 5
+D. 6
+Answer: B`);
+
+  assert.deepEqual(parsed, [{
+    source_index: 1,
+    question: 'How many sides does a square have?',
+    topic_id: 'shapes',
+    options: ['3', '4', '5', '6'],
+    correct_answer: '4',
+  }]);
+});
+
 test('keeps fixed-question parsing and selected-scope evidence independent of filename', async () => {
   const first = await extractFixedQuestionDocument({
     path: 'different-name-one.docx',
@@ -393,6 +411,25 @@ test('allows publication validation only for fully valid stored questions with m
 
   assert.equal(result.isValid, true);
   assert.equal(result.questions[0].is_valid, true);
+});
+
+test('accepts a canonical topic_id as the publication metadata authority', () => {
+  const result = validateQuestionSetForPublication({
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    topic_id: 'shapes',
+    questions: [{
+      question: 'How many sides does a square have?',
+      options: ['3', '4', '5', '6'],
+      correct_answer: '4',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      topic_id: 'shapes',
+    }],
+  });
+
+  assert.equal(result.isValid, true);
+  assert.equal(result.document_errors.length, 0);
 });
 
 test('allows structural review for a valid mixed-topic document while publication remains blocked', () => {

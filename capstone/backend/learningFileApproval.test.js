@@ -36,6 +36,10 @@ test('approval fingerprints are stable for the reviewed question set and change 
     ...validQuestions[0],
     correct_answer: '6',
   }]));
+  assert.notEqual(fingerprint, buildLearningFileApprovalFingerprint({
+    ...validFile,
+    topic_id: 'shapes',
+  }, validQuestions));
 });
 
 test('publication requires a current explicit approval after structural review succeeds', () => {

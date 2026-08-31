@@ -7,6 +7,7 @@ const buildLearningFileApprovalFingerprint = (learningFile = {}, questions = [])
     file_type: normalizeText(learningFile.file_type),
     grade_level: normalizeText(learningFile.grade_level),
     difficulty: normalizeText(learningFile.difficulty),
+    topic_id: normalizeText(learningFile.topic_id),
     math_topic: normalizeText(learningFile.math_topic),
     document_topic: normalizeText(learningFile.document_topic),
     questions: (Array.isArray(questions) ? questions : []).map((question) => ({
@@ -15,6 +16,7 @@ const buildLearningFileApprovalFingerprint = (learningFile = {}, questions = [])
       correct_answer: normalizeText(question?.correct_answer),
       grade_level: normalizeText(question?.grade_level),
       difficulty: normalizeText(question?.difficulty),
+      topic_id: normalizeText(question?.topic_id),
       math_topic: normalizeText(question?.math_topic),
     })),
   };

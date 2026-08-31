@@ -1,6 +1,7 @@
 const QUESTION_LINE = /^\s*(?:question\s*)?(\d+)\s*[.)]\s*(.+?)\s*$/i;
 const OPTION_LINE = /^\s*([A-Z])\s*[.)]\s*(.*?)\s*$/i;
 const ANSWER_LINE = /^\s*(?:correct\s+)?answer\s*:\s*(.*?)\s*$/i;
+const TOPIC_ID_LINE = /^\s*topic(?:\s+id|_id)\s*:\s*([a-z0-9_]+)\s*$/i;
 const {
   isValidDifficulty,
   isValidGradeLevel,
@@ -142,6 +143,7 @@ const finalizeQuestion = (draft) => {
   return {
     source_index: draft.source_index,
     question: normalizeText(draft.questionParts.join(' ')),
+    ...(draft.topic_id ? { topic_id: draft.topic_id } : {}),
     options,
     correct_answer: resolveCorrectAnswer(draft.rawAnswer, draft.options),
   };
@@ -170,11 +172,18 @@ const parseFixedQuestionText = (documentText) => {
         questionParts: [questionMatch[2]],
         options: [],
         rawAnswer: '',
+        topic_id: '',
       };
       continue;
     }
 
     if (!currentQuestion) continue;
+
+    const topicIdMatch = line.match(TOPIC_ID_LINE);
+    if (topicIdMatch) {
+      currentQuestion.topic_id = normalizeText(topicIdMatch[1]);
+      continue;
+    }
 
     const optionMatch = line.match(OPTION_LINE);
     if (optionMatch) {
@@ -276,6 +285,7 @@ const validateQuestionSetForPublication = ({
   questions,
   grade_level,
   difficulty,
+  topic_id,
   math_topic,
   metadata_error = '',
   scope_validation: scopeValidation = null,
@@ -289,6 +299,7 @@ const validateQuestionSetForPublication = ({
   const publicationMetadataError = metadata_error || validateLearningMetadata({
     grade_level: normalizeText(grade_level),
     difficulty: normalizeDifficultyValue(difficulty),
+    topic_id: normalizeText(topic_id),
     math_topic: normalizeText(math_topic),
   });
 

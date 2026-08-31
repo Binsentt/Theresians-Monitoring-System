@@ -73,6 +73,32 @@ test('lesson generation sends only lesson context to the server-side Responses A
   assert.deepEqual(questions, validQuestions);
 });
 
+test('lesson generation carries the selected canonical topic ID separately from its display label', async () => {
+  let request;
+
+  await generateLessonQuestions({
+    lessonText: 'Addition combines two quantities.',
+    title: 'Addition lesson',
+    gradeLevel: 'Grade 1',
+    difficulty: 'Easy',
+    topicId: 'basic_addition',
+    mathTopic: 'Basic Addition',
+    questionCount: 2,
+    apiKey: 'test-key',
+    fetchImpl: async (_url, options) => {
+      request = JSON.parse(options.body);
+      return {
+        ok: true,
+        json: async () => ({ output_text: JSON.stringify({ questions: validQuestions }) }),
+      };
+    },
+  });
+
+  const input = JSON.stringify(request.input);
+  assert.match(input, /Topic ID: basic_addition/);
+  assert.match(input, /Topic: Basic Addition/);
+});
+
 test('lesson generation rejects a provider response that does not produce exactly the requested number of usable questions', async () => {
   await assert.rejects(
     generateLessonQuestions({

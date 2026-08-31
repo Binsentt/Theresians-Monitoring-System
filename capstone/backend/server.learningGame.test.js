@@ -130,6 +130,43 @@ const requestJson = async (baseUrl, path, options = {}) => {
   };
 };
 
+test('Lesson Manager registry endpoint returns only versioned static curriculum metadata and rejects writes', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let queryCount = 0;
+  setQueryHandler(async () => {
+    queryCount += 1;
+    return emptyResult;
+  });
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  const response = await fetch(`${baseUrl}/api/curriculum/registry`, {
+    headers: { Authorization: 'Bearer teacher-token' },
+  });
+  assert.equal(response.status, 200);
+  const registry = await response.json();
+  assert.equal(registry.version, '2026-08-31');
+  assert.equal(registry.grades.length, 6);
+  assert.equal(registry.difficulties.length, 3);
+  assert.equal(registry.topics.length, 25);
+  assert.equal(registry.scopes.length, 18);
+  assert.equal(registry.topics.some((topic) => topic.topic_id === 'basic_addition' && topic.display_label === 'Basic Addition'), true);
+  assert.equal(Object.hasOwn(registry, 'questions'), false);
+  assert.match(response.headers.get('etag') || '', /2026-08-31/);
+  assert.equal(queryCount, 0);
+
+  const unauthenticated = await fetch(`${baseUrl}/api/curriculum/registry`);
+  assert.equal(unauthenticated.status, 401);
+  const writeAttempt = await fetch(`${baseUrl}/api/curriculum/registry`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer teacher-token' },
+  });
+  assert.equal(writeAttempt.status, 404);
+});
+
 test('question publishing replaces the active Godot bundle for one grade difficulty topic', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -201,10 +238,12 @@ test('question publishing replaces the active Godot bundle for one grade difficu
   const response = await requestJson(baseUrl, '/api/questions/publish/77', { method: 'POST' });
 
   assert.equal(response.status, 200);
-  assert.deepEqual(unpublishedLearningFiles.params, ['Grade 1', 'Normal', 'Addition', 77]);
-  assert.match(unpublishedLearningFiles.sql, /id <> \$4/);
-  assert.deepEqual(unpublishedQuestions.params, ['Grade 1', 'Normal', 'Addition', 77]);
-  assert.match(unpublishedQuestions.sql, /lf\.id <> \$4/);
+  assert.deepEqual(unpublishedLearningFiles.params, ['Grade 1', 'Normal', 'addition', 'Addition', 77]);
+  assert.match(unpublishedLearningFiles.sql, /topic_id = \$3/);
+  assert.match(unpublishedLearningFiles.sql, /id <> \$5/);
+  assert.deepEqual(unpublishedQuestions.params, ['Grade 1', 'Normal', 'addition', 'Addition', 77]);
+  assert.match(unpublishedQuestions.sql, /lf\.topic_id = \$3/);
+  assert.match(unpublishedQuestions.sql, /lf\.id <> \$5/);
   assert.deepEqual(publishedLearningFile.params, [77, 1]);
   assert.deepEqual(publishedQuestions.params, [77]);
 });
@@ -348,7 +387,7 @@ test('a confirmed same-scope replacement supersedes only the active set inside o
   });
 
   assert.equal(response.status, 200);
-  assert.deepEqual(supersededParams, ['Grade 1', 'Normal', 'Addition', 80]);
+  assert.deepEqual(supersededParams, ['Grade 1', 'Normal', 'addition', 'Addition', 80]);
   assert.deepEqual(activatedParams, [80, 1]);
 });
 
@@ -439,6 +478,7 @@ test('an invalid legacy-shaped Set 13 cannot be published or mutate publication 
         title: 'legacy-set-13',
         grade_level: 'Grade 1',
         difficulty: 'Easy',
+        topic_id: 'basic_addition',
         math_topic: 'Basic Addition',
         subject: 'Mathematics',
         deleted_at: null,
@@ -713,9 +753,9 @@ test('a failed AI generation key cannot replay, while a deliberate new key creat
         math_topic: 'Basic Addition',
         file_type: 'lesson',
         source: 'lesson',
-        uploaded_by: params[10],
-        generation_idempotency_key: params[15],
-        generation_request_fingerprint: params[16],
+        uploaded_by: params[11],
+        generation_idempotency_key: params[16],
+        generation_request_fingerprint: params[17],
         generation_status: 'generating',
       };
       records.push(record);
@@ -982,7 +1022,7 @@ test('lesson upload generates exactly the requested staged questions through the
   });
 
   let openAiRequest = null;
-  let storedQuestions = 0;
+  const storedQuestionParams = [];
   let learningFileInsertParams = null;
   global.fetch = async (url, options) => {
     if (url === 'https://api.openai.com/v1/responses') {
@@ -1008,13 +1048,14 @@ test('lesson upload generates exactly the requested staged questions through the
         title: 'Addition lesson',
         grade_level: 'Grade 1',
         difficulty: 'Easy',
+        topic_id: 'basic_addition',
         math_topic: 'Basic Addition',
         file_type: 'lesson',
         published: false,
       }]);
     }
     if (sql.startsWith('insert into public.questions')) {
-      storedQuestions += 1;
+      storedQuestionParams.push(params);
       return emptyResult;
     }
     return emptyResult;
@@ -1027,6 +1068,7 @@ test('lesson upload generates exactly the requested staged questions through the
       title: 'Addition lesson',
       grade_level: 'Grade 1',
       difficulty: 'Easy',
+      topic_id: 'basic_addition',
       math_topic: 'Basic Addition',
       file_type: 'lesson',
       expected_question_count: '2',
@@ -1039,10 +1081,13 @@ test('lesson upload generates exactly the requested staged questions through the
   assert.equal(openAiRequest.text.format.schema.properties.questions.maxItems, 2);
   assert.equal(response.body.learningFile.question_count, 2);
   assert.equal(response.body.learningFile.published, false);
-  assert.equal(storedQuestions, 2);
-  assert.equal(learningFileInsertParams[6], null);
-  assert.equal(learningFileInsertParams[9], 'lesson');
-  assert.equal(learningFileInsertParams[10], 1);
+  assert.equal(storedQuestionParams.length, 2);
+  assert.equal(storedQuestionParams.every((params) => params.includes('basic_addition')), true);
+  assert.equal(learningFileInsertParams.includes('basic_addition'), true);
+  assert.equal(learningFileInsertParams[6], 'basic_addition');
+  assert.equal(learningFileInsertParams[7], null);
+  assert.equal(learningFileInsertParams[10], 'lesson');
+  assert.equal(learningFileInsertParams[11], 1);
 });
 
 test('lesson generation coalesces concurrent duplicate uploads and replays the completed idempotency key', async (t) => {
@@ -1140,10 +1185,10 @@ test('lesson generation coalesces concurrent duplicate uploads and replays the c
         file_type: 'lesson',
         source: 'lesson',
         published: false,
-        uploaded_by: params[10],
+        uploaded_by: params[11],
         generation_status: 'generating',
-        generation_idempotency_key: params[15],
-        generation_request_fingerprint: params[16],
+        generation_idempotency_key: params[16],
+        generation_request_fingerprint: params[17],
       };
       records.push(record);
       return resultRows([record]);
@@ -1315,8 +1360,67 @@ test('Godot question endpoint accepts grade and topic query aliases', async (t) 
   const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201&difficulty=Easy&topic=Basic%20Addition');
 
   assert.equal(response.status, 200);
-  assert.deepEqual(queryCalls[0], ['Mathematics', 'Grade 1', 'Easy', 'Basic Addition']);
-  assert.deepEqual(queryCalls[1], ['Mathematics', 'Grade 1', 'Easy', 'Basic Addition']);
+  assert.deepEqual(queryCalls[0], ['Mathematics', 'Grade 1', 'Easy', 'basic_addition', 'Basic Addition']);
+  assert.deepEqual(queryCalls[1], ['Mathematics', 'Grade 1', 'Easy', 'basic_addition', 'Basic Addition']);
+});
+
+test('Godot question endpoint uses canonical topic_id for an exact active scope and returns traceability', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  const queryCalls = [];
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('from public.questions q')) {
+      queryCalls.push({ sql, params });
+      return resultRows([{
+        id: 501,
+        learning_file_id: 83,
+        question: 'What is 2 + 3?',
+        options: ['4', '5', '6', '7'],
+        correct_answer: '5',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        topic_id: 'basic_addition',
+        math_topic: 'Basic Addition',
+        source: 'fixed',
+        published: true,
+      }]);
+    }
+    if (sql.includes('from public.learning_files')) {
+      queryCalls.push({ sql, params });
+      return resultRows([{
+        id: 83,
+        title: 'First Bandit Basics',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        topic_id: 'basic_addition',
+        math_topic: 'Basic Addition',
+        file_type: 'fixed_questions',
+        published: true,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=1&difficulty=Easy&topic_id=basic_addition');
+
+  assert.equal(response.status, 200);
+  assert.equal(queryCalls.length, 2);
+  assert.equal(queryCalls.every((call) => call.params.includes('basic_addition')), true);
+  assert.equal(response.body.learning_files[0].topic_id, 'basic_addition');
+  assert.equal(response.body.learning_files[0].math_topic, 'Basic Addition');
+  assert.equal(response.body.questions[0].topic_id, 'basic_addition');
+  assert.equal(response.body.questions[0].learning_file_id, 83);
+  assert.deepEqual(response.body.scope, {
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    topic_id: 'basic_addition',
+    topic_label: 'Basic Addition',
+  });
 });
 
 test('Godot question endpoint rejects an incomplete dynamic scope without widening the query', async (t) => {
@@ -1374,8 +1478,8 @@ test('Godot question endpoint maps legacy Medium and Hard requests to canonical 
   const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201&difficulty=Medium&topic=Addition');
 
   assert.equal(response.status, 200);
-  assert.deepEqual(queryCalls[0].params, ['Mathematics', 'Grade 1', 'Normal', 'Addition']);
-  assert.deepEqual(queryCalls[1].params, ['Mathematics', 'Grade 1', 'Normal', 'Addition']);
+  assert.deepEqual(queryCalls[0].params, ['Mathematics', 'Grade 1', 'Normal', 'addition', 'Addition']);
+  assert.deepEqual(queryCalls[1].params, ['Mathematics', 'Grade 1', 'Normal', 'addition', 'Addition']);
   assert.match(queryCalls[0].sql, /normal/i);
   assert.match(queryCalls[1].sql, /normal/i);
 });
@@ -1400,8 +1504,8 @@ test('Godot question endpoint normalizes numeric grade aliases and scopes to one
   const response = await requestJson(baseUrl, '/api/game/questions?grade=1&difficulty=Easy&topic=Basic%20Addition');
 
   assert.equal(response.status, 200);
-  assert.deepEqual(queryCalls[0].params, ['Mathematics', 'Grade 1', 'Easy', 'Basic Addition']);
-  assert.deepEqual(queryCalls[1].params, ['Mathematics', 'Grade 1', 'Easy', 'Basic Addition']);
+  assert.deepEqual(queryCalls[0].params, ['Mathematics', 'Grade 1', 'Easy', 'basic_addition', 'Basic Addition']);
+  assert.deepEqual(queryCalls[1].params, ['Mathematics', 'Grade 1', 'Easy', 'basic_addition', 'Basic Addition']);
   assert.match(queryCalls[0].sql, /order by uploaded_at desc, id desc limit 1/);
   assert.match(queryCalls[1].sql, /order by active_lf\.uploaded_at desc, active_lf\.id desc limit 1/);
 });
@@ -1814,7 +1918,7 @@ test('a reusable Lesson PDF source creates isolated exact-scope generated childr
     const request = JSON.parse(options.body);
     generationRequests.push(request);
     const scopeText = request.input[1].content[0].text;
-    const isSubtraction = scopeText.includes('Topic identifier: Subtraction.');
+    const isSubtraction = scopeText.includes('Topic ID: subtraction.');
     return {
       ok: true,
       headers: { get: () => null },
@@ -1842,11 +1946,12 @@ test('a reusable Lesson PDF source creates isolated exact-scope generated childr
         grade_level: params[3],
         difficulty: params[4],
         math_topic: params[5],
+        topic_id: params[6],
         requested_question_count: params[9],
-        source_learning_file_id: params[10],
-        source_content_fingerprint: params[11],
-        generation_idempotency_key: params[12],
-        generation_request_fingerprint: params[13],
+        source_learning_file_id: params[11],
+        source_content_fingerprint: params[12],
+        generation_idempotency_key: params[13],
+        generation_request_fingerprint: params[14],
         content_role: 'question_set',
       };
       insertedChildren.push(child);
@@ -1874,6 +1979,7 @@ test('a reusable Lesson PDF source creates isolated exact-scope generated childr
     body: JSON.stringify({
       grade_level: 'Grade 1',
       difficulty: 'Easy',
+      topic_id: 'basic_addition',
       math_topic: 'Basic Addition',
       expected_question_count: 1,
     }),
@@ -1884,6 +1990,7 @@ test('a reusable Lesson PDF source creates isolated exact-scope generated childr
     body: JSON.stringify({
       grade_level: 'Grade 1',
       difficulty: 'Easy',
+      topic_id: 'subtraction',
       math_topic: 'Subtraction',
       expected_question_count: 1,
     }),
@@ -1894,7 +2001,8 @@ test('a reusable Lesson PDF source creates isolated exact-scope generated childr
   assert.equal(insertedChildren.length, 2);
   assert.deepEqual(insertedChildren.map((child) => child.source_learning_file_id), [801, 801]);
   assert.deepEqual(insertedChildren.map((child) => child.math_topic), ['Basic Addition', 'Subtraction']);
+  assert.deepEqual(insertedChildren.map((child) => child.topic_id), ['basic_addition', 'subtraction']);
   assert.equal(generationRequests.length, 2);
-  assert.match(generationRequests[0].input[1].content[0].text, /Grade: Grade 1\.\nDifficulty: Easy\.\nTopic identifier: Basic Addition\./);
-  assert.match(generationRequests[1].input[1].content[0].text, /Topic identifier: Subtraction\./);
+  assert.match(generationRequests[0].input[1].content[0].text, /Grade: Grade 1\.\nDifficulty: Easy\.\nTopic ID: basic_addition\.\nTopic: Basic Addition\./);
+  assert.match(generationRequests[1].input[1].content[0].text, /Topic ID: subtraction\.\nTopic: Subtraction\./);
 });

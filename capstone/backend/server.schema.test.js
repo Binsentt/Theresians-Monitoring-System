@@ -90,3 +90,24 @@ test('startup schema creates game_results for future game integration', async ()
     'game_results question_set_id should use a restrictive foreign key so permanent deletion cannot race historical result insertion'
   );
 });
+
+test('startup schema keeps nullable canonical topic IDs for learning files and questions', async () => {
+  await waitForSchemaInitialization();
+
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('alter table public.learning_files add column if not exists topic_id varchar(100)')),
+    'learning_files should add a nullable canonical topic_id without rewriting legacy rows'
+  );
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('alter table public.questions add column if not exists topic_id varchar(100)')),
+    'questions should add a nullable canonical topic_id without rewriting legacy rows'
+  );
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('learning_files_scope_topic_id_index')),
+    'learning_files should index canonical encounter scopes'
+  );
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('questions_learning_file_topic_id_index')),
+    'questions should index canonical question metadata'
+  );
+});

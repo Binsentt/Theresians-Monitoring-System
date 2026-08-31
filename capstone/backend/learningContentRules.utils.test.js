@@ -4,13 +4,15 @@ const assert = require('node:assert/strict');
 const {
   ALLOWED_DIFFICULTIES,
   ALLOWED_MATH_TOPICS,
-  GRADE_TOPIC_MAP,
   MAX_LESSON_QUESTION_COUNT,
   getMathTopicsForGrade,
   getMathTopicsForGradeDifficulty,
+  getTopicIdsForGradeDifficulty,
   isValidDifficulty,
   isValidMathTopicForGrade,
   isValidMathTopicForGradeDifficulty,
+  isValidTopicIdForGradeDifficulty,
+  normalizeGradeLevel,
   normalizeDifficultyValue,
   parseExpectedQuestionCount,
   parseLessonQuestionCount,
@@ -58,10 +60,6 @@ test('maps math topics by grade and difficulty', () => {
   assert.deepEqual(getMathTopicsForGradeDifficulty('Grade 6', 'Difficult'), [
     'Rational Numbers',
     'Geometric Measurements',
-  ]);
-  assert.deepEqual(GRADE_TOPIC_MAP['Grade 5'].Normal, [
-    'Number Theory',
-    'Basic Arithmetic',
   ]);
 });
 
@@ -114,6 +112,35 @@ test('validates topic combinations against grade and difficulty', () => {
       grade_level: 'Grade 2',
       difficulty: 'Medium',
       math_topic: 'Measurement',
+    }),
+    'Topic must match the selected grade level and difficulty.'
+  );
+});
+
+test('derives canonical topic IDs from the backend registry without accepting arbitrary topic text', () => {
+  assert.equal(normalizeGradeLevel('grade1'), 'Grade 1');
+  assert.deepEqual(getTopicIdsForGradeDifficulty('Grade 1', 'Easy'), [
+    'basic_addition',
+    'subtraction',
+    'shapes',
+    'place_value',
+  ]);
+  assert.equal(isValidTopicIdForGradeDifficulty('Grade 1', 'Easy', 'basic_addition'), true);
+  assert.equal(isValidTopicIdForGradeDifficulty('Grade 1', 'Easy', 'addition'), false);
+  assert.equal(isValidTopicIdForGradeDifficulty('Grade 1', 'Easy', 'basic-addition'), false);
+  assert.equal(
+    validateLearningMetadata({
+      grade_level: 'grade1',
+      difficulty: 'Medium',
+      topic_id: 'addition',
+    }),
+    ''
+  );
+  assert.equal(
+    validateLearningMetadata({
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      topic_id: 'addition',
     }),
     'Topic must match the selected grade level and difficulty.'
   );

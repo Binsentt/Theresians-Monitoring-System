@@ -134,7 +134,7 @@ const parseGeneratedQuestions = (outputText, expectedCount) => {
   return questions;
 };
 
-const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, mathTopic, questionCount }) => {
+const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, topicId, mathTopic, questionCount }) => {
   const lesson = asTrimmedString(lessonText).slice(0, MAX_LESSON_TEXT_CHARS);
   const fallbackTitle = asTrimmedString(title);
   if (!lesson && !fallbackTitle) {
@@ -157,7 +157,8 @@ const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, mathT
           `Create exactly ${questionCount} questions.`,
           `Grade: ${asTrimmedString(gradeLevel)}.`,
           `Difficulty: ${asTrimmedString(difficulty)}.`,
-          `Topic identifier: ${asTrimmedString(mathTopic)}.`,
+          `Topic ID: ${asTrimmedString(topicId)}.`,
+          `Topic: ${asTrimmedString(mathTopic)}.`,
           `Lesson title: ${fallbackTitle || 'Untitled lesson'}.`,
           'Lesson content:',
           lesson || fallbackTitle,
@@ -172,6 +173,7 @@ const generateLessonQuestions = async ({
   title,
   gradeLevel,
   difficulty,
+  topicId,
   mathTopic,
   questionCount,
   apiKey = process.env.OPENAI_API_KEY,
@@ -194,7 +196,7 @@ const generateLessonQuestions = async ({
   const boundedTimeoutMs = Number.isInteger(timeoutMs) && timeoutMs > 0
     ? timeoutMs
     : QUESTION_GENERATION_TIMEOUT_MS;
-  const input = buildGenerationInput({ lessonText, title, gradeLevel, difficulty, mathTopic, questionCount });
+  const input = buildGenerationInput({ lessonText, title, gradeLevel, difficulty, topicId, mathTopic, questionCount });
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), boundedTimeoutMs);
 

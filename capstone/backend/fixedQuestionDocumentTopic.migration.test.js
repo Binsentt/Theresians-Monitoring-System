@@ -81,3 +81,20 @@ test('lesson-source lineage migration is additive and preserves legacy question 
   assert.doesNotMatch(migration, /DELETE\s+FROM/i);
   assert.doesNotMatch(migration, /UPDATE\s+public\.questions/i);
 });
+
+test('canonical topic-ID migration is nullable, additive, and does not rewrite legacy rows', () => {
+  const migration = fs.readFileSync(
+    path.join(__dirname, 'migrations', '016_add_canonical_topic_id.sql'),
+    'utf8'
+  );
+
+  assert.match(migration, /ALTER TABLE public\.learning_files[\s\S]*ADD COLUMN IF NOT EXISTS topic_id VARCHAR\(100\) NULL/i);
+  assert.match(migration, /ALTER TABLE public\.questions[\s\S]*ADD COLUMN IF NOT EXISTS topic_id VARCHAR\(100\) NULL/i);
+  assert.match(migration, /CREATE INDEX IF NOT EXISTS[\s\S]*learning_files_scope_topic_id_index/i);
+  assert.match(migration, /\(grade_level, difficulty, topic_id\)[\s\S]*topic_id IS NOT NULL/i);
+  assert.match(migration, /CREATE INDEX IF NOT EXISTS[\s\S]*questions_learning_file_topic_id_index/i);
+  assert.doesNotMatch(migration, /\bDROP\b/i);
+  assert.doesNotMatch(migration, /\bTRUNCATE\b/i);
+  assert.doesNotMatch(migration, /\bDELETE\s+FROM\b/i);
+  assert.doesNotMatch(migration, /\bUPDATE\s+public\.(learning_files|questions)\b/i);
+});

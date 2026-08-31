@@ -67,6 +67,17 @@ const {
   parseLessonQuestionCount,
 } = require('./learningContentRules.utils');
 const {
+  CANONICAL_DIFFICULTIES,
+  CANONICAL_GRADES,
+  getPublicRegistrySnapshot,
+  getTopicById,
+  isValidScope,
+  normalizeDifficulty,
+  normalizeGradeLevel,
+  normalizeTopicId,
+  resolveLegacyDisplayTopic,
+} = require('./curriculumScopeRegistry');
+const {
   QuestionGenerationError,
   generateLessonQuestions,
 } = require('./lessonQuestionGeneration');
@@ -428,6 +439,7 @@ const ensureSchema = async () => {
       grade_level VARCHAR(50) NOT NULL,
       difficulty VARCHAR(20),
       math_topic VARCHAR(100),
+      topic_id VARCHAR(100),
       document_topic TEXT,
       file_type VARCHAR(50) NOT NULL,
       subject VARCHAR(50) NOT NULL DEFAULT 'Mathematics',
@@ -439,6 +451,7 @@ const ensureSchema = async () => {
     );`);
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS file_size BIGINT');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS difficulty VARCHAR(20)');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS topic_id VARCHAR(100)');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS requested_question_count INTEGER');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ');
@@ -488,15 +501,18 @@ const ensureSchema = async () => {
       grade_level VARCHAR(50),
       difficulty VARCHAR(20),
       math_topic VARCHAR(100),
+      topic_id VARCHAR(100),
       source VARCHAR(50) NOT NULL,
       published BOOLEAN DEFAULT false,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );`);
     await pool.query('ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS difficulty VARCHAR(20)');
+    await pool.query('ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS topic_id VARCHAR(100)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_published ON public.learning_files(published)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_questions_published ON public.questions(published)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_grade_difficulty_topic ON public.learning_files(grade_level, difficulty, math_topic)');
+    await pool.query('CREATE INDEX IF NOT EXISTS learning_files_scope_topic_id_index ON public.learning_files(grade_level, difficulty, topic_id) WHERE topic_id IS NOT NULL');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_lifecycle ON public.learning_files(generation_status, publish_status)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_source_learning_file_id ON public.learning_files(source_learning_file_id) WHERE source_learning_file_id IS NOT NULL');
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_learning_files_client_provided_fingerprint
@@ -504,6 +520,7 @@ const ensureSchema = async () => {
       WHERE source_content_fingerprint IS NOT NULL
         AND source IN ('restored_import', 'client_provided')`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_questions_grade_difficulty_topic ON public.questions(grade_level, difficulty, math_topic)');
+    await pool.query('CREATE INDEX IF NOT EXISTS questions_learning_file_topic_id_index ON public.questions(learning_file_id, topic_id) WHERE topic_id IS NOT NULL');
   } catch (err) {
     console.error('Schema initialization failed:', err.message);
   }
@@ -1295,15 +1312,38 @@ const calculateGameResultPercentage = ({ score, totalItems }) => {
 };
 
 const normalizeGameGradeLevel = (value) => {
-  const normalized = String(value || '').trim();
-  const numericMatch = normalized.match(/^(?:grade\s*)?([1-6])$/i);
-  if (numericMatch) return `Grade ${numericMatch[1]}`;
-  return normalized || null;
+  return normalizeGradeLevel(value);
 };
 
-const QUESTION_GRADE_LEVELS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
-const QUESTION_DIFFICULTIES = ['Easy', 'Normal', 'Difficult'];
+const QUESTION_GRADE_LEVELS = CANONICAL_GRADES;
+const QUESTION_DIFFICULTIES = CANONICAL_DIFFICULTIES;
 const GAME_QUESTION_SET_SIZE = 5;
+
+const resolveCanonicalQuestionScope = ({
+  grade_level,
+  grade,
+  difficulty,
+  topic_id,
+  math_topic,
+  topic,
+} = {}) => {
+  const canonicalGrade = normalizeGameGradeLevel(grade_level || grade);
+  const canonicalDifficulty = normalizeDifficulty(difficulty);
+  const rawTopicId = String(topic_id || '').trim();
+  const canonicalTopicId = rawTopicId
+    ? normalizeTopicId(rawTopicId)
+    : resolveLegacyDisplayTopic(canonicalGrade, canonicalDifficulty, math_topic || topic);
+  if (!canonicalGrade || !canonicalDifficulty || !canonicalTopicId
+    || !isValidScope(canonicalGrade, canonicalDifficulty, canonicalTopicId)) {
+    return null;
+  }
+  return {
+    grade_level: canonicalGrade,
+    difficulty: canonicalDifficulty,
+    topic_id: canonicalTopicId,
+    math_topic: getTopicById(canonicalTopicId).display_label,
+  };
+};
 
 const buildQuestionFolderStructure = () => ({
   root: { name: 'Questions', path: 'Questions/' },
@@ -1320,7 +1360,7 @@ const buildQuestionFolderStructure = () => ({
 });
 
 const buildQuestionFolderPath = (gradeLevel, difficulty) => {
-  const grade = String(gradeLevel || '').trim();
+  const grade = normalizeGameGradeLevel(gradeLevel);
   const level = normalizeDifficultyValue(difficulty);
   if (!grade) return 'Questions/';
   if (!level) return `Questions/${grade}/`;
@@ -1418,7 +1458,7 @@ const resolveScopeId = (value) => {
   return Number.isNaN(parsed) ? NaN : parsed;
 };
 
-const resolveGameResultQuestionSet = async ({ rawQuestionSetId, gradeLevel, difficulty, mathTopic }) => {
+const resolveGameResultQuestionSet = async ({ rawQuestionSetId, gradeLevel, difficulty, topicId, mathTopic }) => {
   if (rawQuestionSetId === undefined || rawQuestionSetId === null || rawQuestionSetId === '') {
     return { questionSetId: null };
   }
@@ -1434,7 +1474,7 @@ const resolveGameResultQuestionSet = async ({ rawQuestionSetId, gradeLevel, diff
   }
 
   const result = await pool.query(
-    `SELECT id, grade_level, difficulty, math_topic, publish_status
+    `SELECT id, grade_level, difficulty, topic_id, math_topic, publish_status
      FROM public.learning_files
      WHERE id = $1
      LIMIT 1`,
@@ -1448,11 +1488,17 @@ const resolveGameResultQuestionSet = async ({ rawQuestionSetId, gradeLevel, diff
     return { error: 'Question set is not an active or replaced production set.' };
   }
 
-  const matchingScope = (
-    normalizeGameGradeLevel(questionSet.grade_level) === normalizeGameGradeLevel(gradeLevel)
-    && normalizeDifficultyValue(questionSet.difficulty) === normalizeDifficultyValue(difficulty)
-    && String(questionSet.math_topic || '').trim() === String(mathTopic || '').trim()
-  );
+  const submittedScope = resolveCanonicalQuestionScope({
+    grade_level: gradeLevel,
+    difficulty,
+    topic_id: topicId,
+    math_topic: mathTopic,
+  });
+  const storedScope = resolveCanonicalQuestionScope(questionSet);
+  const matchingScope = submittedScope && storedScope
+    && submittedScope.grade_level === storedScope.grade_level
+    && submittedScope.difficulty === storedScope.difficulty
+    && submittedScope.topic_id === storedScope.topic_id;
   if (!matchingScope) return { error: 'Question set does not match the submitted result scope.' };
 
   return { questionSetId };
@@ -1856,9 +1902,9 @@ const buildMathQuestionTemplates = (grade_level, math_topic) => {
 const saveQuestionsForFile = async (learningFileId, questions, queryClient = pool) => {
   if (!Array.isArray(questions) || questions.length === 0) return;
   const insertPromises = questions.map((item) => queryClient.query(
-    `INSERT INTO public.questions (learning_file_id, question, options, correct_answer, grade_level, difficulty, math_topic, source, published)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-    [learningFileId, item.question, JSON.stringify(item.options || []), item.correct_answer, item.grade_level, item.difficulty || null, item.math_topic, item.source || 'ai', false]
+    `INSERT INTO public.questions (learning_file_id, question, options, correct_answer, grade_level, difficulty, math_topic, topic_id, source, published)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [learningFileId, item.question, JSON.stringify(item.options || []), item.correct_answer, item.grade_level, item.difficulty || null, item.math_topic, item.topic_id || null, item.source || 'ai', false]
   ));
   await Promise.all(insertPromises);
 };
@@ -1881,6 +1927,7 @@ const parseFixedQuestionsFile = async (file) => {
       correct_answer: String(item.correct_answer || item.answer || '').trim(),
       grade_level: String(item.grade_level || '').trim(),
       math_topic: String(item.math_topic || '').trim(),
+      topic_id: String(item.topic_id || '').trim() || null,
       source: 'fixed',
     }));
   }
@@ -1895,6 +1942,7 @@ const parseFixedQuestionsFile = async (file) => {
         correct_answer: rest[4] || '',
         grade_level: '',
         math_topic: '',
+        topic_id: null,
         source: 'fixed',
       };
     });
@@ -1948,6 +1996,7 @@ const buildLessonGenerationRequestFingerprint = ({
   sourceContentFingerprint,
   gradeLevel,
   difficulty,
+  topicId,
   mathTopic,
   questionCount,
 }) => crypto.createHash('sha256').update(JSON.stringify({
@@ -1958,6 +2007,7 @@ const buildLessonGenerationRequestFingerprint = ({
   source_content_fingerprint: sourceContentFingerprint,
   grade_level: gradeLevel,
   difficulty,
+  topic_id: topicId,
   math_topic: mathTopic,
   requested_question_count: questionCount,
 })).digest('hex');
@@ -2020,7 +2070,7 @@ const respondToExistingLessonGeneration = ({ res, learningFile, requestFingerpri
   });
 };
 
-const generateQuestionTextFromLesson = async (filePath, title, grade_level, difficulty, math_topic, questionCount) => {
+const generateQuestionTextFromLesson = async (filePath, title, grade_level, difficulty, topic_id, math_topic, questionCount) => {
   const buffer = fs.readFileSync(filePath);
   let pdfData;
   try {
@@ -2038,6 +2088,7 @@ const generateQuestionTextFromLesson = async (filePath, title, grade_level, diff
     title,
     gradeLevel: grade_level,
     difficulty,
+    topicId: topic_id,
     mathTopic: math_topic,
     questionCount,
   });
@@ -2078,7 +2129,7 @@ const requireQuestionSetRecord = (learningFile) => {
 const getQuestionSetValidationState = async (queryClient, learningFile, { lockRows = false } = {}) => {
   requireQuestionSetRecord(learningFile);
   const questionResult = await queryClient.query(
-    `SELECT id, learning_file_id, question, options, correct_answer, grade_level, difficulty, math_topic
+    `SELECT id, learning_file_id, question, options, correct_answer, grade_level, difficulty, math_topic, topic_id
      FROM public.questions
      WHERE learning_file_id = $1
      ORDER BY id ASC${lockRows ? ' FOR UPDATE' : ''}`,
@@ -2094,6 +2145,7 @@ const getQuestionSetValidationState = async (queryClient, learningFile, { lockRo
   const validationInput = {
     grade_level: learningFile.grade_level,
     difficulty: canonicalDifficulty,
+    topic_id: learningFile.topic_id,
     math_topic: learningFile.math_topic,
     questions: scopedQuestions,
   };
@@ -2111,6 +2163,7 @@ const getQuestionSetValidationState = async (queryClient, learningFile, { lockRo
       metadata_error: documentScopeError || validateLearningMetadata({
         grade_level: learningFile.grade_level,
         difficulty: canonicalDifficulty,
+        topic_id: learningFile.topic_id,
         math_topic: learningFile.math_topic,
       }),
       scope_validation: scopeValidation,
@@ -2218,6 +2271,7 @@ const buildQuestionSetReplacementSummary = (learningFile, questionCount = null) 
   title: learningFile.generated_question_set_name || learningFile.title || learningFile.file_name || 'Untitled question set',
   grade_level: learningFile.grade_level,
   difficulty: normalizeDifficultyValue(learningFile.difficulty),
+  topic_id: learningFile.topic_id || null,
   math_topic: learningFile.math_topic,
   question_count: Number.isInteger(Number(questionCount ?? learningFile.question_count))
     ? Number(questionCount ?? learningFile.question_count)
@@ -2262,14 +2316,21 @@ const publishLearningFile = async (fileId, publisherId, { confirmReplacement = f
       throw error;
     }
 
-    const canonicalDifficulty = normalizeDifficultyValue(learningFile.difficulty);
-    const scopeKey = `${learningFile.grade_level}|${canonicalDifficulty}|${learningFile.math_topic}`;
+    const canonicalScope = resolveCanonicalQuestionScope(learningFile);
+    if (!canonicalScope) {
+      const error = createLifecycleHttpError('The question set does not have a safely resolvable canonical publication topic.', 422);
+      error.code = 'CANONICAL_TOPIC_UNRESOLVED';
+      throw error;
+    }
+    const { grade_level: canonicalGrade, difficulty: canonicalDifficulty, topic_id: canonicalTopicId, math_topic: canonicalTopicLabel } = canonicalScope;
+    const scopeKey = `${canonicalGrade}|${canonicalDifficulty}|${canonicalTopicId}`;
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [scopeKey]);
 
     const destinationParams = [
-      learningFile.grade_level,
+      canonicalGrade,
       canonicalDifficulty,
-      learningFile.math_topic,
+      canonicalTopicId,
+      canonicalTopicLabel,
       fileId,
     ];
     const learningDifficulty = canonicalDifficultySql('difficulty');
@@ -2281,6 +2342,7 @@ const publishLearningFile = async (fileId, publisherId, { confirmReplacement = f
               lf.file_name,
               lf.grade_level,
               lf.difficulty,
+              lf.topic_id,
               lf.math_topic,
               COALESCE(question_counts.question_count, 0)::INTEGER AS question_count
        FROM public.learning_files lf
@@ -2291,8 +2353,8 @@ const publishLearningFile = async (fileId, publisherId, { confirmReplacement = f
        ) question_counts ON question_counts.learning_file_id = lf.id
        WHERE lf.grade_level = $1
          AND ${linkedLearningDifficulty} = $2
-         AND lf.math_topic = $3
-         AND lf.id <> $4
+         AND (lf.topic_id = $3 OR (lf.topic_id IS NULL AND lf.math_topic = $4))
+         AND lf.id <> $5
          AND lf.subject = 'Mathematics'
          AND lf.deleted_at IS NULL
          AND (lf.published = true OR lf.publish_status = 'active')
@@ -2318,8 +2380,8 @@ const publishLearningFile = async (fileId, publisherId, { confirmReplacement = f
            publish_status = 'superseded'
        WHERE grade_level = $1
          AND ${learningDifficulty} = $2
-         AND math_topic = $3
-         AND id <> $4
+         AND (topic_id = $3 OR (topic_id IS NULL AND math_topic = $4))
+         AND id <> $5
          AND subject = 'Mathematics'
          AND deleted_at IS NULL
          AND (published = true OR publish_status = 'active')`,
@@ -2332,8 +2394,8 @@ const publishLearningFile = async (fileId, publisherId, { confirmReplacement = f
        WHERE q.learning_file_id = lf.id
          AND lf.grade_level = $1
          AND ${linkedLearningDifficulty} = $2
-         AND lf.math_topic = $3
-         AND lf.id <> $4
+         AND (lf.topic_id = $3 OR (lf.topic_id IS NULL AND lf.math_topic = $4))
+         AND lf.id <> $5
          AND lf.subject = 'Mathematics'
          AND lf.deleted_at IS NULL
          AND lf.publish_status = 'superseded'`,
@@ -2651,7 +2713,7 @@ const getLearningFiles = async () => {
   return result.rows.map(buildFileRecord);
 };
 
-const getGameQuestions = async ({ grade_level, difficulty, math_topic }) => {
+const getGameQuestions = async ({ grade_level, difficulty, topic_id, math_topic }) => {
   const params = ['Mathematics'];
   let clause = 'WHERE lf.subject = $1 AND lf.published = true AND lf.deleted_at IS NULL';
   const normalizedDifficulty = difficulty ? normalizeDifficultyValue(difficulty) : null;
@@ -2665,11 +2727,14 @@ const getGameQuestions = async ({ grade_level, difficulty, math_topic }) => {
     params.push(normalizedDifficulty);
     clause += ` AND ${lfDifficulty} = $${params.length}`;
   }
-  if (math_topic) {
+  if (topic_id) {
+    params.push(topic_id);
+    const topicIdIndex = params.length;
     params.push(math_topic);
-    clause += ` AND lf.math_topic = $${params.length}`;
+    const legacyTopicIndex = params.length;
+    clause += ` AND (lf.topic_id = $${topicIdIndex} OR (lf.topic_id IS NULL AND lf.math_topic = $${legacyTopicIndex}))`;
   }
-  if (grade_level && difficulty && math_topic) {
+  if (grade_level && difficulty && topic_id) {
     clause += `
       AND lf.id = (
         SELECT active_lf.id
@@ -2679,7 +2744,7 @@ const getGameQuestions = async ({ grade_level, difficulty, math_topic }) => {
           AND active_lf.deleted_at IS NULL
           AND active_lf.grade_level = $2
           AND ${activeDifficulty} = $3
-          AND active_lf.math_topic = $4
+           AND (active_lf.topic_id = $4 OR (active_lf.topic_id IS NULL AND active_lf.math_topic = $5))
         ORDER BY active_lf.uploaded_at DESC, active_lf.id DESC
         LIMIT 1
       )`;
@@ -2693,21 +2758,26 @@ const getGameQuestions = async ({ grade_level, difficulty, math_topic }) => {
     params
   );
   return result.rows
-    .map((row) => ({
-      id: row.id,
-      learning_file_id: row.learning_file_id,
-      question: row.question,
-      options: row.options,
-      correct_answer: row.correct_answer,
-      grade_level: row.grade_level,
-      difficulty: normalizeDifficultyValue(row.difficulty),
-      math_topic: row.math_topic,
-      source: row.source,
-    }))
+    .map((row) => {
+      const resolvedTopicId = normalizeTopicId(row.topic_id)
+        || (row.topic_id ? null : resolveLegacyDisplayTopic(row.grade_level, row.difficulty, row.math_topic));
+      return {
+        id: row.id,
+        learning_file_id: row.learning_file_id,
+        question: row.question,
+        options: row.options,
+        correct_answer: row.correct_answer,
+        grade_level: row.grade_level,
+        difficulty: normalizeDifficultyValue(row.difficulty),
+        topic_id: resolvedTopicId,
+        math_topic: row.math_topic,
+        source: row.source,
+      };
+    })
     .filter((row) => (
       row.grade_level === grade_level
       && row.difficulty === normalizedDifficulty
-      && row.math_topic === math_topic
+      && row.topic_id === topic_id
     ));
 };
 
@@ -2747,7 +2817,7 @@ const needQuestionParser = async (fileType, file) => {
   return [];
 };
 
-const getGameFiles = async ({ grade_level, difficulty, math_topic }) => {
+const getGameFiles = async ({ grade_level, difficulty, topic_id, math_topic }) => {
   const params = ['Mathematics'];
   let clause = 'WHERE subject = $1 AND published = true AND deleted_at IS NULL';
   const normalizedDifficulty = difficulty ? normalizeDifficultyValue(difficulty) : null;
@@ -2760,11 +2830,14 @@ const getGameFiles = async ({ grade_level, difficulty, math_topic }) => {
     params.push(normalizedDifficulty);
     clause += ` AND ${difficultySql} = $${params.length}`;
   }
-  if (math_topic) {
+  if (topic_id) {
+    params.push(topic_id);
+    const topicIdIndex = params.length;
     params.push(math_topic);
-    clause += ` AND math_topic = $${params.length}`;
+    const legacyTopicIndex = params.length;
+    clause += ` AND (topic_id = $${topicIdIndex} OR (topic_id IS NULL AND math_topic = $${legacyTopicIndex}))`;
   }
-  if (grade_level && difficulty && math_topic) {
+  if (grade_level && difficulty && topic_id) {
     clause += `
       AND id = (
         SELECT id
@@ -2774,27 +2847,32 @@ const getGameFiles = async ({ grade_level, difficulty, math_topic }) => {
           AND deleted_at IS NULL
           AND grade_level = $2
           AND ${difficultySql} = $3
-          AND math_topic = $4
+           AND (topic_id = $4 OR (topic_id IS NULL AND math_topic = $5))
         ORDER BY uploaded_at DESC, id DESC
         LIMIT 1
       )`;
   }
   const result = await pool.query(`SELECT * FROM public.learning_files ${clause} ORDER BY uploaded_at DESC`, params);
   return result.rows
-    .map((row) => ({
-      id: row.id,
-      title: row.title,
-      file_url: row.file_url,
-      grade_level: row.grade_level,
-      difficulty: normalizeDifficultyValue(row.difficulty),
-      math_topic: row.math_topic,
-      file_type: row.file_type,
-      published: row.published,
-    }))
+    .map((row) => {
+      const resolvedTopicId = normalizeTopicId(row.topic_id)
+        || (row.topic_id ? null : resolveLegacyDisplayTopic(row.grade_level, row.difficulty, row.math_topic));
+      return {
+        id: row.id,
+        title: row.title,
+        file_url: row.file_url,
+        grade_level: row.grade_level,
+        difficulty: normalizeDifficultyValue(row.difficulty),
+        topic_id: resolvedTopicId,
+        math_topic: row.math_topic,
+        file_type: row.file_type,
+        published: row.published,
+      };
+    })
     .filter((row) => (
       row.grade_level === grade_level
       && row.difficulty === normalizedDifficulty
-      && row.math_topic === math_topic
+      && row.topic_id === topic_id
     ));
 };
 
@@ -4263,24 +4341,18 @@ const getLessonSourceFilePath = (lessonSource = {}) => {
   return path.join(uploadsDir, fileName);
 };
 
-const validateLessonGenerationScope = ({ grade_level, difficulty, math_topic, expected_question_count }) => {
-  const gradeLevel = String(grade_level || '').trim();
-  const normalizedDifficulty = normalizeDifficultyValue(difficulty);
-  const mathTopic = String(math_topic || '').trim();
-  const metadataError = validateLearningMetadata({
-    grade_level: gradeLevel,
-    difficulty: normalizedDifficulty,
-    math_topic: mathTopic,
-  });
-  if (metadataError) return { error: metadataError };
+const validateLessonGenerationScope = ({ grade_level, difficulty, topic_id, math_topic, expected_question_count }) => {
+  const scope = resolveCanonicalQuestionScope({ grade_level, difficulty, topic_id, math_topic });
+  if (!scope) return { error: 'Topic must match the selected grade level and difficulty.' };
 
   const parsedCount = parseLessonQuestionCount(expected_question_count);
   if (parsedCount.error) return { error: parsedCount.error };
 
   return {
-    gradeLevel,
-    difficulty: normalizedDifficulty,
-    mathTopic,
+    gradeLevel: scope.grade_level,
+    difficulty: scope.difficulty,
+    topicId: scope.topic_id,
+    mathTopic: scope.math_topic,
     questionCount: parsedCount.value,
   };
 };
@@ -4405,6 +4477,7 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
       sourceContentFingerprint,
       gradeLevel: scope.gradeLevel,
       difficulty: scope.difficulty,
+      topicId: scope.topicId,
       mathTopic: scope.mathTopic,
       questionCount: scope.questionCount,
     });
@@ -4431,13 +4504,13 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
 
     const insertResult = await pool.query(
       `INSERT INTO public.learning_files (
-         title, file_name, file_url, grade_level, difficulty, math_topic, document_topic,
+         title, file_name, file_url, grade_level, difficulty, math_topic, topic_id, document_topic,
          file_type, subject, folder_id, published, source, uploaded_by, file_size,
          requested_question_count, generation_status, publish_status, content_role,
          source_learning_file_id, source_content_fingerprint, generation_idempotency_key,
          generation_request_fingerprint, source_file_mime_type
-       ) VALUES ($1, $2, $3, $4, $5, $6, NULL, 'lesson', 'Mathematics', $7, false, 'lesson', $8, $9,
-                 $10, 'generating', 'staged', 'question_set', $11, $12, $13, $14, $15)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, 'lesson', 'Mathematics', $8, false, 'lesson', $9, $10,
+                 $11, 'generating', 'staged', 'question_set', $12, $13, $14, $15, $16)
        RETURNING *`,
       [
         `${lessonSource.title} — ${scope.gradeLevel} / ${scope.difficulty} / ${scope.mathTopic}`,
@@ -4446,6 +4519,7 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
         scope.gradeLevel,
         scope.difficulty,
         scope.mathTopic,
+        scope.topicId,
         lessonSource.folder_id || null,
         req.authenticatedUser.id,
         lessonSource.file_size || null,
@@ -4467,24 +4541,10 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
       lessonSource.title,
       scope.gradeLevel,
       scope.difficulty,
+      scope.topicId,
       scope.mathTopic,
       scope.questionCount
     );
-    const scopeValidation = validateQuestionSetScope({
-      selected_scope: {
-        grade_level: scope.gradeLevel,
-        difficulty: scope.difficulty,
-        math_topic: scope.mathTopic,
-      },
-      require_document_topic: false,
-      questions: questions.map((question, index) => ({ ...question, source_index: index + 1 })),
-    });
-    if (!scopeValidation.isValid) {
-      throw new QuestionGenerationError(
-        scopeValidation.code || 'QUESTION_AI_SCOPE_VALIDATION_FAILED',
-        scopeValidation.message || 'Question generation returned questions outside the selected scope.'
-      );
-    }
 
     const client = await pool.connect();
     try {
@@ -4494,6 +4554,7 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
         grade_level: scope.gradeLevel,
         difficulty: scope.difficulty,
         math_topic: scope.mathTopic,
+        topic_id: scope.topicId,
         source: 'ai',
       })), client);
       const completed = await client.query(
@@ -4554,7 +4615,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
   let lessonGenerationRequestFingerprint = null;
   let lessonSourceContentFingerprint = null;
   try {
-    const { title, grade_level, difficulty, math_topic, file_type, folder_id, expected_question_count } = req.body;
+    const { title, grade_level, difficulty, topic_id, math_topic, file_type, folder_id, expected_question_count } = req.body;
     if (!req.file) return res.status(400).json({ error: 'File is required' });
     if (Number(req.file.size) > MAX_LESSON_UPLOAD_BYTES) {
       cleanTemporaryUpload(req.file.path);
@@ -4563,24 +4624,20 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         code: 'LESSON_FILE_TOO_LARGE',
       });
     }
-    if (!title || !grade_level || !difficulty || !math_topic || !file_type) {
+    if (!title || !grade_level || !difficulty || (!topic_id && !math_topic) || !file_type) {
       return res.status(400).json({ error: 'Missing required metadata' });
     }
 
-    const normalizedGrade = String(grade_level).trim();
-    const normalizedDifficulty = normalizeDifficultyValue(difficulty);
-    let normalizedTopic = String(math_topic || '').trim();
-    const normalizedType = String(file_type).trim().toLowerCase();
-
-    const learningMetadataError = validateLearningMetadata({
-      grade_level: normalizedGrade,
-      difficulty: normalizedDifficulty,
-      math_topic: normalizedTopic,
-    });
-    if (learningMetadataError) {
+    const canonicalScope = resolveCanonicalQuestionScope({ grade_level, difficulty, topic_id, math_topic });
+    if (!canonicalScope) {
       cleanTemporaryUpload(req.file.path);
-      return res.status(400).json({ error: learningMetadataError });
+      return res.status(400).json({ error: 'Topic must match the selected grade level and difficulty.' });
     }
+    const normalizedGrade = canonicalScope.grade_level;
+    const normalizedDifficulty = canonicalScope.difficulty;
+    const normalizedTopicId = canonicalScope.topic_id;
+    const normalizedTopic = canonicalScope.math_topic;
+    const normalizedType = String(file_type).trim().toLowerCase();
     if (!isValidFileType(normalizedType)) {
       cleanTemporaryUpload(req.file.path);
       return res.status(400).json({ error: 'Invalid file type.' });
@@ -4670,6 +4727,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         sourceContentFingerprint: lessonSourceContentFingerprint,
         gradeLevel: normalizedGrade,
         difficulty: normalizedDifficulty,
+        topicId: normalizedTopicId,
         mathTopic: normalizedTopic,
         questionCount: requestedQuestionCount,
       });
@@ -4710,11 +4768,11 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     const createLearningFile = async (generationStatus) => {
       const insertResult = await pool.query(
         `INSERT INTO public.learning_files (
-          title, file_name, file_url, grade_level, difficulty, math_topic, document_topic,
+          title, file_name, file_url, grade_level, difficulty, math_topic, topic_id, document_topic,
           file_type, subject, folder_id, published, source, uploaded_by,
           file_size, requested_question_count, generation_status, publish_status,
           source_content_fingerprint, generation_idempotency_key, generation_request_fingerprint
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Mathematics', $9, false, $10, $11, $12, $13, $14, 'staged', $15, $16, $17)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Mathematics', $10, false, $11, $12, $13, $14, $15, 'staged', $16, $17, $18)
          RETURNING *`,
         [
           String(title).trim(),
@@ -4723,6 +4781,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
           normalizedGrade,
           normalizedDifficulty,
           normalizedTopic || null,
+          normalizedTopicId,
           null,
           normalizedType,
           folderResolution.folderId,
@@ -4775,27 +4834,10 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
           String(title).trim(),
           normalizedGrade,
           normalizedDifficulty,
+          normalizedTopicId,
           normalizedTopic,
           requestedQuestionCount
         );
-        const generatedScopeValidation = validateQuestionSetScope({
-          selected_scope: {
-            grade_level: normalizedGrade,
-            difficulty: normalizedDifficulty,
-            math_topic: normalizedTopic,
-          },
-          require_document_topic: false,
-          questions: questions.map((question, index) => ({
-            ...question,
-            source_index: index + 1,
-          })),
-        });
-        if (!generatedScopeValidation.isValid) {
-          throw new QuestionGenerationError(
-            generatedScopeValidation.code || 'QUESTION_AI_SCOPE_VALIDATION_FAILED',
-            generatedScopeValidation.message || 'Question generation returned questions outside the selected scope.'
-          );
-        }
 
         const client = await pool.connect();
         try {
@@ -4805,6 +4847,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
             grade_level: learningFile.grade_level,
             difficulty: learningFile.difficulty,
             math_topic: learningFile.math_topic,
+            topic_id: learningFile.topic_id,
             source: 'ai',
           })), client);
           const completedResult = await client.query(
@@ -4849,10 +4892,10 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
       await client.query('BEGIN');
       const insertResult = await client.query(
         `INSERT INTO public.learning_files (
-          title, file_name, file_url, grade_level, difficulty, math_topic, document_topic,
+          title, file_name, file_url, grade_level, difficulty, math_topic, topic_id, document_topic,
           file_type, subject, folder_id, published, source, uploaded_by,
           file_size, requested_question_count, generation_status, publish_status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Mathematics', $9, false, $10, $11, $12, NULL, 'not_applicable', 'staged')
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Mathematics', $10, false, $11, $12, $13, NULL, 'not_applicable', 'staged')
          RETURNING *`,
         [
           String(title).trim(),
@@ -4861,6 +4904,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
           normalizedGrade,
           normalizedDifficulty,
           normalizedTopic || null,
+          normalizedTopicId,
           fixedDocumentTopic,
           normalizedType,
           folderResolution.folderId,
@@ -4876,6 +4920,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         grade_level: learningFile.grade_level,
         difficulty: learningFile.difficulty,
         math_topic: learningFile.math_topic,
+        topic_id: question.topic_id || null,
         source: 'fixed',
       })), client);
       await client.query('COMMIT');
@@ -5153,22 +5198,19 @@ app.put('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (re
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
-    const { title, grade_level, difficulty, math_topic, file_type, folder_id } = req.body;
-    if (!title || !grade_level || !difficulty || !math_topic || !file_type) {
+    const { title, grade_level, difficulty, topic_id, math_topic, file_type, folder_id } = req.body;
+    if (!title || !grade_level || !difficulty || (!topic_id && !math_topic) || !file_type) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
-    const normalizedGrade = String(grade_level).trim();
-    const normalizedDifficulty = normalizeDifficultyValue(difficulty);
-    const normalizedTopic = String(math_topic).trim();
-    const normalizedType = String(file_type).trim().toLowerCase();
-    const learningMetadataError = validateLearningMetadata({
-      grade_level: normalizedGrade,
-      difficulty: normalizedDifficulty,
-      math_topic: normalizedTopic,
-    });
-    if (learningMetadataError) {
-      return res.status(400).json({ error: learningMetadataError });
+    const canonicalScope = resolveCanonicalQuestionScope({ grade_level, difficulty, topic_id, math_topic });
+    if (!canonicalScope) {
+      return res.status(400).json({ error: 'Topic must match the selected grade level and difficulty.' });
     }
+    const normalizedGrade = canonicalScope.grade_level;
+    const normalizedDifficulty = canonicalScope.difficulty;
+    const normalizedTopicId = canonicalScope.topic_id;
+    const normalizedTopic = canonicalScope.math_topic;
+    const normalizedType = String(file_type).trim().toLowerCase();
     if (!isValidFileType(normalizedType)) {
       return res.status(400).json({ error: 'Invalid file type.' });
     }
@@ -5184,8 +5226,9 @@ app.put('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (re
            grade_level = $2,
            difficulty = $3,
            math_topic = $4,
-           file_type = $5,
-           folder_id = $6,
+           topic_id = $5,
+           file_type = $6,
+           folder_id = $7,
            published = false,
            publish_status = 'staged',
            published_at = NULL,
@@ -5194,10 +5237,10 @@ app.put('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (re
            approved_at = NULL,
            approved_by = NULL,
            approved_content_fingerprint = NULL
-     WHERE id = $7
+     WHERE id = $8
         AND deleted_at IS NULL
        RETURNING *`,
-      [String(title).trim(), normalizedGrade, normalizedDifficulty, normalizedTopic, normalizedType, folderResolution.folderId, fileId]
+      [String(title).trim(), normalizedGrade, normalizedDifficulty, normalizedTopic, normalizedTopicId, normalizedType, folderResolution.folderId, fileId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'File not found' });
 
@@ -5205,9 +5248,10 @@ app.put('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (re
       `UPDATE public.questions
        SET grade_level = $1,
            difficulty = $2,
-           math_topic = $3
-       WHERE learning_file_id = $4`,
-      [normalizedGrade, normalizedDifficulty, normalizedTopic, fileId]
+           math_topic = $3,
+           topic_id = CASE WHEN source = 'ai' THEN $4 ELSE topic_id END
+       WHERE learning_file_id = $5`,
+      [normalizedGrade, normalizedDifficulty, normalizedTopic, normalizedTopicId, fileId]
     );
 
     res.json(normalizeLearningFileRow(result.rows[0]));
@@ -5331,26 +5375,40 @@ app.post('/api/questions/unpublish/:id', requireLessonQuestionManagerAccess, asy
   }
 });
 
+app.get('/api/curriculum/registry', requireLessonQuestionManagerAccess, (req, res) => {
+  const registry = getPublicRegistrySnapshot();
+  const etag = `"curriculum-registry-${registry.version}"`;
+  res.set('ETag', etag);
+  res.set('Cache-Control', 'private, max-age=300');
+  if (req.headers['if-none-match'] === etag) return res.status(304).end();
+  return res.json(registry);
+});
+
 app.get('/api/game/questions', async (req, res) => {
   try {
-    const grade_level = normalizeGameGradeLevel(req.query.grade_level || req.query.grade);
-    const difficulty = normalizeDifficultyValue(req.query.difficulty || '');
-    const math_topic = String(req.query.math_topic || req.query.topic || '').trim();
-    if (!grade_level || !difficulty || !math_topic) {
+    const requestedTopicId = String(req.query.topic_id || '').trim();
+    const requestedTopic = String(req.query.math_topic || req.query.topic || '').trim();
+    if ((!req.query.grade_level && !req.query.grade) || !req.query.difficulty || (!requestedTopicId && !requestedTopic)) {
       return res.status(400).json({
         error: 'Grade, Difficulty, and Topic are required for game questions.',
         code: 'QUESTION_SCOPE_REQUIRED',
       });
     }
-    const scopeError = validateLearningMetadata({ grade_level, difficulty, math_topic });
-    if (scopeError) {
+    const scope = resolveCanonicalQuestionScope({
+      grade_level: req.query.grade_level,
+      grade: req.query.grade,
+      difficulty: req.query.difficulty,
+      topic_id: requestedTopicId,
+      math_topic: requestedTopic,
+    });
+    if (!scope) {
       return res.status(400).json({
-        error: scopeError,
+        error: 'Topic must match the selected grade level and difficulty.',
         code: 'QUESTION_SCOPE_INVALID',
       });
     }
-    const learningFiles = await getGameFiles({ grade_level, difficulty, math_topic });
-    const gameQuestions = await getGameQuestions({ grade_level, difficulty, math_topic });
+    const learningFiles = await getGameFiles(scope);
+    const gameQuestions = await getGameQuestions(scope);
     if (gameQuestions.length > 0) {
       await markLearningFilesFetchedByGame(gameQuestions);
     }
@@ -5378,7 +5436,17 @@ app.get('/api/game/questions', async (req, res) => {
           expected_question_count: GAME_QUESTION_SET_SIZE,
           available_question_count: availableQuestionCount,
         };
-    res.json({ learning_files: learningFiles, questions: gameQuestions, availability });
+    res.json({
+      learning_files: learningFiles,
+      questions: gameQuestions,
+      availability,
+      scope: {
+        grade_level: scope.grade_level,
+        difficulty: scope.difficulty,
+        topic_id: scope.topic_id,
+        topic_label: scope.math_topic,
+      },
+    });
   } catch (err) {
     console.error('Fetch game questions failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch game content' });
@@ -6178,6 +6246,7 @@ app.post('/api/game/result', async (req, res) => {
       rawQuestionSetId: req.body?.question_set_id,
       gradeLevel: resultGradeLevel,
       difficulty,
+      topicId: req.body?.topic_id,
       mathTopic: math_topic,
     });
     if (questionSetResolution.error) {
