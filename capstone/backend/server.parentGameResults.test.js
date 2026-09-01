@@ -324,7 +324,7 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(insertedValues[4], 'Difficult');
   });
 
-  await t.test('stores a matching active question set with the individual Godot result', async () => {
+  await t.test('stores a matching active question set when result Topic metadata is omitted or differs', async () => {
     let insertedValues = null;
     let questionSetChecked = false;
     setQueryHandler(async (sql, params) => {
@@ -361,7 +361,7 @@ test('parent game results routes and access middleware', async (t) => {
         student_name: 'Ava Santos',
         grade_level: 'Grade 3',
         difficulty: 'Normal',
-        math_topic: 'Fractions',
+        math_topic: 'Legacy client label that does not control the pool',
         question_set_id: 77,
         score: 1,
         total_items: 1,

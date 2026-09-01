@@ -16,6 +16,7 @@ const {
   normalizeDifficultyValue,
   parseExpectedQuestionCount,
   parseLessonQuestionCount,
+  resolveQuestionPoolScope,
   validateLearningMetadata,
   validateExpectedQuestionCount,
 } = require('./learningContentRules.utils');
@@ -30,6 +31,23 @@ test('normalizes legacy and current difficulty terminology to one display value'
   assert.equal(normalizeDifficultyValue('Normal'), 'Normal');
   assert.equal(normalizeDifficultyValue('Hard'), 'Difficult');
   assert.equal(normalizeDifficultyValue('Difficult'), 'Difficult');
+});
+
+test('resolves the active question pool from Grade and Difficulty without Topic metadata', () => {
+  assert.deepEqual(
+    resolveQuestionPoolScope({ grade: '1', difficulty: 'Hard' }),
+    { grade_level: 'Grade 1', difficulty: 'Difficult' }
+  );
+  assert.deepEqual(
+    resolveQuestionPoolScope({ grade_level: 'Grade 6', difficulty: 'Average', topic_id: 'unsupported-source-tag' }),
+    { grade_level: 'Grade 6', difficulty: 'Normal' }
+  );
+  assert.equal(validateLearningMetadata({ grade_level: 'Grade 1', difficulty: 'Easy' }), '');
+  assert.equal(validateLearningMetadata({
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    topic_id: 'unsupported-source-tag',
+  }), '');
 });
 
 test('maps math topics by grade and difficulty', () => {
@@ -113,7 +131,7 @@ test('validates topic combinations against grade and difficulty', () => {
       difficulty: 'Medium',
       math_topic: 'Measurement',
     }),
-    'Topic must match the selected grade level and difficulty.'
+    ''
   );
 });
 
@@ -142,7 +160,7 @@ test('derives canonical topic IDs from the backend registry without accepting ar
       difficulty: 'Easy',
       topic_id: 'addition',
     }),
-    'Topic must match the selected grade level and difficulty.'
+    ''
   );
 });
 

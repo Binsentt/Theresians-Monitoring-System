@@ -7,7 +7,6 @@ const {
   isValidGradeLevel,
   isValidMathTopicForGradeDifficulty,
   normalizeDifficultyValue,
-  validateLearningMetadata,
 } = require('./learningContentRules.utils');
 
 const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -73,8 +72,8 @@ const resolveFixedQuestionDocumentMetadata = ({
   return {
     document_topic: documentTopic || null,
     math_topic: mathTopic,
-    // Source headings remain readable provenance only. The explicitly chosen
-    // Grade/Difficulty/Topic scope is authoritative for this set.
+    // Source headings remain readable provenance only. The selected
+    // Grade/Difficulty scope is authoritative for this set.
     metadata_error: '',
   };
 };
@@ -221,12 +220,10 @@ const validateQuestionSetForReview = ({
   questions,
   grade_level,
   difficulty,
-  math_topic,
 } = {}) => {
   const questionValidation = validateFixedQuestions(questions);
   const normalizedGrade = normalizeText(grade_level);
   const normalizedDifficulty = normalizeDifficultyValue(difficulty);
-  const normalizedTopic = normalizeText(math_topic);
   const documentErrors = [...questionValidation.document_errors];
 
   if (!isValidGradeLevel(normalizedGrade)) {
@@ -235,10 +232,6 @@ const validateQuestionSetForReview = ({
   if (!isValidDifficulty(normalizedDifficulty)) {
     documentErrors.push('Difficulty must be Easy, Normal, or Difficult.');
   }
-  if (normalizedTopic && !isValidMathTopicForGradeDifficulty(normalizedGrade, normalizedDifficulty, normalizedTopic)) {
-    documentErrors.push('Topic must match the selected grade level and difficulty.');
-  }
-
   const validatedQuestions = questionValidation.questions.map((question) => {
     const validationErrors = [...question.validation_errors];
     if (normalizeText(question.grade_level) !== normalizedGrade) validationErrors.push('Question grade must match the selected Grade.');
@@ -261,36 +254,18 @@ const validateQuestionSetForPublication = ({
   questions,
   grade_level,
   difficulty,
-  topic_id,
-  math_topic,
-  scope_validation: scopeValidation = null,
 } = {}) => {
   const reviewValidation = validateQuestionSetForReview({
     questions,
     grade_level,
     difficulty,
-    math_topic,
   });
-  const publicationMetadataError = validateLearningMetadata({
-    grade_level: normalizeText(grade_level),
-    difficulty: normalizeDifficultyValue(difficulty),
-    topic_id: normalizeText(topic_id),
-    math_topic: normalizeText(math_topic),
-  });
-
-  const scopeError = scopeValidation && scopeValidation.isValid === false
-    ? String(scopeValidation.message || 'Question scope must match the selected game publication topic.')
-    : '';
 
   return {
-    isValid: reviewValidation.isValid && !publicationMetadataError && !scopeError,
-    document_errors: [
-      ...reviewValidation.document_errors,
-      ...(publicationMetadataError ? [publicationMetadataError] : []),
-      ...(scopeError ? [scopeError] : []),
-    ],
+    isValid: reviewValidation.isValid,
+    document_errors: reviewValidation.document_errors,
     questions: reviewValidation.questions,
-    scope_validation: scopeValidation,
+    scope_validation: null,
   };
 };
 

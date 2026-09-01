@@ -41,6 +41,16 @@ const isValidGradeLevel = (value) => Boolean(normalizeGradeLevel(value));
 
 const isValidDifficulty = (value) => Boolean(normalizeDifficulty(value));
 
+// Topic is historical/source metadata.  The active question-pool identity is
+// deliberately limited to these two canonical values.
+const resolveQuestionPoolScope = ({ grade_level: gradeLevel, grade, difficulty } = {}) => {
+  const canonicalGrade = normalizeGradeLevel(gradeLevel || grade);
+  const canonicalDifficulty = normalizeDifficulty(difficulty);
+  return canonicalGrade && canonicalDifficulty
+    ? { grade_level: canonicalGrade, difficulty: canonicalDifficulty }
+    : null;
+};
+
 const isValidTopicIdForGradeDifficulty = (gradeLevel, difficulty, topicId) => {
   return isValidScope(gradeLevel, difficulty, topicId);
 };
@@ -54,21 +64,13 @@ const isValidMathTopicForGrade = (gradeLevel, topic) => {
   return getMathTopicsForGrade(gradeLevel).includes(selectedTopic);
 };
 
-const validateLearningMetadata = ({ grade_level: gradeLevel, difficulty, topic_id: topicId, math_topic: mathTopic } = {}) => {
+const validateLearningMetadata = ({ grade_level: gradeLevel, difficulty } = {}) => {
   if (!isValidGradeLevel(gradeLevel)) {
     return 'Grade level must be one of Grade 1 through Grade 6.';
   }
 
   if (!isValidDifficulty(difficulty)) {
     return 'Difficulty must be Easy, Normal, or Difficult.';
-  }
-
-  const suppliedTopicId = normalizeLearningMetadataValue(topicId);
-  const hasValidTopic = suppliedTopicId
-    ? isValidTopicIdForGradeDifficulty(gradeLevel, difficulty, suppliedTopicId)
-    : isValidMathTopicForGradeDifficulty(gradeLevel, difficulty, mathTopic);
-  if (!hasValidTopic) {
-    return 'Topic must match the selected grade level and difficulty.';
   }
 
   return '';
@@ -115,6 +117,7 @@ module.exports = {
   getTopicById,
   isValidGradeLevel,
   isValidDifficulty,
+  resolveQuestionPoolScope,
   normalizeGradeLevel,
   normalizeDifficultyValue,
   isValidMathTopicForGrade,

@@ -463,7 +463,7 @@ test('accepts a declared non-arithmetic canonical scope without per-question top
   assert.deepEqual(result.document_errors, []);
 });
 
-test('allows structural review for a valid mixed-topic document while publication remains blocked', () => {
+test('allows structural review and publication for a valid mixed-topic document', () => {
   const mixedQuestions = [
     {
       question: 'What is 2 + 3?',
@@ -498,8 +498,8 @@ test('allows structural review for a valid mixed-topic document while publicatio
 
   assert.equal(review.isValid, true);
   assert.ok(review.questions.every((question) => question.is_valid));
-  assert.equal(publication.isValid, false);
-  assert.match(publication.document_errors.join(' '), /Topic must match/i);
+  assert.equal(publication.isValid, true);
+  assert.deepEqual(publication.document_errors, []);
 });
 
 test('keeps invalid question structure and controlled metadata as structural review failures', () => {
@@ -537,7 +537,7 @@ test('keeps invalid question structure and controlled metadata as structural rev
   ]);
 });
 
-test('blocks publication when a fixed-question document has no single controlled game topic', () => {
+test('allows publication when a fixed-question document has no Topic metadata', () => {
   const result = validateQuestionSetForPublication({
     grade_level: 'Grade 1',
     difficulty: 'Easy',
@@ -552,8 +552,8 @@ test('blocks publication when a fixed-question document has no single controlled
     }],
   });
 
-  assert.equal(result.isValid, false);
-  assert.match(result.document_errors.join(' '), /Topic must match/i);
+  assert.equal(result.isValid, true);
+  assert.deepEqual(result.document_errors, []);
 });
 
 test('retains a mixed fixed-question document heading as non-authoritative display metadata', () => {
@@ -576,7 +576,7 @@ test('retains a mixed fixed-question document heading as non-authoritative displ
   }), '');
 });
 
-test('keeps a topic-scope mismatch out of structural review while blocking publication', () => {
+test('keeps optional Topic metadata out of both structural review and publication', () => {
   const input = {
     grade_level: 'Grade 1',
     difficulty: 'Easy',
@@ -603,7 +603,7 @@ test('keeps a topic-scope mismatch out of structural review while blocking publi
   });
 
   assert.equal(review.isValid, true);
-  assert.equal(publication.isValid, false);
-  assert.equal(publication.scope_validation.code, 'QUESTION_TOPIC_MISMATCH');
-  assert.match(publication.document_errors.join(' '), /Question 3 conflicts with selected Topic: Basic Addition/i);
+  assert.equal(publication.isValid, true);
+  assert.equal(publication.scope_validation, null);
+  assert.deepEqual(publication.document_errors, []);
 });

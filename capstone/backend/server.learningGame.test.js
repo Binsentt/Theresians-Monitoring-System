@@ -167,7 +167,7 @@ test('Lesson Manager registry endpoint returns only versioned static curriculum 
   assert.equal(writeAttempt.status, 404);
 });
 
-test('question publishing replaces the active Godot bundle for one grade difficulty topic', async (t) => {
+test('question publishing replaces the active Godot bundle for one Grade and Difficulty pool', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -238,17 +238,17 @@ test('question publishing replaces the active Godot bundle for one grade difficu
   const response = await requestJson(baseUrl, '/api/questions/publish/77', { method: 'POST' });
 
   assert.equal(response.status, 200);
-  assert.deepEqual(unpublishedLearningFiles.params, ['Grade 1', 'Normal', 'addition', 'Addition', 77]);
-  assert.match(unpublishedLearningFiles.sql, /topic_id = \$3/);
-  assert.match(unpublishedLearningFiles.sql, /id <> \$5/);
-  assert.deepEqual(unpublishedQuestions.params, ['Grade 1', 'Normal', 'addition', 'Addition', 77]);
-  assert.match(unpublishedQuestions.sql, /lf\.topic_id = \$3/);
-  assert.match(unpublishedQuestions.sql, /lf\.id <> \$5/);
+  assert.deepEqual(unpublishedLearningFiles.params, ['Grade 1', 'Normal', 77]);
+  assert.doesNotMatch(unpublishedLearningFiles.sql, /topic_id|math_topic/i);
+  assert.match(unpublishedLearningFiles.sql, /id <> \$3/);
+  assert.deepEqual(unpublishedQuestions.params, ['Grade 1', 'Normal', 77]);
+  assert.doesNotMatch(unpublishedQuestions.sql, /topic_id|math_topic/i);
+  assert.match(unpublishedQuestions.sql, /lf\.id <> \$3/);
   assert.deepEqual(publishedLearningFile.params, [77, 1]);
   assert.deepEqual(publishedQuestions.params, [77]);
 });
 
-test('same-scope active content requires an explicit replacement confirmation before it can be superseded', async (t) => {
+test('same Grade and Difficulty active content requires replacement confirmation and lists legacy active sets', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -298,6 +298,13 @@ test('same-scope active content requires an explicit replacement confirmation be
         difficulty: 'Medium',
         math_topic: 'Addition',
         question_count: 5,
+      }, {
+        id: 9,
+        title: 'Current Shapes',
+        grade_level: 'Grade 1',
+        difficulty: 'Normal',
+        math_topic: 'Shapes',
+        question_count: 5,
       }]);
     }
     if (sql.startsWith('update public.learning_files') || sql.startsWith('update public.questions')) {
@@ -311,6 +318,7 @@ test('same-scope active content requires an explicit replacement confirmation be
   assert.equal(response.status, 409);
   assert.equal(response.body.code, 'ACTIVE_SET_REPLACEMENT_CONFIRMATION_REQUIRED');
   assert.equal(response.body.replacement.current_active.id, 8);
+  assert.deepEqual(response.body.replacement.affected_active.map((set) => set.id), [8, 9]);
   assert.equal(response.body.replacement.current_active.difficulty, 'Normal');
   assert.equal(response.body.replacement.new_set.id, 78);
   assert.equal(response.body.replacement.new_set.difficulty, 'Normal');
@@ -387,7 +395,7 @@ test('a confirmed same-scope replacement supersedes only the active set inside o
   });
 
   assert.equal(response.status, 200);
-  assert.deepEqual(supersededParams, ['Grade 1', 'Normal', 'addition', 'Addition', 80]);
+  assert.deepEqual(supersededParams, ['Grade 1', 'Normal', 80]);
   assert.deepEqual(activatedParams, [80, 1]);
 });
 
@@ -1245,12 +1253,11 @@ test('lesson generation coalesces concurrent duplicate uploads and replays the c
     mimetype: 'application/pdf',
     size: fs.statSync(uploadPaths[3]).size,
   };
-  const conflictResponse = await requestJson(baseUrl, '/api/learning-files/upload', {
+  const topicCompatibilityResponse = await requestJson(baseUrl, '/api/learning-files/upload', {
     ...options,
     body: JSON.stringify({ ...body, math_topic: 'Shapes' }),
   });
-  assert.equal(conflictResponse.status, 409);
-  assert.equal(conflictResponse.body.code, 'AI_GENERATION_IDEMPOTENCY_CONFLICT');
+  assert.equal(topicCompatibilityResponse.status, 200);
   assert.equal(providerCalls, 1);
   assert.equal(records.length, 1);
 });
@@ -1339,7 +1346,7 @@ test('learning file question preview returns staged structured questions without
   assert.match(response.body.review_fingerprint || '', /^[a-f0-9]{64}$/);
 });
 
-test('Fixed Question upload stamps the human-selected canonical scope on every parsed question', async (t) => {
+test('Fixed Question upload accepts a Grade and Difficulty scope with no Topic metadata', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fixed-question-scope-test-'));
@@ -1363,11 +1370,11 @@ test('Fixed Question upload stamps the human-selected canonical scope on every p
       learningFileInsertParams = params;
       return resultRows([{
         id: 350,
-        title: 'Selected Shapes Set',
+        title: 'Grade 1 Easy Mixed Set',
         grade_level: 'Grade 1',
         difficulty: 'Easy',
-        topic_id: 'shapes',
-        math_topic: 'Shapes',
+        topic_id: null,
+        math_topic: null,
         file_type: 'fixed_questions',
         approval_status: 'review_required',
         published: false,
@@ -1395,19 +1402,18 @@ test('Fixed Question upload stamps the human-selected canonical scope on every p
   const response = await requestJson(baseUrl, '/api/learning-files/upload', {
     method: 'POST',
     body: JSON.stringify({
-      title: 'Selected Shapes Set',
+      title: 'Grade 1 Easy Mixed Set',
       grade_level: 'Grade 1',
       difficulty: 'Easy',
-      topic_id: 'shapes',
-      math_topic: 'Shapes',
       file_type: 'fixed_questions',
     }),
   });
 
   assert.equal(response.status, 201);
-  assert.equal(learningFileInsertParams[6], 'shapes');
+  assert.equal(learningFileInsertParams[5], null);
+  assert.equal(learningFileInsertParams[6], null);
   assert.equal(storedQuestionParams.length, 5);
-  assert.deepEqual(storedQuestionParams.map((params) => params[7]), ['shapes', 'shapes', 'shapes', 'shapes', 'shapes']);
+  assert.deepEqual(storedQuestionParams.map((params) => params[7]), [null, null, null, null, null]);
 });
 
 test('approval rejects a question set that is no longer review-required', async (t) => {
@@ -1445,7 +1451,7 @@ test('approval rejects a question set that is no longer review-required', async 
   assert.equal(approvalUpdateAttempted, false);
 });
 
-test('Godot question endpoint accepts grade and topic query aliases', async (t) => {
+test('Godot question endpoint routes by Grade and Difficulty when Topic is omitted or supplied as compatibility metadata', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -1462,14 +1468,18 @@ test('Godot question endpoint accepts grade and topic query aliases', async (t) 
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201&difficulty=Easy&topic=Basic%20Addition');
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201&difficulty=Easy');
 
   assert.equal(response.status, 200);
-  assert.deepEqual(queryCalls[0], ['Mathematics', 'Grade 1', 'Easy', 'basic_addition', 'Basic Addition']);
-  assert.deepEqual(queryCalls[1], ['Mathematics', 'Grade 1', 'Easy', 'basic_addition', 'Basic Addition']);
+  assert.equal(queryCalls.every((params) => !params.includes('basic_addition') && !params.includes('Basic Addition')), true);
+  assert.deepEqual(response.body.scope, {
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    question_set_id: null,
+  });
 });
 
-test('Godot question endpoint uses canonical topic_id for an exact active scope and returns traceability', async (t) => {
+test('Godot question endpoint returns one active Grade and Difficulty set while preserving optional traceability metadata', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -1514,8 +1524,10 @@ test('Godot question endpoint uses canonical topic_id for an exact active scope 
   const response = await requestJson(baseUrl, '/api/game/questions?grade=1&difficulty=Easy&topic_id=basic_addition');
 
   assert.equal(response.status, 200);
-  assert.equal(queryCalls.length, 2);
-  assert.equal(queryCalls.every((call) => call.params.includes('basic_addition')), true);
+  assert.equal(queryCalls.length, 3);
+  assert.deepEqual(queryCalls[0].params, ['Grade 1', 'Easy']);
+  assert.deepEqual(queryCalls.slice(1).map((call) => call.params), [[83], [83]]);
+  assert.equal(queryCalls.every((call) => !call.params.includes('basic_addition')), true);
   assert.equal(response.body.learning_files[0].topic_id, 'basic_addition');
   assert.equal(response.body.learning_files[0].math_topic, 'Basic Addition');
   assert.equal(response.body.questions[0].topic_id, 'basic_addition');
@@ -1523,12 +1535,11 @@ test('Godot question endpoint uses canonical topic_id for an exact active scope 
   assert.deepEqual(response.body.scope, {
     grade_level: 'Grade 1',
     difficulty: 'Easy',
-    topic_id: 'basic_addition',
-    topic_label: 'Basic Addition',
+    question_set_id: 83,
   });
 });
 
-test('Godot question endpoint rejects an incomplete dynamic scope without widening the query', async (t) => {
+test('Godot question endpoint rejects a scope missing Grade or Difficulty without widening the query', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -1542,7 +1553,7 @@ test('Godot question endpoint rejects an incomplete dynamic scope without wideni
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201&difficulty=Easy');
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201');
 
   assert.equal(response.status, 400);
   assert.equal(response.body.code, 'QUESTION_SCOPE_REQUIRED');
@@ -1583,13 +1594,12 @@ test('Godot question endpoint maps legacy Medium and Hard requests to canonical 
   const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201&difficulty=Medium&topic=Addition');
 
   assert.equal(response.status, 200);
-  assert.deepEqual(queryCalls[0].params, ['Mathematics', 'Grade 1', 'Normal', 'addition', 'Addition']);
-  assert.deepEqual(queryCalls[1].params, ['Mathematics', 'Grade 1', 'Normal', 'addition', 'Addition']);
+  assert.deepEqual(queryCalls[0].params, ['Grade 1', 'Normal']);
+  assert.equal(queryCalls.length, 1);
   assert.match(queryCalls[0].sql, /normal/i);
-  assert.match(queryCalls[1].sql, /normal/i);
 });
 
-test('Godot question endpoint normalizes numeric grade aliases and scopes to one active source', async (t) => {
+test('Godot question endpoint normalizes numeric grade aliases without Topic routing', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -1609,13 +1619,12 @@ test('Godot question endpoint normalizes numeric grade aliases and scopes to one
   const response = await requestJson(baseUrl, '/api/game/questions?grade=1&difficulty=Easy&topic=Basic%20Addition');
 
   assert.equal(response.status, 200);
-  assert.deepEqual(queryCalls[0].params, ['Mathematics', 'Grade 1', 'Easy', 'basic_addition', 'Basic Addition']);
-  assert.deepEqual(queryCalls[1].params, ['Mathematics', 'Grade 1', 'Easy', 'basic_addition', 'Basic Addition']);
-  assert.match(queryCalls[0].sql, /order by uploaded_at desc, id desc limit 1/);
-  assert.match(queryCalls[1].sql, /order by active_lf\.uploaded_at desc, active_lf\.id desc limit 1/);
+  assert.deepEqual(queryCalls[0].params, ['Grade 1', 'Easy']);
+  assert.equal(queryCalls.length, 1);
+  assert.match(queryCalls[0].sql, /limit 2/);
 });
 
-test('Godot question endpoint does not widen an unscoped restored-import record into an exact request', async (t) => {
+test('Godot question endpoint can serve a Grade and Difficulty active legacy row without Topic metadata', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -1657,7 +1666,35 @@ test('Godot question endpoint does not widen an unscoped restored-import record 
   const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201&difficulty=Easy&topic=Basic%20Addition');
 
   assert.equal(response.status, 200);
-  assert.deepEqual(response.body.questions, []);
+  assert.equal(response.body.questions.length, 1);
+  assert.equal(response.body.questions[0].question_set_id, 42);
+});
+
+test('Godot question endpoint fails closed when legacy active sets make a Grade and Difficulty pool ambiguous', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let questionQueryStarted = false;
+  setQueryHandler(async (sql) => {
+    if (sql.includes('from public.learning_files')) {
+      return resultRows([
+        { id: 41, grade_level: 'Grade 1', difficulty: 'Easy', math_topic: 'Addition' },
+        { id: 42, grade_level: 'Grade 1', difficulty: 'Easy', math_topic: 'Shapes' },
+      ]);
+    }
+    if (sql.includes('from public.questions q')) questionQueryStarted = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/questions?grade=Grade%201&difficulty=Easy');
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'QUESTION_POOL_AMBIGUOUS');
+  assert.equal(questionQueryStarted, false);
 });
 
 test('Lesson and Question Manager receives restored-import learning files through its existing endpoint', async (t) => {
@@ -1885,7 +1922,10 @@ test('Godot question responses record an active set fetch only after active ques
 
   let fetchMetadataUpdate = null;
   setQueryHandler(async (sql, params) => {
-    if (sql.startsWith('select lf.*') && sql.includes('from public.learning_files')) {
+    if (sql.startsWith('select id, grade_level, difficulty') && sql.includes('from public.learning_files')) {
+      return resultRows([{ id: 71, grade_level: 'Grade 1', difficulty: 'Normal' }]);
+    }
+    if (sql.startsWith('select * from public.learning_files')) {
       return resultRows([{
         id: 71,
         grade_level: 'Grade 1',
@@ -1944,7 +1984,7 @@ test('empty Godot question responses do not mark a question set as fetched', asy
   assert.deepEqual(response.body.availability, {
     available: false,
     code: 'QUESTION_POOL_EXHAUSTED',
-    message: 'No published questions are available for this Grade, Difficulty, and Topic yet.',
+    message: 'No published questions are available for this Grade and Difficulty yet.',
     expected_question_count: 5,
     available_question_count: 0,
   });
@@ -1960,7 +2000,10 @@ test('undersized Godot question pools are explicitly reported without discarding
   });
 
   setQueryHandler(async (sql) => {
-    if (sql.startsWith('select lf.* from public.learning_files')) {
+    if (sql.startsWith('select id, grade_level, difficulty') && sql.includes('from public.learning_files')) {
+      return resultRows([{ id: 71, grade_level: 'Grade 1', difficulty: 'Easy' }]);
+    }
+    if (sql.startsWith('select * from public.learning_files')) {
       return resultRows([{ id: 71, title: 'Small Basic Addition', published: true }]);
     }
     if (sql.startsWith('select q.*') && sql.includes('from public.questions q')) {
@@ -1993,7 +2036,7 @@ test('undersized Godot question pools are explicitly reported without discarding
   });
 });
 
-test('a reusable Lesson PDF source creates isolated exact-scope generated children without a live provider call', async (t) => {
+test('a reusable mixed-topic Lesson source creates Grade and Difficulty children without Topic routing or a live provider call', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const sourceFileName = `lesson-source-${Date.now()}.pdf`;
@@ -2022,16 +2065,14 @@ test('a reusable Lesson PDF source creates isolated exact-scope generated childr
     assert.equal(url, 'https://api.openai.com/v1/responses');
     const request = JSON.parse(options.body);
     generationRequests.push(request);
-    const scopeText = request.input[1].content[0].text;
-    const isSubtraction = scopeText.includes('Topic ID: subtraction.');
     return {
       ok: true,
       headers: { get: () => null },
       json: async () => ({ output_text: JSON.stringify({
         questions: [{
-          question: isSubtraction ? 'What is 6 - 2?' : 'What is 2 + 3?',
-          options: isSubtraction ? ['2', '3', '4', '5'] : ['4', '5', '6', '7'],
-          correct_answer: isSubtraction ? '4' : '5',
+          question: 'What is 2 + 3?',
+          options: ['4', '5', '6', '7'],
+          correct_answer: '5',
         }],
       }) }),
     };
@@ -2084,8 +2125,6 @@ test('a reusable Lesson PDF source creates isolated exact-scope generated childr
     body: JSON.stringify({
       grade_level: 'Grade 1',
       difficulty: 'Easy',
-      topic_id: 'basic_addition',
-      math_topic: 'Basic Addition',
       expected_question_count: 1,
     }),
   });
@@ -2095,8 +2134,6 @@ test('a reusable Lesson PDF source creates isolated exact-scope generated childr
     body: JSON.stringify({
       grade_level: 'Grade 1',
       difficulty: 'Easy',
-      topic_id: 'subtraction',
-      math_topic: 'Subtraction',
       expected_question_count: 1,
     }),
   });
@@ -2105,9 +2142,10 @@ test('a reusable Lesson PDF source creates isolated exact-scope generated childr
   assert.equal(subtraction.status, 201);
   assert.equal(insertedChildren.length, 2);
   assert.deepEqual(insertedChildren.map((child) => child.source_learning_file_id), [801, 801]);
-  assert.deepEqual(insertedChildren.map((child) => child.math_topic), ['Basic Addition', 'Subtraction']);
-  assert.deepEqual(insertedChildren.map((child) => child.topic_id), ['basic_addition', 'subtraction']);
+  assert.deepEqual(insertedChildren.map((child) => child.math_topic), [null, null]);
+  assert.deepEqual(insertedChildren.map((child) => child.topic_id), [null, null]);
   assert.equal(generationRequests.length, 2);
-  assert.match(generationRequests[0].input[1].content[0].text, /Grade: Grade 1\.\nDifficulty: Easy\.\nTopic ID: basic_addition\.\nTopic: Basic Addition\./);
-  assert.match(generationRequests[1].input[1].content[0].text, /Topic ID: subtraction\.\nTopic: Subtraction\./);
+  assert.match(generationRequests[0].input[1].content[0].text, /Grade: Grade 1\.\nDifficulty: Easy\./);
+  assert.doesNotMatch(generationRequests[0].input[1].content[0].text, /Topic ID:|Topic:/);
+  assert.doesNotMatch(generationRequests[1].input[1].content[0].text, /Topic ID:|Topic:/);
 });
