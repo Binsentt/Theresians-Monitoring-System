@@ -1,10 +1,11 @@
 # Theresian's Quest — Canonical Grade, Difficulty, and Topic Registry
 
-**Status:** Approved design — documentation only; no runtime, schema, deployment, or production-content change is authorized by this document.
+**Status:** Historical topic-taxonomy reference. Its former Grade/Difficulty/Topic routing policy is superseded by the Grade+Difficulty active-pool design in [`docs/superpowers/specs/2026-09-01-grade-difficulty-question-pool-design.md`](superpowers/specs/2026-09-01-grade-difficulty-question-pool-design.md). No runtime, schema, deployment, or production-content change is authorized by this document.
 
 **Decision date:** 2026-08-31
 **Registry version:** `2026-08-31`
-**Canonical scope key:** `grade_level + difficulty + topic_id`
+**Historical metadata key:** `grade_level + difficulty + topic_id`
+**Current active-pool key:** `grade_level + difficulty`
 
 ## 1. Authority and invariants
 
@@ -13,17 +14,17 @@ The backend owns the one canonical curriculum registry. It is the authoritative 
 - canonical Grade values;
 - canonical Difficulty values and accepted aliases;
 - canonical topic IDs, display labels, and any explicit legacy aliases; and
-- the valid Grade/Difficulty/Topic memberships below.
+- the optional Grade/Difficulty/Topic membership metadata below.
 
-The registry is a versioned, read-only backend code artifact. It is not a user-editable database table, a filename convention, an AI classification result, or a separate frontend configuration map. New persisted data uses the canonical `topic_id`; display labels are always resolved from the registry.
+The registry is a versioned, read-only backend code artifact. It is not a user-editable database table, a filename convention, an AI classification result, or a separate frontend configuration map. Topic values remain optional persisted/display metadata when present; they are not required for new question sets and are never active-pool authority.
 
-The invariant for an active game pool is therefore:
+The previous active-pool invariant was:
 
 ```text
 Grade 1|Easy|basic_addition|question_set_id
 ```
 
-Two inputs that normalize to the same canonical tuple address the same scope. No case variation, legacy difficulty name, display-label spelling, or frontend-only mapping may form another pool.
+This historical tuple is retained only for metadata compatibility. The active game-pool invariant is now `Grade 1|Easy|question_set_id`; no topic ID, display label, filename, or frontend-only mapping may form another pool. Grade/Difficulty aliases normalize at the boundary.
 
 ## 2. Canonical Grades and Difficulties
 
@@ -50,11 +51,11 @@ Only the six exact `Grade N` values are canonical. Trim and case-insensitive com
 
 `Medium` and `Hard` are compatibility inputs only. They must never be persisted or used as distinct active-pool keys.
 
-## 3. Canonical topic registry
+## 3. Canonical topic registry (optional metadata)
 
-Each label below has one stable machine ID across all its valid memberships. A label is not made into several topics merely because it is present in several Grade/Difficulty cells.
+Each label below has one stable machine ID across all its historical/optional metadata memberships. A label is not made into several topics merely because it is present in several Grade/Difficulty cells. These memberships must not gate upload, approval, publication, game routing, or result verification.
 
-| `topic_id` | Canonical display label | Explicit aliases | Fixed Question evidence policy |
+| `topic_id` | Canonical display label | Explicit aliases | Historic Fixed Question evidence policy (retired) |
 | --- | --- | --- | --- |
 | `basic_addition` | Basic Addition | none | deterministic evidence supported |
 | `subtraction` | Subtraction | none | deterministic evidence supported |
