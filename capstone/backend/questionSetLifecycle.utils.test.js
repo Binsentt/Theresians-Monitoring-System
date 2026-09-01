@@ -38,6 +38,18 @@ test('uses the persisted active, superseded, generating, and failed states', () 
   );
 });
 
+test('reports an approved staged set as approved but not in the game', () => {
+  const lifecycle = deriveQuestionSetLifecycle({
+    approval_status: 'approved',
+    publish_status: 'staged',
+    published: false,
+  });
+
+  assert.equal(lifecycle.code, 'approved_inactive');
+  assert.equal(lifecycle.label, 'Approved');
+  assert.equal(lifecycle.publishLabel, 'Not in Game');
+});
+
 test('adds source traceability labels without fabricating a lifecycle', () => {
   const lesson = toQuestionSetResponse({
     id: 7,

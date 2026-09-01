@@ -2223,7 +2223,8 @@ const buildQuestionSetReplacementSummary = (learningFile, questionCount = null) 
     : null,
 });
 
-const publishLearningFile = async (fileId, publisherId, { confirmReplacement = false } = {}) => {
+const publishLearningFile = async (fileId, publisher, { confirmReplacement = false } = {}) => {
+  const publisherId = Number(publisher?.id) || null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -2352,6 +2353,7 @@ const publishLearningFile = async (fileId, publisherId, { confirmReplacement = f
       [fileId, publisherId || null]
     );
     await client.query('UPDATE public.questions SET published = true WHERE learning_file_id = $1', [fileId]);
+    await writeQuestionSetPublicationAudit(client, publisher, publishedResult.rows[0] || learningFile, 'published');
     await client.query('COMMIT');
     return normalizeLearningFileRow(publishedResult.rows[0] || learningFile);
   } catch (error) {
@@ -2360,21 +2362,6 @@ const publishLearningFile = async (fileId, publisherId, { confirmReplacement = f
   } finally {
     client.release();
   }
-};
-
-const unpublishLearningFile = async (fileId) => {
-  await pool.query(
-    `UPDATE public.learning_files
-     SET published = false,
-         publish_status = 'staged',
-         approval_status = 'review_required',
-         approved_at = NULL,
-         approved_by = NULL,
-         approved_content_fingerprint = NULL
-     WHERE id = $1`,
-    [fileId]
-  );
-  await pool.query('UPDATE public.questions SET published = false WHERE learning_file_id = $1', [fileId]);
 };
 
 const writeQuestionSetApprovalAudit = async (client, actor, learningFile) => {
@@ -2387,6 +2374,72 @@ const writeQuestionSetApprovalAudit = async (client, actor, learningFile) => {
      ) VALUES ($1, 'Approve Question Set', $2, 'Reviewed question set approved for publication.', $3, 'question_set_approval', $4, NOW())`,
     [actorName, target, Number(learningFile?.id) || null, actorId]
   );
+};
+
+const writeQuestionSetPublicationAudit = async (client, actor, learningFile, operation) => {
+  const actorName = String(actor?.name || actor?.email || '').trim() || 'Unknown Publisher';
+  const actorId = Number.isInteger(Number(actor?.id)) ? Number(actor.id) : null;
+  const target = String(learningFile?.generated_question_set_name || learningFile?.title || learningFile?.file_name || 'Question Set').trim();
+  const scope = [learningFile?.grade_level, normalizeDifficultyValue(learningFile?.difficulty)].filter(Boolean).join(' / ');
+
+  if (operation === 'published') {
+    await client.query(
+      `INSERT INTO public.admin_audit_logs (
+         admin_name, action, target_user, reason, target_account_id, operation_type, admin_account_id, created_at
+       ) VALUES ($1, 'Push Question Set to Game', $2, $3, $4, 'question_set_published', $5, NOW())`,
+      [actorName, target, `Published approved question set${scope ? ` for ${scope}` : ''}.`, Number(learningFile?.id) || null, actorId]
+    );
+    return;
+  }
+
+  await client.query(
+    `INSERT INTO public.admin_audit_logs (
+       admin_name, action, target_user, reason, target_account_id, operation_type, admin_account_id, created_at
+     ) VALUES ($1, 'Remove Question Set from Game', $2, $3, $4, 'question_set_unpublished', $5, NOW())`,
+    [actorName, target, `Removed active question set from Game${scope ? ` for ${scope}` : ''}.`, Number(learningFile?.id) || null, actorId]
+  );
+};
+
+const unpublishLearningFile = async (fileId, actor) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const fileResult = await client.query(
+      'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      [fileId]
+    );
+    const learningFile = fileResult.rows[0];
+    if (!learningFile) throw createLifecycleHttpError('Uploaded file not found', 404);
+    requireQuestionSetRecord(learningFile);
+    if (!(learningFile.published || learningFile.publish_status === 'active')) {
+      const error = createLifecycleHttpError('Only an Active in Game question set can be removed from Game.', 409);
+      error.code = 'QUESTION_SET_NOT_ACTIVE';
+      throw error;
+    }
+
+    const unpublishedResult = await client.query(
+      `UPDATE public.learning_files
+       SET published = false,
+           publish_status = 'staged'
+       WHERE id = $1
+       RETURNING *`,
+      [fileId]
+    );
+    const unpublishedFile = unpublishedResult.rows[0] || {
+      ...learningFile,
+      published: false,
+      publish_status: 'staged',
+    };
+    await client.query('UPDATE public.questions SET published = false WHERE learning_file_id = $1', [fileId]);
+    await writeQuestionSetPublicationAudit(client, actor, unpublishedFile, 'unpublished');
+    await client.query('COMMIT');
+    return normalizeLearningFileRow(unpublishedFile);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 };
 
 const approveLearningFile = async (fileId, approver) => {
@@ -4019,7 +4072,7 @@ app.delete('/api/folders/:id', requireLessonQuestionManagerAccess, async (req, r
     const folderId = parseInt(req.params.id, 10);
     if (Number.isNaN(folderId)) return res.status(400).json({ error: 'Invalid folder ID' });
     const activeQuestionSetResult = await pool.query(
-      `SELECT 1 AS active_question_set
+      `SELECT id, title, file_name, grade_level, difficulty, topic_id, math_topic
        FROM public.learning_files
        WHERE folder_id = $1
          AND deleted_at IS NULL
@@ -4029,7 +4082,9 @@ app.delete('/api/folders/:id', requireLessonQuestionManagerAccess, async (req, r
     );
     if (activeQuestionSetResult.rows.length > 0) {
       return res.status(409).json({
-        error: 'This folder contains an Active in Game question set. Publish a replacement before moving it to Trash.',
+        error: 'This folder contains an Active in Game question set. Remove it from Game before moving the folder to Trash.',
+        code: 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED',
+        blocked_question_set: buildQuestionSetReplacementSummary(activeQuestionSetResult.rows[0]),
       });
     }
     const result = await pool.query(
@@ -4085,7 +4140,7 @@ app.delete('/api/folders/:id/permanent', requireLessonQuestionManagerAccess, asy
     const folderId = parseInt(req.params.id, 10);
     if (Number.isNaN(folderId)) return res.status(400).json({ error: 'Invalid folder ID' });
     const activeQuestionSetResult = await pool.query(
-      `SELECT 1 AS active_question_set
+      `SELECT id, title, file_name, grade_level, difficulty, topic_id, math_topic
        FROM public.learning_files
        WHERE folder_id = $1
          AND (published = true OR publish_status = 'active')
@@ -4094,7 +4149,9 @@ app.delete('/api/folders/:id/permanent', requireLessonQuestionManagerAccess, asy
     );
     if (activeQuestionSetResult.rows.length > 0) {
       return res.status(409).json({
-        error: 'This folder contains an Active in Game question set. Publish a replacement before permanently deleting it.',
+        error: 'This folder contains an Active in Game question set. Remove it from Game before permanently deleting the folder.',
+        code: 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED',
+        blocked_question_set: buildQuestionSetReplacementSummary(activeQuestionSetResult.rows[0]),
       });
     }
     const historicalResult = await pool.query(
@@ -5019,6 +5076,19 @@ app.put('/api/learning-files/:id/rename', requireLessonQuestionManagerAccess, as
     const title = String(req.body.title || '').trim();
     if (!title) return res.status(400).json({ error: 'File name is required.' });
 
+    const currentFileResult = await pool.query(
+      'SELECT id, published, publish_status FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL',
+      [fileId]
+    );
+    const currentFile = currentFileResult.rows[0];
+    if (!currentFile) return res.status(404).json({ error: 'File not found' });
+    if (currentFile.published || currentFile.publish_status === 'active') {
+      return res.status(409).json({
+        error: 'This question set is Active in Game. Remove from Game before editing this question set.',
+        code: 'ACTIVE_QUESTION_SET_CANNOT_BE_EDITED',
+      });
+    }
+
     const result = await pool.query(
       `UPDATE public.learning_files
        SET title = $1,
@@ -5028,6 +5098,7 @@ app.put('/api/learning-files/:id/rename', requireLessonQuestionManagerAccess, as
            approved_content_fingerprint = NULL
        WHERE id = $2
          AND deleted_at IS NULL
+         AND NOT (COALESCE(published, false) = true OR publish_status = 'active')
        RETURNING *`,
       [title, fileId]
     );
@@ -5046,6 +5117,18 @@ app.put('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (re
     const { title, grade_level, difficulty, topic_id, math_topic, file_type, folder_id } = req.body;
     if (!title || !grade_level || !difficulty || !file_type) {
       return res.status(400).json({ error: 'Missing required fields' });
+    }
+    const currentFileResult = await pool.query(
+      'SELECT id, published, publish_status FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL',
+      [fileId]
+    );
+    const currentFile = currentFileResult.rows[0];
+    if (!currentFile) return res.status(404).json({ error: 'File not found' });
+    if (currentFile.published || currentFile.publish_status === 'active') {
+      return res.status(409).json({
+        error: 'This question set is Active in Game. Remove from Game before editing this question set.',
+        code: 'ACTIVE_QUESTION_SET_CANNOT_BE_EDITED',
+      });
     }
     const canonicalScope = resolveCanonicalQuestionScope({ grade_level, difficulty, topic_id, math_topic });
     if (!canonicalScope) {
@@ -5084,6 +5167,7 @@ app.put('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (re
            approved_content_fingerprint = NULL
      WHERE id = $8
         AND deleted_at IS NULL
+        AND NOT (COALESCE(published, false) = true OR publish_status = 'active')
        RETURNING *`,
       [String(title).trim(), normalizedGrade, normalizedDifficulty, normalizedTopic, normalizedTopicId, normalizedType, folderResolution.folderId, fileId]
     );
@@ -5106,6 +5190,87 @@ app.put('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (re
   }
 });
 
+app.delete('/api/learning-files/trash', requireLessonQuestionManagerAccess, async (req, res) => {
+  const rawFileIds = req.body?.file_ids;
+  const fileIds = Array.isArray(rawFileIds)
+    ? rawFileIds.map((value) => Number(value))
+    : [];
+  const hasOnlySafeUniqueIds = fileIds.length > 0
+    && fileIds.every((id) => Number.isSafeInteger(id) && id > 0)
+    && new Set(fileIds).size === fileIds.length;
+  if (!hasOnlySafeUniqueIds) {
+    return res.status(400).json({ error: 'file_ids must be a non-empty list of unique positive integer IDs.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const filesResult = await client.query(
+      `SELECT id, title, file_name, file_url, published, publish_status, deleted_at
+       FROM public.learning_files
+       WHERE id = ANY($1)
+         AND deleted_at IS NOT NULL
+       ORDER BY id ASC
+       FOR UPDATE`,
+      [fileIds]
+    );
+    const files = filesResult.rows;
+    if (files.length !== fileIds.length) {
+      throw createLifecycleHttpError('One or more selected files are no longer in Trash.', 404);
+    }
+
+    const activeFileIds = files
+      .filter((file) => file.published || file.publish_status === 'active')
+      .map((file) => file.id);
+    if (activeFileIds.length > 0) {
+      const error = createLifecycleHttpError('An Active in Game question set must be removed from Game before permanent deletion.', 409);
+      error.code = 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED';
+      error.blockedFileIds = activeFileIds;
+      throw error;
+    }
+
+    const historicalResult = await client.query(
+      `SELECT DISTINCT question_set_id
+       FROM public.game_results
+       WHERE question_set_id = ANY($1)`,
+      [fileIds]
+    );
+    const historicalFileIds = historicalResult.rows
+      .map((row) => Number(row.question_set_id))
+      .filter((id) => Number.isSafeInteger(id));
+    if (historicalFileIds.length > 0) {
+      const error = createLifecycleHttpError('Question sets with historical results cannot be permanently deleted.', 409);
+      error.code = 'QUESTION_SET_HISTORY_PREVENTS_PERMANENT_DELETE';
+      error.blockedFileIds = historicalFileIds;
+      throw error;
+    }
+
+    await client.query('DELETE FROM public.questions WHERE learning_file_id = ANY($1)', [fileIds]);
+    const deletedResult = await client.query(
+      `DELETE FROM public.learning_files
+       WHERE id = ANY($1)
+         AND deleted_at IS NOT NULL
+       RETURNING id, file_url`,
+      [fileIds]
+    );
+    if (deletedResult.rows.length !== fileIds.length) {
+      throw createLifecycleHttpError('One or more selected files could not be permanently deleted.', 409);
+    }
+    await client.query('COMMIT');
+    deletedResult.rows.forEach((file) => removeFileFromDisk(file.file_url));
+    return res.json({ success: true, deleted_file_ids: deletedResult.rows.map((file) => file.id) });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(err.statusCode || 500).json({
+      error: err.statusCode ? err.message : 'Failed to empty Trash.',
+      ...(err.code ? { code: err.code } : {}),
+      ...(err.blockedFileIds ? { blocked_file_ids: err.blockedFileIds } : {}),
+    });
+  } finally {
+    client.release();
+  }
+});
+
 app.delete('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (req, res) => {
   try {
     const fileId = parseInt(req.params.id, 10);
@@ -5118,7 +5283,8 @@ app.delete('/api/learning-files/:id', requireLessonQuestionManagerAccess, async 
     if (!currentFile) return res.status(404).json({ error: 'File not found' });
     if (currentFile.published || currentFile.publish_status === 'active') {
       return res.status(409).json({
-        error: 'This question set is Active in Game. Publish a replacement before moving it to Trash.',
+        error: 'This question set is Active in Game. Remove from Game before deleting this question set.',
+        code: 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED',
       });
     }
     const fileResult = await pool.query(
@@ -5166,7 +5332,8 @@ app.delete('/api/learning-files/:id/permanent', requireLessonQuestionManagerAcce
     const file = fileResult.rows[0];
     if (file.published || file.publish_status === 'active') {
       return res.status(409).json({
-        error: 'This question set is Active in Game. Publish a replacement before permanently deleting it.',
+        error: 'This question set is Active in Game. Remove from Game before permanently deleting this question set.',
+        code: 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED',
       });
     }
     const historicalResult = await pool.query(
@@ -5192,7 +5359,7 @@ app.post('/api/questions/publish/:id', requireLessonQuestionManagerAccess, async
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
-    const learningFile = await publishLearningFile(fileId, req.authenticatedUser.id, {
+    const learningFile = await publishLearningFile(fileId, req.authenticatedUser, {
       confirmReplacement: req.body?.confirm_replacement === true,
     });
     res.json({ success: true, message: 'Content pushed to game.', learningFile });
@@ -5212,11 +5379,14 @@ app.post('/api/questions/unpublish/:id', requireLessonQuestionManagerAccess, asy
   try {
     const fileId = parseInt(req.params.id, 10);
     if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
-    await unpublishLearningFile(fileId);
-    res.json({ success: true, message: 'Content removed from game.' });
+    const learningFile = await unpublishLearningFile(fileId, req.authenticatedUser);
+    res.json({ success: true, message: 'Content removed from game.', learningFile });
   } catch (err) {
     console.error('Unpublish failed:', err.message);
-    res.status(500).json({ error: 'Failed to remove content from game' });
+    res.status(err.statusCode || 500).json({
+      error: err.statusCode ? err.message : 'Failed to remove content from game',
+      ...(err.code ? { code: err.code } : {}),
+    });
   }
 });
 

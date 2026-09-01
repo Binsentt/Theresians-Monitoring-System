@@ -232,6 +232,7 @@ export default function LessonQuestionManager() {
   const [trashPage, setTrashPage] = useState(1);
   const [formErrors, setFormErrors] = useState({});
   const [replacementConfirmation, setReplacementConfirmation] = useState(null);
+  const [removalConfirmation, setRemovalConfirmation] = useState(null);
   const [selectedLessonSourceId, setSelectedLessonSourceId] = useState('');
   const [savingLessonSource, setSavingLessonSource] = useState(false);
   const pageSize = 10;
@@ -663,7 +664,7 @@ export default function LessonQuestionManager() {
 
   const moveFileToTrash = async (file) => {
     if (file.published || file.publish_status === 'active') {
-      showNotification('This question set is Active in Game. Publish a replacement before moving it to Trash.', 'error');
+      showNotification('This question set is Active in Game. Remove from Game before deleting this question set.', 'error');
       return;
     }
     const confirmMessage = `Delete "${file.title}" from Pending question sets?`;
@@ -712,6 +713,29 @@ export default function LessonQuestionManager() {
     } catch (error) {
       console.error(error);
       showNotification(error.message || 'Permanent delete failed.', 'error');
+    }
+  };
+
+  const removeFileFromGame = async (file) => {
+    try {
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/questions/unpublish/${file.id}`), {
+        method: 'POST',
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Remove from Game failed');
+      const removedFile = normalizeManagedLearningFile(data.learningFile || {
+        ...file,
+        published: false,
+        publish_status: 'staged',
+      });
+      setFiles((current) => current.map((item) => (item.id === removedFile.id ? removedFile : item)));
+      if (questionPreviewDetails?.id === removedFile.id) setQuestionPreviewDetails(removedFile);
+      setRemovalConfirmation(null);
+      await loadFilesAndFolders();
+      showNotification(data.message || 'Question set removed from Game.');
+    } catch (error) {
+      console.error(error);
+      showNotification(error.message || 'Remove from Game failed.', 'error');
     }
   };
 
@@ -835,13 +859,13 @@ export default function LessonQuestionManager() {
     if (!window.confirm('Permanently delete every file in Trash?')) return;
 
     try {
-      await Promise.all(
-        trashFiles.map(async (file) => {
-          const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/permanent`), { method: 'DELETE' });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || 'Permanent file delete failed');
-        })
-      );
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl('/api/learning-files/trash'), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_ids: trashFiles.map((file) => file.id) }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to empty Trash.');
       showNotification('Trash emptied.');
       loadFilesAndFolders();
     } catch (error) {
@@ -1011,32 +1035,51 @@ export default function LessonQuestionManager() {
       header: 'Actions',
       className: 'drive-actions-cell no-print',
       render: (_, row) => {
+        const isActiveQuestionSet = row.published
+          || row.publish_status === 'active'
+          || row.lifecycle?.code === 'active'
+          || row.lifecycle?.tone === 'active';
         const fixedQuestionPublicationBlockReason = getFixedQuestionPublicationBlockReason(row);
         const publicationEligibility = getPublicationEligibility(row);
         const fixedQuestionPublicationBlocked = row.file_type === 'fixed_questions' && !publicationEligibility.eligible;
-        const pushDisabled = row.generation_status === 'generating'
+        const pushDisabled = isActiveQuestionSet
+          || row.generation_status === 'generating'
           || row.generation_status === 'failed'
           || row.validation_summary?.is_valid === false
           || !publicationEligibility.eligible;
         return (
           <div className="drive-row-actions">
-          <button type="button" className="drive-action-button" onClick={() => setRenamingFile(row)}><FilePenLine size={16} />Rename</button>
+          <button
+            type="button"
+            className="drive-action-button"
+            onClick={() => setRenamingFile(row)}
+            disabled={isActiveQuestionSet}
+            title={isActiveQuestionSet ? 'Remove from Game before editing this question set.' : undefined}
+          ><FilePenLine size={16} />Rename</button>
           <button type="button" className="drive-action-button" onClick={() => openQuestionSetPreview(row)}><FileText size={16} />Preview</button>
           <button
             type="button"
             className="drive-action-button"
             onClick={() => moveFileToTrash(row)}
-            disabled={row.published || row.lifecycle?.tone === 'active'}
-            title={row.published || row.lifecycle?.tone === 'active' ? 'Active question sets cannot be deleted. Publish a confirmed replacement first.' : undefined}
+            disabled={isActiveQuestionSet}
+            title={isActiveQuestionSet ? 'Remove from Game before deleting this question set.' : undefined}
           ><Trash2 size={16} />Delete</button>
-          <button
-            type="button"
-            className="drive-action-button primary"
-            onClick={() => pushFileToGame(row)}
-            disabled={pushDisabled}
-            title={fixedQuestionPublicationBlockReason || (row.validation_summary?.is_valid === false ? 'Review and correct this question set before Push to Game.' : undefined)}
-          ><Upload size={16} />{fixedQuestionPublicationBlocked && publicationEligibility.code !== 'REVIEW_APPROVAL_REQUIRED' ? 'Not Eligible for Game' : 'Push to Game'}</button>
-          {!publicationEligibility.eligible && (
+          {isActiveQuestionSet ? (
+            <button
+              type="button"
+              className="drive-action-button primary"
+              onClick={() => setRemovalConfirmation(row)}
+            ><Upload size={16} />Remove from Game</button>
+          ) : (
+            <button
+              type="button"
+              className="drive-action-button primary"
+              onClick={() => pushFileToGame(row)}
+              disabled={pushDisabled}
+              title={fixedQuestionPublicationBlockReason || (row.validation_summary?.is_valid === false ? 'Review and correct this question set before Push to Game.' : undefined)}
+            ><Upload size={16} />{fixedQuestionPublicationBlocked && publicationEligibility.code !== 'REVIEW_APPROVAL_REQUIRED' ? 'Not Eligible for Game' : 'Push to Game'}</button>
+          )}
+          {!isActiveQuestionSet && !publicationEligibility.eligible && (
             <span className="manager-action-helper">{publicationEligibility.reason || fixedQuestionPublicationBlockReason}</span>
           )}
         </div>
@@ -1540,6 +1583,31 @@ export default function LessonQuestionManager() {
                 </div>
               </div>,
               document.body,
+            )}
+
+            {removalConfirmation && (
+              <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setRemovalConfirmation(null)}>
+                <div className="manager-modal replacement-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="remove-active-question-set-title" onMouseDown={(event) => event.stopPropagation()}>
+                  <div className="manager-modal-header">
+                    <div>
+                      <h2 id="remove-active-question-set-title">Remove this question set from the game?</h2>
+                      <p className="empty-text">Players will no longer receive questions from this set. The uploaded source, questions, approval, and historical results will not be deleted.</p>
+                    </div>
+                    <button type="button" className="icon-button" aria-label="Cancel removal" onClick={() => setRemovalConfirmation(null)}>x</button>
+                  </div>
+                  <div className="replacement-summary-grid">
+                    <section className="replacement-summary-card">
+                      <h3>Active Set</h3>
+                      <p><strong>{removalConfirmation.generated_question_set_name || removalConfirmation.title || removalConfirmation.file_name}</strong></p>
+                      <p className="question-review-metadata">{removalConfirmation.grade_level} · {removalConfirmation.difficulty}</p>
+                    </section>
+                  </div>
+                  <div className="preview-actions">
+                    <button type="button" className="btn btn-secondary" onClick={() => setRemovalConfirmation(null)}>Cancel</button>
+                    <button type="button" className="btn btn-primary" onClick={() => removeFileFromGame(removalConfirmation)}>Confirm Remove from Game</button>
+                  </div>
+                </div>
+              </div>
             )}
 
             {replacementConfirmation && (

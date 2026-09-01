@@ -173,6 +173,11 @@ describe('LessonQuestionManager upload and trash controls', () => {
       }
       if (scopedValue.endsWith('/api/learning-files')) return okJson(fixtures.files);
       if (scopedValue.endsWith('/api/folders')) return okJson(fixtures.folders);
+      if (scopedValue.endsWith('/api/learning-files/trash') && options.method === 'DELETE') {
+        const ids = JSON.parse(options.body).file_ids;
+        fixtures.trashFiles = fixtures.trashFiles.filter((file) => !ids.includes(file.id));
+        return okJson({ success: true, deleted_file_ids: ids });
+      }
       if (scopedValue.endsWith('/api/learning-files/trash')) return okJson(fixtures.trashFiles);
       if (scopedValue.endsWith('/api/folders/trash')) return okJson(fixtures.trashFolders);
       if (value.includes('/api/learning-files/31/restore') && options.method === 'POST') {
@@ -199,6 +204,19 @@ describe('LessonQuestionManager upload and trash controls', () => {
           file.id === 77 ? { ...file, published: true } : file
         ));
         return okJson({ success: true, message: 'Content pushed to game.', learningFile: fixtures.files[0] });
+      }
+      if (value.includes('/api/questions/unpublish/77') && options.method === 'POST') {
+        fixtures.files = fixtures.files.map((file) => (
+          file.id === 77
+            ? {
+              ...file,
+              published: false,
+              publish_status: 'staged',
+              lifecycle: { label: 'Approved', tone: 'approved', publishLabel: 'Not in Game' },
+            }
+            : file
+        ));
+        return okJson({ success: true, message: 'Content removed from game.', learningFile: fixtures.files[0] });
       }
       const approvalMatch = value.match(/\/api\/learning-files\/(\d+)\/approve/);
       if (approvalMatch && options.method === 'POST') {
@@ -743,9 +761,86 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).toContain('Active in Game');
     expect(container.textContent).toContain('Client Provided');
     expect(container.textContent).toContain('Last Game Fetch:');
+    const renameButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Rename'));
+    expect(renameButton.disabled).toBe(true);
+    expect(renameButton.title).toContain('Remove from Game before editing this question set');
     const deleteButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Delete'));
     expect(deleteButton.disabled).toBe(true);
-    expect(deleteButton.title).toContain('Active question sets cannot be deleted');
+    expect(deleteButton.title).toContain('Remove from Game before deleting this question set');
+  });
+
+  test('an active set can be removed from Game only through an explicit confirmation', async () => {
+    fixtures.files = [{
+      id: 77,
+      title: 'approved-addition-set',
+      file_name: 'approved-addition-set.json',
+      grade_level: 'Grade 1',
+      difficulty: 'Normal',
+      file_type: 'fixed_questions',
+      published: true,
+      publish_status: 'active',
+      approval_status: 'approved',
+      lifecycle: { label: 'Active in Game', tone: 'active', publishLabel: 'Active in Game' },
+      validation_summary: {
+        is_valid: true,
+        publication_eligibility: { eligible: true, code: 'ELIGIBLE', message: 'Eligible for Game publication.' },
+      },
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Normal');
+
+    const actionLabels = Array.from(container.querySelectorAll('.drive-row-actions button'))
+      .map((button) => button.textContent.trim());
+    expect(actionLabels).toContain('Remove from Game');
+    expect(actionLabels).not.toContain('Push to Game');
+
+    await act(async () => {
+      clickByText(container, 'Remove from Game');
+    });
+
+    expect(document.body.textContent).toContain('Remove this question set from the game?');
+    expect(document.body.textContent).toContain('Players will no longer receive questions from this set.');
+    await act(async () => {
+      clickByText(document.body, 'Confirm Remove from Game');
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/questions/unpublish/77', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer lesson-manager-token' },
+    });
+    expect(container.textContent).toContain('Approved');
+    expect(container.textContent).toContain('Not in Game');
+    expect(container.textContent).toContain('Push to Game');
+  });
+
+  test('empty trash uses the single atomic bulk-delete contract', async () => {
+    window.confirm = jest.fn(() => true);
+    fixtures.trashFiles = [
+      { id: 31, title: 'Deleted Quiz', file_name: 'deleted.csv', deleted_at: '2026-05-20T00:00:00.000Z' },
+      { id: 32, title: 'Deleted Review', file_name: 'deleted.docx', deleted_at: '2026-05-20T00:00:00.000Z' },
+    ];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await act(async () => {
+      clickByText(container, 'Trash Bin');
+    });
+    await act(async () => {
+      clickByText(container, 'Empty Trash');
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/trash', {
+      method: 'DELETE',
+      headers: {
+        Authorization: 'Bearer lesson-manager-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ file_ids: [31, 32] }),
+    });
   });
 
   test('Lesson PDF Preview shows staged generated questions before Push to Game', async () => {

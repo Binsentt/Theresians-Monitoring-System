@@ -83,6 +83,17 @@ function deriveQuestionSetLifecycle(row = {}) {
     };
   }
 
+  if (normalizedPublishStatus === 'staged' && row.approval_status === 'approved') {
+    return {
+      code: 'approved_inactive',
+      label: 'Approved',
+      tone: 'approved',
+      generationStatus,
+      publishStatus: normalizedPublishStatus,
+      publishLabel: 'Not in Game',
+    };
+  }
+
   if (generationStatus === 'ready_for_review') {
     return {
       code: 'ready_for_review',

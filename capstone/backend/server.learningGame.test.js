@@ -179,6 +179,7 @@ test('question publishing replaces the active Godot bundle for one Grade and Dif
   let unpublishedQuestions = null;
   let publishedLearningFile = null;
   let publishedQuestions = null;
+  let publicationAudit = null;
 
   setQueryHandler(async (sql, params) => {
     if (sql === 'begin' || sql === 'commit') return emptyResult;
@@ -232,6 +233,10 @@ test('question publishing replaces the active Godot bundle for one Grade and Dif
       publishedQuestions = { sql, params };
       return emptyResult;
     }
+    if (sql.startsWith('insert into public.admin_audit_logs')) {
+      publicationAudit = { sql, params };
+      return emptyResult;
+    }
     return emptyResult;
   });
 
@@ -246,6 +251,184 @@ test('question publishing replaces the active Godot bundle for one Grade and Dif
   assert.match(unpublishedQuestions.sql, /lf\.id <> \$3/);
   assert.deepEqual(publishedLearningFile.params, [77, 1]);
   assert.deepEqual(publishedQuestions.params, [77]);
+  assert.match(publicationAudit.sql, /push question set to game/i);
+  assert.match(publicationAudit.sql, /question_set_published/i);
+});
+
+test('removing an active question set is transactional and preserves its approval record', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let lifecycleUpdate = null;
+  let questionUpdate = null;
+  let auditInsert = null;
+  setQueryHandler(async (sql, params) => {
+    if (sql === 'begin' || sql === 'commit') return emptyResult;
+    if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) {
+      return resultRows([{
+        id: 77,
+        title: 'Approved Addition Set',
+        file_name: 'approved-addition.json',
+        file_url: '/uploads/approved-addition.json',
+        grade_level: 'Grade 1',
+        difficulty: 'Normal',
+        subject: 'Mathematics',
+        published: true,
+        publish_status: 'active',
+        approval_status: 'approved',
+        approved_at: '2026-09-01T00:00:00.000Z',
+        approved_by: 19,
+        approved_content_fingerprint: 'approved-fingerprint',
+        deleted_at: null,
+      }]);
+    }
+    if (sql.startsWith('update public.learning_files') && sql.includes('published = false')) {
+      lifecycleUpdate = { sql, params };
+      return resultRows([{
+        id: 77,
+        title: 'Approved Addition Set',
+        file_name: 'approved-addition.json',
+        file_url: '/uploads/approved-addition.json',
+        grade_level: 'Grade 1',
+        difficulty: 'Normal',
+        published: false,
+        publish_status: 'staged',
+        approval_status: 'approved',
+        approved_at: '2026-09-01T00:00:00.000Z',
+        approved_by: 19,
+        approved_content_fingerprint: 'approved-fingerprint',
+      }]);
+    }
+    if (sql.startsWith('update public.questions set published = false')) {
+      questionUpdate = { sql, params };
+      return emptyResult;
+    }
+    if (sql.startsWith('insert into public.admin_audit_logs')) {
+      auditInsert = { sql, params };
+      return emptyResult;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/questions/unpublish/77', { method: 'POST' });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.learningFile.id, 77);
+  assert.equal(response.body.learningFile.file_name, 'approved-addition.json');
+  assert.equal(response.body.learningFile.file_url, '/uploads/approved-addition.json');
+  assert.equal(response.body.learningFile.publish_status, 'staged');
+  assert.equal(response.body.learningFile.lifecycle.label, 'Approved');
+  assert.equal(response.body.learningFile.lifecycle.publishLabel, 'Not in Game');
+  assert.deepEqual(lifecycleUpdate.params, [77]);
+  assert.doesNotMatch(lifecycleUpdate.sql, /approval_status|approved_at|approved_by|approved_content_fingerprint/i);
+  assert.deepEqual(questionUpdate.params, [77]);
+  assert.match(auditInsert.sql, /remove question set from game/i);
+  assert.match(auditInsert.sql, /question_set_unpublished/i);
+});
+
+test('Remove from Game rejects inactive and deleted sets without mutating questions or audit history', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let questionOrAuditMutationAttempted = false;
+  setQueryHandler(async (sql, params) => {
+    if (sql === 'begin' || sql === 'rollback') return emptyResult;
+    if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) {
+      return Number(params[0]) === 77
+        ? resultRows([{ id: 77, published: false, publish_status: 'staged', deleted_at: null }])
+        : emptyResult;
+    }
+    if (sql.startsWith('update public.questions') || sql.startsWith('insert into public.admin_audit_logs')) {
+      questionOrAuditMutationAttempted = true;
+    }
+    return emptyResult;
+  });
+
+  const inactive = await requestJson(baseUrl, '/api/questions/unpublish/77', { method: 'POST' });
+  const deleted = await requestJson(baseUrl, '/api/questions/unpublish/78', { method: 'POST' });
+
+  assert.equal(inactive.status, 409);
+  assert.equal(inactive.body.code, 'QUESTION_SET_NOT_ACTIVE');
+  assert.equal(deleted.status, 404);
+  assert.equal(questionOrAuditMutationAttempted, false);
+});
+
+test('active question sets cannot bypass Remove from Game through rename or metadata edits', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let lifecycleMutationAttempted = false;
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select id, published, publish_status from public.learning_files')) {
+      return resultRows([{ id: 77, published: true, publish_status: 'active', deleted_at: null }]);
+    }
+    if (sql.startsWith('update public.learning_files') || sql.startsWith('update public.questions')) {
+      lifecycleMutationAttempted = true;
+    }
+    return emptyResult;
+  });
+
+  const rename = await requestJson(baseUrl, '/api/learning-files/77/rename', {
+    method: 'PUT',
+    body: JSON.stringify({ title: 'renamed-active-set' }),
+  });
+  const metadata = await requestJson(baseUrl, '/api/learning-files/77', {
+    method: 'PUT',
+    body: JSON.stringify({
+      title: 'renamed-active-set',
+      grade_level: 'Grade 1',
+      difficulty: 'Normal',
+      file_type: 'fixed_questions',
+    }),
+  });
+
+  assert.equal(rename.status, 409);
+  assert.equal(rename.body.code, 'ACTIVE_QUESTION_SET_CANNOT_BE_EDITED');
+  assert.equal(metadata.status, 409);
+  assert.equal(metadata.body.code, 'ACTIVE_QUESTION_SET_CANNOT_BE_EDITED');
+  assert.equal(lifecycleMutationAttempted, false);
+});
+
+test('Remove from Game keeps Lesson Manager authorization and Parent/Teacher scope rules authoritative', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const originalRole = authenticatedTeacher.role;
+  t.after(async () => {
+    authenticatedTeacher.role = originalRole;
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+  setQueryHandler(async () => emptyResult);
+
+  authenticatedTeacher.role = 'admin';
+  assert.equal((await requestJson(baseUrl, '/api/questions/unpublish/77', { method: 'POST' })).status, 404);
+
+  authenticatedTeacher.role = 'teacher';
+  assert.equal((await requestJson(baseUrl, '/api/questions/unpublish/77', { method: 'POST' })).status, 404);
+
+  authenticatedTeacher.role = 'parent_teacher';
+  const parentTeacherParentScope = await requestJson(baseUrl, '/api/questions/unpublish/77', { method: 'POST' });
+  assert.equal(parentTeacherParentScope.status, 403);
+  assert.equal(parentTeacherParentScope.body.code, 'LESSON_MANAGER_TEACHER_SCOPE_REQUIRED');
+  assert.equal((await requestJson(baseUrl, '/api/questions/unpublish/77?scope=teacher', { method: 'POST' })).status, 404);
+
+  authenticatedTeacher.role = 'parent';
+  assert.equal((await requestJson(baseUrl, '/api/questions/unpublish/77', { method: 'POST' })).status, 403);
+
+  authenticatedTeacher.role = 'student';
+  assert.equal((await requestJson(baseUrl, '/api/questions/unpublish/77', { method: 'POST' })).status, 403);
 });
 
 test('same Grade and Difficulty active content requires replacement confirmation and lists legacy active sets', async (t) => {
@@ -636,6 +819,9 @@ test('learning file preview and rename endpoints preserve canonical folder metad
         published: false,
         file_url: null,
       }]);
+    }
+    if (sql.startsWith('select id, published, publish_status from public.learning_files') && params[0] === 77) {
+      return resultRows([{ id: 77, published: false, publish_status: 'staged' }]);
     }
     if (sql.startsWith('update public.learning_files') && sql.includes('set title = $1')) {
       return resultRows([{
@@ -1790,8 +1976,121 @@ test('active question sets cannot be moved to trash before a replacement is publ
   const response = await requestJson(baseUrl, '/api/learning-files/44', { method: 'DELETE' });
 
   assert.equal(response.status, 409);
-  assert.match(response.body.error, /active.*replacement/i);
+  assert.equal(response.body.code, 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED');
+  assert.match(response.body.error, /active.*remove.*game/i);
   assert.equal(destructiveUpdateCalled, false);
+});
+
+test('active question sets cannot be permanently deleted', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let destructiveDeleteCalled = false;
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.learning_files where id = $1') && sql.includes('deleted_at is not null')) {
+      return resultRows([{
+        id: Number(params[0]),
+        title: 'Active Trashed Set',
+        published: true,
+        publish_status: 'active',
+        deleted_at: '2026-09-01T00:00:00.000Z',
+      }]);
+    }
+    if (sql.startsWith('delete from public.questions') || sql.startsWith('delete from public.learning_files')) {
+      destructiveDeleteCalled = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/44/permanent', { method: 'DELETE' });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED');
+  assert.match(response.body.error, /remove from game/i);
+  assert.equal(destructiveDeleteCalled, false);
+});
+
+test('emptying trash validates every selected set before permanently deleting any of them', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let destructiveDeleteCalled = false;
+  let rollbackCalled = false;
+  setQueryHandler(async (sql, params) => {
+    if (sql === 'begin') return emptyResult;
+    if (sql === 'rollback') {
+      rollbackCalled = true;
+      return emptyResult;
+    }
+    if (sql.includes('from public.learning_files') && sql.includes('id = any($1)') && sql.includes('for update')) {
+      assert.deepEqual(params, [[44, 45]]);
+      return resultRows([
+        { id: 44, title: 'Replaced Set', published: false, publish_status: 'superseded', deleted_at: '2026-09-01T00:00:00.000Z' },
+        { id: 45, title: 'Historical Set', published: false, publish_status: 'staged', deleted_at: '2026-09-01T00:00:00.000Z' },
+      ]);
+    }
+    if (sql.includes('from public.game_results') && sql.includes('question_set_id = any($1)')) {
+      assert.deepEqual(params, [[44, 45]]);
+      return resultRows([{ question_set_id: 45 }]);
+    }
+    if (sql.startsWith('delete from public.questions') || sql.startsWith('delete from public.learning_files')) {
+      destructiveDeleteCalled = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/trash', {
+    method: 'DELETE',
+    body: JSON.stringify({ file_ids: [44, 45] }),
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'QUESTION_SET_HISTORY_PREVENTS_PERMANENT_DELETE');
+  assert.deepEqual(response.body.blocked_file_ids, [45]);
+  assert.equal(rollbackCalled, true);
+  assert.equal(destructiveDeleteCalled, false);
+});
+
+test('emptying trash blocks every selected target when one is still active', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let destructiveDeleteCalled = false;
+  setQueryHandler(async (sql) => {
+    if (sql === 'begin' || sql === 'rollback') return emptyResult;
+    if (sql.includes('from public.learning_files') && sql.includes('id = any($1)') && sql.includes('for update')) {
+      return resultRows([
+        { id: 44, title: 'Active Set', published: true, publish_status: 'active', deleted_at: '2026-09-01T00:00:00.000Z' },
+        { id: 45, title: 'Other Trashed Set', published: false, publish_status: 'staged', deleted_at: '2026-09-01T00:00:00.000Z' },
+      ]);
+    }
+    if (sql.startsWith('delete from public.questions') || sql.startsWith('delete from public.learning_files')) {
+      destructiveDeleteCalled = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/trash', {
+    method: 'DELETE',
+    body: JSON.stringify({ file_ids: [44, 45] }),
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED');
+  assert.deepEqual(response.body.blocked_file_ids, [44]);
+  assert.equal(destructiveDeleteCalled, false);
 });
 
 test('historically referenced question sets cannot be permanently deleted', async (t) => {
@@ -1828,6 +2127,40 @@ test('historically referenced question sets cannot be permanently deleted', asyn
 
   assert.equal(response.status, 409);
   assert.match(response.body.error, /historical.*results/i);
+  assert.equal(destructiveDeleteCalled, false);
+});
+
+test('a folder with an active question set cannot be permanently deleted', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let destructiveDeleteCalled = false;
+  setQueryHandler(async (sql) => {
+    if (sql.includes('from public.learning_files') && sql.includes('folder_id = $1') && sql.includes('publish_status = \'active\'')) {
+      return resultRows([{
+        id: 71,
+        title: 'Active Folder Set',
+        grade_level: 'Grade 1',
+        difficulty: 'Normal',
+        published: true,
+        publish_status: 'active',
+      }]);
+    }
+    if (sql.startsWith('delete from public.questions') || sql.startsWith('delete from public.learning_files') || sql.startsWith('delete from public.folders')) {
+      destructiveDeleteCalled = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/folders/13/permanent', { method: 'DELETE' });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED');
+  assert.equal(response.body.blocked_question_set.id, 71);
   assert.equal(destructiveDeleteCalled, false);
 });
 
@@ -1869,8 +2202,15 @@ test('legacy folder deletion cannot unpublish an active question set', async (t)
 
   let destructiveUpdateCalled = false;
   setQueryHandler(async (sql, params) => {
-    if (sql.startsWith('select 1 as active_question_set from public.learning_files') && sql.includes('folder_id = $1')) {
-      return resultRows([{ active_question_set: 1 }]);
+    if (sql.includes('from public.learning_files') && sql.includes('folder_id = $1')) {
+      return resultRows([{
+        id: 71,
+        title: 'Active Folder Set',
+        grade_level: 'Grade 1',
+        difficulty: 'Normal',
+        published: true,
+        publish_status: 'active',
+      }]);
     }
     if (sql.startsWith('update public.folders') || sql.startsWith('update public.learning_files')) {
       destructiveUpdateCalled = true;
@@ -1881,7 +2221,10 @@ test('legacy folder deletion cannot unpublish an active question set', async (t)
   const response = await requestJson(baseUrl, '/api/folders/13', { method: 'DELETE' });
 
   assert.equal(response.status, 409);
-  assert.match(response.body.error, /active.*replacement/i);
+  assert.equal(response.body.code, 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED');
+  assert.equal(response.body.blocked_question_set.id, 71);
+  assert.equal(response.body.blocked_question_set.title, 'Active Folder Set');
+  assert.match(response.body.error, /active.*remove.*game/i);
   assert.equal(destructiveUpdateCalled, false);
 });
 
