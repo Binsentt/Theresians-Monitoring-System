@@ -284,4 +284,69 @@ describe('ActivityLog table', () => {
     await waitForActivityText(container, 'Ava Santos');
     expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Reset Activity Log')).toBe(false);
   });
+
+  test('focuses the reset confirmation, traps keyboard focus, and restores focus to its trigger', async () => {
+    global.fetch = jest.fn(() => jsonResponse({
+      data: [],
+      pagination: { total: 0, pages: 1, current_page: 1 },
+    }));
+
+    await act(async () => {
+      root.render(<ActivityLog role="admin" allowActivityReset limit={10} />);
+    });
+
+    const trigger = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Reset Activity Log');
+    act(() => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const dialog = container.querySelector('[role="dialog"]');
+    const confirmation = dialog.querySelector('input[name="activity-log-reset-confirmation"]');
+    const cancel = Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent === 'Cancel');
+
+    expect(document.activeElement).toBe(confirmation);
+    act(() => {
+      cancel.focus();
+      cancel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    });
+    expect(document.activeElement).toBe(confirmation);
+
+    act(() => cancel.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  test('keeps the reset dialog open and announces a failed reset without disabling its controls', async () => {
+    global.fetch = jest.fn((url) => {
+      if (String(url) === '/api/activity-logs/reset') {
+        return Promise.resolve({
+          ok: false,
+          json: async () => ({ error: 'The activity reset could not be completed.' }),
+        });
+      }
+      return jsonResponse({ data: [], pagination: { total: 0, pages: 1, current_page: 1 } });
+    });
+
+    await act(async () => {
+      root.render(<ActivityLog role="admin" allowActivityReset limit={10} />);
+    });
+
+    const trigger = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Reset Activity Log');
+    act(() => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const dialog = container.querySelector('[role="dialog"]');
+    const confirmation = dialog.querySelector('input[name="activity-log-reset-confirmation"]');
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      valueSetter.call(confirmation, 'RESET');
+      confirmation.dispatchEvent(new Event('input', { bubbles: true }));
+      confirmation.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const confirm = Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent === 'Reset Activity Log');
+    await act(async () => {
+      confirm.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('The activity reset could not be completed.');
+    expect(confirmation.disabled).toBe(false);
+    expect(confirm.disabled).toBe(false);
+  });
 });
