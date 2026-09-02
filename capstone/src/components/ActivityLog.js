@@ -27,7 +27,7 @@ const GRADE_SECTIONS = {
 
 const GRADES = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
 
-export default function ActivityLog({ limit = 50, role = 'admin', userId = null }) {
+export default function ActivityLog({ limit = 50, role = 'admin', userId = null, allowActivityReset = false }) {
   const [activities, setActivities] = useState([]);
   const [pagination, setPagination] = useState({ total: 0, pages: 1, current_page: 1 });
   const [loading, setLoading] = useState(true);
@@ -42,11 +42,17 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
   const [childrenLoaded, setChildrenLoaded] = useState(role !== 'parent');
   const [selectedChildId, setSelectedChildId] = useState('');
   const [reportError, setReportError] = useState('');
+  const [activityRevision, setActivityRevision] = useState(0);
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [resetConfirmation, setResetConfirmation] = useState('');
+  const [resettingActivity, setResettingActivity] = useState(false);
+  const [resetActivityError, setResetActivityError] = useState('');
   const { preparedRows, hasPreparedReport, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
   const requiresScopedUser = role === 'teacher' || role === 'parent';
   const scopedUserReady = !requiresScopedUser || Boolean(userId);
   const showFilters = shouldShowActivityLogFilters(role);
   const isParentView = role === 'parent';
+  const canResetActivityLog = role === 'admin' && allowActivityReset;
 
   useEffect(() => {
     if (!showFilters) {
@@ -155,7 +161,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
     };
 
     fetchActivityLogs();
-  }, [childrenLoaded, currentPage, debouncedSearch, isParentView, limit, role, scopedUserReady, selectedChildId, selectedGrade, selectedSection, userId]);
+  }, [activityRevision, childrenLoaded, currentPage, debouncedSearch, isParentView, limit, role, scopedUserReady, selectedChildId, selectedGrade, selectedSection, userId]);
 
   const handleGradeChange = useCallback((grade) => {
     setSelectedGrade(grade);
@@ -167,6 +173,45 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
     setSelectedSection(section);
     setCurrentPage(1);
   }, []);
+
+  const closeResetDialog = () => {
+    if (resettingActivity) return;
+    setResetDialogOpen(false);
+    setResetConfirmation('');
+    setResetActivityError('');
+  };
+
+  const submitActivityReset = async (event) => {
+    event.preventDefault();
+    if (resetConfirmation !== 'RESET') {
+      setResetActivityError('Type RESET to confirm this action.');
+      return;
+    }
+
+    setResettingActivity(true);
+    setResetActivityError('');
+    try {
+      const response = await fetch('/api/activity-logs/reset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...buildAuthHeaders(),
+        },
+        body: JSON.stringify({ confirmation: resetConfirmation }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Unable to reset Student quest activity.');
+
+      setResetDialogOpen(false);
+      setResetConfirmation('');
+      setCurrentPage(1);
+      setActivityRevision((revision) => revision + 1);
+    } catch (err) {
+      setResetActivityError(err.message || 'Unable to reset Student quest activity.');
+    } finally {
+      setResettingActivity(false);
+    }
+  };
 
   const availableSections = selectedGrade ? GRADE_SECTIONS[selectedGrade] || [] : [];
   const totalPages = Math.max(1, pagination.pages || 1);
@@ -367,6 +412,18 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
             preparing={reportPreparing}
             onPrint={prepareActivityReport}
           />
+          {canResetActivityLog && (
+            <button
+              type="button"
+              className="btn-reset activity-log-reset-button"
+              onClick={() => {
+                setResetActivityError('');
+                setResetDialogOpen(true);
+              }}
+            >
+              Reset Activity Log
+            </button>
+          )}
         </div>
         <span className="results-count">
           Showing {activities.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} - {Math.min((currentPage - 1) * itemsPerPage + activities.length, pagination.total || activities.length)} of {pagination.total || activities.length} records
@@ -450,6 +507,32 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null 
         rows={reportRows}
         columns={reportColumns}
       />
+      {canResetActivityLog && resetDialogOpen && (
+        <div className="activity-log-reset-backdrop" role="presentation" onMouseDown={closeResetDialog}>
+          <form className="activity-log-reset-dialog" role="dialog" aria-modal="true" aria-labelledby="activity-log-reset-title" onSubmit={submitActivityReset} onMouseDown={(event) => event.stopPropagation()}>
+            <h3 id="activity-log-reset-title">Reset Activity Log</h3>
+            <p>Only Student quest-activity records shown in this view will be deleted.</p>
+            <p>Accounts, Student progress, saves, results, playtime, questions, publications, relationships, assignments, and audit logs are not affected.</p>
+            <label htmlFor="activity-log-reset-confirmation">Type RESET to confirm</label>
+            <input
+              id="activity-log-reset-confirmation"
+              name="activity-log-reset-confirmation"
+              value={resetConfirmation}
+              onChange={(event) => {
+                setResetConfirmation(event.target.value);
+                setResetActivityError('');
+              }}
+              disabled={resettingActivity}
+              autoComplete="off"
+            />
+            {resetActivityError && <p className="activity-log-reset-error">{resetActivityError}</p>}
+            <div className="activity-log-reset-actions">
+              <button type="button" className="btn-reset" onClick={closeResetDialog} disabled={resettingActivity}>Cancel</button>
+              <button type="submit" className="btn-reset activity-log-reset-confirm" disabled={resettingActivity || resetConfirmation !== 'RESET'}>Reset Activity Log</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

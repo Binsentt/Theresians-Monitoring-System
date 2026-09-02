@@ -219,4 +219,69 @@ describe('ActivityLog table', () => {
     // verifies the complete authorized dataset reaches that portal.
     expect(document.querySelector('#print-report-root')).not.toBeNull();
   });
+
+  test('offers the typed RESET action only to the Admin Activity Log and refreshes after a successful reset', async () => {
+    let listRequests = 0;
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url) === '/api/activity-logs/reset') {
+        expect(options.method).toBe('POST');
+        expect(JSON.parse(options.body)).toEqual({ confirmation: 'RESET' });
+        return jsonResponse({ success: true, deleted_count: 3 });
+      }
+      if (String(url).startsWith('/api/activity-logs?')) {
+        listRequests += 1;
+        return jsonResponse({
+          data: [{
+            id: listRequests,
+            student_id: 44,
+            student_name: 'Ava Santos',
+            grade_level: 'Grade 3',
+            current_quest: 'Tutorial',
+            activity_timestamp: '2026-05-27T08:30:00.000Z',
+          }],
+          pagination: { total: 1, pages: 1, current_page: 1 },
+        });
+      }
+      return jsonResponse({});
+    });
+
+    await act(async () => {
+      root.render(<ActivityLog role="admin" allowActivityReset limit={10} />);
+    });
+    await waitForActivityText(container, 'Ava Santos');
+
+    const resetButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Reset Activity Log');
+    expect(resetButton).not.toBeNull();
+    act(() => resetButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog.textContent).toContain('Only Student quest-activity records shown in this view will be deleted.');
+    expect(dialog.textContent).toContain('Accounts, Student progress, saves, results, playtime, questions, publications, relationships, assignments, and audit logs are not affected.');
+    const confirmation = dialog.querySelector('input[name="activity-log-reset-confirmation"]');
+    expect(confirmation).not.toBeNull();
+    const confirmButton = Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent === 'Reset Activity Log');
+    expect(confirmButton.disabled).toBe(true);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      valueSetter.call(confirmation, 'RESET');
+      confirmation.dispatchEvent(new Event('input', { bubbles: true }));
+      confirmation.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(confirmButton.disabled).toBe(false);
+
+    await act(async () => {
+      confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(global.fetch.mock.calls.some(([url]) => String(url) === '/api/activity-logs/reset')).toBe(true);
+    expect(listRequests).toBe(2);
+
+    await act(async () => {
+      root.render(<ActivityLog role="teacher" userId={77} allowActivityReset limit={10} />);
+    });
+    await waitForActivityText(container, 'Ava Santos');
+    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Reset Activity Log')).toBe(false);
+  });
 });

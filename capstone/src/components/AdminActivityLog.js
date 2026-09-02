@@ -98,6 +98,7 @@ export default function AdminActivityLog() {
               <ActivityLog
                 role="admin"
                 limit={100}
+                allowActivityReset
               />
             </ContentSection>
           </PageContent>

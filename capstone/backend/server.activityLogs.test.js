@@ -5,7 +5,9 @@ const crypto = require('node:crypto');
 
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
+let transactionReleaseCount = 0;
 const authenticatedParent = { id: 19, role: 'parent', session_version: 0, is_archived: false };
+const authenticatedAdmin = { id: 1, role: 'admin', session_version: 0, is_archived: false };
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
 const mockPool = {
@@ -15,8 +17,15 @@ const mockPool = {
     if (compactSql(sql).startsWith('select * from public.accounts where id = $1') && Number(params[0]) === 19) {
       return resultRows([authenticatedParent]);
     }
+    if (compactSql(sql).startsWith('select * from public.accounts where id = $1') && Number(params[0]) === 1) {
+      return resultRows([authenticatedAdmin]);
+    }
     return result;
   },
+  connect: async () => ({
+    query: async (sql, params = []) => queryHandler(compactSql(sql), params, sql),
+    release: () => { transactionReleaseCount += 1; },
+  }),
 };
 
 const dbPath = require.resolve('./database/db');
@@ -41,7 +50,11 @@ const serverDependencyStubs = {
   cors: () => createMiddleware(),
   jsonwebtoken: {
     sign: () => 'token',
-    verify: (token) => (token === 'parent-token' ? { userId: 19, sessionVersion: 0 } : {}),
+    verify: (token) => {
+      if (token === 'parent-token') return { userId: 19, sessionVersion: 0 };
+      if (token === 'admin-token') return { userId: 1, sessionVersion: 0 };
+      return {};
+    },
   },
   multer: multerStub,
   'pdf-parse': async () => ({ text: '' }),
@@ -214,6 +227,86 @@ test('activity log API accepts Godot session aliases and scoped child filters', 
     assert.deepEqual(mainParams.slice(0, 2), [19, 44]);
     assert.deepEqual(countParams.slice(0, 2), [19, 44]);
   });
+});
+
+test('Activity Log reset is admin-only, requires RESET, and deletes only canonical Student quest records transactionally', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const transactionSql = [];
+  transactionReleaseCount = 0;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (['begin', 'commit', 'rollback'].includes(sql) || sql.startsWith('delete from public.activity_logs al')) {
+      transactionSql.push(sql);
+    }
+    if (sql.startsWith('delete from public.activity_logs al')) return { rows: [], rowCount: 3 };
+    return emptyResult;
+  });
+
+  const unauthenticated = await requestJson(baseUrl, '/api/activity-logs/reset', {
+    method: 'POST',
+    body: JSON.stringify({ confirmation: 'RESET' }),
+  });
+  assert.equal(unauthenticated.status, 401);
+
+  const parent = await requestJson(baseUrl, '/api/activity-logs/reset', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer parent-token' },
+    body: JSON.stringify({ confirmation: 'RESET' }),
+  });
+  assert.equal(parent.status, 403);
+
+  const invalidConfirmation = await requestJson(baseUrl, '/api/activity-logs/reset', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({ confirmation: 'reset' }),
+  });
+  assert.equal(invalidConfirmation.status, 400);
+  assert.equal(transactionSql.length, 0);
+
+  const reset = await requestJson(baseUrl, '/api/activity-logs/reset', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({ confirmation: 'RESET' }),
+  });
+
+  assert.equal(reset.status, 200);
+  assert.equal(reset.body.deleted_count, 3);
+  assert.deepEqual(transactionSql.map((sql) => sql === 'begin' || sql === 'commit' ? sql : 'delete'), ['begin', 'delete', 'commit']);
+  assert.equal(transactionReleaseCount, 1);
+
+  const deleteSql = transactionSql.find((sql) => sql.startsWith('delete from public.activity_logs al'));
+  assert.match(deleteSql, /al\.event_key is not null/);
+  assert.match(deleteSql, /lower\(btrim\(coalesce\(al\.role, ''\)\)\) = 'student'/);
+  assert.match(deleteSql, /nullif\(btrim\(al\.current_quest\), ''\) is not null/);
+  assert.match(deleteSql, /nullif\(btrim\(al\.current_scene\), ''\) is not null/);
+  assert.match(deleteSql, /nullif\(btrim\(al\.current_map\), ''\) is not null/);
+  for (const protectedTable of ['admin_audit_logs', 'accounts', 'student_game_progress', 'playtime_sessions', 'question', 'learning_file']) {
+    assert.doesNotMatch(deleteSql, new RegExp(protectedTable));
+  }
+
+  transactionSql.length = 0;
+  transactionReleaseCount = 0;
+  setQueryHandler(async (sql) => {
+    if (['begin', 'commit', 'rollback'].includes(sql) || sql.startsWith('delete from public.activity_logs al')) {
+      transactionSql.push(sql);
+    }
+    if (sql.startsWith('delete from public.activity_logs al')) throw new Error('simulated delete failure');
+    return emptyResult;
+  });
+
+  const failedReset = await requestJson(baseUrl, '/api/activity-logs/reset', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({ confirmation: 'RESET' }),
+  });
+  assert.equal(failedReset.status, 500);
+  assert.deepEqual(transactionSql.map((sql) => sql === 'begin' || sql === 'rollback' ? sql : 'delete'), ['begin', 'delete', 'rollback']);
+  assert.equal(transactionReleaseCount, 1);
 });
 
 test('canonical game quest events use the active lease, canonical profile data, and idempotent event keys', async (t) => {

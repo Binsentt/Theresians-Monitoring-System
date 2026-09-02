@@ -7027,6 +7027,33 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
   }
 });
 
+app.post('/api/activity-logs/reset', requireAccountManagementAdmin, async (req, res) => {
+  if (req.body?.confirmation !== 'RESET') {
+    return res.status(400).json({ error: 'Type RESET to confirm this action.' });
+  }
+
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const result = await client.query(`DELETE FROM public.activity_logs al WHERE ${STUDENT_QUEST_ACTIVITY_SQL}`);
+    await client.query('COMMIT');
+    return res.json({ success: true, deleted_count: result.rowCount || 0 });
+  } catch (err) {
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Activity Log reset rollback failed:', rollbackError.message);
+      }
+    }
+    console.error('Activity Log reset failed:', err.message);
+    return res.status(500).json({ error: 'Failed to reset Student quest activity.' });
+  } finally {
+    client?.release();
+  }
+});
+
 const parseActivityDurationSeconds = (value) => {
   if (value === undefined || value === null || value === '') return 0;
   if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;

@@ -140,6 +140,75 @@
   margin-bottom: 14px;
 }
 
+.table-report-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.activity-log-reset-button {
+  min-height: 40px;
+}
+
+.activity-log-reset-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.activity-log-reset-dialog {
+  width: min(100%, 540px);
+  padding: 24px;
+  border: 1px solid var(--border-color, #dbe3ef);
+  border-radius: 18px;
+  background: var(--panel-bg, #ffffff);
+  color: var(--text-primary, #0b2447);
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.24);
+}
+
+.activity-log-reset-dialog h3 {
+  margin: 0 0 12px;
+}
+
+.activity-log-reset-dialog p {
+  line-height: 1.5;
+}
+
+.activity-log-reset-dialog label {
+  display: block;
+  margin: 18px 0 8px;
+  font-weight: 700;
+}
+
+.activity-log-reset-dialog input {
+  width: 100%;
+  min-height: 44px;
+  padding: 11px 14px;
+  border: 1px solid var(--border-color, #dbe3ef);
+  border-radius: 14px;
+}
+
+.activity-log-reset-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.activity-log-reset-confirm {
+  border-color: #b91c1c;
+  color: #b91c1c;
+}
+
+.activity-log-reset-error {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
 .results-count {
   font-size: 0.9rem;
   color: var(--text-muted, #64748b);
