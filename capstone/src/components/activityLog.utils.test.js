@@ -97,4 +97,16 @@ describe('normalizeActivityLogPayload', () => {
     expect(formatActivityLogDuration({ total_play_time: 3600 })).toBe('1h 0m');
     expect(formatActivityLogDuration({ duration: '7m 30s' })).toBe('7m 30s');
   });
+
+  test('renders stored canonical quests with only meaningful stored difficulty', () => {
+    expect(getActivityLogActivity({ current_quest: 'Tutorial', activity_description: 'New Game' })).toBe('Tutorial');
+    expect(getActivityLogActivity({ current_quest: 'Teacher House', activity_description: 'Load Game' })).toBe('Teacher House');
+    expect(getActivityLogActivity({ current_quest: 'Oakleaf Bandit', difficulty_level: 'Easy' })).toBe('Oakleaf Bandit — Easy');
+    expect(getActivityLogActivity({ current_quest: 'Oakleaf Bandit', difficulty_level: ' unknown ' })).toBe('Oakleaf Bandit');
+  });
+
+  test('never uses generic activity descriptions or website URLs as Student Quest Activity', () => {
+    expect(getActivityLogActivity({ activity_description: 'Viewed https://portal.example/admin' })).toBe('No active quest');
+    expect(getActivityLogActivity({ current_quest: '   ', activity_description: 'Account signed in' })).toBe('No active quest');
+  });
 });

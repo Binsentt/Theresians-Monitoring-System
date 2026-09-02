@@ -82,14 +82,19 @@ export function getActivityLogGrade(record) {
   return String(record?.grade || record?.grade_level || '').trim() || '-';
 }
 
+const isMeaningfulDifficulty = (value) => {
+  const difficulty = String(value || '').trim();
+  if (!difficulty) return false;
+
+  return !/^(unknown|n\/?a|none|null|undefined|-|not\s+(specified|available|applicable))$/i.test(difficulty);
+};
+
 export function getActivityLogActivity(record) {
   const quest = String(record?.current_quest || '').trim();
-  if (quest) return quest;
+  if (!quest) return 'No active quest';
 
-  const description = String(record?.activity_description || '').trim();
-  if (description && !/^gameplay session$/i.test(description)) return description;
-
-  return 'No active quest';
+  const difficulty = String(record?.difficulty_level || '').trim();
+  return isMeaningfulDifficulty(difficulty) ? `${quest} — ${difficulty}` : quest;
 }
 
 const parseDurationSeconds = (value) => {

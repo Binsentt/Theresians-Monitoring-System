@@ -81,6 +81,61 @@ describe('ActivityLog table', () => {
     expect(headers).not.toContain('Progress');
   });
 
+  test('renders canonical quest payloads without exposing generic website activity descriptions', async () => {
+    global.fetch = jest.fn(() => jsonResponse({
+      data: [
+        {
+          id: 1,
+          student_id: 44,
+          student_name: 'Ava Santos',
+          grade_level: 'Grade 3',
+          current_quest: 'Tutorial',
+          activity_description: 'New Game',
+          activity_timestamp: '2026-05-27T08:30:00.000Z',
+        },
+        {
+          id: 2,
+          student_id: 44,
+          student_name: 'Ava Santos',
+          grade_level: 'Grade 3',
+          current_quest: 'Teacher House',
+          activity_description: 'Load Game',
+          activity_timestamp: '2026-05-27T08:31:00.000Z',
+        },
+        {
+          id: 3,
+          student_id: 44,
+          student_name: 'Ava Santos',
+          grade_level: 'Grade 3',
+          current_quest: 'Oakleaf Bandit',
+          difficulty_level: 'Easy',
+          activity_timestamp: '2026-05-27T08:32:00.000Z',
+        },
+        {
+          id: 4,
+          student_id: 44,
+          student_name: 'Ava Santos',
+          grade_level: 'Grade 3',
+          activity_description: 'Viewed https://portal.example/admin',
+          activity_timestamp: '2026-05-27T08:33:00.000Z',
+        },
+      ],
+      pagination: { total: 4, pages: 1, current_page: 1 },
+    }));
+
+    await act(async () => {
+      root.render(<ActivityLog role="admin" limit={10} />);
+    });
+
+    await waitForActivityText(container, 'Oakleaf Bandit');
+    expect(container.textContent).toContain('Tutorial');
+    expect(container.textContent).toContain('Teacher House');
+    expect(container.textContent).toContain('Oakleaf Bandit — Easy');
+    expect(container.textContent).toContain('No active quest');
+    expect(container.textContent).not.toContain('Viewed https://portal.example/admin');
+    expect(container.textContent).not.toContain('Load Game');
+  });
+
   test('parent activity logs are fetched for the selected child only', async () => {
     const requestedActivityUrls = [];
     global.fetch = jest.fn((url) => {

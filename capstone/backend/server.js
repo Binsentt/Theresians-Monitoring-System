@@ -6856,6 +6856,18 @@ const handleTopAchieversRequest = async (req, res) => {
 app.get('/api/top-achievers', requireAnalyticsAccess, handleTopAchieversRequest);
 app.get('/api/leaderboard/top-achievers', requireAnalyticsAccess, handleTopAchieversRequest);
 
+const STUDENT_QUEST_ACTIVITY_SQL = [
+  '(',
+  'al.event_key IS NOT NULL',
+  'OR (',
+  "LOWER(BTRIM(COALESCE(al.role, ''))) = 'student'",
+  "AND NULLIF(BTRIM(al.current_quest), '') IS NOT NULL",
+  "AND NULLIF(BTRIM(al.current_scene), '') IS NOT NULL",
+  "AND NULLIF(BTRIM(al.current_map), '') IS NOT NULL",
+  ')',
+  ')',
+].join(' ');
+
 // --- ENHANCED: Get Recent Activity Logs with Filtering & Role-Based Access ---
 app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
   try {
@@ -6910,6 +6922,7 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
 
     const params = [];
     query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'al.student_id' });
+    query += ` AND ${STUDENT_QUEST_ACTIVITY_SQL}`;
     let paramIndex = params.length + 1;
 
     if (selectedStudentId) {
@@ -6969,6 +6982,7 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
       WHERE 1=1`;
     let countParams = [];
     countQuery += appendAnalyticsScopeFilter({ scope, params: countParams, studentColumn: 'al.student_id' });
+    countQuery += ` AND ${STUDENT_QUEST_ACTIVITY_SQL}`;
     let countParamIndex = countParams.length + 1;
 
     if (selectedStudentId) {

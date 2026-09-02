@@ -177,6 +177,43 @@ test('activity log API accepts Godot session aliases and scoped child filters', 
     assert.match(countQuery, /left join public\.accounts account on account\.id = al\.student_id/);
     assert.match(mainQuery, /al\.student_id in \(/);
   });
+
+  await t.test('uses the same canonical Student Quest Activity predicate for data and count queries', async () => {
+    let mainQuery = '';
+    let countQuery = '';
+    let mainParams = [];
+    let countParams = [];
+    setQueryHandler(async (sql, params) => {
+      if (sql.startsWith('select al.id')) {
+        mainQuery = sql;
+        mainParams = params;
+        return resultRows([]);
+      }
+      if (sql.startsWith('select count(*) as total')) {
+        countQuery = sql;
+        countParams = params;
+        return resultRows([{ total: 0 }]);
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/activity-logs?student_id=44&limit=10', {
+      headers: { Authorization: 'Bearer parent-token' },
+    });
+
+    assert.equal(response.status, 200);
+    for (const sql of [mainQuery, countQuery]) {
+      assert.match(sql, /al\.event_key is not null/);
+      assert.match(sql, /lower\(btrim\(coalesce\(al\.role, ''\)\)\) = 'student'/);
+      assert.match(sql, /nullif\(btrim\(al\.current_quest\), ''\) is not null/);
+      assert.match(sql, /nullif\(btrim\(al\.current_scene\), ''\) is not null/);
+      assert.match(sql, /nullif\(btrim\(al\.current_map\), ''\) is not null/);
+      assert.doesNotMatch(sql, /admin_audit_logs/);
+      assert.match(sql, /al\.student_id in \(/);
+    }
+    assert.deepEqual(mainParams.slice(0, 2), [19, 44]);
+    assert.deepEqual(countParams.slice(0, 2), [19, 44]);
+  });
 });
 
 test('canonical game quest events use the active lease, canonical profile data, and idempotent event keys', async (t) => {

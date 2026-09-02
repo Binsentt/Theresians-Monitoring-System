@@ -67,8 +67,8 @@ export default function AdminActivityLog() {
         onSelect={handleSidebarSelection}
         logoSrc={logoImage}
         portalLabel="Admin Portal"
-        heading="Activity Log"
-        subheading="Review recent account and system activity."
+        heading="Student Quest Activity"
+        subheading="Review canonical student quest activity."
       />
     );
   }
@@ -88,8 +88,8 @@ export default function AdminActivityLog() {
         <MainContent>
           <TopBar>
             <div>
-              <h1>Activity Log</h1>
-              <p>Monitor all student gameplay sessions and engagement metrics</p>
+              <h1>Student Quest Activity</h1>
+              <p>Review canonical student quest activity recorded by the game.</p>
             </div>
           </TopBar>
 
