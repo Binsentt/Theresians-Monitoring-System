@@ -21,7 +21,12 @@ import {
 } from './manageUsers.utils';
 import { apiUrl } from '../api';
 import { buildAuthHeaders, clearStoredSession } from './session.utils';
-import { PARENT_CHILD_GRADE_OPTIONS, validateEmail as validateEmailFormat, validatePhilippineMobile } from '../utils/validation.utils';
+import {
+  PARENT_CHILD_GRADE_OPTIONS,
+  validateEmail as validateEmailFormat,
+  validatePhilippineMobile,
+  validatePhilippineMobileUpdate,
+} from '../utils/validation.utils';
 import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext } from './tableReporting.utils';
@@ -137,8 +142,11 @@ export default function ManageUsers() {
     return validateEmailFormat(email).error || '';
   };
 
-  const validatePhone = (phone) => {
-    return validatePhilippineMobile(phone).error || '';
+  const validatePhone = (phone, originalPhone) => {
+    const result = originalPhone === undefined
+      ? validatePhilippineMobile(phone)
+      : validatePhilippineMobileUpdate(phone, originalPhone);
+    return result.error || '';
   };
 
   const restrictInput = (field, value) => {
@@ -152,11 +160,11 @@ export default function ManageUsers() {
     return cleanedValue;
   };
 
-  const validateUserField = (field, value, role) => {
+  const validateUserField = (field, value, role, originalMobileNumber) => {
     if (field === 'firstName' || field === 'lastName') return validateNameField(value);
     if (field === 'middleName') return validateNameField(value, { required: false });
     if (field === 'email') return validateEmail(value);
-    if (field === 'mobile_number') return validatePhone(value);
+    if (field === 'mobile_number') return validatePhone(value, originalMobileNumber);
     if (field === 'birthday') return validateBirthday(value);
     if (field === 'employee_id') return validateEmployeeId(value, { required: isTeacherRole(role) });
     return '';
@@ -187,12 +195,18 @@ export default function ManageUsers() {
     const finalValue = restrictInput(field, value);
     const nextForm = { ...editForm, [field]: finalValue };
     setEditForm(nextForm);
-    setEditErrors((current) => ({ ...current, [field]: validateUserField(field, finalValue, editingUser?.role || editForm.role) }));
+    setEditErrors((current) => ({
+      ...current,
+      [field]: validateUserField(field, finalValue, editingUser?.role || editForm.role, editingUser?.mobile_number || ''),
+    }));
   };
 
   const handleEditFormBlur = (field) => {
     setEditTouched((current) => ({ ...current, [field]: true }));
-    setEditErrors((current) => ({ ...current, [field]: validateUserField(field, editForm[field], editingUser?.role || editForm.role) }));
+    setEditErrors((current) => ({
+      ...current,
+      [field]: validateUserField(field, editForm[field], editingUser?.role || editForm.role, editingUser?.mobile_number || ''),
+    }));
   };
 
   useEffect(() => {
@@ -261,7 +275,7 @@ export default function ManageUsers() {
       const payload = {
         name: fullName,
         email: newUser.email,
-        mobile_number: newUser.mobile_number,
+        mobile_number: validatePhilippineMobile(newUser.mobile_number).value,
         address: combineAddressFields(newUser),
         birthday: newUser.birthday,
         gender: newUser.gender || '',
@@ -529,8 +543,10 @@ export default function ManageUsers() {
       if (error) nextErrors[field] = error;
       return nextErrors;
     }, {});
+    const mobileError = validatePhone(editForm.mobile_number, editingUser.mobile_number || '');
+    if (mobileError) errors.mobile_number = mobileError;
     Object.keys(editTouched).forEach((field) => {
-      const error = validateUserField(field, editForm[field], selectedRole);
+      const error = validateUserField(field, editForm[field], selectedRole, editingUser.mobile_number || '');
       if (error) errors[field] = error;
     });
     if (isTeacherRole(selectedRole) && !String(editForm.employee_id || '').trim()) {
@@ -548,7 +564,7 @@ export default function ManageUsers() {
       const payload = {
         name: fullName,
         email: editForm.email,
-        mobile_number: editForm.mobile_number,
+        mobile_number: validatePhilippineMobileUpdate(editForm.mobile_number, editingUser.mobile_number || '').value,
         address: combineAddressFields(editForm),
         birthday: editForm.birthday,
         gender: editForm.gender || '',
@@ -937,12 +953,13 @@ export default function ManageUsers() {
                   <div className="form-group">
                     <label>Mobile Number:</label>
                     <input
-                      type="text"
+                      type="tel"
                       placeholder="09123456789"
                       value={newUser.mobile_number}
                       onChange={(e) => handleAddFormChange('mobile_number', e.target.value)}
                       onBlur={() => handleAddFormBlur('mobile_number')}
                       inputMode="numeric"
+                      maxLength={11}
                       className="sts-input"
                     />
                     {addErrors.mobile_number && <p className="error-text">{addErrors.mobile_number}</p>}
@@ -1310,11 +1327,12 @@ export default function ManageUsers() {
                     <div className="form-group">
                       <label>Mobile Number:</label>
                       <input
-                        type="text"
+                        type="tel"
                         value={editForm.mobile_number}
                         onChange={(e) => handleEditFormChange('mobile_number', e.target.value)}
                         onBlur={() => handleEditFormBlur('mobile_number')}
                         inputMode="numeric"
+                        maxLength={11}
                         className="sts-input"
                       />
                       {editErrors.mobile_number && <p className="error-text">{editErrors.mobile_number}</p>}

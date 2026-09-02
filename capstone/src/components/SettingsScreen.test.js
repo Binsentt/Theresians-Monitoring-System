@@ -281,4 +281,47 @@ describe('SettingsScreen dashboard layout', () => {
     });
     expect(container.textContent).not.toContain('Mobile number must be in the format 09XXXXXXXXX.');
   });
+
+  test('omits an unchanged legacy mobile number from an unrelated profile update', async () => {
+    const legacyUser = {
+      id: 8,
+      name: 'Parent Teacher',
+      email: 'parent-teacher@gmail.com',
+      role: 'parent_teacher',
+      mobile_number: '0917-123-4567',
+    };
+    global.fetch = jest.fn((url, options = {}) => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => (options.method === 'PUT' ? { user: legacyUser } : legacyUser),
+    }));
+
+    await act(async () => {
+      root.render(<SettingsScreen />);
+    });
+    const editProfileButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Edit Profile');
+    await act(async () => {
+      editProfileButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const mobile = container.querySelector('input[placeholder="09XXXXXXXXX"]');
+    expect(mobile.value).toBe('0917-123-4567');
+    expect(mobile.type).toBe('tel');
+    expect(mobile.inputMode).toBe('numeric');
+    expect(mobile.maxLength).toBe(11);
+
+    await act(async () => {
+      setInputValue(container.querySelector('input[value="Parent"]'), 'Updated');
+      container.querySelector('.profile-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    const updateRequest = global.fetch.mock.calls.find(([url, options]) => (
+      String(url).includes('/api/user/8') && options?.method === 'PUT'
+    ));
+    expect(updateRequest).toBeTruthy();
+    const payload = JSON.parse(updateRequest[1].body);
+    expect(payload.name).toBe('Updated Teacher');
+    expect(payload).not.toHaveProperty('mobile_number');
+  });
 });

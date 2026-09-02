@@ -5,6 +5,7 @@ import {
   validateEmail,
   validateGameStudentId,
   validatePhilippineMobile,
+  validatePhilippineMobileUpdate,
   validatePassword,
   validateOtp,
 } from './validation.utils';
@@ -149,6 +150,28 @@ describe('validation.utils', () => {
         });
       }
     );
+  });
+
+  describe('validatePhilippineMobileUpdate', () => {
+    test('preserves an exactly unchanged legacy mobile number while validating changes canonically', () => {
+      const legacyMobile = '+639171234567';
+
+      expect(validatePhilippineMobileUpdate(legacyMobile, legacyMobile)).toEqual({
+        isValid: true,
+        value: legacyMobile,
+        error: null,
+      });
+      expect(validatePhilippineMobileUpdate(` ${legacyMobile}`, legacyMobile)).toEqual({
+        isValid: false,
+        value: null,
+        error: 'Mobile number must be in the format 09XXXXXXXXX.',
+      });
+      expect(validatePhilippineMobileUpdate('09171234567', legacyMobile)).toEqual({
+        isValid: true,
+        value: '09171234567',
+        error: null,
+      });
+    });
   });
 
   describe('validateGameStudentId', () => {

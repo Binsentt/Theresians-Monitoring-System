@@ -30,6 +30,13 @@ export const validatePhilippineMobile = (value) => {
   return { isValid: true, value: normalized, error: null };
 };
 
+export const validatePhilippineMobileUpdate = (value, originalValue) => {
+  if (value === originalValue) {
+    return { isValid: true, value, error: null };
+  }
+  return validatePhilippineMobile(value);
+};
+
 export const validateGameStudentId = (value) => {
   const normalized = String(value ?? '').trim();
   if (!normalized) {

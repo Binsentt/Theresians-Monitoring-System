@@ -697,6 +697,59 @@ describe('ManageUsers edit flow', () => {
     expect(container.textContent).not.toContain('Mobile number must be in the format 09XXXXXXXXX.');
   });
 
+  test('uses a numeric mobile-friendly input for new accounts', async () => {
+    await act(async () => {
+      root.render(<ManageUsers />);
+    });
+
+    const addButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Add');
+    await act(async () => {
+      addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const mobile = container.querySelector('input[placeholder="09123456789"]');
+    expect(mobile.type).toBe('tel');
+    expect(mobile.inputMode).toBe('numeric');
+    expect(mobile.maxLength).toBe(11);
+  });
+
+  test('allows an unrelated edit with an unchanged legacy mobile number and keeps it in the request', async () => {
+    const originalMobile = accountsPayload[0].mobile_number;
+    accountsPayload[0].mobile_number = '0917-123-4567';
+
+    try {
+      await act(async () => {
+        root.render(<ManageUsers />);
+      });
+
+      const editButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Edit');
+      await act(async () => {
+        editButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+      const mobile = container.querySelector('input[value="0917-123-4567"]');
+      expect(mobile.type).toBe('tel');
+      expect(mobile.inputMode).toBe('numeric');
+      expect(mobile.maxLength).toBe(11);
+
+      await act(async () => {
+        setFieldValue(container.querySelector('input[value="Maria"]'), 'Marian');
+      });
+      const updateButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Update User');
+      await act(async () => {
+        updateButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+
+      const updateRequest = global.fetch.mock.calls.find(([url, options]) => (
+        String(url) === '/api/accounts/7' && options?.method === 'PUT'
+      ));
+      expect(updateRequest).toBeTruthy();
+      expect(JSON.parse(updateRequest[1].body).mobile_number).toBe('0917-123-4567');
+    } finally {
+      accountsPayload[0].mobile_number = originalMobile;
+    }
+  });
+
   test('Teacher Employee ID input strips non-digits and stops at 10 digits', async () => {
     await act(async () => {
       root.render(<ManageUsers />);

@@ -15,7 +15,7 @@ import { DashboardContainer, MainContent, PageContent, TopBar } from './layout/A
 import { apiUrl } from '../api';
 import { buildAuthHeaders, clearStoredSession, getStoredUserSession } from './session.utils';
 import PasswordStrengthFeedback from './PasswordStrengthFeedback';
-import { getPasswordStrength, validatePhilippineMobile } from '../utils/validation.utils';
+import { getPasswordStrength, validatePhilippineMobile, validatePhilippineMobileUpdate } from '../utils/validation.utils';
 import '../styles/settings.css';
 
 export default function SettingsScreen() {
@@ -43,6 +43,7 @@ export default function SettingsScreen() {
   });
   const [profileErrors, setProfileErrors] = useState({});
   const [profileUpdating, setProfileUpdating] = useState(false);
+  const [originalMobileNumber, setOriginalMobileNumber] = useState('');
 
   // Change Password States
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -160,8 +161,11 @@ export default function SettingsScreen() {
     return '';
   };
   const validateEmail = (email) => !email ? 'Email is required' : (!email.endsWith('@gmail.com') ? 'Use @gmail.com' : '');
-  const validatePhone = (phone) => {
-    return validatePhilippineMobile(phone).error || '';
+  const validatePhone = (phone, originalPhone) => {
+    const result = originalPhone === undefined
+      ? validatePhilippineMobile(phone)
+      : validatePhilippineMobileUpdate(phone, originalPhone);
+    return result.error || '';
   };
   const validatePassword = (pw) => (pw && !getPasswordStrength(pw).meetsPolicy) ? 'Password must be at least 12 characters.' : '';
   const validateBirthday = (date) => {
@@ -188,16 +192,18 @@ export default function SettingsScreen() {
 
       // Initialize form from the fresh data
       const nameParts = (freshUserData?.name || '').split(' ').filter(Boolean);
+      const originalMobile = freshUserData.mobile_number || '';
       setEditForm({
         firstName: nameParts[0] || '',
         middleName: nameParts.length > 2 ? nameParts.slice(1, -1).join(' ') : '',
         lastName: nameParts.length ? nameParts[nameParts.length - 1] : '',
         email: freshUserData.email || '',
-        mobile_number: freshUserData.mobile_number || '',
+        mobile_number: originalMobile,
         ...splitAddressFields(freshUserData.address),
         birthday: freshUserData.birthday || '',
         gender: freshUserData.gender || ''
       });
+      setOriginalMobileNumber(originalMobile);
       console.log('📝 Edit form initialized:', { phone: freshUserData.mobile_number, address: freshUserData.address, birthday: freshUserData.birthday, gender: freshUserData.gender });
       setProfileErrors({});
       setErrorMessage('');
@@ -206,16 +212,18 @@ export default function SettingsScreen() {
       console.error('Error preparing edit form:', err);
       // Fallback: initialize from current user state even if fetch fails
       const nameParts = (user?.name || '').split(' ').filter(Boolean);
+      const originalMobile = user.mobile_number || '';
       setEditForm({
         firstName: nameParts[0] || '',
         middleName: nameParts.length > 2 ? nameParts.slice(1, -1).join(' ') : '',
         lastName: nameParts.length ? nameParts[nameParts.length - 1] : '',
         email: user.email,
-        mobile_number: user.mobile_number || '',
+        mobile_number: originalMobile,
         ...splitAddressFields(user.address),
         birthday: user.birthday || '',
         gender: user.gender || ''
       });
+      setOriginalMobileNumber(originalMobile);
       setProfileErrors({});
       setErrorMessage('');
       setShowEditProfile(true);
@@ -233,7 +241,7 @@ export default function SettingsScreen() {
     else if (field === 'middleName') error = validateNamePart(finalValue, false);
     else if (field === 'lastName') error = validateNamePart(finalValue, true);
     else if (field === 'email') error = validateEmail(finalValue);
-    else if (field === 'mobile_number') error = validatePhone(finalValue);
+    else if (field === 'mobile_number') error = validatePhone(finalValue, originalMobileNumber);
     else if (field === 'birthday') error = validateBirthday(finalValue);
 
     setProfileErrors({ ...profileErrors, [field]: error });
@@ -257,7 +265,8 @@ export default function SettingsScreen() {
     if (!editForm.email) validationErrors.email = 'Email is required';
     else if (!editForm.email.endsWith('@gmail.com')) validationErrors.email = 'Use @gmail.com';
     
-    const mobileError = validatePhone(editForm.mobile_number);
+    const mobileResult = validatePhilippineMobileUpdate(editForm.mobile_number, originalMobileNumber);
+    const mobileError = mobileResult.error;
     if (mobileError) validationErrors.mobile_number = mobileError;
     
     const birthdayError = validateBirthday(editForm.birthday);
@@ -284,12 +293,14 @@ export default function SettingsScreen() {
         name: fullName.trim(),
         email: editForm.email.toLowerCase().trim(),
         role: user.role || 'User',
-        mobile_number: validatePhilippineMobile(editForm.mobile_number).value,
         address: combineAddressFields(editForm),
         birthday: editForm.birthday || '', // Send empty string, backend converts to NULL
         gender: editForm.gender || '',
         status: user.status || 'Active'
       };
+      if (editForm.mobile_number !== originalMobileNumber) {
+        payload.mobile_number = mobileResult.value;
+      }
 
       console.log('📤 Sending profile update payload:', payload);
 
@@ -619,11 +630,13 @@ export default function SettingsScreen() {
                   <div className="form-group">
                     <label>Phone Number</label>
                     <input
-                      type="text"
+                      type="tel"
                       placeholder="09XXXXXXXXX"
                       value={editForm.mobile_number}
                       onChange={(e) => handleProfileFormChange('mobile_number', e.target.value)}
                       className={profileErrors.mobile_number ? 'error' : ''}
+                      inputMode="numeric"
+                      maxLength={11}
                     />
                     {profileErrors.mobile_number && <span className="error-text">{profileErrors.mobile_number}</span>}
                   </div>
