@@ -308,4 +308,3 @@ Use the visual companion/computer-use workflow only in the imported sandbox. Ins
 - [ ] **Step 5: Confirm delivery and safety.**
 
 Run clean status and exact-head checks for both implementation worktrees and compare original dirty statuses with their preflight records. Report web/Godot hashes, test evidence, no-migration result, and zero push/deploy/production/publication/OpenAI/APK operations.
-
