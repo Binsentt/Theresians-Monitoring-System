@@ -114,4 +114,77 @@ test('account APIs enforce the Philippine mobile format server-side', async (t) 
     assert.equal(response.body.error, 'Mobile number must be in the format 09XXXXXXXXX.');
     assert.equal(updated, false);
   });
+
+  await t.test('preserves unchanged legacy mobile values for account and profile updates', async (t) => {
+    const legacyMobile = '0917-123-4567';
+    const originalAccount = accounts[2];
+    accounts[2] = {
+      ...originalAccount,
+      mobile_number: legacyMobile,
+      parent_id: 'parent-code',
+      status: 'Active',
+    };
+    t.after(() => {
+      accounts[2] = originalAccount;
+    });
+
+    const updatedMobiles = [];
+    let mobileParameterIndex = 0;
+    queryHandler = async (sql, params) => {
+      if (sql.startsWith('update public.accounts')) {
+        const mobile = params[mobileParameterIndex];
+        updatedMobiles.push(mobile);
+        return { rows: [{ ...accounts[2], mobile_number: mobile }] };
+      }
+      return emptyResult;
+    };
+
+    const updates = [
+      { path: '/api/accounts/2', token: 'admin-token', body: { name: 'Edited Parent' }, mobileIndex: 4 },
+      { path: '/api/accounts/2', token: 'admin-token', body: { mobile_number: legacyMobile }, mobileIndex: 4 },
+      { path: '/api/user/2', token: 'parent-token', body: { address: 'Updated address' }, mobileIndex: 2 },
+      { path: '/api/user/2', token: 'parent-token', body: { mobile_number: legacyMobile }, mobileIndex: 2 },
+    ];
+
+    for (const update of updates) {
+      mobileParameterIndex = update.mobileIndex;
+      const response = await requestJson(baseUrl, update.path, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${update.token}` },
+        body: JSON.stringify(update.body),
+      });
+      assert.equal(response.status, 200);
+    }
+
+    assert.deepEqual(updatedMobiles, Array(4).fill(legacyMobile));
+  });
+
+  await t.test('rejects changed invalid mobile values for legacy account and profile updates', async (t) => {
+    const legacyMobile = '0917-123-4567';
+    const originalAccount = accounts[2];
+    accounts[2] = { ...originalAccount, mobile_number: legacyMobile, status: 'Active' };
+    t.after(() => {
+      accounts[2] = originalAccount;
+    });
+
+    let updated = false;
+    queryHandler = async (sql) => {
+      if (sql.startsWith('update public.accounts')) updated = true;
+      return emptyResult;
+    };
+
+    for (const update of [
+      { path: '/api/accounts/2', token: 'admin-token' },
+      { path: '/api/user/2', token: 'parent-token' },
+    ]) {
+      const response = await requestJson(baseUrl, update.path, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${update.token}` },
+        body: JSON.stringify({ mobile_number: '9171234567' }),
+      });
+      assert.equal(response.status, 400);
+      assert.equal(response.body.error, 'Mobile number must be in the format 09XXXXXXXXX.');
+    }
+    assert.equal(updated, false);
+  });
 });

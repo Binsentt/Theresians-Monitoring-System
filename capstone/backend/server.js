@@ -1145,6 +1145,13 @@ const normalizePhilippineMobile = (value) => {
   return { mobileNumber: normalized };
 };
 
+const resolveMobileNumberForUpdate = (value, storedValue) => {
+  if (value === undefined || value === storedValue) {
+    return { mobileNumber: storedValue };
+  }
+  return normalizePhilippineMobile(value);
+};
+
 const PARENT_CHILD_GRADE_LEVELS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
 
 const normalizeSchoolSection = (value, { required = false } = {}) => {
@@ -3787,7 +3794,7 @@ app.put('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) => 
       return res.status(400).json({ error: birthdayResult.error });
     }
     const finalBirthday = birthdayResult.birthday;
-    const mobileResult = normalizePhilippineMobile(mobile_number !== undefined ? mobile_number : old.mobile_number);
+    const mobileResult = resolveMobileNumberForUpdate(mobile_number, old.mobile_number);
     if (mobileResult.error) return res.status(400).json({ error: mobileResult.error });
     const employeeIdResult = resolveEmployeeIdForRole(finalRole, employee_id !== undefined ? employee_id : old.employee_id);
     if (employeeIdResult.error) {
@@ -6737,9 +6744,7 @@ app.put('/api/user/:id', async (req, res) => {
     if (birthdayResult.error) {
       return res.status(400).json({ error: birthdayResult.error });
     }
-    const mobileResult = normalizePhilippineMobile(
-      req.body.mobile_number !== undefined ? req.body.mobile_number : old.mobile_number
-    );
+    const mobileResult = resolveMobileNumberForUpdate(req.body.mobile_number, old.mobile_number);
     if (mobileResult.error) return res.status(400).json({ error: mobileResult.error });
 
     const finalEmail = req.body.email && req.body.email.trim() !== ''
