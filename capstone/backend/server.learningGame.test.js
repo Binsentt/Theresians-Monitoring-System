@@ -255,6 +255,83 @@ test('question publishing replaces the active Godot bundle for one Grade and Dif
   assert.match(publicationAudit.sql, /question_set_published/i);
 });
 
+test('publishing locks active files separately from grouped active-set count summaries', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let activeScopeLock = null;
+  let activeScopeSummary = null;
+  let publicationMutationAttempted = false;
+  setQueryHandler(async (sql, params) => {
+    if (sql === 'begin' || sql === 'rollback') return emptyResult;
+    if (sql.startsWith('select * from public.learning_files') && sql.includes('where id = $1')) {
+      const learningFile = {
+        id: 42,
+        title: 'Approved Grade 1 Easy Set',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        subject: 'Mathematics',
+        deleted_at: null,
+      };
+      return resultRows([approvedForPublication(learningFile, [{
+        question: 'What is 2 + 3?',
+        options: ['4', '5', '6', '7'],
+        correct_answer: '5',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+      }])]);
+    }
+    if (sql.startsWith('select id, learning_file_id') && sql.includes('from public.questions')) {
+      return resultRows([{
+        id: 4201,
+        learning_file_id: 42,
+        question: 'What is 2 + 3?',
+        options: ['4', '5', '6', '7'],
+        correct_answer: '5',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+      }]);
+    }
+    if (sql.startsWith('select lf.id') && sql.includes('from public.learning_files lf') && sql.includes('for update')) {
+      activeScopeLock = { sql, params };
+      return resultRows([{ id: 41 }]);
+    }
+    if (sql.startsWith('select lf.id') && sql.includes('from public.learning_files lf') && sql.includes('group by learning_file_id')) {
+      activeScopeSummary = { sql, params };
+      return resultRows([{
+        id: 41,
+        title: 'Existing Grade 1 Easy Set',
+        file_name: 'existing-grade-1-easy.docx',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        question_count: 5,
+      }]);
+    }
+    if (sql.startsWith('update public.learning_files') || sql.startsWith('update public.questions')) {
+      publicationMutationAttempted = true;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/questions/publish/42', { method: 'POST' });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'ACTIVE_SET_REPLACEMENT_CONFIRMATION_REQUIRED');
+  assert.equal(response.body.replacement.current_active.id, 41);
+  assert.equal(response.body.replacement.current_active.question_count, 5);
+  assert.deepEqual(activeScopeLock.params, ['Grade 1', 'Easy', 42]);
+  assert.match(activeScopeLock.sql, /for update/i);
+  assert.doesNotMatch(activeScopeLock.sql, /group by/i);
+  assert.deepEqual(activeScopeSummary.params, [[41]]);
+  assert.match(activeScopeSummary.sql, /group by learning_file_id/i);
+  assert.doesNotMatch(activeScopeSummary.sql, /for update/i);
+  assert.equal(publicationMutationAttempted, false);
+});
+
 test('removing an active question set is transactional and preserves its approval record', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -473,7 +550,10 @@ test('same Grade and Difficulty active content requires replacement confirmation
         math_topic: 'Addition',
       }]);
     }
-    if (sql.includes('from public.learning_files') && sql.includes('publish_status = \'active\'')) {
+    if (sql.startsWith('select lf.id') && sql.includes('from public.learning_files') && sql.includes('for update')) {
+      return resultRows([{ id: 8 }, { id: 9 }]);
+    }
+    if (sql.includes('from public.learning_files') && sql.includes('group by learning_file_id')) {
       return resultRows([{
         id: 8,
         title: 'Current Addition',

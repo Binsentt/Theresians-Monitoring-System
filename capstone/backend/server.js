@@ -2287,21 +2287,12 @@ const publishLearningFile = async (fileId, publisher, { confirmReplacement = fal
     const learningDifficulty = canonicalDifficultySql('difficulty');
     const linkedLearningDifficulty = canonicalDifficultySql('lf.difficulty');
 
-    const activeScopeResult = await client.query(
-      `SELECT lf.id,
-              lf.title,
-              lf.file_name,
-              lf.grade_level,
-              lf.difficulty,
-              lf.topic_id,
-              lf.math_topic,
-              COALESCE(question_counts.question_count, 0)::INTEGER AS question_count
+    // PostgreSQL does not permit FOR UPDATE on a query with grouped results.
+    // Keep the publication scope protected by its advisory lock and lock each
+    // active base row before reading grouped question counts for confirmation.
+    const activeScopeLockResult = await client.query(
+      `SELECT lf.id
        FROM public.learning_files lf
-       LEFT JOIN (
-         SELECT learning_file_id, COUNT(*)::INTEGER AS question_count
-         FROM public.questions
-         GROUP BY learning_file_id
-       ) question_counts ON question_counts.learning_file_id = lf.id
        WHERE lf.grade_level = $1
          AND ${linkedLearningDifficulty} = $2
          AND lf.id <> $3
@@ -2312,6 +2303,30 @@ const publishLearningFile = async (fileId, publisher, { confirmReplacement = fal
        FOR UPDATE`,
       destinationParams
     );
+    const activeSetIds = activeScopeLockResult.rows
+      .map(({ id: activeSetId }) => Number(activeSetId))
+      .filter(Number.isInteger);
+    const activeScopeResult = activeSetIds.length === 0
+      ? { rows: [] }
+      : await client.query(
+        `SELECT lf.id,
+                lf.title,
+                lf.file_name,
+                lf.grade_level,
+                lf.difficulty,
+                lf.topic_id,
+                lf.math_topic,
+                COALESCE(question_counts.question_count, 0)::INTEGER AS question_count
+         FROM public.learning_files lf
+         LEFT JOIN (
+           SELECT learning_file_id, COUNT(*)::INTEGER AS question_count
+           FROM public.questions
+           GROUP BY learning_file_id
+         ) question_counts ON question_counts.learning_file_id = lf.id
+         WHERE lf.id = ANY($1::INTEGER[])
+         ORDER BY lf.published_at DESC NULLS LAST, lf.uploaded_at DESC, lf.id DESC`,
+        [activeSetIds]
+      );
     const activeSets = activeScopeResult.rows;
     if (activeSets.length > 0 && !confirmReplacement) {
       const error = createLifecycleHttpError('An Active question set already exists for this Grade and Difficulty. Confirm replacement before pushing this set to the game.', 409);
