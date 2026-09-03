@@ -51,11 +51,11 @@ class MockIntersectionObserver {
 
 const markPreviewAsReviewed = async () => {
   const observer = previewObservers.at(-1);
-  const sentinel = document.body.querySelector('[data-testid="final-question-review-sentinel"]');
+  const finalQuestionCard = Array.from(document.body.querySelectorAll('.generated-question-card')).at(-1);
   expect(observer).toBeTruthy();
-  expect(sentinel).toBeTruthy();
+  expect(finalQuestionCard).toBeTruthy();
   await act(async () => {
-    observer.callback([{ target: sentinel, isIntersecting: true }]);
+    observer.callback([{ target: finalQuestionCard, isIntersecting: true }]);
   });
 };
 
@@ -880,7 +880,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).toContain('ready for manual Push to Game');
   });
 
-  test('requires the final question sentinel in the inner Preview scroll container before Approve', async () => {
+  test('requires the final question card in the inner Preview scroll container before Approve', async () => {
     fixtures.files = [buildReviewRequiredFile()];
 
     await act(async () => {
@@ -893,16 +893,16 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     const approveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve');
     const previewBody = document.body.querySelector('.generated-questions-preview-body');
-    const sentinel = document.body.querySelector('[data-testid="final-question-review-sentinel"]');
+    const finalQuestionCard = Array.from(document.body.querySelectorAll('.generated-question-card')).at(-1);
     expect(approveButton.disabled).toBe(true);
-    expect(sentinel).toBeTruthy();
+    expect(finalQuestionCard).toBeTruthy();
     expect(previewObservers).toHaveLength(1);
     expect(previewObservers[0].options.root).toBe(previewBody);
-    expect(previewObservers[0].target).toBe(sentinel);
+    expect(previewObservers[0].target).toBe(finalQuestionCard);
     expect(document.body.querySelector('input[type="checkbox"]')).toBeNull();
 
     await act(async () => {
-      previewObservers[0].callback([{ target: sentinel, isIntersecting: true }]);
+      previewObservers[0].callback([{ target: finalQuestionCard, isIntersecting: true }]);
     });
     expect(approveButton.disabled).toBe(false);
 

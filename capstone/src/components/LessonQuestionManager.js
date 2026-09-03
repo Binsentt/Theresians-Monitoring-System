@@ -222,7 +222,7 @@ export default function LessonQuestionManager() {
   const [reviewComplete, setReviewComplete] = useState(false);
   const [reviewSnapshotKey, setReviewSnapshotKey] = useState('');
   const previewBodyRef = useRef(null);
-  const finalQuestionSentinelRef = useRef(null);
+  const finalQuestionCardRef = useRef(null);
   const uploadInFlightRef = useRef(false);
   const [fixedUploadValidation, setFixedUploadValidation] = useState(null);
   const [selectedFolder, setSelectedFolder] = useState({ grade_level: '', difficulty: '' });
@@ -255,21 +255,21 @@ export default function LessonQuestionManager() {
       || previewQuestions.length === 0
       || !reviewSnapshotKey
       || !previewBodyRef.current
-      || !finalQuestionSentinelRef.current
+      || !finalQuestionCardRef.current
       || typeof IntersectionObserver !== 'function'
     ) {
       return undefined;
     }
 
     const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.target === finalQuestionSentinelRef.current && entry.isIntersecting)) {
+      if (entries.some((entry) => entry.target === finalQuestionCardRef.current && entry.isIntersecting)) {
         setReviewComplete(true);
       }
     }, {
       root: previewBodyRef.current,
       threshold: 0.01,
     });
-    observer.observe(finalQuestionSentinelRef.current);
+    observer.observe(finalQuestionCardRef.current);
     return () => observer.disconnect();
   }, [questionPreviewFile?.id, previewQuestions.length, previewQuestionsLoading, reviewSnapshotKey]);
 
@@ -1549,7 +1549,10 @@ export default function LessonQuestionManager() {
                           const questionIsValid = question.is_valid !== false && questionErrors.length === 0;
                           return (
                             <React.Fragment key={question.id || `${question.question}-${index}`}>
-                              <article className={`generated-question-card ${questionIsValid ? 'valid' : 'invalid'}`}>
+                              <article
+                                ref={index === previewQuestions.length - 1 ? finalQuestionCardRef : null}
+                                className={`generated-question-card ${questionIsValid ? 'valid' : 'invalid'}`}
+                              >
                                 <strong>{index + 1}. {question.question}</strong>
                                 <ol type="A">
                                   {(question.options || []).map((option, optionIndex) => (
@@ -1561,7 +1564,6 @@ export default function LessonQuestionManager() {
                                 <p className="question-review-metadata">{formatQuestionGradeLabel(question.grade_level || previewFile.grade_level)} · {question.difficulty || previewFile.difficulty}</p>
                                 {questionIsValid ? <p className="question-validation-valid">Valid</p> : questionErrors.map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
                               </article>
-                              {index === previewQuestions.length - 1 && <div ref={finalQuestionSentinelRef} data-testid="final-question-review-sentinel" aria-hidden="true" />}
                             </React.Fragment>
                           );
                         })}
