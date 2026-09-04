@@ -3,9 +3,14 @@ const normalizeParentCode = (value) => {
   return /^\d{6}$/.test(code) ? code : null;
 };
 
-const normalizeStudentCode = (value) => {
-  const code = String(value || '').trim();
-  return /^\d{6}$/.test(code) ? code : null;
+const normalizeNewStudentCode = (value) => {
+  const code = String(value ?? '');
+  return /^[0-9]{8}$/.test(code) ? code : null;
+};
+
+const normalizeExistingStudentCode = (value) => {
+  const code = String(value ?? '');
+  return /^[0-9]{6}$/.test(code) || /^[0-9]{8}$/.test(code) ? code : null;
 };
 
 const normalizeGameStudentName = (value) =>
@@ -62,7 +67,8 @@ const resolveAccuracyRate = (payload = {}) => {
 
 module.exports = {
   normalizeParentCode,
-  normalizeStudentCode,
+  normalizeNewStudentCode,
+  normalizeExistingStudentCode,
   normalizeGameStudentName,
   buildGameStudentEmail,
   toNullableNumber,

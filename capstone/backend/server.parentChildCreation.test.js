@@ -43,6 +43,8 @@ Module._load = function loadWithServerStubs(request, parent, isMain) {
   if (request === 'jsonwebtoken') return { sign: () => 'token', verify: (token) => tokenPayloads[token] || {} };
   if (request === 'multer') return () => ({ single: passthrough, array: passthrough, fields: passthrough });
   if (request === 'pdf-parse') return async () => ({ text: '' });
+  if (request === 'yauzl') return { open: () => {} };
+  if (request === 'fast-xml-parser') return { XMLParser: class { parse() { return {}; } } };
   return originalLoad.call(this, request, parent, isMain);
 };
 
@@ -78,7 +80,7 @@ const validChild = {
   middle_initial: 'M',
   grade_level: 'Grade 3',
   section: 'Jade',
-  student_id: '001234',
+  student_id: '00123456',
 };
 
 test('parent child creation is authenticated, scoped, and duplicate-safe', async (t) => {
@@ -89,7 +91,7 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     await close(server);
   });
 
-  await t.test('creates a six-digit child account and canonical Parent relationship from the session', async () => {
+  await t.test('creates an eight-digit child account and canonical Parent relationship from the session', async () => {
     let accountInsert = null;
     let relationshipInsert = null;
     queryHandler = async (sql, params) => {
@@ -113,9 +115,9 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     });
 
     assert.equal(response.status, 201);
-    assert.equal(response.body.child.game_student_id, '001234');
+    assert.equal(response.body.child.game_student_id, '00123456');
     assert.equal(accountInsert.includes('999999'), false);
-    assert.equal(accountInsert.at(-1), '001234');
+    assert.equal(accountInsert.at(-1), '00123456');
     assert.deepEqual(relationshipInsert, [19, 44, 'parent']);
   });
 
@@ -135,7 +137,7 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     const response = await requestJson(baseUrl, '/api/parent/children', {
       method: 'POST',
       headers: { Authorization: 'Bearer parent-token' },
-      body: JSON.stringify({ ...validChild, section: '  Jade  ', student_id: '001246' }),
+      body: JSON.stringify({ ...validChild, section: '  Jade  ', student_id: '00124680' }),
     });
 
     assert.equal(response.status, 201);
@@ -153,7 +155,7 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     const response = await requestJson(baseUrl, '/api/parent/children', {
       method: 'POST',
       headers: { Authorization: 'Bearer parent-token' },
-      body: JSON.stringify({ ...validChild, section: '   ', student_id: '001247' }),
+      body: JSON.stringify({ ...validChild, section: '   ', student_id: '00124780' }),
     });
 
     assert.equal(response.status, 400);
@@ -174,7 +176,7 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     const invalidResponse = await requestJson(baseUrl, '/api/parent/children', {
       method: 'POST',
       headers: { Authorization: 'Bearer parent-token' },
-      body: JSON.stringify({ ...validChild, grade_level: 'Grade 1', section: 'Emerald', student_id: '001248' }),
+      body: JSON.stringify({ ...validChild, grade_level: 'Grade 1', section: 'Emerald', student_id: '00124880' }),
     });
 
     assert.equal(registryResponse.status, 200);
@@ -200,7 +202,7 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     const response = await requestJson(baseUrl, '/api/parent/children', {
       method: 'POST',
       headers: { Authorization: 'Bearer parent-teacher-token' },
-      body: JSON.stringify({ ...validChild, first_name: 'Noah', student_id: '001245', parent_id: '112832' }),
+      body: JSON.stringify({ ...validChild, first_name: 'Noah', student_id: '00124580', parent_id: '112832' }),
     });
 
     assert.equal(response.status, 201);
@@ -254,6 +256,41 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     });
     assert.equal(differentParent.status, 409);
     assert.match(differentParent.body.error, /another parent/i);
+    assert.equal(wrote, false);
+  });
+
+  await t.test('looks up a legacy six-digit Student before any new-account write', async () => {
+    let wrote = false;
+    queryHandler = async (sql) => {
+      if (sql.includes('from public.accounts s') && sql.includes('where s.game_student_id = $1')) {
+        return { rows: [{ id: 44, game_student_id: '001234', linked_to_authenticated_parent: true, linked_to_another_parent: false }] };
+      }
+      if (sql.startsWith('insert')) wrote = true;
+      return emptyResult;
+    };
+
+    const response = await requestJson(baseUrl, '/api/parent/children', {
+      method: 'POST', headers: { Authorization: 'Bearer parent-token' }, body: JSON.stringify({ ...validChild, student_id: '001234' }),
+    });
+
+    assert.equal(response.status, 409);
+    assert.match(response.body.error, /already linked/i);
+    assert.equal(wrote, false);
+  });
+
+  await t.test('rejects an unknown six-digit Student ID before an account insert', async () => {
+    let wrote = false;
+    queryHandler = async (sql) => {
+      if (sql.startsWith('insert')) wrote = true;
+      return emptyResult;
+    };
+
+    const response = await requestJson(baseUrl, '/api/parent/children', {
+      method: 'POST', headers: { Authorization: 'Bearer parent-token' }, body: JSON.stringify({ ...validChild, student_id: '001235' }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error, 'Student ID must be exactly 8 digits.');
     assert.equal(wrote, false);
   });
 });

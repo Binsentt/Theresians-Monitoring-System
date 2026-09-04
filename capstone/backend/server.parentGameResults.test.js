@@ -89,6 +89,8 @@ const serverDependencyStubs = {
   },
   multer: multerStub,
   'pdf-parse': async () => ({ text: '' }),
+  yauzl: { open: () => {} },
+  'fast-xml-parser': { XMLParser: class { parse() { return {}; } } },
 };
 const originalLoad = Module._load;
 let serverExports;
@@ -322,6 +324,36 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(response.body.student_id, 44);
     assert.equal(insertedValues[2], 44);
     assert.equal(insertedValues[4], 'Difficult');
+  });
+
+  await t.test('resolves an eight-digit game Student ID without coercing it to an internal ID', async () => {
+    let insertedValues = null;
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+        assert.deepEqual(params, [19, '00123456']);
+        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+      }
+      if (sql.startsWith('insert into public.game_results')) {
+        insertedValues = params;
+        return emptyResult;
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456', student_id: '00123456', student_name: 'Ava Santos', grade_level: 'Grade 3',
+        difficulty: 'Easy', math_topic: 'Fractions', score: 1, total_items: 1,
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(response.body.student_id, 44);
+    assert.equal(insertedValues[2], 44);
   });
 
   await t.test('stores a matching active question set when result Topic metadata is omitted or differs', async () => {
@@ -664,6 +696,31 @@ test('parent game results routes and access middleware', async (t) => {
         student_name: 'Ava Santos',
         grade_level: 'Grade 3',
         status: 'Playing',
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(insertedValues[0], 44);
+  });
+
+  await t.test('resolves an eight-digit Godot activity Student ID through its parent link', async () => {
+    let insertedValues = null;
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('s.game_student_id = $1') && sql.includes('join public.accounts parent')) {
+        assert.deepEqual(params, ['00123456', '123456']);
+        return resultRows([{ id: 44 }]);
+      }
+      if (sql.startsWith('insert into public.activity_logs')) {
+        insertedValues = params;
+        return resultRows([{ id: 100, student_id: 44 }]);
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/activity-logs', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456', student_id: '00123456', student_name: 'Ava Santos', grade_level: 'Grade 3', status: 'Playing',
       }),
     });
 

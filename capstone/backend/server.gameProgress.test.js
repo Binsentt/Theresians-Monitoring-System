@@ -49,6 +49,8 @@ const serverDependencyStubs = {
   },
   multer: multerStub,
   'pdf-parse': async () => ({ text: '' }),
+  yauzl: { open: () => {} },
+  'fast-xml-parser': { XMLParser: class { parse() { return {}; } } },
 };
 
 const originalLoad = Module._load;
@@ -213,6 +215,71 @@ test('game progress persists linked child identity, grade, and section from the 
   assert.equal(response.status, 201);
   assert.deepEqual(progressValues.slice(0, 4), [44, 'Ava Santos', 'Grade 3', 'Section A']);
   assert.deepEqual(activityValues.slice(0, 4), [44, 'Ava Santos', 'Grade 3', 'Section A']);
+});
+
+test('game progress resolves an eight-digit public Student ID without converting it to an internal ID', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let linkedStudentValues = [];
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (['begin', 'commit', 'rollback'].includes(sql)) return emptyResult;
+    if (sql.startsWith('select id, name, parent_id from public.accounts')) return resultRows([{ id: 19, name: 'Parent User', parent_id: '123456' }]);
+    if (sql.startsWith('select s.* from public.accounts s join public.teacher_student_relationships')) {
+      linkedStudentValues = params;
+      return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3', section: 'Jade' }]);
+    }
+    if (sql.startsWith('select id from public.student_game_progress')) return emptyResult;
+    if (sql.startsWith('insert into public.student_game_progress')) return resultRows([{ id: 88, student_id: 44 }]);
+    if (sql.startsWith('insert into public.activity_logs')) return resultRows([{ id: 99, student_id: 44 }]);
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/progress', {
+    method: 'POST',
+    body: JSON.stringify({
+      parent_id: '123456', student_id: '00123456', student_name: 'Ava Santos', grade_level: 'Grade 3',
+      current_quest: 'Tutorial', score: 1, correct_answers: 1, total_questions: 1,
+    }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.deepEqual(linkedStudentValues, [19, '00123456']);
+});
+
+test('game progress never creates a missing legacy six-digit Student ID', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let createdStudent = false;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (['begin', 'rollback'].includes(sql)) return emptyResult;
+    if (sql.startsWith('select id, name, parent_id from public.accounts')) return resultRows([{ id: 19, name: 'Parent User', parent_id: '123456' }]);
+    if (sql.startsWith('select s.* from public.accounts s join public.teacher_student_relationships')) return emptyResult;
+    if (sql.startsWith('select * from public.accounts where game_student_id = $1')) return emptyResult;
+    if (sql.startsWith('insert into public.accounts')) createdStudent = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/progress', {
+    method: 'POST',
+    body: JSON.stringify({
+      parent_id: '123456', student_id: '001234', student_name: 'Ava Santos', grade_level: 'Grade 3',
+      current_quest: 'Tutorial', score: 1, correct_answers: 1, total_questions: 1,
+    }),
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, 'Student ID must be exactly 8 digits.');
+  assert.equal(createdStudent, false);
 });
 
 test('game progress rejects a heartbeat-stale current-cycle lease before writing progress', async (t) => {

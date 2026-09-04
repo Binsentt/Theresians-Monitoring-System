@@ -175,19 +175,24 @@ describe('validation.utils', () => {
   });
 
   describe('validateGameStudentId', () => {
-    test('keeps a six-digit Game Student ID as a string with leading zeroes', () => {
+    test('keeps six-digit legacy and eight-digit current Game Student IDs as strings with leading zeroes', () => {
       expect(validateGameStudentId('001234')).toEqual({
         isValid: true,
         value: '001234',
         error: null,
       });
+      expect(validateGameStudentId('00123456')).toEqual({
+        isValid: true,
+        value: '00123456',
+        error: null,
+      });
     });
 
-    test.each(['', '12345', '1234567', 'ABC123', '123.456'])('rejects invalid Student ID %s', (value) => {
+    test.each(['', '12345', '1234567', '123456789', 'ABC123', '123.456', ' 001234 '])('rejects invalid Student ID %s', (value) => {
       expect(validateGameStudentId(value)).toEqual({
         isValid: false,
         value: null,
-        error: value === '' ? 'Student ID is required.' : 'Student ID must be exactly 6 digits.',
+        error: value === '' ? 'Student ID is required.' : 'Student ID must be either 6 or 8 digits.',
       });
     });
   });
@@ -237,6 +242,18 @@ describe('validation.utils', () => {
       expect(PARENT_CHILD_GRADE_OPTIONS).toEqual(['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6']);
     });
 
+    test('accepts an eight-digit Student ID for a new child while retaining legacy lookup compatibility', () => {
+      expect(validateChildProfile({
+        firstName: 'Ava',
+        lastName: 'Santos',
+        middleInitial: 'M',
+        gradeLevel: 'Grade 3',
+        section: 'Jade',
+        studentId: '00123456',
+        sectionOptions: ['Garnet', 'Jade'],
+      })).toEqual({});
+    });
+
     test('rejects an invalid middle initial, malformed Section, and malformed Student ID', () => {
       expect(validateChildProfile({
         firstName: 'Ava',
@@ -244,11 +261,11 @@ describe('validation.utils', () => {
         middleInitial: 'MM',
         gradeLevel: 'Grade 3',
         section: 'Rizal!',
-        studentId: '12345',
+        studentId: '1234567',
       })).toEqual({
         middleInitial: 'Middle initial must be one letter.',
         section: 'Section may only contain letters, numbers, spaces, periods, apostrophes, or hyphens.',
-        studentId: 'Student ID must be exactly 6 digits.',
+        studentId: 'Student ID must be either 6 or 8 digits.',
       });
     });
 

@@ -38,12 +38,12 @@ export const validatePhilippineMobileUpdate = (value, originalValue) => {
 };
 
 export const validateGameStudentId = (value) => {
-  const normalized = String(value ?? '').trim();
+  const normalized = String(value ?? '');
   if (!normalized) {
     return { isValid: false, value: null, error: 'Student ID is required.' };
   }
-  if (!/^\d{6}$/.test(normalized)) {
-    return { isValid: false, value: null, error: 'Student ID must be exactly 6 digits.' };
+  if (!/^[0-9]{6}$/.test(normalized) && !/^[0-9]{8}$/.test(normalized)) {
+    return { isValid: false, value: null, error: 'Student ID must be either 6 or 8 digits.' };
   }
   return { isValid: true, value: normalized, error: null };
 };

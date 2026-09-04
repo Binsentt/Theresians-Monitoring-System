@@ -90,6 +90,23 @@ describe('ParentAddChildModal', () => {
     expect(Array.from(section.options).map((option) => option.value)).toEqual(['', 'Diamond', 'Emerald']);
   });
 
+  test('keeps Parent Add Child as a six-or-eight digit lookup-or-create field', async () => {
+    global.fetch.mockImplementation((url) => (
+      String(url).endsWith('/api/sections/registry') ? okJson(sectionRegistryFixture) : okJson({})
+    ));
+    await act(async () => {
+      root.render(<ParentAddChildModal onClose={jest.fn()} onCreated={jest.fn()} />);
+      await Promise.resolve();
+    });
+
+    const studentId = container.querySelector('#child-student-id');
+    expect(studentId.inputMode).toBe('numeric');
+    expect(studentId.maxLength).toBe(8);
+    expect(studentId.placeholder).toBe('001234 or 00123456');
+    expect(container.querySelector('.parent-add-child-student-id .field-help').textContent)
+      .toContain('new Student requires 8 digits');
+  });
+
   test('submits the selected canonical Section and preserves the leading-zero Student ID', async () => {
     const onCreated = jest.fn();
     global.fetch.mockImplementation((url) => {

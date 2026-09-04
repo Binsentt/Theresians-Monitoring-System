@@ -57,6 +57,8 @@ const serverDependencyStubs = {
   },
   multer: multerStub,
   'pdf-parse': async () => ({ text: '' }),
+  yauzl: { open: () => {} },
+  'fast-xml-parser': { XMLParser: class { parse() { return {}; } } },
 };
 
 const originalLoad = Module._load;
@@ -309,7 +311,7 @@ test('playtime start preserves a linked child canonical null Section instead of 
   assert.deepEqual(insertedValues.slice(0, 5), [44, '123456', 'Ava Santos', 'Grade 3', null]);
 });
 
-test('playtime start creates and links an unused six-digit Student ID for New Game', async (t) => {
+test('playtime start creates and links an unused eight-digit Student ID for New Game', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   let createdStudentValues = null;
@@ -324,7 +326,7 @@ test('playtime start creates and links an unused six-digit Student ID for New Ga
     if (sql.includes('select id from public.accounts') && sql.includes('where game_student_id = $1')) return emptyResult;
     if (sql.startsWith('insert into public.accounts')) {
       createdStudentValues = params;
-      return resultRows([{ id: 55, name: 'Integration Test Student', game_student_id: '000042' }]);
+      return resultRows([{ id: 55, name: 'Integration Test Student', game_student_id: '00000042' }]);
     }
     if (sql.includes('from public.teacher_student_relationships') && sql.includes('lower(relationship_type) = $3')) return emptyResult;
     if (sql.startsWith('insert into public.teacher_student_relationships')) {
@@ -344,7 +346,7 @@ test('playtime start creates and links an unused six-digit Student ID for New Ga
   const response = await requestJson(baseUrl, '/api/playtime/start', {
     method: 'POST',
     body: JSON.stringify({
-      student_id: '000042',
+      student_id: '00000042',
       parent_id: '123456',
       student_name: 'Integration Test Student',
       grade_level: 'Grade 3',
@@ -355,8 +357,36 @@ test('playtime start creates and links an unused six-digit Student ID for New Ga
   assert.equal(response.status, 201);
   assert.equal(response.body.success, true);
   assert.equal(response.body.is_new_registration, undefined);
-  assert.deepEqual(createdStudentValues.slice(-1), ['000042']);
+  assert.deepEqual(createdStudentValues.slice(-1), ['00000042']);
   assert.deepEqual(relationshipValues, [19, 55, 'parent']);
+});
+
+test('playtime start never creates a missing legacy six-digit Student ID', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let createdStudent = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (sql.includes('from public.accounts s') && sql.includes('game_student_id = $2')) return emptyResult;
+    if (sql.includes('select id from public.accounts') && sql.includes('where game_student_id = $1')) return emptyResult;
+    if (sql.startsWith('insert into public.accounts')) createdStudent = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      student_id: '000042', parent_id: '123456', student_name: 'Integration Test Student', grade_level: 'Grade 3', section: '',
+    }),
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, 'Student ID must be exactly 8 digits.');
+  assert.equal(createdStudent, false);
 });
 
 test('playtime start rejects an archived account that already owns the submitted Student ID', async (t) => {
@@ -381,7 +411,7 @@ test('playtime start rejects an archived account that already owns the submitted
   const response = await requestJson(baseUrl, '/api/playtime/start', {
     method: 'POST',
     body: JSON.stringify({
-      student_id: '000042',
+      student_id: '00000042',
       parent_id: '123456',
       student_name: 'Integration Test Student',
       grade_level: 'Grade 3',
@@ -594,7 +624,7 @@ test('playtime start preserves six-digit external student IDs through the link l
       return emptyResult;
     }
     if (sql.startsWith('insert into public.accounts')) {
-      return resultRows([{ id: 45, game_student_id: '001234' }]);
+      return resultRows([{ id: 45, game_student_id: '00123456' }]);
     }
     if (sql.includes('from public.teacher_student_relationships') && sql.includes('lower(relationship_type) = $3')) {
       return emptyResult;
@@ -615,7 +645,7 @@ test('playtime start preserves six-digit external student IDs through the link l
   const unlinkedResponse = await requestJson(baseUrl, '/api/playtime/start', {
     method: 'POST',
     body: JSON.stringify({
-      student_id: '001234',
+      student_id: '00123456',
       parent_id: '123456',
       student_name: 'Ava Santos',
       grade_level: 'Grade 3',

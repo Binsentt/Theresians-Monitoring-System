@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 
 const {
   normalizeParentCode,
+  normalizeNewStudentCode,
+  normalizeExistingStudentCode,
   normalizeGameStudentName,
   buildGameStudentEmail,
   toNullableNumber,
@@ -16,6 +18,19 @@ test('normalizes only exact six digit parent IDs', () => {
   assert.equal(normalizeParentCode('48291'), null);
   assert.equal(normalizeParentCode('4829157'), null);
   assert.equal(normalizeParentCode('ABC915'), null);
+});
+
+test('separates new Student creation from legacy-compatible Student lookup', () => {
+  assert.equal(normalizeNewStudentCode('00123456'), '00123456');
+  for (const invalidNewCode of ['001234', '1234567', '123456789', ' 00123456 ', '12A45678', '1234-5678']) {
+    assert.equal(normalizeNewStudentCode(invalidNewCode), null, invalidNewCode);
+  }
+
+  assert.equal(normalizeExistingStudentCode('001234'), '001234');
+  assert.equal(normalizeExistingStudentCode('00123456'), '00123456');
+  for (const invalidLookupCode of ['12345', '1234567', '123456789', ' 001234 ', '12A456']) {
+    assert.equal(normalizeExistingStudentCode(invalidLookupCode), null, invalidLookupCode);
+  }
 });
 
 test('normalizes game student names for duplicate matching', () => {

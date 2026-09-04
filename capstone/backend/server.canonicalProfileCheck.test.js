@@ -25,6 +25,8 @@ Module._load = function loadWithServerStubs(request, parent, isMain) {
   if (request === 'jsonwebtoken') return { sign: () => 'token', verify: () => ({}) };
   if (request === 'multer') return () => ({ single: passthrough, array: passthrough, fields: passthrough });
   if (request === 'pdf-parse') return async () => ({ text: '' });
+  if (request === 'yauzl') return { open: () => {} };
+  if (request === 'fast-xml-parser') return { XMLParser: class { parse() { return {}; } } };
   return originalLoad.call(this, request, parent, isMain);
 };
 
@@ -89,6 +91,32 @@ test('profile check returns only the canonical linked child profile', async (t) 
     assert.match(linkedStudentSql, /s\.name/i);
     assert.match(linkedStudentSql, /s\.grade_level/i);
     assert.match(linkedStudentSql, /s\.section/i);
+  });
+
+  await t.test('accepts an eight-digit Student code for profile and learning-cycle lookup', async () => {
+    let profileParams = [];
+    let learningCycleParams = [];
+    queryHandler = async (sql, params) => {
+      if (sql.includes('from public.accounts where parent_id = $1') && sql.includes('lower(role) in')) return { rows: [activeParent] };
+      if (sql.includes('current_learning_cycle_version') && sql.includes('from public.accounts s') && !sql.includes('s.name')) {
+        learningCycleParams = params;
+        return { rows: [{ id: 44, current_learning_cycle_version: 1, current_learning_cycle_started_at: null }] };
+      }
+      if (sql.includes('from public.accounts s') && sql.includes('join public.teacher_student_relationships r')) {
+        profileParams = params;
+        return { rows: [{ ...canonicalChild, game_student_id: '00123456' }] };
+      }
+      if (sql.includes('from public.student_game_progress')) return emptyResult;
+      return emptyResult;
+    };
+
+    const profile = await requestJson(baseUrl, '/api/game/profile/check/00123456?parent_id=654321');
+    const learningCycle = await requestJson(baseUrl, '/api/game/learning-cycle/00123456?parent_id=654321');
+
+    assert.equal(profile.status, 200);
+    assert.deepEqual(profileParams, [activeParent.id, '00123456']);
+    assert.equal(learningCycle.status, 200);
+    assert.deepEqual(learningCycleParams, [activeParent.id, '00123456']);
   });
 
   await t.test('ignores caller-supplied identity metadata and returns only the linked canonical profile', async () => {

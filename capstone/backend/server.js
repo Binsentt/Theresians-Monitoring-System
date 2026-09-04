@@ -15,7 +15,8 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 const pool = require('./database/db');
 const {
   normalizeParentCode,
-  normalizeStudentCode,
+  normalizeNewStudentCode,
+  normalizeExistingStudentCode,
   normalizeGameStudentName,
   buildGameStudentEmail,
   toNullableNumber,
@@ -240,7 +241,7 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS temporary_password_expires_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS parent_id VARCHAR(6)');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS game_student_id VARCHAR(6)');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS game_student_id VARCHAR(8)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS first_name VARCHAR(100)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS last_name VARCHAR(100)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS middle_initial VARCHAR(5)');
@@ -1194,10 +1195,10 @@ const resolveParentChildProfile = (payload = {}) => {
   const canonicalSection = resolveCanonicalSection(gradeLevel, sectionResult.section);
   if (!canonicalSection) return { error: `Section is not available for ${gradeLevel}.` };
 
-  const studentId = normalizeStudentCode(payload.student_id ?? payload.studentId ?? payload.game_student_id);
+  const studentId = normalizeExistingStudentCode(payload.student_id ?? payload.studentId ?? payload.game_student_id);
   if (!studentId) {
     return { error: String(payload.student_id ?? payload.studentId ?? payload.game_student_id ?? '').trim()
-      ? 'Student ID must be exactly 6 digits.'
+      ? 'Student ID must be either 6 or 8 digits.'
       : 'Student ID is required.' };
   }
 
@@ -5675,10 +5676,10 @@ app.post('/api/game/parent/validate', async (req, res) => {
 
 app.get('/api/game/learning-cycle/:student_id', async (req, res) => {
   try {
-    const studentCode = normalizeStudentCode(req.params.student_id);
+    const studentCode = normalizeExistingStudentCode(req.params.student_id);
     const parentCode = normalizeParentCode(req.query.parent_id);
     if (!studentCode || !parentCode) {
-      return res.status(400).json({ ok: false, error: 'Parent ID and Student ID must each be exactly 6 digits.' });
+      return res.status(400).json({ ok: false, error: 'Parent ID must be exactly 6 digits and Student ID must be either 6 or 8 digits.' });
     }
 
     const { parent, error } = await getValidatedActiveParentAccount(parentCode);
@@ -5708,10 +5709,10 @@ app.get('/api/game/learning-cycle/:student_id', async (req, res) => {
 
 app.get('/api/game/profile/check/:student_id', async (req, res) => {
   try {
-    const studentCode = normalizeStudentCode(req.params.student_id);
+    const studentCode = normalizeExistingStudentCode(req.params.student_id);
     const parentCode = normalizeParentCode(req.query.parent_id);
     if (!studentCode) {
-      return res.status(400).json({ error: 'Student ID must be exactly 6 digits.' });
+      return res.status(400).json({ error: 'Student ID must be either 6 or 8 digits.' });
     }
     if (!parentCode) {
       return res.status(400).json({ error: 'Parent ID must be exactly 6 digits.' });
@@ -5872,8 +5873,8 @@ app.post('/api/game/progress', async (req, res) => {
     }
 
     const parent = parentResult.rows[0];
-    // Prefer authoritative six-digit student code when provided.
-    const submittedStudentCode = normalizeStudentCode(String(req.body?.student_id || '').trim());
+    // Prefer an authoritative six- or eight-digit public Student code when provided.
+    const submittedStudentCode = normalizeExistingStudentCode(req.body?.student_id);
     let student = null;
     let studentResult = null;
     let isLinkedCanonicalChild = false;
@@ -5903,14 +5904,21 @@ app.post('/api/game/progress', async (req, res) => {
           return res.status(403).json({ error: 'Student is not linked to this parent.' });
         }
 
+        // A legacy code can locate an existing account but can never create one.
+        const newStudentCode = normalizeNewStudentCode(submittedStudentCode);
+        if (!newStudentCode) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Student ID must be exactly 8 digits.' });
+        }
+
         // No existing account with this code: create a new student account tied to this code.
         const studentPassword = await hashPassword(generateRandomPassword());
-        const email = buildGameStudentEmail(parent.id, studentName || `student-${submittedStudentCode}`);
+        const email = buildGameStudentEmail(parent.id, studentName || `student-${newStudentCode}`);
         studentResult = await client.query(
           `INSERT INTO public.accounts (name, email, password, role, status, is_archived, must_change_password, game_student_id)
            VALUES ($1, $2, $3, 'student', 'Offline', false, false, $4)
            RETURNING *`,
-          [studentName || '', email, studentPassword, submittedStudentCode]
+          [studentName || '', email, studentPassword, newStudentCode]
         );
         student = studentResult.rows[0];
       }
@@ -6147,7 +6155,7 @@ app.post('/api/game/result', async (req, res) => {
   const difficulty = reportedDifficulty || resolveDifficultyFromScene(req.body || {});
 
   const parentCode = normalizeParentCode(parent_id);
-  const submittedStudentCode = normalizeStudentCode(student_id);
+  const submittedStudentCode = normalizeExistingStudentCode(student_id);
   const submittedStudentId = submittedStudentCode ? null : resolveScopeId(student_id ?? resolved_student_id);
   const studentName = normalizeGameStudentName(student_name);
   const scoreValue = toNullableNumber(score);
@@ -7115,7 +7123,7 @@ app.post('/api/activity-logs', async (req, res) => {
     // the foreign-key column used by monitoring queries.  A just-created game
     // may not have been saved yet, so acknowledge that harmless pre-profile
     // event instead of coercing e.g. 001234 into the unrelated integer 1234.
-    const gameStudentCode = normalizeStudentCode(student_id);
+    const gameStudentCode = normalizeExistingStudentCode(student_id);
     let activityStudentId = gameStudentCode ? null : resolveScopeId(student_id);
     if (gameStudentCode) {
       const parentCode = normalizeParentCode(req.body.parent_id);
@@ -7344,7 +7352,7 @@ const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
   }
 
   const requestedStudentId = String(req.query.student_id || '').trim();
-  const gameStudentCode = normalizeStudentCode(requestedStudentId);
+  const gameStudentCode = normalizeExistingStudentCode(requestedStudentId);
   const studentId = gameStudentCode ? null : resolvePositiveInteger(requestedStudentId);
   if (requestedStudentId && !gameStudentCode && Number.isNaN(studentId)) {
     return { error: 'Invalid student ID' };
@@ -7480,9 +7488,9 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
 
 app.post('/api/playtime/start', async (req, res) => {
   try {
-    const studentCode = normalizeStudentCode(req.body.student_id);
+    const studentCode = normalizeExistingStudentCode(req.body.student_id);
     if (!studentCode) {
-      return res.status(400).json({ error: 'Student ID must be exactly 6 digits.' });
+      return res.status(400).json({ error: 'Student ID must be either 6 or 8 digits.' });
     }
 
     const studentName = String(req.body.student_name || '').trim();
@@ -7546,18 +7554,23 @@ app.post('/api/playtime/start', async (req, res) => {
         return res.status(403).json({ error: 'Student ID is already registered with a different parent.', can_play: false });
       }
 
+      const newStudentCode = normalizeNewStudentCode(studentCode);
+      if (!newStudentCode) {
+        return res.status(400).json({ error: 'Student ID must be exactly 8 digits.', can_play: false });
+      }
+
       // NEW GAME: create the canonical student account and Parent relationship before
       // allowing gameplay so the registration is persistent at Start.
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
         const studentPassword = await hashPassword(generateRandomPassword());
-        const email = buildGameStudentEmail(parentId, studentName || `student-${studentCode}`);
+        const email = buildGameStudentEmail(parentId, studentName || `student-${newStudentCode}`);
         const studentResult = await client.query(
           `INSERT INTO public.accounts (name, email, password, role, status, is_archived, must_change_password, game_student_id)
            VALUES ($1, $2, $3, 'student', 'Offline', false, false, $4)
            RETURNING id`,
-          [studentName, email, studentPassword, studentCode]
+          [studentName, email, studentPassword, newStudentCode]
         );
         studentId = studentResult.rows[0]?.id;
         if (!studentId) throw new Error('Unable to create the new game student account.');
@@ -7922,8 +7935,14 @@ app.post('/api/parent/children', requireParentAnalyticsAccess, async (req, res) 
       return res.status(409).json({ error: 'This Student ID is already linked to another parent or needs administrator resolution.' });
     }
 
+    const newStudentCode = normalizeNewStudentCode(childProfile.studentId);
+    if (!newStudentCode) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Student ID must be exactly 8 digits.' });
+    }
+
     const studentPassword = await hashPassword(generateRandomPassword());
-    const studentEmail = buildGameStudentEmail(parentId, `${childProfile.fullName}-${childProfile.studentId}`);
+    const studentEmail = buildGameStudentEmail(parentId, `${childProfile.fullName}-${newStudentCode}`);
     const studentResult = await client.query(
       `INSERT INTO public.accounts (
          name, first_name, last_name, middle_initial, grade_level, section,
@@ -7940,7 +7959,7 @@ app.post('/api/parent/children', requireParentAnalyticsAccess, async (req, res) 
         childProfile.section,
         studentEmail,
         studentPassword,
-        childProfile.studentId,
+        newStudentCode,
       ]
     );
     const child = studentResult.rows[0];

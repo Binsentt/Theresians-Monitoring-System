@@ -115,7 +115,7 @@ export default function ParentAddChildModal({ onClose, onCreated }) {
         <div className="parent-add-child-heading">
           <div>
             <h2 id="add-child-title">Add Child</h2>
-            <p>Create a linked Game Student ID for your child. Your Parent ID is verified from your signed-in account.</p>
+            <p>Link an existing Game Student or create a new profile for your child. Your Parent ID is verified from your signed-in account.</p>
           </div>
           <button type="button" className="parent-add-child-close" onClick={onClose} aria-label="Close Add Child form">×</button>
         </div>
@@ -155,8 +155,8 @@ export default function ParentAddChildModal({ onClose, onCreated }) {
           </div>
           <div className="form-group parent-add-child-student-id">
             <label htmlFor="child-student-id">Student ID Number *</label>
-            <input id="child-student-id" value={form.studentId} onChange={(event) => updateField('studentId', event.target.value)} onBlur={() => touchField('studentId')} inputMode="numeric" maxLength={6} placeholder="001234" aria-invalid={Boolean(errors.studentId)} />
-            <span className="field-help">Use the six-digit Game Student ID. Leading zeroes are kept.</span>
+            <input id="child-student-id" value={form.studentId} onChange={(event) => updateField('studentId', event.target.value.replace(/[^0-9]/g, ''))} onBlur={() => touchField('studentId')} inputMode="numeric" maxLength={8} placeholder="001234 or 00123456" aria-invalid={Boolean(errors.studentId)} />
+            <span className="field-help">Enter an existing 6- or 8-digit Student ID. A new Student requires 8 digits. Leading zeroes are kept.</span>
             {errors.studentId && <span className="error-text" role="alert">{errors.studentId}</span>}
           </div>
           {requestError && <p className="parent-add-child-request-error" role="alert">{requestError}</p>}
