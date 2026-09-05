@@ -15,7 +15,7 @@ import { DashboardContainer, MainContent, PageContent, TopBar } from './layout/A
 import { apiUrl } from '../api';
 import { buildAuthHeaders, clearStoredSession, getStoredUserSession } from './session.utils';
 import PasswordStrengthFeedback from './PasswordStrengthFeedback';
-import { getPasswordStrength, validatePhilippineMobile, validatePhilippineMobileUpdate } from '../utils/validation.utils';
+import { validateNewWebsitePassword, validatePhilippineMobile, validatePhilippineMobileUpdate } from '../utils/validation.utils';
 import '../styles/settings.css';
 
 export default function SettingsScreen() {
@@ -167,7 +167,7 @@ export default function SettingsScreen() {
       : validatePhilippineMobileUpdate(phone, originalPhone);
     return result.error || '';
   };
-  const validatePassword = (pw) => (pw && !getPasswordStrength(pw).meetsPolicy) ? 'Password must be at least 12 characters.' : '';
+  const validateNewPassword = (pw) => validateNewWebsitePassword(pw).error || '';
   const validateBirthday = (date) => {
     return validateOptionalAdultBirthday(date);
   };
@@ -382,7 +382,7 @@ export default function SettingsScreen() {
     if (field === 'currentPassword') {
       error = !value ? 'Current password is required' : '';
     } else if (field === 'newPassword') {
-      error = !value ? 'New password is required' : validatePassword(value);
+      error = !value ? 'New password is required' : validateNewPassword(value);
     } else if (field === 'confirmPassword') {
       error = value !== passwordForm.newPassword ? 'Passwords do not match' : '';
     }
@@ -394,7 +394,7 @@ export default function SettingsScreen() {
     const errors = {};
     if (!requiresInitialPassword && !passwordForm.currentPassword) errors.currentPassword = 'Current password is required';
     if (!passwordForm.newPassword) errors.newPassword = 'New password is required';
-    const pwError = validatePassword(passwordForm.newPassword);
+    const pwError = validateNewPassword(passwordForm.newPassword);
     if (pwError) errors.newPassword = pwError;
     if (passwordForm.newPassword !== passwordForm.confirmPassword) errors.confirmPassword = 'Passwords do not match';
 
@@ -738,7 +738,7 @@ export default function SettingsScreen() {
                           value={passwordForm.newPassword}
                           onChange={(e) => handlePasswordFormChange('newPassword', e.target.value)}
                           className={passwordErrors.newPassword ? 'error' : ''}
-                          placeholder="At least 12 characters"
+                          placeholder="At least 8 characters"
                         />
                         {passwordForm.newPassword?.length > 0 && (
                           <button
@@ -823,7 +823,7 @@ export default function SettingsScreen() {
                         value={passwordForm.newPassword}
                         onChange={(e) => handlePasswordFormChange('newPassword', e.target.value)}
                         className={passwordErrors.newPassword ? 'error' : ''}
-                        placeholder="At least 12 characters"
+                        placeholder="At least 8 characters"
                       />
                       {passwordForm.newPassword?.length > 0 && (
                         <button

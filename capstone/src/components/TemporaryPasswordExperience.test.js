@@ -173,10 +173,10 @@ describe('TemporaryPasswordExperience', () => {
     });
     const passwordInput = container.querySelector('#dashboard-new-password');
     await setInputValue(passwordInput, 'short');
-    expect(container.textContent).toContain('Password Strength: Weak');
-    expect(container.textContent).toContain('Password must be at least 12 characters.');
+    expect(container.textContent).toContain('Password Strength: Very Weak');
+    expect(container.textContent).toContain('Password must be at least 8 characters.');
 
-    await setInputValue(passwordInput, 'LongerSecurePassword42!');
+    await setInputValue(passwordInput, 'Eight8!x');
     expect(container.textContent).toContain('Password Strength: Strong');
   });
 });

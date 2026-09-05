@@ -6,6 +6,7 @@ import {
   validateGameStudentId,
   validatePhilippineMobile,
   validatePhilippineMobileUpdate,
+  validateNewWebsitePassword,
   validatePassword,
   validateOtp,
 } from './validation.utils';
@@ -198,16 +199,27 @@ describe('validation.utils', () => {
   });
 
   describe('getPasswordStrength', () => {
-    test('never marks a password below the backend minimum as acceptable', () => {
-      expect(getPasswordStrength('short')).toMatchObject({ label: 'Weak', meetsPolicy: false });
+    test('classifies passwords by raw length and character variety without changing acceptance', () => {
+      expect(getPasswordStrength('short')).toMatchObject({ label: 'Very Weak', meetsPolicy: false });
+      expect(getPasswordStrength('123456')).toMatchObject({ label: 'Weak', meetsPolicy: false });
+      expect(getPasswordStrength('eight888')).toMatchObject({ label: 'Fair', meetsPolicy: true });
+      expect(getPasswordStrength('Eight8!x')).toMatchObject({ label: 'Strong', meetsPolicy: true });
+      expect(getPasswordStrength('LongerEight8!')).toMatchObject({ label: 'Very Strong', meetsPolicy: true });
     });
 
-    test('labels a policy-valid baseline password as Medium', () => {
-      expect(getPasswordStrength('twelvechars!')).toMatchObject({ label: 'Medium', meetsPolicy: true });
+    test('accepts eight raw characters without trimming or composition requirements', () => {
+      expect(validateNewWebsitePassword('       ')).toEqual({
+        isValid: false,
+        error: 'Password must be at least 8 characters.',
+      });
+      expect(validateNewWebsitePassword('        ')).toEqual({
+        isValid: true,
+        error: null,
+      });
     });
 
-    test('labels a longer, varied policy-valid password as Strong', () => {
-      expect(getPasswordStrength('LongerSecurePassword42!')).toMatchObject({ label: 'Strong', meetsPolicy: true });
+    test('keeps legacy login validation independent from new-password policy validation', () => {
+      expect(validatePassword('abc')).toEqual({ isValid: true, error: null });
     });
   });
 

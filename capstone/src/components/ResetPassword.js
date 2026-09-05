@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import logoImage from '../assets/images/STS_Logo.png';
 import { apiUrl } from '../api';
+import PasswordStrengthFeedback from './PasswordStrengthFeedback';
+import { validateNewWebsitePassword } from '../utils/validation.utils';
 import '../styles/resetpassword.css';
 
 function PasswordVisibilityIcon({ visible }) {
@@ -77,6 +79,12 @@ export default function ResetPassword() {
 
     if (newPassword !== confirmPassword) {
       alert('Passwords do not match');
+      return;
+    }
+
+    const passwordValidation = validateNewWebsitePassword(newPassword);
+    if (!passwordValidation.isValid) {
+      alert(passwordValidation.error);
       return;
     }
 
@@ -187,6 +195,7 @@ export default function ResetPassword() {
                     <PasswordVisibilityIcon visible={showNewPassword} />
                   </button>
                 </div>
+                <PasswordStrengthFeedback password={newPassword} />
               </div>
 
               <div className="sts-input-group">

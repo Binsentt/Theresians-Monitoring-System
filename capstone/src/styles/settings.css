@@ -564,15 +564,17 @@
   line-height: 1.35;
 }
 
+.password-strength-very-weak strong,
 .password-strength-weak strong {
   color: var(--error-color, #b91c1c);
 }
 
-.password-strength-medium strong {
+.password-strength-fair strong {
   color: #a16207;
 }
 
-.password-strength-strong strong {
+.password-strength-strong strong,
+.password-strength-very-strong strong {
   color: var(--success-color, #15803d);
 }
 

@@ -1399,9 +1399,8 @@ const normalizeLearningFileRow = (row) => {
 const requireWebsiteManagedAccount = requireAuthenticatedRoles(WEBSITE_MANAGED_ACCOUNT_ROLES);
 
 const validateWebsitePassword = (value) => {
-  const password = String(value || '');
-  if (password.trim().length < 12) {
-    return 'Password must be at least 12 characters.';
+  if (typeof value !== 'string' || value.length < 8) {
+    return 'Password must be at least 8 characters.';
   }
   return null;
 };
@@ -3821,8 +3820,15 @@ app.put('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) => 
     const finalArchived = typeof is_archived === 'boolean' ? is_archived : old.is_archived;
     const finalParentCode = accountHasParentAccess(finalRole) ? (old.parent_id || await generateUniqueParentCode()) : null;
 
+    const passwordProvided = Object.prototype.hasOwnProperty.call(req.body, 'password');
     let hashedPassword = old.password;
-    if (password && password.trim() !== '') {
+    if (passwordProvided) {
+      const passwordError = validateWebsitePassword(password);
+      if (passwordError) {
+        const error = new Error(passwordError);
+        error.statusCode = 400;
+        throw error;
+      }
       hashedPassword = await hashPassword(password);
     }
 
@@ -3861,6 +3867,7 @@ app.put('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) => 
     res.json({ success: true, message: 'Profile updated successfully', user: updatedUser });
   } catch (err) {
     console.error('Update Error:', err.message);
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     res.status(500).json({ error: 'Update failed: ' + err.message });
   }
 });
@@ -6647,6 +6654,9 @@ app.post('/api/reset-password/verify', async (req, res) => {
     if (user.otp_expires_at && new Date(user.otp_expires_at) < new Date()) {
       return res.status(401).json({ error: 'OTP expired' });
     }
+
+    const passwordError = validateWebsitePassword(newPassword);
+    if (passwordError) return res.status(400).json({ error: passwordError });
 
     const hashedPassword = await hashPassword(newPassword);
     await pool.query('UPDATE accounts SET password=$1, otp_code=NULL, otp_expires_at=NULL WHERE LOWER(email)=$2', [hashedPassword, email.toLowerCase().trim()]);

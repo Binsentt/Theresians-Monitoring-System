@@ -253,13 +253,18 @@ describe('SettingsScreen dashboard layout', () => {
     await act(async () => {
       setInputValue(passwordInputs[1], 'short');
     });
-    expect(container.textContent).toContain('Password Strength: Weak');
-    expect(container.textContent).toContain('At least 12 characters required');
+    expect(container.textContent).toContain('Password Strength: Very Weak');
+    expect(container.textContent).toContain('At least 8 characters required');
 
     await act(async () => {
-      setInputValue(passwordInputs[1], 'LongerSecurePassword42!');
+      setInputValue(passwordInputs[1], 'Eight8!x');
     });
     expect(container.textContent).toContain('Password Strength: Strong');
+
+    await act(async () => {
+      setInputValue(passwordInputs[1], 'eight888');
+    });
+    expect(container.textContent).toContain('Password Strength: Fair');
   });
 
   test('keeps optional profile mobile blank and rejects a supplied non-local Philippine format inline', async () => {

@@ -2,7 +2,7 @@
  * Validation utilities for form fields
  */
 
-export const WEBSITE_PASSWORD_MIN_LENGTH = 12;
+export const WEBSITE_PASSWORD_MIN_LENGTH = 8;
 export const PARENT_CHILD_GRADE_OPTIONS = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
 
 export const validateSchoolSection = (value, { required = false } = {}) => {
@@ -49,7 +49,7 @@ export const validateGameStudentId = (value) => {
 };
 
 export const getPasswordStrength = (value) => {
-  const password = String(value || '');
+  const password = typeof value === 'string' ? value : String(value ?? '');
   const requirements = {
     minimumLength: password.length >= WEBSITE_PASSWORD_MIN_LENGTH,
     lowercase: /[a-z]/.test(password),
@@ -57,14 +57,34 @@ export const getPasswordStrength = (value) => {
     number: /\d/.test(password),
     symbol: /[^A-Za-z0-9]/.test(password),
   };
-  const variety = [requirements.lowercase, requirements.uppercase, requirements.number, requirements.symbol]
-    .filter(Boolean)
-    .length;
   const meetsPolicy = requirements.minimumLength;
-  const label = !meetsPolicy
-    ? 'Weak'
-    : (password.length >= 16 && variety >= 3 ? 'Strong' : 'Medium');
+  const hasLettersAndNumber = (requirements.lowercase || requirements.uppercase) && requirements.number;
+  const hasStrongComposition = requirements.lowercase
+    && requirements.uppercase
+    && requirements.number
+    && requirements.symbol;
+  const label = password.length < 6
+    ? 'Very Weak'
+    : password.length < WEBSITE_PASSWORD_MIN_LENGTH
+      ? 'Weak'
+      : hasStrongComposition && password.length >= 12
+        ? 'Very Strong'
+        : hasStrongComposition
+          ? 'Strong'
+          : hasLettersAndNumber
+            ? 'Fair'
+            : 'Weak';
   return { label, meetsPolicy, requirements };
+};
+
+export const validateNewWebsitePassword = (password) => {
+  if (typeof password !== 'string' || password.length < WEBSITE_PASSWORD_MIN_LENGTH) {
+    return {
+      isValid: false,
+      error: `Password must be at least ${WEBSITE_PASSWORD_MIN_LENGTH} characters.`,
+    };
+  }
+  return { isValid: true, error: null };
 };
 
 const validateChildName = (value, label, { required = false, initial = false } = {}) => {

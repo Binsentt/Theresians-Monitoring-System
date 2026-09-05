@@ -8,12 +8,10 @@ import {
   SESSION_STORAGE_KEY,
 } from './session.utils';
 import PasswordStrengthFeedback from './PasswordStrengthFeedback';
-import { getPasswordStrength } from '../utils/validation.utils';
+import { validateNewWebsitePassword } from '../utils/validation.utils';
 import '../styles/settings.css';
 
-const validatePassword = (value) => (
-  getPasswordStrength(value).meetsPolicy ? '' : 'Password must be at least 12 characters.'
-);
+const validatePassword = (value) => validateNewWebsitePassword(value).error || '';
 
 const updateStoredSession = (payload) => {
   localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload.user));
@@ -164,7 +162,7 @@ export default function TemporaryPasswordExperience({ children }) {
         <div className="temporary-password-overlay" role="presentation">
           <section className="temporary-password-modal" role="dialog" aria-modal="true" aria-labelledby="permanent-password-title">
             <h2 id="permanent-password-title">Create Your Permanent Password</h2>
-            <p>Choose a password with at least 12 characters to secure your account.</p>
+            <p>Choose a password with at least 8 characters to secure your account.</p>
             <form onSubmit={handleContinue} noValidate>
               <div className="form-group">
                 <label htmlFor="dashboard-new-password">New Password</label>

@@ -303,3 +303,98 @@ test('session validation does not treat stale temporary metadata as active for a
   assert.equal(restoredSession.status, 200);
   assert.equal(restoredSession.body.user.requiresInitialPasswordSetup, false);
 });
+
+test('every manual password write enforces the raw eight-character website password minimum', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    await close(server);
+  });
+
+  const websiteAccount = {
+    id: 1,
+    name: 'Admin Account',
+    email: 'admin@example.com',
+    role: 'admin',
+    password: 'current-password',
+    is_archived: false,
+    must_change_password: true,
+    temporary_password_issued_at: new Date(Date.now() - 1_000).toISOString(),
+    temporary_password_expires_at: new Date(Date.now() + 60_000).toISOString(),
+    session_version: 0,
+  };
+  const managedTarget = {
+    ...websiteAccount,
+    id: 44,
+    name: 'Managed Parent',
+    email: 'managed.parent@example.com',
+    role: 'parent',
+    must_change_password: false,
+  };
+  const resetAccount = {
+    ...websiteAccount,
+    id: 72,
+    email: 'recover@example.com',
+    otp_code: '123456',
+    otp_expires_at: new Date(Date.now() + 60_000).toISOString(),
+  };
+  const passwordWrites = [];
+  queryHandler = async (sql, params) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return { rows: [Number(params[0]) === 44 ? managedTarget : websiteAccount] };
+    }
+    if (sql.startsWith('select * from accounts where lower(email)=$1 and otp_code=$2')) {
+      return { rows: [resetAccount] };
+    }
+    if (sql.startsWith('update public.accounts set password = $1') || sql.startsWith('update accounts set password=$1')) {
+      passwordWrites.push(params[0]);
+      return { rows: [{ ...websiteAccount, password: params[0], must_change_password: false }] };
+    }
+    if (sql.startsWith('update public.accounts set name=$1')) {
+      passwordWrites.push(params[3]);
+      return { rows: [{ ...managedTarget, password: params[3] }] };
+    }
+    return emptyResult;
+  };
+
+  const shortPassword = 'seven77';
+  const initial = await requestJson(baseUrl, '/api/account/initial-password', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer teacher-token' },
+    body: JSON.stringify({ newPassword: shortPassword }),
+  });
+  const normal = await requestJson(baseUrl, '/api/account/password', {
+    method: 'PUT',
+    headers: { Authorization: 'Bearer teacher-token' },
+    body: JSON.stringify({ currentPassword: 'current-password', newPassword: shortPassword }),
+  });
+  const firstLoginOtp = await requestJson(baseUrl, '/api/verify-password-change-otp', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer teacher-token' },
+    body: JSON.stringify({ userId: 1, firstLogin: true, newPassword: shortPassword }),
+  });
+  const recovery = await requestJson(baseUrl, '/api/reset-password/verify', {
+    method: 'POST',
+    body: JSON.stringify({ email: 'recover@example.com', otp: '123456', newPassword: shortPassword }),
+  });
+  const adminEdit = await requestJson(baseUrl, '/api/accounts/44', {
+    method: 'PUT',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({ name: 'Managed Parent', password: shortPassword }),
+  });
+
+  for (const response of [initial, normal, firstLoginOtp, recovery, adminEdit]) {
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error, 'Password must be at least 8 characters.');
+  }
+  assert.deepEqual(passwordWrites, []);
+
+  const rawEightCharacterPassword = '        ';
+  const validInitial = await requestJson(baseUrl, '/api/account/initial-password', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer teacher-token' },
+    body: JSON.stringify({ newPassword: rawEightCharacterPassword }),
+  });
+  assert.equal(validInitial.status, 200);
+  assert.ok(passwordWrites.includes(`bcrypt:${rawEightCharacterPassword}`));
+});
