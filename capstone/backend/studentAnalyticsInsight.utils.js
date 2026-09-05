@@ -3,18 +3,21 @@ const {
   QuestionGenerationError,
   buildProviderDiagnostics,
 } = require('./lessonQuestionGeneration');
+const {
+  GROUNDING_POLICY_VERSION,
+  buildGroundedClaimCatalog,
+  buildClaimSelectionSchema,
+  renderValidatedClaimSelection,
+} = require('./studentAnalyticsGrounding.utils');
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const ANALYTICS_INSIGHT_MODEL = 'gpt-5-mini';
-const MAX_LIST_ITEMS = 5;
-const MAX_ITEM_LENGTH = 280;
-const MAX_INSIGHT_LENGTH = 900;
-
 const asText = (value) => String(value || '').trim();
 
 function buildGroundedInsightInput({ gradeLevel, metrics = {} } = {}) {
   const difficulty = metrics.difficultyBreakdown || {};
   return {
+    grounding_policy_version: GROUNDING_POLICY_VERSION,
     grade: asText(gradeLevel) || null,
     results_recorded: metrics.validResultCount ?? null,
     correct_answers: metrics.correctAnswers ?? null,
@@ -44,48 +47,12 @@ function buildInsightFingerprint(input) {
   return crypto.createHash('sha256').update(JSON.stringify(input)).digest('hex');
 }
 
-function validateStringList(value, field) {
-  if (!Array.isArray(value) || value.length > MAX_LIST_ITEMS) {
-    throw new QuestionGenerationError('ANALYTICS_AI_INVALID_RESPONSE', `Analytics insight returned an invalid ${field} list.`);
-  }
-  const normalized = value.map(asText);
-  if (normalized.some((item) => !item || item.length > MAX_ITEM_LENGTH)) {
-    throw new QuestionGenerationError('ANALYTICS_AI_INVALID_RESPONSE', `Analytics insight returned an invalid ${field} item.`);
-  }
-  return normalized;
-}
-
-function validateGroundedInsight(value) {
-  const performanceInsight = asText(value?.performance_insight);
-  if (!performanceInsight || performanceInsight.length > MAX_INSIGHT_LENGTH) {
-    throw new QuestionGenerationError('ANALYTICS_AI_INVALID_RESPONSE', 'Analytics insight returned an invalid performance insight.');
-  }
-  return {
-    performance_insight: performanceInsight,
-    strengths: validateStringList(value?.strengths, 'strengths'),
-    weaknesses: validateStringList(value?.weaknesses, 'weaknesses'),
-    recommendations: validateStringList(value?.recommendations, 'recommendations'),
-  };
-}
-
 const extractOutputText = (responseBody) => {
   if (typeof responseBody?.output_text === 'string') return responseBody.output_text;
   return (responseBody?.output || [])
     .flatMap((item) => (item?.content || []).map((content) => content?.text).filter((text) => typeof text === 'string'))
     .join('\n');
 };
-
-const buildInsightSchema = () => ({
-  type: 'object',
-  additionalProperties: false,
-  required: ['performance_insight', 'strengths', 'weaknesses', 'recommendations'],
-  properties: {
-    performance_insight: { type: 'string' },
-    strengths: { type: 'array', maxItems: MAX_LIST_ITEMS, items: { type: 'string' } },
-    weaknesses: { type: 'array', maxItems: MAX_LIST_ITEMS, items: { type: 'string' } },
-    recommendations: { type: 'array', maxItems: MAX_LIST_ITEMS, items: { type: 'string' } },
-  },
-});
 
 async function generateGroundedStudentInsight({ input, apiKey = process.env.OPENAI_API_KEY, fetchImpl = global.fetch, timeoutMs = 25000 } = {}) {
   if (!asText(apiKey)) {
@@ -94,6 +61,21 @@ async function generateGroundedStudentInsight({ input, apiKey = process.env.OPEN
   if (typeof fetchImpl !== 'function') {
     throw new QuestionGenerationError('ANALYTICS_AI_UNAVAILABLE', 'Grounded AI Insights are unavailable on this backend.');
   }
+
+  let catalog;
+  try {
+    catalog = buildGroundedClaimCatalog(input);
+  } catch {
+    throw new QuestionGenerationError(
+      'ANALYTICS_AI_INVALID_RESPONSE',
+      'Grounded AI Insights could not build a valid evidence catalog.'
+    );
+  }
+  const providerInput = {
+    grounding_policy_version: catalog.policyVersion,
+    evidence: catalog.providerEvidence,
+    permitted_claim_ids: catalog.permittedClaimIds,
+  };
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -113,12 +95,12 @@ async function generateGroundedStudentInsight({ input, apiKey = process.env.OPEN
             role: 'system',
             content: [{
               type: 'input_text',
-              text: 'You are an educational analytics interpreter. Use only the supplied deterministic metrics. Do not calculate, alter, or invent percentages, scores, topic results, difficulty results, quest completion, progress, or events. Do not identify the student. If a metric is null, say it is unavailable rather than inferring it. Keep each point concise and grounded in the supplied facts.',
+              text: 'You are an educational analytics interpreter. Select only the permitted claim IDs supported by the supplied deterministic evidence. Return the required JSON selection object only: no prose, no additional properties, no calculated values, no trends, no inferred topics, and no invented quest events. A null difficulty is no recorded data, never a weakness.',
             }],
           },
           {
             role: 'user',
-            content: [{ type: 'input_text', text: JSON.stringify(input) }],
+            content: [{ type: 'input_text', text: JSON.stringify(providerInput) }],
           },
         ],
         text: {
@@ -126,7 +108,7 @@ async function generateGroundedStudentInsight({ input, apiKey = process.env.OPEN
             type: 'json_schema',
             name: 'grounded_student_insight',
             strict: true,
-            schema: buildInsightSchema(),
+            schema: buildClaimSelectionSchema(catalog),
           },
         },
       }),
@@ -164,7 +146,7 @@ async function generateGroundedStudentInsight({ input, apiKey = process.env.OPEN
     );
   }
   try {
-    return validateGroundedInsight(JSON.parse(outputText));
+    return renderValidatedClaimSelection(JSON.parse(outputText), catalog);
   } catch (error) {
     if (error instanceof QuestionGenerationError) {
       if (!error.providerDiagnostics) error.providerDiagnostics = buildProviderDiagnostics(response, responseBody, 'invalid_provider_response');
@@ -172,7 +154,7 @@ async function generateGroundedStudentInsight({ input, apiKey = process.env.OPEN
     }
     throw new QuestionGenerationError(
       'ANALYTICS_AI_INVALID_RESPONSE',
-      'Grounded AI Insights returned invalid structured output.',
+      'Grounded AI Insights returned an invalid grounded claim selection.',
       buildProviderDiagnostics(response, responseBody, 'invalid_provider_response')
     );
   }
@@ -183,5 +165,4 @@ module.exports = {
   buildGroundedInsightInput,
   buildInsightFingerprint,
   generateGroundedStudentInsight,
-  validateGroundedInsight,
 };
