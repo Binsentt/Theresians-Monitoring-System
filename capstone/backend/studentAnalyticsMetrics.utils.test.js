@@ -77,3 +77,15 @@ test('does not fabricate quest completion or missing total progress', () => {
   assert.equal(metrics.totalProgress, null);
   assert.equal(metrics.accuracy, null);
 });
+
+test('keeps no-data difficulty distinct from a recorded zero-percent result', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    progress: {},
+    quizSessions: [{ score: 0, total_items: 1, difficulty: 'Easy' }],
+    playtimeSessions: [],
+  });
+
+  assert.equal(metrics.difficultyBreakdown.easy.accuracy, 0);
+  assert.equal(metrics.difficultyBreakdown.medium.accuracy, null);
+  assert.equal(metrics.difficultyBreakdown.hard.accuracy, null);
+});

@@ -395,6 +395,172 @@ test('grounded insight requires five valid results before contacting OpenAI', as
   assert.equal(response.body.required_result_count, 5);
 });
 
+test('invalid grounded provider output is not cached and deterministic progress remains available', async (t) => {
+  reset();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const originalFetch = global.fetch;
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  let insertCalls = 0;
+  t.after(async () => {
+    global.fetch = originalFetch;
+    if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalOpenAiKey;
+    reset();
+    await close(server);
+  });
+  process.env.OPENAI_API_KEY = 'test-key';
+
+  const progress = {
+    student_id: 44,
+    grade_level: 'Grade 3',
+    score: 12,
+    correct_answers: 3,
+    total_questions: 5,
+    accuracy_rate: 60,
+    progress_percentage: 42,
+    total_quests_completed: 1,
+    current_quest: 'Fraction Forest',
+  };
+  const results = Array.from({ length: 5 }, (_, index) => ({
+    score: index < 3 ? 1 : 0,
+    total_items: 1,
+    difficulty: 'Medium',
+    math_topic: 'Fractions',
+  }));
+  queryHandler = async (sql) => {
+    if (sql.startsWith('select p.*') && sql.includes('from public.student_game_progress p')) return resultRows([progress]);
+    if (sql.includes('from public.game_results')) return resultRows(results);
+    if (sql.includes('from public.playtime_sessions') || sql.includes('from public.activity_logs')) return resultRows([]);
+    if (sql.includes('from public.student_ai_insights')) return emptyResult;
+    if (sql.startsWith('insert into public.student_ai_insights')) {
+      insertCalls += 1;
+      return emptyResult;
+    }
+    return emptyResult;
+  };
+  global.fetch = async (url, options) => {
+    if (String(url).startsWith(baseUrl)) return originalFetch(url, options);
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ output_text: JSON.stringify({
+        grounding_policy_version: 'grounded-claims-v1',
+        performance_claim_ids: ['invented_85_percent'],
+        strength_claim_ids: [],
+        weakness_claim_ids: [],
+        recommendation_claim_ids: [],
+      }) }),
+    };
+  };
+
+  const failedInsight = await requestJson(baseUrl, '/api/student-progress/44/ai-insight', {
+    method: 'POST',
+    headers: authHeaders('admin'),
+  });
+  const deterministicDetails = await requestJson(baseUrl, '/api/student-progress/44', { headers: authHeaders('admin') });
+
+  assert.equal(failedInsight.status, 502);
+  assert.equal(failedInsight.body.status, 'unavailable');
+  assert.equal(insertCalls, 0);
+  assert.equal(deterministicDetails.status, 200);
+  assert.equal(deterministicDetails.body.metrics.accuracy, 60);
+});
+
+test('valid grounded output caches by fingerprint and regenerates a stale entry', async (t) => {
+  reset();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const originalFetch = global.fetch;
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  let providerCalls = 0;
+  let insertCalls = 0;
+  let cachedInsight = null;
+  t.after(async () => {
+    global.fetch = originalFetch;
+    if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalOpenAiKey;
+    reset();
+    await close(server);
+  });
+  process.env.OPENAI_API_KEY = 'test-key';
+
+  const progress = {
+    student_id: 44,
+    grade_level: 'Grade 3',
+    score: 12,
+    correct_answers: 3,
+    total_questions: 5,
+    accuracy_rate: 60,
+    progress_percentage: 42,
+    total_quests_completed: 1,
+    current_quest: 'Fraction Forest',
+  };
+  const results = Array.from({ length: 5 }, (_, index) => ({
+    score: index < 3 ? 1 : 0,
+    total_items: 1,
+    difficulty: index < 3 ? 'Easy' : 'Medium',
+    math_topic: 'Fractions',
+  }));
+  queryHandler = async (sql, params) => {
+    if (sql.startsWith('select p.*') && sql.includes('from public.student_game_progress p')) return resultRows([progress]);
+    if (sql.includes('from public.game_results')) return resultRows(results);
+    if (sql.includes('from public.playtime_sessions') || sql.includes('from public.activity_logs')) return resultRows([]);
+    if (sql.startsWith('select input_fingerprint') && sql.includes('from public.student_ai_insights')) {
+      return cachedInsight ? resultRows([cachedInsight]) : emptyResult;
+    }
+    if (sql.startsWith('insert into public.student_ai_insights')) {
+      insertCalls += 1;
+      cachedInsight = {
+        input_fingerprint: params[1],
+        insight: JSON.parse(params[2]),
+        generated_at: '2026-09-05T00:00:00.000Z',
+        stale_at: null,
+      };
+      return resultRows([{ insight: cachedInsight.insight, generated_at: cachedInsight.generated_at }]);
+    }
+    return emptyResult;
+  };
+  global.fetch = async (url, options) => {
+    if (String(url).startsWith(baseUrl)) return originalFetch(url, options);
+    providerCalls += 1;
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ output_text: JSON.stringify({
+        grounding_policy_version: 'grounded-claims-v1',
+        performance_claim_ids: ['overall_accuracy'],
+        strength_claim_ids: ['difficulty_easy_strength'],
+        weakness_claim_ids: ['difficulty_normal_weakness'],
+        recommendation_claim_ids: ['practice_difficulty_normal'],
+      }) }),
+    };
+  };
+
+  const generated = await requestJson(baseUrl, '/api/student-progress/44/ai-insight', {
+    method: 'POST', headers: authHeaders('admin'),
+  });
+  const cached = await requestJson(baseUrl, '/api/student-progress/44/ai-insight', {
+    method: 'POST', headers: authHeaders('admin'),
+  });
+  cachedInsight = { ...cachedInsight, input_fingerprint: 'pre-policy-fingerprint' };
+  const regenerated = await requestJson(baseUrl, '/api/student-progress/44/ai-insight', {
+    method: 'POST', headers: authHeaders('admin'),
+  });
+
+  assert.equal(generated.status, 200);
+  assert.equal(generated.body.status, 'generated');
+  assert.match(generated.body.insight.performance_insight, /60%/);
+  assert.equal(insertCalls, 2);
+  assert.equal(cached.status, 200);
+  assert.equal(cached.body.status, 'cached');
+  assert.equal(providerCalls, 2);
+  assert.equal(regenerated.status, 200);
+  assert.equal(regenerated.body.status, 'regenerated');
+});
+
 test('Parent/Teacher may use separate authenticated teacher and parent contexts', async (t) => {
   reset();
   const server = await listen();
