@@ -250,7 +250,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
   const reportScope = [selectedGrade, selectedSection, debouncedSearch ? `Search: ${debouncedSearch}` : '']
     .filter(Boolean)
     .join(' / ') || (isParentView ? 'Selected child' : 'All authorised activity records');
-  const reportLabel = isParentView || /^\d{6}$/.test(debouncedSearch)
+  const reportLabel = isParentView || /^(?:\d{6}|\d{8})$/.test(debouncedSearch)
     ? 'Print Student Activity'
     : selectedSection
       ? 'Print Section Activity'

@@ -81,6 +81,34 @@ describe('ActivityLog table', () => {
     expect(headers).not.toContain('Progress');
   });
 
+  test('uses a Student Activity print label for an eight-digit Student ID search', async () => {
+    global.fetch = jest.fn(() => jsonResponse({
+      data: [{
+        id: 1,
+        student_id: 44,
+        game_student_id: '12345678',
+        student_name: 'Ava Santos',
+        grade_level: 'Grade 3',
+        current_quest: 'Fraction Forest',
+      }],
+      pagination: { total: 1, pages: 1, current_page: 1 },
+    }));
+
+    await act(async () => {
+      root.render(<ActivityLog role="admin" limit={10} />);
+    });
+    const search = container.querySelector('#search-input');
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      valueSetter.call(search, '12345678');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      search.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
+
+    expect(container.querySelector('button[aria-label="Print Student Activity"]')).not.toBeNull();
+  });
+
   test('renders canonical quest payloads without exposing generic website activity descriptions', async () => {
     global.fetch = jest.fn(() => jsonResponse({
       data: [
