@@ -11,7 +11,8 @@
 /* Dashboard Container */
 .dashboard-container {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   background: var(--bg-primary, #f5f7fb);
   margin-left: var(--dashboard-sidebar-width, 288px);
   min-width: 0;
@@ -24,6 +25,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0; /* Prevent flex item from overflowing */
+  min-height: 0; /* Allow the native page scroll region to shrink inside the viewport. */
   width: 100%;
   overflow: hidden;
 }
@@ -31,8 +33,11 @@
 /* Page Content */
 .page-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior-y: auto;
+  -webkit-overflow-scrolling: touch;
   padding: var(--spacing-lg, 24px);
   max-width: 1360px;
   margin: 0 auto;

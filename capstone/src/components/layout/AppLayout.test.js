@@ -28,3 +28,38 @@ test('shared content transition honors reduced-motion preferences', () => {
   expect(stylesheet).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.page-content-transition\s*\{\s*animation:\s*none;/);
   expect(stylesheet).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.dashboard-inline-skeleton\s*\{\s*animation:\s*none;/);
 });
+
+test('shared dashboard shell keeps native main-content scrolling reachable without wheel interception', () => {
+  const layoutStyles = fs.readFileSync(path.resolve(__dirname, '../../styles/layout.css'), 'utf8');
+  const globalStyles = fs.readFileSync(path.resolve(__dirname, '../../styles/global.css'), 'utf8');
+  const sidebarStyles = fs.readFileSync(path.resolve(__dirname, '../../styles/analyticsSidebar.css'), 'utf8');
+  const managerStyles = fs.readFileSync(path.resolve(__dirname, '../../styles/lessonQuestionManager.css'), 'utf8');
+  const userStyles = fs.readFileSync(path.resolve(__dirname, '../../styles/manageusers.css'), 'utf8');
+  const parentStyles = fs.readFileSync(path.resolve(__dirname, '../../styles/parentdashboard.css'), 'utf8');
+  const settingsStyles = fs.readFileSync(path.resolve(__dirname, '../../styles/settings.css'), 'utf8');
+  const rule = (styles, selector) => styles.match(new RegExp(`${selector}\\s*\\{([^}]*)\\}`, 's'))?.[1] || '';
+
+  const dashboard = rule(layoutStyles, '\\.dashboard-container');
+  const main = rule(layoutStyles, '\\.main-content');
+  const page = rule(layoutStyles, '\\.page-content');
+  const sidebar = rule(sidebarStyles, '\\.analytics-sidebar-panel');
+
+  expect(dashboard).toContain('height: 100vh');
+  expect(dashboard).toContain('min-height: 0');
+  expect(main).toContain('min-height: 0');
+  expect(page).toContain('min-height: 0');
+  expect(page).toContain('overflow-y: auto');
+  expect(page).toContain('overscroll-behavior-y: auto');
+  expect(page).toContain('-webkit-overflow-scrolling: touch');
+  expect(sidebar).toContain('overflow-y: auto');
+  expect(sidebar).toContain('overscroll-behavior-y: auto');
+  expect(sidebar).toContain('-webkit-overflow-scrolling: touch');
+
+  expect(layoutStyles).not.toMatch(/wheel|touch-action\s*:\s*none/i);
+  expect(managerStyles).toMatch(/\.generated-questions-preview-body\s*\{[\s\S]*overflow-y:\s*auto;/);
+  expect(managerStyles).toMatch(/\.file-preview-body\s*\{[\s\S]*overflow:\s*auto;/);
+  expect(userStyles).toMatch(/\.modal-content\s*\{[\s\S]*overflow-y:\s*auto;/);
+  expect(parentStyles).toMatch(/\.parent-add-child-modal\s*\{[\s\S]*overflow-y:\s*auto;/);
+  expect(settingsStyles).toMatch(/\.temporary-password-modal\s*\{[\s\S]*overflow-y:\s*auto;/);
+  expect(globalStyles).toMatch(/\.table-container,[\s\S]*overflow-x:\s*auto;/);
+});
