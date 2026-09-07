@@ -124,7 +124,7 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const editButton = Array.from(container.querySelectorAll('button')).find(
+    const editButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === 'Edit'
     );
 
@@ -134,9 +134,30 @@ describe('ManageUsers edit flow', () => {
       editButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Edit User');
-    expect(container.querySelector('input[value="Maria"]')).toBeTruthy();
-    expect(container.querySelector('input[value="maria@gmail.com"]')).toBeTruthy();
+    expect(document.body.textContent).toContain('Edit User');
+    expect(document.body.querySelector('input[value="Maria"]')).toBeTruthy();
+    expect(document.body.querySelector('input[value="maria@gmail.com"]')).toBeTruthy();
+  });
+
+  test.each(['Edit', 'Archive Account'])('%s dialog escapes a transformed scrolled page and restores keyboard focus', async (label) => {
+    container.style.transform = 'translateY(0)';
+    container.classList.add('page-content');
+    container.scrollTop = 798;
+    await act(async () => root.render(<ManageUsers />));
+    const trigger = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === label);
+    trigger.focus();
+    await act(async () => trigger.click());
+    const overlay = document.body.querySelector('.modal-overlay');
+    expect(overlay.parentElement).toBe(document.body);
+    const dialog = overlay.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(container.classList.contains('modal-scroll-locked')).toBe(true);
+    await act(async () => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(document.querySelector('.modal-overlay')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(container.scrollTop).toBe(798);
+    expect(container.classList.contains('modal-scroll-locked')).toBe(false);
   });
 
   test('shows generated Parent ID in the users table for parent accounts', async () => {
@@ -144,9 +165,9 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    expect(container.textContent).toContain('PARENT ID');
-    expect(container.textContent).toContain('482915');
-    expect(container.querySelector('button[aria-label="Print User List"]')).not.toBeNull();
+    expect(document.body.textContent).toContain('PARENT ID');
+    expect(document.body.textContent).toContain('482915');
+    expect(document.body.querySelector('button[aria-label="Print User List"]')).not.toBeNull();
     let opened = false;
     act(() => { opened = openPreparedReport(); });
     expect(opened).toBe(true);
@@ -186,9 +207,9 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    expect(container.textContent).toContain('Manage Users');
-    expect(container.querySelector('[data-testid="dashboard"]')).toBeTruthy();
-    expect(container.querySelector('.sts-loader-container')).toBeNull();
+    expect(document.body.textContent).toContain('Manage Users');
+    expect(document.body.querySelector('[data-testid="dashboard"]')).toBeTruthy();
+    expect(document.body.querySelector('.sts-loader-container')).toBeNull();
 
     await act(async () => {
       resolveAccounts({ ok: true, json: async () => accountsPayload });
@@ -215,7 +236,7 @@ describe('ManageUsers edit flow', () => {
     await act(async () => {
       root.render(<ManageUsers />);
     });
-    const resendButton = Array.from(container.querySelectorAll('button')).find(
+    const resendButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === 'Send Temporary Password'
     );
     await act(async () => {
@@ -225,8 +246,8 @@ describe('ManageUsers edit flow', () => {
     const request = global.fetch.mock.calls.find(([url]) => String(url).includes('/api/accounts/7/temporary-password'));
     expect(request[1].method).toBe('POST');
     expect(request[1].headers.Authorization).toBe('Bearer manage-users-token');
-    expect(container.textContent).toContain('Temporary Password Issued');
-    expect(container.textContent).not.toContain('must-not-render');
+    expect(document.body.textContent).toContain('Temporary Password Issued');
+    expect(document.body.textContent).not.toContain('must-not-render');
   });
 
   test('uses the compact shared action-button treatment for active users', async () => {
@@ -234,7 +255,7 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const targetRow = Array.from(container.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Maria Santos'));
+    const targetRow = Array.from(document.body.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Maria Santos'));
     const actions = targetRow.querySelector('.actions-cell');
     const actionButtons = Array.from(actions.querySelectorAll('button'));
 
@@ -265,12 +286,12 @@ describe('ManageUsers edit flow', () => {
     await act(async () => {
       root.render(<ManageUsers />);
     });
-    const showArchivedButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Show Archived');
+    const showArchivedButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Show Archived');
     await act(async () => {
       showArchivedButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const archivedRow = Array.from(container.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Archived Teacher'));
+    const archivedRow = Array.from(document.body.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Archived Teacher'));
     const actions = archivedRow.querySelector('.actions-cell');
     const restoreButton = Array.from(actions.querySelectorAll('button')).find((button) => button.textContent === 'Restore');
 
@@ -300,11 +321,11 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
     await act(async () => {
-      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Show Archived')
+      Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Show Archived')
         .dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const permanentDelete = Array.from(container.querySelectorAll('button')).find(
+    const permanentDelete = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === 'Permanent Delete'
     );
     expect(permanentDelete).toBeTruthy();
@@ -312,19 +333,19 @@ describe('ManageUsers edit flow', () => {
     await act(async () => {
       permanentDelete.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(container.textContent).toContain('This action is irreversible.');
+    expect(document.body.textContent).toContain('This action is irreversible.');
 
     await act(async () => {
-      setFieldValue(container.querySelector('textarea[name="deletion-reason"]'), 'Duplicate account cleanup.');
+      setFieldValue(document.body.querySelector('textarea[name="deletion-reason"]'), 'Duplicate account cleanup.');
     });
     await act(async () => {
-      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Continue')
+      Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue')
         .dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const typedConfirmation = container.querySelector('input[name="permanent-delete-confirmation"]');
+    const typedConfirmation = document.body.querySelector('input[name="permanent-delete-confirmation"]');
     expect(typedConfirmation).toBeTruthy();
-    const permanentConfirm = Array.from(container.querySelectorAll('button')).find(
+    const permanentConfirm = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === 'Permanently Delete Account'
     );
     expect(permanentConfirm.disabled).toBe(true);
@@ -352,7 +373,7 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const targetRow = Array.from(container.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Maria Santos'));
+    const targetRow = Array.from(document.body.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Maria Santos'));
     const nameCell = targetRow.querySelector('.user-name-cell');
     const emailCell = targetRow.querySelector('.email-cell');
 
@@ -366,20 +387,20 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    expect(container.textContent).toContain('Users List (3)');
-    expect(container.textContent).toContain('Maria Santos');
-    expect(container.textContent).toContain('Parent User');
-    expect(container.textContent).toContain('Admin User');
-    expect(container.textContent).not.toContain('Game Student');
+    expect(document.body.textContent).toContain('Users List (3)');
+    expect(document.body.textContent).toContain('Maria Santos');
+    expect(document.body.textContent).toContain('Parent User');
+    expect(document.body.textContent).toContain('Admin User');
+    expect(document.body.textContent).not.toContain('Game Student');
 
-    const searchInput = container.querySelector('input[placeholder="Search users..."]');
+    const searchInput = document.body.querySelector('input[placeholder="Search users..."]');
     await act(async () => {
       setFieldValue(searchInput, 'student');
     });
 
-    expect(container.textContent).toContain('Users List (0)');
-    expect(container.textContent).toContain('No results found for "student"');
-    expect(container.textContent).not.toContain('Game Student');
+    expect(document.body.textContent).toContain('Users List (0)');
+    expect(document.body.textContent).toContain('No results found for "student"');
+    expect(document.body.textContent).not.toContain('Game Student');
   });
 
   test('marks the logged-in account and removes clickable row actions for it', async () => {
@@ -394,7 +415,7 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const rows = Array.from(container.querySelectorAll('tbody tr'));
+    const rows = Array.from(document.body.querySelectorAll('tbody tr'));
     const currentAccountRow = rows.find((row) => row.textContent.includes('admin@gmail.com'));
     const otherAccountRow = rows.find((row) => row.textContent.includes('maria@gmail.com'));
 
@@ -413,23 +434,23 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const targetRow = Array.from(container.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Maria Santos'));
+    const targetRow = Array.from(document.body.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Maria Santos'));
     const deleteButton = targetRow.querySelector('.delete-action-btn');
     await act(async () => {
       deleteButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Archive Account');
-    expect(container.textContent).toContain('Maria Santos');
-    expect(container.textContent).toContain('Teacher');
-    const continueButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Continue');
+    expect(document.body.textContent).toContain('Archive Account');
+    expect(document.body.textContent).toContain('Maria Santos');
+    expect(document.body.textContent).toContain('Teacher');
+    const continueButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue');
     await act(async () => {
       continueButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(container.textContent).toContain('Reason for archiving is required.');
+    expect(document.body.textContent).toContain('Reason for archiving is required.');
     expect(global.fetch.mock.calls.some(([url, options]) => String(url).includes('/api/accounts/7') && options?.method === 'DELETE')).toBe(false);
 
-    const reason = container.querySelector('textarea[name="deletion-reason"]');
+    const reason = document.body.querySelector('textarea[name="deletion-reason"]');
     await act(async () => {
       setFieldValue(reason, '  Account requested deactivation.  ');
     });
@@ -437,8 +458,8 @@ describe('ManageUsers edit flow', () => {
       continueButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Are you sure you want to archive this account?');
-    const confirmButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Archive Account');
+    expect(document.body.textContent).toContain('Are you sure you want to archive this account?');
+    const confirmButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Archive Account');
     await act(async () => {
       confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
@@ -458,7 +479,7 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const editButtons = Array.from(container.querySelectorAll('button')).filter(
+    const editButtons = Array.from(document.body.querySelectorAll('button')).filter(
       (button) => button.textContent === 'Edit'
     );
 
@@ -466,9 +487,9 @@ describe('ManageUsers edit flow', () => {
       editButtons[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Linked Children');
-    expect(container.textContent).toContain('Student Email');
-    expect(container.textContent).toContain('Parent ID');
+    expect(document.body.textContent).toContain('Linked Children');
+    expect(document.body.textContent).toContain('Student Email');
+    expect(document.body.textContent).toContain('Parent ID');
     expect(global.fetch).toHaveBeenCalledWith('/api/teacher-student-relationships?teacherId=8', expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer manage-users-token' }),
     }));
@@ -497,15 +518,15 @@ describe('ManageUsers edit flow', () => {
     await act(async () => {
       root.render(<ManageUsers />);
     });
-    const editButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Edit');
+    const editButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Edit');
     await act(async () => {
       editButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Class Assignments');
-    expect(container.textContent).toContain('Grade 3');
-    expect(container.textContent).toContain('Rizal');
-    expect(container.textContent).toContain('Individual Student Exceptions');
+    expect(document.body.textContent).toContain('Class Assignments');
+    expect(document.body.textContent).toContain('Grade 3');
+    expect(document.body.textContent).toContain('Rizal');
+    expect(document.body.textContent).toContain('Individual Student Exceptions');
     expect(global.fetch).toHaveBeenCalledWith('/api/teacher-class-assignments?teacherId=7', expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer manage-users-token' }),
     }));
@@ -544,17 +565,17 @@ describe('ManageUsers edit flow', () => {
     await act(async () => {
       root.render(<ManageUsers />);
     });
-    const parentTeacherRow = Array.from(container.querySelectorAll('tr')).find((row) => row.textContent.includes('Parent Teacher User'));
+    const parentTeacherRow = Array.from(document.body.querySelectorAll('tr')).find((row) => row.textContent.includes('Parent Teacher User'));
     const editButton = Array.from(parentTeacherRow.querySelectorAll('button')).find((button) => button.textContent === 'Edit');
     await act(async () => {
       editButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Class Assignments');
-    expect(container.textContent).toContain('Individual Student Exceptions');
-    expect(container.textContent).toContain('Assigned Exception');
-    expect(container.textContent).toContain('Linked Children');
-    expect(container.textContent).toContain('Linked Child');
+    expect(document.body.textContent).toContain('Class Assignments');
+    expect(document.body.textContent).toContain('Individual Student Exceptions');
+    expect(document.body.textContent).toContain('Assigned Exception');
+    expect(document.body.textContent).toContain('Linked Children');
+    expect(document.body.textContent).toContain('Linked Child');
   });
 
   test('Linked Children shows the authoritative Student ID returned by the backend', async () => {
@@ -582,13 +603,13 @@ describe('ManageUsers edit flow', () => {
     await act(async () => {
       root.render(<ManageUsers />);
     });
-    const editButtons = Array.from(container.querySelectorAll('button')).filter((button) => button.textContent === 'Edit');
+    const editButtons = Array.from(document.body.querySelectorAll('button')).filter((button) => button.textContent === 'Edit');
     await act(async () => {
       editButtons[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('STUDENT ID');
-    expect(container.textContent).toContain('001234');
+    expect(document.body.textContent).toContain('STUDENT ID');
+    expect(document.body.textContent).toContain('001234');
   });
 
   test('Add User form uses system-generated credentials without manual password input', async () => {
@@ -596,7 +617,7 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const addButton = Array.from(container.querySelectorAll('button')).find(
+    const addButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === 'Add'
     );
 
@@ -604,8 +625,8 @@ describe('ManageUsers edit flow', () => {
       addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('A strong temporary password will be generated and emailed automatically.');
-    expect(container.querySelector('input[type="password"]')).toBeNull();
+    expect(document.body.textContent).toContain('A strong temporary password will be generated and emailed automatically.');
+    expect(document.body.querySelector('input[type="password"]')).toBeNull();
   });
 
   test('Add User form does not require birthday or gender for admin-created parent accounts', async () => {
@@ -632,7 +653,7 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const addButton = Array.from(container.querySelectorAll('button')).find(
+    const addButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === 'Add'
     );
 
@@ -640,7 +661,7 @@ describe('ManageUsers edit flow', () => {
       addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const form = container.querySelector('form');
+    const form = document.body.querySelector('form');
     const inputs = form.querySelectorAll('input');
     await act(async () => {
       setFieldValue(inputs[0], 'Paula');
@@ -656,7 +677,7 @@ describe('ManageUsers edit flow', () => {
       '/api/accounts',
       expect.objectContaining({ method: 'POST' })
     );
-    expect(container.textContent).not.toContain('Please fill in all required fields (First Name, Last Name, Email, Gender)');
+    expect(document.body.textContent).not.toContain('Please fill in all required fields (First Name, Last Name, Email, Gender)');
   });
 
   test('shows inline Philippine mobile and email validation and blocks an invalid Add Account request', async () => {
@@ -664,13 +685,13 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const addButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Add');
+    const addButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Add');
     await act(async () => {
       addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const email = container.querySelector('input[placeholder="user@gmail.com"]');
-    const mobile = container.querySelector('input[placeholder="09123456789"]');
+    const email = document.body.querySelector('input[placeholder="user@gmail.com"]');
+    const mobile = document.body.querySelector('input[placeholder="09123456789"]');
     await act(async () => {
       setFieldValue(email, 'not-an-email');
       email.dispatchEvent(new Event('blur', { bubbles: true }));
@@ -678,11 +699,11 @@ describe('ManageUsers edit flow', () => {
       mobile.dispatchEvent(new Event('blur', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Please enter a valid email address.');
-    expect(container.textContent).toContain('Mobile number must be in the format 09XXXXXXXXX.');
+    expect(document.body.textContent).toContain('Please enter a valid email address.');
+    expect(document.body.textContent).toContain('Mobile number must be in the format 09XXXXXXXXX.');
 
     await act(async () => {
-      container.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      document.body.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
 
     expect(global.fetch.mock.calls.some(([url, options]) => (
@@ -693,8 +714,8 @@ describe('ManageUsers edit flow', () => {
       setFieldValue(email, 'parent@example.edu');
       setFieldValue(mobile, '09171234567');
     });
-    expect(container.textContent).not.toContain('Please enter a valid email address.');
-    expect(container.textContent).not.toContain('Mobile number must be in the format 09XXXXXXXXX.');
+    expect(document.body.textContent).not.toContain('Please enter a valid email address.');
+    expect(document.body.textContent).not.toContain('Mobile number must be in the format 09XXXXXXXXX.');
   });
 
   test('uses a numeric mobile-friendly input for new accounts', async () => {
@@ -702,12 +723,12 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const addButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Add');
+    const addButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Add');
     await act(async () => {
       addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const mobile = container.querySelector('input[placeholder="09123456789"]');
+    const mobile = document.body.querySelector('input[placeholder="09123456789"]');
     expect(mobile.type).toBe('tel');
     expect(mobile.inputMode).toBe('numeric');
     expect(mobile.maxLength).toBe(11);
@@ -722,20 +743,20 @@ describe('ManageUsers edit flow', () => {
         root.render(<ManageUsers />);
       });
 
-      const editButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Edit');
+      const editButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Edit');
       await act(async () => {
         editButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       });
 
-      const mobile = container.querySelector('input[value="0917-123-4567"]');
+      const mobile = document.body.querySelector('input[value="0917-123-4567"]');
       expect(mobile.type).toBe('tel');
       expect(mobile.inputMode).toBe('numeric');
       expect(mobile.maxLength).toBe(11);
 
       await act(async () => {
-        setFieldValue(container.querySelector('input[value="Maria"]'), 'Marian');
+        setFieldValue(document.body.querySelector('input[value="Maria"]'), 'Marian');
       });
-      const updateButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Update User');
+      const updateButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Update User');
       await act(async () => {
         updateButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       });
@@ -755,7 +776,7 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const addButton = Array.from(container.querySelectorAll('button')).find(
+    const addButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === 'Add'
     );
 
@@ -763,13 +784,13 @@ describe('ManageUsers edit flow', () => {
       addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const roleSelect = container.querySelector('.role-selector select');
+    const roleSelect = document.body.querySelector('.role-selector select');
     await act(async () => {
       roleSelect.value = 'Teacher';
       roleSelect.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
-    const employeeInput = Array.from(container.querySelectorAll('input')).find(
+    const employeeInput = Array.from(document.body.querySelectorAll('input')).find(
       (input) => input.placeholder === '1234567890'
     );
 
@@ -786,7 +807,7 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const addButton = Array.from(container.querySelectorAll('button')).find(
+    const addButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === 'Add'
     );
 
@@ -794,10 +815,10 @@ describe('ManageUsers edit flow', () => {
       addButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Street');
-    expect(container.textContent).toContain('City');
-    expect(container.textContent).toContain('Province');
-    expect(container.querySelector('input[placeholder="Enter address"]')).toBeNull();
+    expect(document.body.textContent).toContain('Street');
+    expect(document.body.textContent).toContain('City');
+    expect(document.body.textContent).toContain('Province');
+    expect(document.body.querySelector('input[placeholder="Enter address"]')).toBeNull();
   });
 
   test('Edit User form splits a stored address into street, city, and province inputs', async () => {
@@ -807,7 +828,7 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const editButton = Array.from(container.querySelectorAll('button')).find(
+    const editButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === 'Edit'
     );
 
@@ -815,9 +836,9 @@ describe('ManageUsers edit flow', () => {
       editButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.querySelector('input[value="T. Alonzo St"]')).toBeTruthy();
-    expect(container.querySelector('input[value="Manila"]')).toBeTruthy();
-    expect(container.querySelector('input[value="Metro Manila"]')).toBeTruthy();
+    expect(document.body.querySelector('input[value="T. Alonzo St"]')).toBeTruthy();
+    expect(document.body.querySelector('input[value="Manila"]')).toBeTruthy();
+    expect(document.body.querySelector('input[value="Metro Manila"]')).toBeTruthy();
   });
 
   test('submits updates for the selected user through the existing save flow', async () => {
@@ -825,7 +846,7 @@ describe('ManageUsers edit flow', () => {
       root.render(<ManageUsers />);
     });
 
-    const editButton = Array.from(container.querySelectorAll('button')).find(
+    const editButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === 'Edit'
     );
 
@@ -833,7 +854,7 @@ describe('ManageUsers edit flow', () => {
       editButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const firstNameInput = container.querySelector('input[value="Maria"]');
+    const firstNameInput = document.body.querySelector('input[value="Maria"]');
 
     await act(async () => {
       firstNameInput.value = 'Marian';
@@ -841,7 +862,7 @@ describe('ManageUsers edit flow', () => {
       firstNameInput.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
-    const updateButton = Array.from(container.querySelectorAll('button')).find(
+    const updateButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === 'Update User'
     );
 

@@ -66,13 +66,13 @@ describe('SettingsScreen dashboard layout', () => {
       root.render(<SettingsScreen />);
     });
 
-    const sidebar = container.querySelector('[data-testid="dashboard-sidebar"]');
-    expect(container.querySelector('[data-testid="dashboard-shell"]')).toBeTruthy();
+    const sidebar = document.body.querySelector('[data-testid="dashboard-sidebar"]');
+    expect(document.body.querySelector('[data-testid="dashboard-shell"]')).toBeTruthy();
     expect(sidebar).toBeTruthy();
     expect(sidebar.dataset.role).toBe('parent_teacher');
     expect(sidebar.dataset.activeItem).toBe('settings');
-    expect(container.textContent).toContain('Settings');
-    expect(container.querySelector('.back-btn')).toBeNull();
+    expect(document.body.textContent).toContain('Settings');
+    expect(document.body.querySelector('.back-btn')).toBeNull();
   });
 
   test('submits normal password changes with the current password to the authenticated server route', async () => {
@@ -96,23 +96,23 @@ describe('SettingsScreen dashboard layout', () => {
       root.render(<SettingsScreen />);
     });
 
-    const passwordTab = Array.from(container.querySelectorAll('button'))
+    const passwordTab = Array.from(document.body.querySelectorAll('button'))
       .find((button) => button.textContent.includes('Change Password'));
     await act(async () => {
       passwordTab.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    const changeButton = Array.from(container.querySelectorAll('button'))
+    const changeButton = Array.from(document.body.querySelectorAll('button'))
       .find((button) => button.textContent === 'Change Password');
     await act(async () => {
       changeButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const passwordInputs = container.querySelectorAll('input[type="password"]');
+    const passwordInputs = document.body.querySelectorAll('input[type="password"]');
     await act(async () => {
       setInputValue(passwordInputs[0], 'current-password');
       setInputValue(passwordInputs[1], 'new-permanent-password-123');
       setInputValue(passwordInputs[2], 'new-permanent-password-123');
-      container.querySelector('.password-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      document.body.querySelector('.password-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
 
     const passwordRequest = global.fetch.mock.calls.find(([url]) => String(url).includes('/api/account/password'));
@@ -162,25 +162,30 @@ describe('SettingsScreen dashboard layout', () => {
       root.render(<SettingsScreen />);
     });
 
-    const passwordTab = Array.from(container.querySelectorAll('button'))
+    const passwordTab = Array.from(document.body.querySelectorAll('button'))
       .find((button) => button.textContent.includes('Change Password'));
     await act(async () => {
       passwordTab.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Your account is still using a temporary password.');
-    expect(container.textContent).not.toContain('Current Password *');
-    const passwordInputs = container.querySelectorAll('input[type="password"]');
+    expect(document.body.textContent).toContain('Your account is still using a temporary password.');
+    expect(document.body.textContent).not.toContain('Current Password *');
+    const passwordInputs = document.body.querySelectorAll('input[type="password"]');
     expect(passwordInputs).toHaveLength(2);
 
     await act(async () => {
       setInputValue(passwordInputs[0], 'new-permanent-password-123');
       setInputValue(passwordInputs[1], 'new-permanent-password-123');
-      container.querySelector('.password-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      document.body.querySelector('.password-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
 
-    expect(container.textContent).toContain('Are you sure you want to use this as your new permanent password?');
-    const confirmButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Confirm');
+    expect(document.body.textContent).toContain('Are you sure you want to use this as your new permanent password?');
+    const confirmButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Confirm');
+    const confirmationDialog = document.querySelector('[aria-labelledby="settings-confirm-password-title"]');
+    expect(confirmationDialog.parentElement.parentElement).toBe(document.body);
+    expect(confirmationDialog.contains(document.activeElement)).toBe(true);
+    await act(async () => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(document.querySelector('[aria-labelledby="settings-confirm-password-title"]')).toBe(confirmationDialog);
     await act(async () => {
       confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
@@ -189,7 +194,7 @@ describe('SettingsScreen dashboard layout', () => {
     expect(passwordRequest).toBeTruthy();
     expect(passwordRequest[1].headers.Authorization).toBe('Bearer settings-session-token');
     expect(JSON.parse(passwordRequest[1].body)).toEqual({ newPassword: 'new-permanent-password-123' });
-    expect(container.textContent).not.toContain('Your account is still using a temporary password.');
+    expect(document.body.textContent).not.toContain('Your account is still using a temporary password.');
   });
 
   test('keeps the normal current-password form when authoritative account state is permanent', async () => {
@@ -216,75 +221,75 @@ describe('SettingsScreen dashboard layout', () => {
     await act(async () => {
       root.render(<SettingsScreen />);
     });
-    const passwordTab = Array.from(container.querySelectorAll('button'))
+    const passwordTab = Array.from(document.body.querySelectorAll('button'))
       .find((button) => button.textContent.includes('Change Password'));
     await act(async () => {
       passwordTab.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).not.toContain('Your account is still using a temporary password.');
+    expect(document.body.textContent).not.toContain('Your account is still using a temporary password.');
 
-    const openFormButton = Array.from(container.querySelectorAll('button'))
+    const openFormButton = Array.from(document.body.querySelectorAll('button'))
       .find((button) => button.textContent === 'Change Password');
     await act(async () => {
       openFormButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Current Password *');
-    expect(container.querySelectorAll('input[type="password"]')).toHaveLength(3);
+    expect(document.body.textContent).toContain('Current Password *');
+    expect(document.body.querySelectorAll('input[type="password"]')).toHaveLength(3);
   });
 
   test('shows inline password strength guidance for the normal settings password flow', async () => {
     await act(async () => {
       root.render(<SettingsScreen />);
     });
-    const passwordTab = Array.from(container.querySelectorAll('button'))
+    const passwordTab = Array.from(document.body.querySelectorAll('button'))
       .find((button) => button.textContent.includes('Change Password'));
     await act(async () => {
       passwordTab.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    const openFormButton = Array.from(container.querySelectorAll('button'))
+    const openFormButton = Array.from(document.body.querySelectorAll('button'))
       .find((button) => button.textContent === 'Change Password');
     await act(async () => {
       openFormButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const passwordInputs = container.querySelectorAll('input[type="password"]');
+    const passwordInputs = document.body.querySelectorAll('input[type="password"]');
     await act(async () => {
       setInputValue(passwordInputs[1], 'short');
     });
-    expect(container.textContent).toContain('Password Strength: Very Weak');
-    expect(container.textContent).toContain('At least 8 characters required');
+    expect(document.body.textContent).toContain('Password Strength: Very Weak');
+    expect(document.body.textContent).toContain('At least 8 characters required');
 
     await act(async () => {
       setInputValue(passwordInputs[1], 'Eight8!x');
     });
-    expect(container.textContent).toContain('Password Strength: Strong');
+    expect(document.body.textContent).toContain('Password Strength: Strong');
 
     await act(async () => {
       setInputValue(passwordInputs[1], 'eight888');
     });
-    expect(container.textContent).toContain('Password Strength: Fair');
+    expect(document.body.textContent).toContain('Password Strength: Fair');
   });
 
   test('keeps optional profile mobile blank and rejects a supplied non-local Philippine format inline', async () => {
     await act(async () => {
       root.render(<SettingsScreen />);
     });
-    const editProfileButton = Array.from(container.querySelectorAll('button'))
+    const editProfileButton = Array.from(document.body.querySelectorAll('button'))
       .find((button) => button.textContent === 'Edit Profile');
     await act(async () => {
       editProfileButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    const mobile = container.querySelector('input[placeholder="09XXXXXXXXX"]');
+    const mobile = document.body.querySelector('input[placeholder="09XXXXXXXXX"]');
     await act(async () => {
       setInputValue(mobile, '0917-123-4567');
     });
-    expect(container.textContent).toContain('Mobile number must be in the format 09XXXXXXXXX.');
+    expect(document.body.textContent).toContain('Mobile number must be in the format 09XXXXXXXXX.');
     await act(async () => {
       setInputValue(mobile, '');
     });
-    expect(container.textContent).not.toContain('Mobile number must be in the format 09XXXXXXXXX.');
+    expect(document.body.textContent).not.toContain('Mobile number must be in the format 09XXXXXXXXX.');
   });
 
   test('omits an unchanged legacy mobile number from an unrelated profile update', async () => {
@@ -304,21 +309,21 @@ describe('SettingsScreen dashboard layout', () => {
     await act(async () => {
       root.render(<SettingsScreen />);
     });
-    const editProfileButton = Array.from(container.querySelectorAll('button'))
+    const editProfileButton = Array.from(document.body.querySelectorAll('button'))
       .find((button) => button.textContent === 'Edit Profile');
     await act(async () => {
       editProfileButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const mobile = container.querySelector('input[placeholder="09XXXXXXXXX"]');
+    const mobile = document.body.querySelector('input[placeholder="09XXXXXXXXX"]');
     expect(mobile.value).toBe('0917-123-4567');
     expect(mobile.type).toBe('tel');
     expect(mobile.inputMode).toBe('numeric');
     expect(mobile.maxLength).toBe(11);
 
     await act(async () => {
-      setInputValue(container.querySelector('input[value="Parent"]'), 'Updated');
-      container.querySelector('.profile-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      setInputValue(document.body.querySelector('input[value="Parent"]'), 'Updated');
+      document.body.querySelector('.profile-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
 
     const updateRequest = global.fetch.mock.calls.find(([url, options]) => (

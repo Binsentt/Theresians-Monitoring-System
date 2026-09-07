@@ -178,6 +178,7 @@ th {
 .users-table-container {
   max-width: 100%;
   overflow-x: auto;
+  overscroll-behavior-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 

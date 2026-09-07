@@ -71,7 +71,10 @@ describe('App public auth routes', () => {
 
     expect(window.location.pathname).toBe('/parent-dashboard');
     expect(container.textContent).toContain('Parent Dashboard');
-    expect(container.textContent).toContain('Change Your Temporary Password');
+    const passwordPrompt = document.body.querySelector('[role="dialog"][aria-labelledby="temporary-password-title"]');
+    expect(passwordPrompt).not.toBeNull();
+    expect(passwordPrompt.getAttribute('aria-modal')).toBe('true');
+    expect(document.getElementById(passwordPrompt.getAttribute('aria-labelledby')).textContent).toBe('Change Your Temporary Password');
   });
 
   test('uses the restored server eligibility marker instead of a stale local temporary flag', async () => {
@@ -103,7 +106,7 @@ describe('App public auth routes', () => {
     });
 
     expect(window.location.pathname).toBe('/admin-dashboard');
-    expect(container.textContent).not.toContain('Change Your Temporary Password');
+    expect(document.body.querySelector('[role="dialog"][aria-labelledby="temporary-password-title"]')).toBeNull();
   });
 
   test('keeps the dashboard content mounted while revalidating a sidebar route change', async () => {

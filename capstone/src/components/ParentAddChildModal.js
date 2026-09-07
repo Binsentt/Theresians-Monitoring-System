@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ModalPortal from './ModalPortal';
 import { apiUrl } from '../api';
 import { fetchSectionRegistry, getSectionsForGrade } from '../sectionRegistry';
 import { buildAuthHeaders } from './session.utils';
@@ -110,6 +111,7 @@ export default function ParentAddChildModal({ onClose, onCreated }) {
   };
 
   return (
+    <ModalPortal>
     <div className="parent-add-child-overlay" role="presentation">
       <section className="parent-add-child-modal" role="dialog" aria-modal="true" aria-labelledby="add-child-title">
         <div className="parent-add-child-heading">
@@ -167,5 +169,6 @@ export default function ParentAddChildModal({ onClose, onCreated }) {
         </form>
       </section>
     </div>
+    </ModalPortal>
   );
 }

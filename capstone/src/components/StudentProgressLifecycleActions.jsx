@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+import ModalPortal from './ModalPortal';
 import { buildScopedApiUrl } from './analyticsEndpoints';
 import { buildAuthHeaders } from './session.utils';
 
@@ -25,7 +25,8 @@ const requestJson = async (path, role, body) => {
   return payload;
 };
 
-const LifecycleDialog = ({ children, onClose, className = '' }) => createPortal(
+const LifecycleDialog = ({ children, onClose, className = '' }) => (
+  <ModalPortal onClose={onClose}>
   <div
     className="learning-cycle-reset-overlay"
     onPointerDown={(event) => {
@@ -51,8 +52,8 @@ const LifecycleDialog = ({ children, onClose, className = '' }) => createPortal(
     >
       {children}
     </div>
-  </div>,
-  document.body,
+  </div>
+  </ModalPortal>
 );
 
 export const StudentProgressArchiveAction = ({ studentId, role, onComplete, className = 'table-action-button table-archive-action' }) => {

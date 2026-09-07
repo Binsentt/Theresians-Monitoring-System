@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { createPortal } from 'react-dom';
+import ModalPortal from './ModalPortal';
 import { buildScopedApiUrl } from './analyticsEndpoints';
 import { buildAuthHeaders } from './session.utils';
 
@@ -75,7 +75,8 @@ export const LearningCycleResetAction = ({ studentId, role, onReset, className =
       >
         Reset Progress
       </button>
-      {open && createPortal(
+      {open && (
+        <ModalPortal onClose={close}>
         <div
           className="learning-cycle-reset-overlay"
           onPointerDown={(event) => {
@@ -147,8 +148,8 @@ export const LearningCycleResetAction = ({ studentId, role, onReset, className =
               </button>
             </div>
           </form>
-        </div>,
-        document.body,
+        </div>
+        </ModalPortal>
       )}
     </>
   );

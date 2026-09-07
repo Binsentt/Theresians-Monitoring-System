@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ModalPortal from './ModalPortal';
 import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
@@ -1153,9 +1154,10 @@ export default function ManageUsers() {
             )}
 
             {validationModal && (
+              <ModalPortal onClose={() => setValidationModal(null)}>
               <div className="modal-overlay" onClick={() => { setValidationModal(null); }}>
-                <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-                  <h2>{validationModal.title}</h2>
+                <div className="modal-content" role="dialog" aria-modal="true" aria-labelledby="account-result-title" onClick={(e) => e.stopPropagation()}>
+                  <h2 id="account-result-title">{validationModal.title}</h2>
                   <p>{validationModal.message}</p>
                   {validationModal.parentId && (
                     <div className="generated-credential-panel">
@@ -1174,14 +1176,16 @@ export default function ManageUsers() {
                   </div>
                 </div>
               </div>
+              </ModalPortal>
             )}
 
             {deletingUser && (
+              <ModalPortal onClose={closeDeleteDialog}>
               <div className="modal-overlay" onClick={closeDeleteDialog}>
-                <div className="modal-content delete-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="modal-content delete-modal" role="dialog" aria-modal="true" aria-labelledby="account-delete-title" onClick={(e) => e.stopPropagation()}>
                   {!showDeleteConfirmation ? (
                     <>
-                      <h2>{deleteOperation === 'permanent' ? 'Permanent Delete Account' : 'Archive Account'}</h2>
+                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Permanent Delete Account' : 'Archive Account'}</h2>
                       <p>You are about to {deleteOperation === 'permanent' ? 'permanently delete' : 'archive'} <strong>{deletingUser.name || deletingUser.email}</strong>.</p>
                       {deleteOperation === 'permanent' && <p className="error-text">This action is irreversible.</p>}
                       <p className="delete-account-role">Role: {formatRoleLabel(deletingUser.role)}</p>
@@ -1207,7 +1211,7 @@ export default function ManageUsers() {
                     </>
                   ) : (
                     <>
-                      <h2>{deleteOperation === 'permanent' ? 'Confirm Permanent Delete' : 'Confirm Archive Account'}</h2>
+                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Confirm Permanent Delete' : 'Confirm Archive Account'}</h2>
                       <p>{deleteOperation === 'permanent' ? 'This action is irreversible. Type DELETE to permanently delete this archived account.' : 'Are you sure you want to archive this account?'}</p>
                       {deleteOperation === 'permanent' && (
                         <label className="deletion-reason-label" htmlFor="permanent-delete-confirmation">
@@ -1237,12 +1241,14 @@ export default function ManageUsers() {
                   )}
                 </div>
               </div>
+              </ModalPortal>
             )}
 
             {editingUser && (
+              <ModalPortal onClose={() => !updating && setEditingUser(null)}>
               <div className="modal-overlay" onClick={() => !updating && setEditingUser(null)}>
-                <div className="modal-content edit-user-modal" onClick={(e) => e.stopPropagation()}>
-                  <h2 className="edit-user-modal-title">Edit User</h2>
+                <div className="modal-content edit-user-modal" role="dialog" aria-modal="true" aria-labelledby="edit-user-title" onClick={(e) => e.stopPropagation()}>
+                  <h2 id="edit-user-title" className="edit-user-modal-title">Edit User</h2>
                   <form onSubmit={handleUpdateUser} className="sts-form edit-user-form">
                     <div className="form-group">
                       <label>First Name: *</label>
@@ -1609,6 +1615,7 @@ export default function ManageUsers() {
                   </form>
                 </div>
               </div>
+              </ModalPortal>
             )}
             </ContentSection>
           </PageContent>

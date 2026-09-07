@@ -46,7 +46,7 @@
 }
 
 .page-content-transition {
-  animation: page-content-enter 160ms ease-out both;
+  animation: page-content-enter 160ms ease-out;
 }
 
 .dashboard-inline-loading {

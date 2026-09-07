@@ -282,7 +282,8 @@ describe('ActivityLog table', () => {
     expect(resetButton).not.toBeNull();
     act(() => resetButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 
-    const dialog = container.querySelector('[role="dialog"]');
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog.parentElement.parentElement).toBe(document.body);
     expect(dialog.textContent).toContain('Only Student quest-activity records shown in this view will be deleted.');
     expect(dialog.textContent).toContain('Accounts, Student progress, saves, results, playtime, questions, publications, relationships, assignments, and audit logs are not affected.');
     const confirmation = dialog.querySelector('input[name="activity-log-reset-confirmation"]');
@@ -302,7 +303,7 @@ describe('ActivityLog table', () => {
       confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(global.fetch.mock.calls.some(([url]) => String(url) === '/api/activity-logs/reset')).toBe(true);
     expect(listRequests).toBe(2);
 
@@ -324,8 +325,9 @@ describe('ActivityLog table', () => {
     });
 
     const trigger = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Reset Activity Log');
+    trigger.focus();
     act(() => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    const dialog = container.querySelector('[role="dialog"]');
+    const dialog = document.body.querySelector('[role="dialog"]');
     const confirmation = dialog.querySelector('input[name="activity-log-reset-confirmation"]');
     const cancel = Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent === 'Cancel');
 
@@ -337,7 +339,7 @@ describe('ActivityLog table', () => {
     expect(document.activeElement).toBe(confirmation);
 
     act(() => cancel.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });
 
@@ -358,7 +360,7 @@ describe('ActivityLog table', () => {
 
     const trigger = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Reset Activity Log');
     act(() => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    const dialog = container.querySelector('[role="dialog"]');
+    const dialog = document.body.querySelector('[role="dialog"]');
     const confirmation = dialog.querySelector('input[name="activity-log-reset-confirmation"]');
     await act(async () => {
       const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
@@ -372,8 +374,8 @@ describe('ActivityLog table', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('The activity reset could not be completed.');
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('The activity reset could not be completed.');
     expect(confirmation.disabled).toBe(false);
     expect(confirm.disabled).toBe(false);
   });

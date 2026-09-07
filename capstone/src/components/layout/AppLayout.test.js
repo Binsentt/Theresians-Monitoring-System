@@ -29,6 +29,18 @@ test('shared content transition honors reduced-motion preferences', () => {
   expect(stylesheet).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.dashboard-inline-skeleton\s*\{\s*animation:\s*none;/);
 });
 
+test('page entrance does not retain a transformed containing block after the animation', () => {
+  const stylesheet = fs.readFileSync(path.resolve(__dirname, '../../styles/layout.css'), 'utf8');
+  const transition = stylesheet.match(/\.page-content-transition\s*\{([^}]*)\}/s)[1];
+  expect(transition).not.toMatch(/\b(both|forwards)\b/);
+});
+
+test('table horizontal scrolling allows native vertical scroll chaining to the page', () => {
+  const stylesheet = fs.readFileSync(path.resolve(__dirname, '../../styles/global.css'), 'utf8');
+  const tableRule = stylesheet.match(/\.table-container,\s*\.data-table-wrapper,[\s\S]*?\{([^}]*)\}/)[1];
+  expect(tableRule).toContain('overscroll-behavior-y: auto');
+});
+
 test('shared dashboard shell keeps native main-content scrolling reachable without wheel interception', () => {
   const layoutStyles = fs.readFileSync(path.resolve(__dirname, '../../styles/layout.css'), 'utf8');
   const globalStyles = fs.readFileSync(path.resolve(__dirname, '../../styles/global.css'), 'utf8');

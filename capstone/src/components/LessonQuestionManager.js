@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import ModalPortal from './ModalPortal';
 import { Download, FilePenLine, FileText, Folder, HardDrive, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
@@ -272,31 +272,6 @@ export default function LessonQuestionManager() {
     observer.observe(finalQuestionCardRef.current);
     return () => observer.disconnect();
   }, [questionPreviewFile?.id, previewQuestions.length, previewQuestionsLoading, reviewSnapshotKey]);
-
-  useLayoutEffect(() => {
-    if (!questionPreviewFile) return undefined;
-
-    const pageContent = document.querySelector('.page-content');
-    const documentScrollRoot = document.scrollingElement || document.documentElement;
-    const savedPageScroll = pageContent
-      ? { left: pageContent.scrollLeft, top: pageContent.scrollTop }
-      : null;
-    const savedDocumentScroll = { left: documentScrollRoot.scrollLeft, top: documentScrollRoot.scrollTop };
-
-    document.body.classList.add('lesson-preview-open');
-    pageContent?.classList.add('lesson-preview-scroll-locked');
-
-    return () => {
-      document.body.classList.remove('lesson-preview-open');
-      pageContent?.classList.remove('lesson-preview-scroll-locked');
-      if (savedPageScroll && pageContent) {
-        pageContent.scrollLeft = savedPageScroll.left;
-        pageContent.scrollTop = savedPageScroll.top;
-      }
-      documentScrollRoot.scrollLeft = savedDocumentScroll.left;
-      documentScrollRoot.scrollTop = savedDocumentScroll.top;
-    };
-  }, [Boolean(questionPreviewFile)]);
 
   const lessonManagerApiUrl = (path, role = user?.role) => withLessonManagerScope(apiUrl(path), role);
 
@@ -1374,7 +1349,8 @@ export default function LessonQuestionManager() {
               </div>
             </div>
 
-            {showUploadForm && createPortal(
+            {showUploadForm && (
+              <ModalPortal onClose={() => setShowUploadForm(false)}>
               <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setShowUploadForm(false)}>
                 <form className="manager-modal drive-upload-modal" onSubmit={handleUpload} role="dialog" aria-modal="true" aria-labelledby="upload-file-title" onMouseDown={(event) => event.stopPropagation()}>
                   <div className="manager-modal-header">
@@ -1503,11 +1479,12 @@ export default function LessonQuestionManager() {
                     <button type="button" className="btn btn-secondary" onClick={() => { resetForm(); setShowUploadForm(false); }} disabled={uploading}>Cancel</button>
                   </div>
                 </form>
-              </div>,
-              document.body,
+              </div>
+              </ModalPortal>
             )}
 
-            {questionPreviewFile && createPortal(
+            {questionPreviewFile && (
+              <ModalPortal onClose={closeQuestionPreview}>
               <div className="manager-modal-backdrop generated-questions-preview-backdrop" role="presentation" onMouseDown={closeQuestionPreview}>
                 <div className="manager-modal generated-questions-preview-modal" role="dialog" aria-modal="true" aria-labelledby="generated-questions-preview-title" onMouseDown={(event) => event.stopPropagation()}>
                   <div className="manager-modal-header generated-questions-preview-header">
@@ -1529,7 +1506,7 @@ export default function LessonQuestionManager() {
                       )}
                     </div>
                   </div>
-                  <div className="generated-questions-preview-body" ref={previewBodyRef}>
+                  <div className="generated-questions-preview-body" ref={previewBodyRef} tabIndex={0} role="region" aria-label="Questions to review">
                     <div className="generated-questions-list">
                     {previewQuestionsLoading ? (
                       <p className="empty-text">Loading questions...</p>
@@ -1583,11 +1560,12 @@ export default function LessonQuestionManager() {
                     <button type="button" className="btn btn-secondary" onClick={closeQuestionPreview}>Close</button>
                   </div>
                 </div>
-              </div>,
-              document.body,
+              </div>
+              </ModalPortal>
             )}
 
             {removalConfirmation && (
+              <ModalPortal onClose={() => setRemovalConfirmation(null)}>
               <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setRemovalConfirmation(null)}>
                 <div className="manager-modal replacement-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="remove-active-question-set-title" onMouseDown={(event) => event.stopPropagation()}>
                   <div className="manager-modal-header">
@@ -1610,9 +1588,11 @@ export default function LessonQuestionManager() {
                   </div>
                 </div>
               </div>
+              </ModalPortal>
             )}
 
             {replacementConfirmation && (
+              <ModalPortal onClose={() => setReplacementConfirmation(null)}>
               <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setReplacementConfirmation(null)}>
                 <div className="manager-modal replacement-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="replace-active-question-set-title" onMouseDown={(event) => event.stopPropagation()}>
                   <div className="manager-modal-header">
@@ -1642,9 +1622,11 @@ export default function LessonQuestionManager() {
                   </div>
                 </div>
               </div>
+              </ModalPortal>
             )}
 
             {renamingFile && (
+              <ModalPortal onClose={() => setRenamingFile(null)}>
               <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setRenamingFile(null)}>
                 <div className="manager-modal drive-create-folder-modal" role="dialog" aria-modal="true" aria-labelledby="rename-file-title" onMouseDown={(event) => event.stopPropagation()}>
                   <div className="manager-modal-header">
@@ -1669,9 +1651,11 @@ export default function LessonQuestionManager() {
                   </div>
                 </div>
               </div>
+              </ModalPortal>
             )}
 
             {editingFile && (
+              <ModalPortal onClose={() => setEditingFile(null)}>
               <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setEditingFile(null)}>
                 <div className="manager-modal" role="dialog" aria-modal="true" aria-labelledby="edit-file-title" onMouseDown={(event) => event.stopPropagation()}>
                   <div className="manager-modal-header">
@@ -1729,6 +1713,7 @@ export default function LessonQuestionManager() {
                   </div>
                 </div>
               </div>
+              </ModalPortal>
             )}
           </PageContent>
         </MainContent>

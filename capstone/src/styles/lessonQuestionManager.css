@@ -776,16 +776,6 @@ button.drive-folder-card {
   box-sizing: border-box;
 }
 
-body.lesson-preview-open {
-  overflow: hidden;
-  overscroll-behavior: none;
-}
-
-.lesson-preview-scroll-locked {
-  overflow-y: hidden;
-  overscroll-behavior: none;
-}
-
 .generated-questions-preview-header {
   min-width: 0;
 }

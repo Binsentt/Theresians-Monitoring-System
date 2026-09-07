@@ -49,18 +49,24 @@ describe('ParentAddChildModal', () => {
   });
 
   test('shows inline errors and does not call the API for an invalid child form', async () => {
+    const onClose = jest.fn();
     await act(async () => {
-      root.render(<ParentAddChildModal onClose={jest.fn()} onCreated={jest.fn()} />);
+      root.render(<ParentAddChildModal onClose={onClose} onCreated={jest.fn()} />);
     });
 
+    expect(document.querySelector('.parent-add-child-overlay').parentElement).toBe(document.body);
+    expect(document.querySelector('[role="dialog"]').contains(document.activeElement)).toBe(true);
+    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(onClose).not.toHaveBeenCalled();
+
     await act(async () => {
-      container.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      document.body.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
 
-    expect(container.textContent).toContain('First name is required.');
-    expect(container.textContent).toContain('Last name is required.');
-    expect(container.textContent).toContain('Grade is required.');
-    expect(container.textContent).toContain('Student ID is required.');
+    expect(document.body.textContent).toContain('First name is required.');
+    expect(document.body.textContent).toContain('Last name is required.');
+    expect(document.body.textContent).toContain('Grade is required.');
+    expect(document.body.textContent).toContain('Student ID is required.');
     expect(global.fetch).toHaveBeenCalledWith('/api/sections/registry', expect.any(Object));
     expect(global.fetch).not.toHaveBeenCalledWith('/api/parent/children', expect.any(Object));
   });
@@ -75,9 +81,9 @@ describe('ParentAddChildModal', () => {
       await Promise.resolve();
     });
 
-    const grade = container.querySelector('#child-grade');
-    const section = container.querySelector('#child-section');
-    expect(container.querySelector('label[for="child-section"]')?.textContent).toBe('Section *');
+    const grade = document.body.querySelector('#child-grade');
+    const section = document.body.querySelector('#child-section');
+    expect(document.body.querySelector('label[for="child-section"]')?.textContent).toBe('Section *');
     expect(section.tagName).toBe('SELECT');
     expect(section.disabled).toBe(true);
 
@@ -99,11 +105,11 @@ describe('ParentAddChildModal', () => {
       await Promise.resolve();
     });
 
-    const studentId = container.querySelector('#child-student-id');
+    const studentId = document.body.querySelector('#child-student-id');
     expect(studentId.inputMode).toBe('numeric');
     expect(studentId.maxLength).toBe(8);
     expect(studentId.placeholder).toBe('001234 or 00123456');
-    expect(container.querySelector('.parent-add-child-student-id .field-help').textContent)
+    expect(document.body.querySelector('.parent-add-child-student-id .field-help').textContent)
       .toContain('new Student requires 8 digits');
   });
 
@@ -127,12 +133,12 @@ describe('ParentAddChildModal', () => {
     });
 
     const fields = {
-      firstName: container.querySelector('#child-first-name'),
-      lastName: container.querySelector('#child-last-name'),
-      middleInitial: container.querySelector('#child-middle-initial'),
-      gradeLevel: container.querySelector('#child-grade'),
-      section: container.querySelector('#child-section'),
-      studentId: container.querySelector('#child-student-id'),
+      firstName: document.body.querySelector('#child-first-name'),
+      lastName: document.body.querySelector('#child-last-name'),
+      middleInitial: document.body.querySelector('#child-middle-initial'),
+      gradeLevel: document.body.querySelector('#child-grade'),
+      section: document.body.querySelector('#child-section'),
+      studentId: document.body.querySelector('#child-student-id'),
     };
     await act(async () => {
       setInputValue(fields.firstName, 'Ava');
@@ -142,7 +148,7 @@ describe('ParentAddChildModal', () => {
       expect(fields.section.tagName).toBe('SELECT');
       setSelectValue(fields.section, 'Jade');
       setInputValue(fields.studentId, '001234');
-      container.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      document.body.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
 
     expect(global.fetch).toHaveBeenCalledWith('/api/parent/children', expect.objectContaining({

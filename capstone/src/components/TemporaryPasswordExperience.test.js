@@ -61,33 +61,40 @@ describe('TemporaryPasswordExperience', () => {
       );
     });
 
-    expect(container.querySelector('[data-testid="role-dashboard"]')).toBeTruthy();
-    expect(container.textContent).toContain('Change Your Temporary Password');
+    expect(document.body.querySelector('[data-testid="role-dashboard"]')).toBeTruthy();
+    expect(document.querySelector('.temporary-password-overlay').parentElement).toBe(document.body);
+    expect(document.body.textContent).toContain('Change Your Temporary Password');
 
-    const notNowButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Not Now');
+    const notNowButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Not Now');
     await act(async () => {
       notNowButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Your account is still using a temporary password.');
-    const changePasswordButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Change Password');
+    expect(document.body.textContent).toContain('Your account is still using a temporary password.');
+    const changePasswordButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Change Password');
     await act(async () => {
       changePasswordButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const passwordInputs = container.querySelectorAll('input[type="password"]');
+    const passwordInputs = document.body.querySelectorAll('input[type="password"]');
+    expect(document.querySelector('.temporary-password-overlay').parentElement).toBe(document.body);
     await setInputValue(passwordInputs[0], 'permanent-password-123');
     await setInputValue(passwordInputs[1], 'permanent-password-123');
 
-    const continueButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Continue');
+    const continueButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue');
     await act(async () => {
       continueButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Are you sure you want to use this as your new permanent password?');
-    expect(container.textContent).not.toContain('permanent-password-123');
+    expect(document.body.textContent).toContain('Are you sure you want to use this as your new permanent password?');
+    const confirmationDialog = document.querySelector('[aria-labelledby="confirm-password-title"]');
+    expect(confirmationDialog.parentElement.parentElement).toBe(document.body);
+    expect(confirmationDialog.contains(document.activeElement)).toBe(true);
+    await act(async () => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(document.querySelector('[aria-labelledby="confirm-password-title"]')).toBe(confirmationDialog);
+    expect(document.body.textContent).not.toContain('permanent-password-123');
 
-    const confirmButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Confirm');
+    const confirmButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Confirm');
     await act(async () => {
       confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
@@ -97,7 +104,7 @@ describe('TemporaryPasswordExperience', () => {
       headers: expect.objectContaining({ Authorization: 'Bearer temporary-password-token' }),
       body: JSON.stringify({ newPassword: 'permanent-password-123' }),
     }));
-    expect(container.textContent).not.toContain('Your account is still using a temporary password.');
+    expect(document.body.textContent).not.toContain('Your account is still using a temporary password.');
     expect(JSON.parse(localStorage.getItem('loggedInUser')).mustChangePassword).toBe(false);
     expect(localStorage.getItem('rememberToken')).toBe('permanent-password-token');
   });
@@ -119,8 +126,8 @@ describe('TemporaryPasswordExperience', () => {
       );
     });
 
-    expect(container.textContent).not.toContain('Change Your Temporary Password');
-    expect(container.textContent).not.toContain('Your account is still using a temporary password.');
+    expect(document.body.textContent).not.toContain('Change Your Temporary Password');
+    expect(document.body.textContent).not.toContain('Your account is still using a temporary password.');
   });
 
   test.each(['admin', 'teacher', 'parent', 'parent_teacher'])('shows the temporary-password prompt for a newly issued %s account', async (role) => {
@@ -140,7 +147,7 @@ describe('TemporaryPasswordExperience', () => {
       );
     });
 
-    expect(container.textContent).toContain('Change Your Temporary Password');
+    expect(document.body.textContent).toContain('Change Your Temporary Password');
   });
 
   test('does not infer temporary-password eligibility from a legacy or missing frontend marker', async () => {
@@ -159,24 +166,24 @@ describe('TemporaryPasswordExperience', () => {
       );
     });
 
-    expect(container.textContent).not.toContain('Change Your Temporary Password');
-    expect(container.textContent).not.toContain('Your account is still using a temporary password.');
+    expect(document.body.textContent).not.toContain('Change Your Temporary Password');
+    expect(document.body.textContent).not.toContain('Your account is still using a temporary password.');
   });
 
   test('shows first-login password strength guidance without changing the required confirmation flow', async () => {
     await act(async () => {
       root.render(<TemporaryPasswordExperience><div>Dashboard</div></TemporaryPasswordExperience>);
     });
-    const changeNow = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Change Password Now');
+    const changeNow = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Change Password Now');
     await act(async () => {
       changeNow.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    const passwordInput = container.querySelector('#dashboard-new-password');
+    const passwordInput = document.body.querySelector('#dashboard-new-password');
     await setInputValue(passwordInput, 'short');
-    expect(container.textContent).toContain('Password Strength: Very Weak');
-    expect(container.textContent).toContain('Password must be at least 8 characters.');
+    expect(document.body.textContent).toContain('Password Strength: Very Weak');
+    expect(document.body.textContent).toContain('Password must be at least 8 characters.');
 
     await setInputValue(passwordInput, 'Eight8!x');
-    expect(container.textContent).toContain('Password Strength: Strong');
+    expect(document.body.textContent).toContain('Password Strength: Strong');
   });
 });

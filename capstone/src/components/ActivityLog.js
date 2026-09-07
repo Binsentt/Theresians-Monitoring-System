@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import ModalPortal from './ModalPortal';
 import '../styles/activitylog.css';
 import {
   buildActivityLogQueryParams,
@@ -47,28 +48,12 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
   const [resetConfirmation, setResetConfirmation] = useState('');
   const [resettingActivity, setResettingActivity] = useState(false);
   const [resetActivityError, setResetActivityError] = useState('');
-  const resetTriggerRef = useRef(null);
-  const resetConfirmationRef = useRef(null);
-  const resetDialogWasOpenRef = useRef(false);
   const { preparedRows, hasPreparedReport, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
   const requiresScopedUser = role === 'teacher' || role === 'parent';
   const scopedUserReady = !requiresScopedUser || Boolean(userId);
   const showFilters = shouldShowActivityLogFilters(role);
   const isParentView = role === 'parent';
   const canResetActivityLog = role === 'admin' && allowActivityReset;
-
-  useEffect(() => {
-    if (resetDialogOpen) {
-      resetDialogWasOpenRef.current = true;
-      resetConfirmationRef.current?.focus();
-      return;
-    }
-
-    if (resetDialogWasOpenRef.current) {
-      resetTriggerRef.current?.focus();
-      resetDialogWasOpenRef.current = false;
-    }
-  }, [resetDialogOpen]);
 
   useEffect(() => {
     if (!showFilters) {
@@ -195,20 +180,6 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
     setResetDialogOpen(false);
     setResetConfirmation('');
     setResetActivityError('');
-  };
-
-  const handleResetDialogKeyDown = (event) => {
-    if (event.key !== 'Tab') return;
-
-    const focusable = Array.from(event.currentTarget.querySelectorAll('input:not([disabled]), button:not([disabled])'));
-    if (!focusable.length) return;
-
-    const currentIndex = focusable.indexOf(document.activeElement);
-    const nextIndex = event.shiftKey
-      ? (currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1)
-      : (currentIndex === focusable.length - 1 ? 0 : currentIndex + 1);
-    event.preventDefault();
-    focusable[nextIndex].focus();
   };
 
   const submitActivityReset = async (event) => {
@@ -444,7 +415,6 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
           />
           {canResetActivityLog && (
             <button
-              ref={resetTriggerRef}
               type="button"
               className="btn-reset activity-log-reset-button"
               onClick={() => {
@@ -539,8 +509,9 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
         columns={reportColumns}
       />
       {canResetActivityLog && resetDialogOpen && (
+        <ModalPortal onClose={closeResetDialog}>
         <div className="activity-log-reset-backdrop" role="presentation" onMouseDown={closeResetDialog}>
-          <form className="activity-log-reset-dialog" role="dialog" aria-modal="true" aria-labelledby="activity-log-reset-title" onSubmit={submitActivityReset} onMouseDown={(event) => event.stopPropagation()} onKeyDown={handleResetDialogKeyDown}>
+          <form className="activity-log-reset-dialog" role="dialog" aria-modal="true" aria-labelledby="activity-log-reset-title" onSubmit={submitActivityReset} onMouseDown={(event) => event.stopPropagation()}>
             <h3 id="activity-log-reset-title">Reset Activity Log</h3>
             <p>Only Student quest-activity records shown in this view will be deleted.</p>
             <p>Accounts, Student progress, saves, results, playtime, questions, publications, relationships, assignments, and audit logs are not affected.</p>
@@ -548,7 +519,6 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
             <input
               id="activity-log-reset-confirmation"
               name="activity-log-reset-confirmation"
-              ref={resetConfirmationRef}
               value={resetConfirmation}
               onChange={(event) => {
                 setResetConfirmation(event.target.value);
@@ -564,6 +534,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
             </div>
           </form>
         </div>
+        </ModalPortal>
       )}
     </div>
   );

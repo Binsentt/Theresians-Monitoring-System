@@ -32,6 +32,22 @@ describe('StudentProgressLifecycleActions', () => {
     delete global.fetch;
   });
 
+  test('keeps keyboard navigation in the archive dialog and returns to its table action on Escape', async () => {
+    await act(async () => root.render(<StudentProgressArchiveAction studentId={44} role="teacher" />));
+    const trigger = container.querySelector('button');
+    trigger.focus();
+    await act(async () => trigger.click());
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    const last = dialog.querySelector('button[type="submit"]');
+    last.focus();
+    last.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(dialog.querySelector('select'));
+    await act(async () => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
   test('archives only the selected Student after a required reason and keeps every modal event out of the row', async () => {
     const onComplete = jest.fn();
     const rowClick = jest.fn();

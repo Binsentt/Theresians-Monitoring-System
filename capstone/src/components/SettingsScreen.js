@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ModalPortal from './ModalPortal';
 import { useNavigate } from 'react-router-dom';
 import logoImage from '../assets/images/STS_Logo.png';
 import {
@@ -953,6 +954,7 @@ export default function SettingsScreen() {
         </div>
               )}
               {showInitialPasswordConfirmation && requiresInitialPassword && (
+                <ModalPortal>
                 <div className="temporary-password-overlay" role="presentation">
                   <section className="temporary-password-modal temporary-password-confirmation" role="dialog" aria-modal="true" aria-labelledby="settings-confirm-password-title">
                     <h2 id="settings-confirm-password-title">Confirm Password Change</h2>
@@ -977,6 +979,7 @@ export default function SettingsScreen() {
                     </div>
                   </section>
                 </div>
+                </ModalPortal>
               )}
             </div>
           </PageContent>

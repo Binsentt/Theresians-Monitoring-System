@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ModalPortal from './ModalPortal';
 import { apiUrl } from '../api';
 import {
   buildAuthHeaders,
@@ -146,6 +147,7 @@ export default function TemporaryPasswordExperience({ children }) {
       )}
 
       {requiresPermanentPassword && promptOpen && (
+        <ModalPortal>
         <div className="temporary-password-overlay" role="presentation">
           <section className="temporary-password-modal" role="dialog" aria-modal="true" aria-labelledby="temporary-password-title">
             <h2 id="temporary-password-title">Change Your Temporary Password</h2>
@@ -156,9 +158,11 @@ export default function TemporaryPasswordExperience({ children }) {
             </div>
           </section>
         </div>
+        </ModalPortal>
       )}
 
       {requiresPermanentPassword && setupOpen && (
+        <ModalPortal>
         <div className="temporary-password-overlay" role="presentation">
           <section className="temporary-password-modal" role="dialog" aria-modal="true" aria-labelledby="permanent-password-title">
             <h2 id="permanent-password-title">Create Your Permanent Password</h2>
@@ -197,9 +201,11 @@ export default function TemporaryPasswordExperience({ children }) {
             </form>
           </section>
         </div>
+        </ModalPortal>
       )}
 
       {requiresPermanentPassword && confirmationOpen && (
+        <ModalPortal>
         <div className="temporary-password-overlay" role="presentation">
           <section className="temporary-password-modal temporary-password-confirmation" role="dialog" aria-modal="true" aria-labelledby="confirm-password-title">
             <h2 id="confirm-password-title">Confirm Password Change</h2>
@@ -210,6 +216,7 @@ export default function TemporaryPasswordExperience({ children }) {
             </div>
           </section>
         </div>
+        </ModalPortal>
       )}
     </>
   );

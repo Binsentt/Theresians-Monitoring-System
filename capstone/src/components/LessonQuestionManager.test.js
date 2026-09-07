@@ -334,6 +334,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(backdrop).toBeTruthy();
     expect(backdrop.parentElement).toBe(document.body);
     expect(backdrop.querySelector('.drive-upload-modal')).toBeTruthy();
+    expect(backdrop.contains(document.activeElement)).toBe(true);
+    expect(document.querySelector('.page-content').classList.contains('modal-scroll-locked')).toBe(true);
 
     await act(async () => {
       const cancelButton = Array.from(backdrop.querySelectorAll('button')).find((button) => button.textContent === 'Cancel');
@@ -443,6 +445,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
 
     expect(document.body.textContent).toContain('Replace Active Question Set?');
+    expect(document.querySelector('[aria-labelledby="replace-active-question-set-title"]').parentElement.parentElement).toBe(document.body);
     expect(document.body.textContent).toContain('Current Addition');
     expect(document.body.textContent).toContain('replacement-addition.docx');
     expect(global.fetch).toHaveBeenCalledTimes(6);
@@ -802,6 +805,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
 
     expect(document.body.textContent).toContain('Remove this question set from the game?');
+    expect(document.querySelector('[aria-labelledby="remove-active-question-set-title"]').parentElement.parentElement).toBe(document.body);
     expect(document.body.textContent).toContain('Players will no longer receive questions from this set.');
     await act(async () => {
       clickByText(document.body, 'Confirm Remove from Game');
@@ -894,6 +898,13 @@ describe('LessonQuestionManager upload and trash controls', () => {
     const approveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve');
     const previewBody = document.body.querySelector('.generated-questions-preview-body');
     const finalQuestionCard = Array.from(document.body.querySelectorAll('.generated-question-card')).at(-1);
+    expect(previewBody.tabIndex).toBe(0);
+    expect(previewBody.getAttribute('role')).toBe('region');
+    expect(previewBody.getAttribute('aria-label')).toBe('Questions to review');
+    expect(document.activeElement).toBe(previewBody);
+    const pageDown = new KeyboardEvent('keydown', { key: 'PageDown', bubbles: true, cancelable: true });
+    previewBody.dispatchEvent(pageDown);
+    expect(pageDown.defaultPrevented).toBe(false);
     expect(approveButton.disabled).toBe(true);
     expect(finalQuestionCard).toBeTruthy();
     expect(previewObservers).toHaveLength(1);
@@ -1183,8 +1194,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
     const firstQuestion = previewBody.querySelector('.generated-question-card');
 
     expect(previewBackdrop.parentElement).toBe(document.body);
-    expect(document.body.classList.contains('lesson-preview-open')).toBe(true);
-    expect(pageContent.classList.contains('lesson-preview-scroll-locked')).toBe(true);
+    expect(document.body.classList.contains('modal-scroll-locked')).toBe(true);
+    expect(pageContent.classList.contains('modal-scroll-locked')).toBe(true);
     expect(pageContent.scrollTop).toBe(215);
     expect(previewBody.scrollTop).toBe(0);
     expect(firstQuestion.querySelector('strong').textContent).toBe('1. What is 2 + 3?');
@@ -1193,8 +1204,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
       Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Close').click();
     });
 
-    expect(document.body.classList.contains('lesson-preview-open')).toBe(false);
-    expect(pageContent.classList.contains('lesson-preview-scroll-locked')).toBe(false);
+    expect(document.body.classList.contains('modal-scroll-locked')).toBe(false);
+    expect(pageContent.classList.contains('modal-scroll-locked')).toBe(false);
     expect(pageContent.scrollTop).toBe(215);
   });
 
