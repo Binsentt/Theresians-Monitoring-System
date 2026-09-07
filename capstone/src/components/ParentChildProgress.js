@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
@@ -11,9 +11,11 @@ import { isParentRole, normalizeRole } from './manageUsers.utils';
 import {
   clampPercent,
   formatPercent,
+  getTotalProgressNote,
   normalizeDifficultyDisplay,
   normalizeDisplayList,
   normalizeStudentProgressPayload,
+  resolveCurrentDifficulty,
   safeDisplayText,
   sortStudentsByName,
   toFiniteNumber,
@@ -31,17 +33,20 @@ export default function ParentChildProgress() {
   const [quizSessions, setQuizSessions] = useState([]);
   const [topicCoverage, setTopicCoverage] = useState([]);
   const [selectedChildMetrics, setSelectedChildMetrics] = useState(null);
+  const [selectedChildProgress, setSelectedChildProgress] = useState(null);
   const [selectedChildAiInsight, setSelectedChildAiInsight] = useState(null);
   const [insightLoading, setInsightLoading] = useState(false);
   const [insightError, setInsightError] = useState('');
   const [selectedAnalyticsReadiness, setSelectedAnalyticsReadiness] = useState(null);
   const [childDetailsLoading, setChildDetailsLoading] = useState(false);
   const [childDetailsError, setChildDetailsError] = useState('');
+  const [topicDetailsError, setTopicDetailsError] = useState('');
   const [unlinkedCount, setUnlinkedCount] = useState(0);
   const [unlinkedWarningDismissed, setUnlinkedWarningDismissed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshToken, setRefreshToken] = useState(0);
+  const childRequestVersion = useRef(0);
 
   useEffect(() => {
     const loadData = async () => {
@@ -128,10 +133,15 @@ export default function ParentChildProgress() {
   const isFocusStudentProgressArchived = Boolean(focusStudent?.progress_archived_at);
 
   useEffect(() => {
+    const requestVersion = ++childRequestVersion.current;
+    setInsightLoading(false);
+    setInsightError('');
+    setTopicDetailsError('');
     if (!focusStudentId || !parentAccountId || isFocusStudentProgressArchived) {
       setQuizSessions([]);
       setTopicCoverage([]);
       setSelectedChildMetrics(null);
+      setSelectedChildProgress(null);
       setSelectedChildAiInsight(null);
       setInsightError('');
       setSelectedAnalyticsReadiness(null);
@@ -144,28 +154,34 @@ export default function ParentChildProgress() {
     const loadChildGameDetails = async () => {
       setChildDetailsLoading(true);
       setChildDetailsError('');
+      setSelectedChildMetrics(null);
+      setSelectedChildProgress(null);
+      setSelectedChildAiInsight(null);
       try {
         const requestOptions = { headers: buildAuthHeaders() };
-        const [quizzesResult, topicsResult, analyticsResult] = await Promise.all([
-          fetch(buildScopedApiUrl(`/api/parent/children/${focusStudentId}/quizzes?limit=20`, 'parent'), requestOptions),
-          fetch(buildScopedApiUrl(`/api/parent/children/${focusStudentId}/topics`, 'parent'), requestOptions),
-          fetch(buildScopedApiUrl(`/api/student-progress/${focusStudentId}`, 'parent'), requestOptions),
-        ]);
-
-        if (!quizzesResult.ok || !topicsResult.ok) {
-          throw new Error('Could not load child quiz details');
-        }
-
-        const [quizzesPayload, topicsPayload, analyticsPayload] = await Promise.all([
-          quizzesResult.json(),
-          topicsResult.json(),
-          analyticsResult.ok ? analyticsResult.json() : Promise.resolve(null),
+        const readChildData = async (path) => {
+          const response = await fetch(buildScopedApiUrl(path, 'parent'), requestOptions);
+          if (!response.ok) throw new Error('Could not load child data');
+          return response.json();
+        };
+        const [quizzesResult, topicsResult, analyticsResult] = await Promise.allSettled([
+          readChildData(`/api/parent/children/${focusStudentId}/quizzes?limit=20`),
+          readChildData(`/api/parent/children/${focusStudentId}/topics`),
+          readChildData(`/api/student-progress/${focusStudentId}`),
         ]);
         if (!active) return;
+
+        const quizzesPayload = quizzesResult.status === 'fulfilled' ? quizzesResult.value : null;
+        const topicsPayload = topicsResult.status === 'fulfilled' ? topicsResult.value : null;
+        const analyticsPayload = analyticsResult.status === 'fulfilled' ? analyticsResult.value : null;
+        setChildDetailsError(quizzesResult.status === 'rejected' ? 'Quiz session details are currently unavailable.' : '');
+        setTopicDetailsError(topicsResult.status === 'rejected' ? 'Topic coverage is currently unavailable.' : '');
+        setInsightError(analyticsResult.status === 'rejected' ? 'Student analytics are currently unavailable.' : '');
 
         setQuizSessions(Array.isArray(quizzesPayload?.data) ? quizzesPayload.data : []);
         setTopicCoverage(Array.isArray(topicsPayload) ? topicsPayload : []);
         setSelectedChildMetrics(analyticsPayload?.metrics && typeof analyticsPayload.metrics === 'object' ? analyticsPayload.metrics : null);
+        setSelectedChildProgress(analyticsPayload?.progress && typeof analyticsPayload.progress === 'object' ? analyticsPayload.progress : null);
         setSelectedChildAiInsight(analyticsPayload?.aiInsight && typeof analyticsPayload.aiInsight === 'object' ? analyticsPayload.aiInsight : null);
         setSelectedAnalyticsReadiness(analyticsPayload?.analyticsReadiness && typeof analyticsPayload.analyticsReadiness === 'object' ? analyticsPayload.analyticsReadiness : null);
       } catch (err) {
@@ -174,6 +190,7 @@ export default function ParentChildProgress() {
         setQuizSessions([]);
         setTopicCoverage([]);
         setSelectedChildMetrics(null);
+        setSelectedChildProgress(null);
         setSelectedChildAiInsight(null);
         setSelectedAnalyticsReadiness(null);
         setChildDetailsError('Quiz session details are currently unavailable.');
@@ -185,8 +202,9 @@ export default function ParentChildProgress() {
     loadChildGameDetails();
     return () => {
       active = false;
+      if (childRequestVersion.current === requestVersion) childRequestVersion.current += 1;
     };
-  }, [focusStudentId, parentAccountId, isFocusStudentProgressArchived]);
+  }, [focusStudentId, parentAccountId, isFocusStudentProgressArchived, refreshToken]);
 
   const logsByStudent = useMemo(() => {
     return activityLogs.reduce((groups, log) => {
@@ -216,8 +234,19 @@ export default function ParentChildProgress() {
     normalizeDisplayList(selectedChildAiInsight?.insight?.recommendations)
   ), [selectedChildAiInsight]);
 
+  const currentQuest = selectedChildMetrics?.currentQuest !== undefined
+    ? selectedChildMetrics.currentQuest
+    : selectedChildProgress?.current_quest;
+  const currentDifficulty = resolveCurrentDifficulty({ ...selectedChildProgress, metrics: selectedChildMetrics });
+  const difficultyRows = [
+    { label: 'Easy', key: 'easy' },
+    { label: 'Normal', key: 'medium' },
+    { label: 'Difficult', key: 'hard' },
+  ];
+
   const generateChildInsight = async () => {
     if (!focusStudentId) return;
+    const requestVersion = childRequestVersion.current;
     setInsightLoading(true);
     setInsightError('');
     try {
@@ -226,6 +255,7 @@ export default function ParentChildProgress() {
         { method: 'POST', headers: { ...buildAuthHeaders(), 'Content-Type': 'application/json' } }
       );
       const payload = await response.json();
+      if (childRequestVersion.current !== requestVersion) return;
       if (payload?.status === 'insufficient_data') {
         setSelectedChildAiInsight(payload);
         return;
@@ -236,10 +266,11 @@ export default function ParentChildProgress() {
       }
       setSelectedChildAiInsight(payload);
     } catch (err) {
+      if (childRequestVersion.current !== requestVersion) return;
       console.error('Child grounded insight request failed:', err);
       setInsightError('Grounded AI Insights are unavailable right now.');
     } finally {
-      setInsightLoading(false);
+      if (childRequestVersion.current === requestVersion) setInsightLoading(false);
     }
   };
 
@@ -328,7 +359,8 @@ export default function ParentChildProgress() {
               </div>
               <div className="analytics-card">
                 <span>Total progress</span>
-                <strong>{formatPercent(selectedChildMetrics?.totalProgress, 'No Data')}</strong>
+                <strong>{formatPercent(selectedChildMetrics?.totalProgress, 'Not available')}</strong>
+                {getTotalProgressNote(selectedChildMetrics) && <small>{getTotalProgressNote(selectedChildMetrics)}</small>}
               </div>
               <div className="analytics-card">
                 <span>Game score</span>
@@ -391,7 +423,11 @@ export default function ParentChildProgress() {
                       </div>
                       <div className="child-progress-stat">
                         <span>Current Quest</span>
-                        <strong>{isFocusStudentProgressArchived ? 'Archived' : safeDisplayText(focusStudent.current_quest, 'N/A')}</strong>
+                        <strong>{isFocusStudentProgressArchived ? 'Archived' : safeDisplayText(currentQuest, 'Not available')}</strong>
+                      </div>
+                      <div className="child-progress-stat">
+                        <span>Current Difficulty</span>
+                        <strong>{isFocusStudentProgressArchived ? 'No Data' : currentDifficulty}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Score</span>
@@ -405,11 +441,38 @@ export default function ParentChildProgress() {
                         <span>Progress</span>
                         <strong>{isFocusStudentProgressArchived ? 'No Data' : formatPercent(selectedChildMetrics?.totalProgress, 'Not available')}</strong>
                       </div>
+                      {[
+                        { label: 'Correct Answers', key: 'correctAnswers' },
+                        { label: 'Incorrect Answers', key: 'incorrectAnswers' },
+                        { label: 'Completed Quests', key: 'completedQuests' },
+                      ].map(({ label, key }) => (
+                        <div className="child-progress-stat" key={key}>
+                          <span>{label}</span>
+                          <strong>{isFocusStudentProgressArchived ? 'No Data' : safeDisplayText(selectedChildMetrics?.[key], 'Not available')}</strong>
+                        </div>
+                      ))}
                     </div>
 
                     {isFocusStudentProgressArchived && (
                       <div className="parent-progress-archived-notice" role="status">
                         This child’s progress is archived. Historical activity and Screen Time remain preserved, but current-cycle analytics are not shown in Active Progress.
+                      </div>
+                    )}
+
+                    {!isFocusStudentProgressArchived && (
+                      <div className="child-activity-panel child-difficulty-panel">
+                        <div className="insights-header">
+                          <h2>Difficulty Breakdown</h2>
+                          <p>Accuracy from recorded question results only.</p>
+                        </div>
+                        <div className="child-topic-list">
+                          {difficultyRows.map(({ label, key }) => (
+                            <div className="child-topic-item" key={key}>
+                              <strong>{label}</strong>
+                              <span>{formatPercent(selectedChildMetrics?.difficultyBreakdown?.[key]?.accuracy, 'Not available')}</span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
 
@@ -419,7 +482,7 @@ export default function ParentChildProgress() {
                         <p>Recent gameplay updates for the selected child.</p>
                       </div>
                       {selectedLogs.length === 0 ? (
-                        <div className="fallback-note">No game progress data available yet. Progress will appear here once the student starts playing the game.</div>
+                        <div className="fallback-note">No recorded activity available for this child.</div>
                       ) : (
                         <div className="child-activity-list">
                           {selectedLogs.slice(0, 5).map((log) => (
@@ -444,7 +507,7 @@ export default function ParentChildProgress() {
                         ) : childDetailsError ? (
                           <div className="fallback-note">{childDetailsError}</div>
                         ) : quizSessions.length === 0 ? (
-                          <div className="fallback-note">No game progress data available yet. Progress will appear here once the student starts playing the game.</div>
+                          <div className="fallback-note">No quiz sessions recorded for this child.</div>
                         ) : (
                           <div className="child-quiz-list">
                             {quizSessions.map((session) => (
@@ -464,7 +527,7 @@ export default function ParentChildProgress() {
                           <p>Recent quiz percentages by topic and difficulty.</p>
                         </div>
                         {scoreTimeline.length === 0 ? (
-                          <div className="fallback-note">No game progress data available yet. Progress will appear here once the student starts playing the game.</div>
+                          <div className="fallback-note">No quiz percentages recorded for this child.</div>
                         ) : (
                           <div className="child-score-chart">
                             <ResponsiveContainer width="100%" height={260}>
@@ -485,8 +548,10 @@ export default function ParentChildProgress() {
                           <h2>Topic Coverage</h2>
                           <p>Topics attempted and best recorded quiz scores.</p>
                         </div>
-                        {topicCoverage.length === 0 ? (
-                          <div className="fallback-note">No game progress data available yet. Progress will appear here once the student starts playing the game.</div>
+                        {topicDetailsError ? (
+                          <div className="fallback-note">{topicDetailsError}</div>
+                        ) : topicCoverage.length === 0 ? (
+                          <div className="fallback-note">No topic results recorded for this child.</div>
                         ) : (
                           <div className="child-topic-list">
                             {topicCoverage.map((topic) => (

@@ -217,7 +217,7 @@ test('parent child routes use the authenticated parent instead of spoofed query 
   let childListParams = null;
   let protectedResultLookup = false;
   queryHandler = async (sql, params) => {
-    if (sql.includes('from public.teacher_student_relationships tsr') && sql.includes('left join public.game_results gr on gr.resolved_student_id = s.id')) {
+    if (sql.includes('from public.accounts a') && sql.includes('left join lateral') && sql.includes('student_game_progress')) {
       childListParams = params;
       return resultRows([]);
     }
@@ -312,6 +312,7 @@ test('grounded insight endpoint returns a current cache without another provider
     current_quest: 'Fraction Forest',
   };
   const results = Array.from({ length: 5 }, (_, index) => ({
+    resolved_student_id: 44,
     score: index < 3 ? 1 : 0,
     total_items: 1,
     difficulty: 'Medium',
@@ -370,6 +371,7 @@ test('grounded insight requires five valid results before contacting OpenAI', as
     }
     if (sql.includes('from public.game_results')) {
       return resultRows(Array.from({ length: 4 }, (_, index) => ({
+        resolved_student_id: 44,
         score: index < 2 ? 1 : 0,
         total_items: 1,
         difficulty: 'Medium',
@@ -424,6 +426,7 @@ test('invalid grounded provider output is not cached and deterministic progress 
   };
   const results = Array.from({ length: 5 }, (_, index) => ({
     score: index < 3 ? 1 : 0,
+    resolved_student_id: 44,
     total_items: 1,
     difficulty: 'Medium',
     math_topic: 'Fractions',
@@ -499,6 +502,7 @@ test('valid grounded output caches by fingerprint and regenerates a stale entry'
   };
   const results = Array.from({ length: 5 }, (_, index) => ({
     score: index < 3 ? 1 : 0,
+    resolved_student_id: 44,
     total_items: 1,
     difficulty: index < 3 ? 'Easy' : 'Medium',
     math_topic: 'Fractions',

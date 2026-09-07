@@ -39,7 +39,8 @@ test('calculates factual accuracy, difficulty, topic, and playtime from valid re
     { topic: 'Fractions', correctAnswers: 1, totalQuestions: 2, accuracy: 50 },
   ]);
   assert.equal(metrics.playtimeMinutes, 20);
-  assert.equal(metrics.totalProgress, 63);
+  assert.equal(metrics.totalProgress, null);
+  assert.equal(metrics.reportedTotalProgress, 63);
   assert.equal(metrics.gameScore, 25);
   assert.equal(metrics.completedQuests, 2);
   assert.equal(metrics.currentQuest, 'Fraction Forest');
@@ -88,4 +89,28 @@ test('keeps no-data difficulty distinct from a recorded zero-percent result', ()
   assert.equal(metrics.difficultyBreakdown.easy.accuracy, 0);
   assert.equal(metrics.difficultyBreakdown.medium.accuracy, null);
   assert.equal(metrics.difficultyBreakdown.hard.accuracy, null);
+});
+
+test('current gameplay difficulty stays separate from historical answer performance and legacy progress', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    progress: { current_map: 'oak_leaf_village', difficulty_level: 'Hard', progress_percentage: 75 },
+    quizSessions: [{ score: 0, total_items: 1, difficulty: 'Hard' }],
+  });
+  assert.equal(metrics.currentDifficulty, 'Easy');
+  assert.equal(metrics.difficultyBreakdown.easy.accuracy, null);
+  assert.equal(metrics.difficultyBreakdown.hard.accuracy, 0);
+  assert.equal(metrics.totalProgress, null);
+  assert.equal(metrics.reportedTotalProgress, 75);
+  assert.equal(metrics.totalProgressVerified, false);
+  assert.equal(metrics.totalProgressSource, 'legacy_client_snapshot');
+});
+
+test('three correct answers out of four cannot establish total game progress', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    progress: { progress_percentage: 75, correct_answers: 3, total_questions: 4 },
+  });
+  assert.equal(metrics.accuracy, 75);
+  assert.equal(metrics.totalProgress, null);
+  assert.equal(metrics.reportedTotalProgress, 75);
+  assert.equal(metrics.totalProgressUnavailableReason, 'full_game_milestones_unverified');
 });

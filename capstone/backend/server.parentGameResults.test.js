@@ -957,9 +957,10 @@ test('parent game results routes and access middleware', async (t) => {
 
   await t.test('parent children endpoint returns a clean empty-progress shape when no game results exist yet', async () => {
     setQueryHandler(async (sql) => {
-      if (sql.includes('from public.teacher_student_relationships tsr') && sql.includes('left join public.game_results gr on gr.resolved_student_id = s.id')) {
+      if (sql.includes('from public.accounts a') && sql.includes('left join lateral') && sql.includes('student_game_progress')) {
         return resultRows([{
           id: 44,
+          student_id: 44,
           name: 'Ava Santos',
           student_name: 'Ava Santos',
           email: 'ava@example.com',
@@ -988,7 +989,7 @@ test('parent game results routes and access middleware', async (t) => {
   await t.test('parent children keeps canonical profile Section authoritative and returns truthful per-child summary metrics', async () => {
     let childrenSql = '';
     setQueryHandler(async (sql) => {
-      if (sql.includes('from public.teacher_student_relationships tsr') && sql.includes('left join public.game_results gr on gr.resolved_student_id = s.id')) {
+      if (sql.includes('from public.accounts a') && sql.includes('left join lateral') && sql.includes('student_game_progress')) {
         childrenSql = sql;
         return resultRows([
           {
@@ -1001,6 +1002,7 @@ test('parent game results routes and access middleware', async (t) => {
             total_quizzes: 3,
             accuracy: '80.00',
             completion_percentage: '42.00',
+            progress_percentage: '42.00',
           },
           {
             id: 45,
@@ -1015,6 +1017,13 @@ test('parent game results routes and access middleware', async (t) => {
           },
         ]);
       }
+      if (sql.includes('from public.game_results') && sql.includes('any($1::integer[])')) {
+        return resultRows([
+          { resolved_student_id: 44, score: 1, total_items: 1, difficulty: 'Easy' },
+          { resolved_student_id: 44, score: 1, total_items: 1, difficulty: 'Easy' },
+          { resolved_student_id: 44, score: 2, total_items: 3, difficulty: 'Easy' },
+        ]);
+      }
       if (sql.includes('count(gr.id)::integer as unlinked_count')) return resultRows([{ unlinked_count: 0 }]);
       return emptyResult;
     });
@@ -1024,14 +1033,13 @@ test('parent game results routes and access middleware', async (t) => {
     });
 
     assert.equal(response.status, 200);
-    assert.equal(response.body.children[0].accuracy, '80.00');
-    assert.equal(response.body.children[0].completion_percentage, '42.00');
+    assert.equal(response.body.children[0].accuracy, 80);
+    assert.equal(response.body.children[0].completion_percentage, null);
+    assert.equal(response.body.children[0].metrics.reportedTotalProgress, 42);
     assert.equal(response.body.children[1].accuracy, null);
     assert.equal(response.body.children[1].completion_percentage, null);
-    assert.match(childrenSql, /coalesce\(p\.grade_level, s\.grade_level\) as grade_level/);
-    assert.match(childrenSql, /nullif\(s\.section, ''\) as section/);
-    assert.match(childrenSql, /as accuracy/);
-    assert.match(childrenSql, /as completion_percentage/);
+    assert.match(childrenSql, /coalesce\(nullif\(a\.grade_level, ''\), p\.grade_level\) as grade_level/);
+    assert.match(childrenSql, /then nullif\(a\.section, ''\)/);
   });
 
   await t.test('student analytics detail only uses the requested linked child data', async () => {
@@ -1055,11 +1063,11 @@ test('parent game results routes and access middleware', async (t) => {
           progress_percentage: 60,
         }]);
       }
-      if (sql.includes('from public.game_results') && sql.includes('where resolved_student_id = $1')) {
-        queriedStudentIds.push(params[0]);
+      if (sql.includes('from public.game_results') && sql.includes('any($1::integer[])')) {
+        queriedStudentIds.push(...params[0]);
         return resultRows([
-          { math_topic: 'Fractions', difficulty: 'Normal', percentage: 60, score: 6, total_items: 10, played_at: '2026-05-20T00:00:00Z' },
-          { math_topic: 'Fractions', difficulty: 'Normal', percentage: 70, score: 7, total_items: 10, played_at: '2026-05-21T00:00:00Z' },
+          { resolved_student_id: 44, math_topic: 'Fractions', difficulty: 'Normal', percentage: 60, score: 6, total_items: 10, played_at: '2026-05-20T00:00:00Z' },
+          { resolved_student_id: 44, math_topic: 'Fractions', difficulty: 'Normal', percentage: 70, score: 7, total_items: 10, played_at: '2026-05-21T00:00:00Z' },
         ]);
       }
       if (sql.includes('from public.activity_logs') && sql.includes('where student_id = $1')) {
@@ -1505,11 +1513,11 @@ test('student analytics derives difficulty recommendations from recorded questio
         total_questions: 0,
       }]);
     }
-    if (sql.includes('from public.game_results') && sql.includes('where resolved_student_id = $1')) {
+    if (sql.includes('from public.game_results') && sql.includes('any($1::integer[])')) {
       return resultRows([
-        { difficulty: 'Easy', score: 9, total_items: 10, math_topic: 'Fractions' },
-        { difficulty: 'Normal', score: 8, total_items: 10, math_topic: 'Fractions' },
-        { difficulty: 'Hard', score: 2, total_items: 10, math_topic: 'Fractions' },
+        { resolved_student_id: 44, difficulty: 'Easy', score: 9, total_items: 10, math_topic: 'Fractions' },
+        { resolved_student_id: 44, difficulty: 'Normal', score: 8, total_items: 10, math_topic: 'Fractions' },
+        { resolved_student_id: 44, difficulty: 'Hard', score: 2, total_items: 10, math_topic: 'Fractions' },
       ]);
     }
     if (sql.includes('from public.activity_logs') && sql.includes('where student_id = $1')) {

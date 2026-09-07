@@ -113,7 +113,7 @@ function addRecordedPerformanceClaims(catalog, input) {
   if (isFiniteNumber(input.game_score)) {
     addPerformanceClaim(catalog, 'game_score', `Recorded game score is ${formatNumber(input.game_score)}.`);
   }
-  if (isFiniteNumber(input.total_progress)) {
+  if (input.total_progress_verified === true && isFiniteNumber(input.total_progress)) {
     addPerformanceClaim(catalog, 'total_progress', `Recorded total progress is ${formatPercentage(input.total_progress)}.`);
   }
   if (isNonNegativeInteger(input.completed_quests)) {
@@ -127,6 +127,9 @@ function addRecordedPerformanceClaims(catalog, input) {
   }
   const currentQuest = asSafeQuestLabel(input.current_quest);
   if (currentQuest) addPerformanceClaim(catalog, 'current_quest', `Current quest: ${currentQuest}.`);
+  if (['Easy', 'Normal', 'Difficult'].includes(input.current_difficulty)) {
+    addPerformanceClaim(catalog, 'current_difficulty', `Current gameplay difficulty is ${input.current_difficulty}.`);
+  }
   if (isFiniteNumber(input.playtime_minutes)) {
     addPerformanceClaim(catalog, 'playtime_minutes', `Recorded completed playtime is ${formatNumber(input.playtime_minutes)} minutes.`);
   }

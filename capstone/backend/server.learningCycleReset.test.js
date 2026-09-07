@@ -160,6 +160,7 @@ test('learning-cycle migration is additive and retains historical monitoring tab
 
 test('current-cycle reads exclude pre-reset progress and results without hiding historical monitoring', () => {
   const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const evidenceSource = fs.readFileSync(path.join(__dirname, 'studentAnalyticsEvidence.service.js'), 'utf8');
   const canonicalProgress = source.slice(
     source.indexOf('const buildCanonicalStudentProgressQuery'),
     source.indexOf('const calculateGameResultPercentage')
@@ -179,8 +180,10 @@ test('current-cycle reads exclude pre-reset progress and results without hiding 
 
   assert.match(canonicalProgress, /progress\.updated_at\s*>=\s*a\.current_learning_cycle_started_at/i);
   assert.match(topAchievers, /p\.updated_at\s*>=\s*a\.current_learning_cycle_started_at/i);
-  assert.match(parentChildren, /gr\.played_at\s*>=\s*s\.current_learning_cycle_started_at/i);
-  assert.match(studentDetail, /played_at\s*>=\s*\$2/i);
+  assert.match(parentChildren, /loadStudentAnalyticsEvidence/);
+  assert.match(studentDetail, /loadStudentAnalyticsEvidence/);
+  assert.match(evidenceSource, /gr\.played_at\s*>=\s*student\.current_learning_cycle_started_at/i);
+  assert.match(evidenceSource, /ps\.learning_cycle_version/);
   assert.match(studentDetail, /activity_timestamp\s*>=\s*\$2/i);
   const activityLogRoute = source.match(/app\.get\('\/api\/activity-logs'[\s\S]*?\n\}\);\r?\n\r?\nconst parseActivityDurationSeconds/)?.[0] || '';
   const playtimeList = source.slice(source.indexOf('const handlePlaytimeListRequest'), source.indexOf("app.post('/api/playtime/start'"));

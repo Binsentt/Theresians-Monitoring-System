@@ -39,6 +39,11 @@ const selection = (overrides = {}) => ({
   ...overrides,
 });
 
+test('unverified legacy completion never becomes a permitted grounded progress claim', () => {
+  const catalog = buildGroundedClaimCatalog({ ...input, total_progress: 75, total_progress_verified: false });
+  assert.equal(catalog.permittedClaimIds.performance.includes('total_progress'), false);
+});
+
 test('catalog renders exact supported percentage, count, and current quest facts', () => {
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(validSelection, catalog);

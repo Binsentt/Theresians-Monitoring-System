@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   normalizePlaytimeStatus,
   resolveDifficultyFromScene,
+  resolveCurrentDifficulty,
   sortRowsByStudentName,
 } = require('./progressScene.utils');
 
@@ -13,6 +14,15 @@ test('resolves difficulty from Godot scene and map fields only', () => {
   assert.equal(resolveDifficultyFromScene({ currentScene: 'pinehill_village.tscn' }), 'Difficult');
   assert.equal(resolveDifficultyFromScene({ scene: 'unknown_scene.tscn', difficulty_level: 'Easy' }), 'Unknown');
   assert.equal(resolveDifficultyFromScene({ difficulty_level: 'Easy' }), 'Unknown');
+});
+
+test('current difficulty uses verified playable context before validated saved battle scope', () => {
+  for (const scene of ['res://interiors/player_house.tscn', 'res://interiors/players_house.tscn', 'res://interiors/teacher_house.tscn', 'res://world/player_house_outside_door.tscn', 'res://world/teacher_house_outside_door.tscn', 'res://world/npc_house_outside_door.tscn']) {
+    assert.equal(resolveCurrentDifficulty({ current_scene: scene, difficulty_level: 'Difficult' }), 'Easy');
+  }
+  assert.equal(resolveCurrentDifficulty({ current_map: 'res://scenes/2nd Village/Pinehill Village.tscn', difficulty_level: 'Easy' }), 'Difficult');
+  assert.equal(resolveCurrentDifficulty({ current_scene: 'res://Battle-Enemy/battle.tscn', difficulty_level: 'Normal' }), 'Normal');
+  assert.equal(resolveCurrentDifficulty({ current_scene: 'unknown.tscn', difficulty_level: 'nonsense' }), 'Unknown');
 });
 
 test('normalizes screen-time statuses without exposing Auto Save labels', () => {

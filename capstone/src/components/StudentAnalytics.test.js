@@ -47,6 +47,57 @@ describe('StudentAnalytics defensive rendering', () => {
     console.error.mockRestore();
   });
 
+  test.each(['admin', 'teacher', 'parent_teacher'])('shows authoritative current difficulty for %s', async (role) => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role }));
+    global.fetch = jest.fn(() => jsonResponse({
+      progress: { student_id: 44, student_name: 'Ava Santos', difficulty_level: 'Difficult' },
+      metrics: { currentDifficulty: 'Easy' },
+      aiInsight: { status: 'insufficient_data' },
+    }));
+
+    await act(async () => root.render(<StudentAnalytics />));
+
+    const difficulty = Array.from(container.querySelectorAll('.student-profile-meta > div'))
+      .find((item) => item.querySelector('span')?.textContent === 'Current Difficulty');
+    expect(difficulty.querySelector('strong').textContent).toBe('Easy');
+  });
+
+  test('preserves an unavailable canonical current quest instead of showing a stale alias', async () => {
+    global.fetch = jest.fn(() => jsonResponse({
+      progress: { student_id: 44, student_name: 'Ava Santos', current_quest: 'Stale quest alias' },
+      metrics: { currentQuest: null },
+      aiInsight: { status: 'insufficient_data' },
+    }));
+
+    await act(async () => root.render(<StudentAnalytics />));
+
+    const quest = Array.from(container.querySelectorAll('.student-profile-meta > div'))
+      .find((item) => item.querySelector('span')?.textContent === 'Current Quest');
+    expect(quest.querySelector('strong').textContent).toBe('Not available');
+    expect(container.textContent).not.toContain('Stale quest alias');
+  });
+
+  test('explains unavailable overall progress while keeping recorded accuracy separate', async () => {
+    global.fetch = jest.fn(() => jsonResponse({
+      progress: { student_id: 44, student_name: 'Ava Santos', progress_percentage: 75 },
+      metrics: {
+        totalProgress: null, reportedTotalProgress: 75, totalProgressUnavailableReason: 'full_game_milestones_unverified',
+        accuracy: 75, correctAnswers: 3, incorrectAnswers: 1,
+      },
+      aiInsight: { status: 'not_generated' },
+    }));
+
+    await act(async () => root.render(<StudentAnalytics />));
+
+    const progressCard = Array.from(container.querySelectorAll('.student-metric-card'))
+      .find((card) => card.textContent.includes('Total Progress'));
+    expect(progressCard.querySelector('strong').textContent).toBe('Not available');
+    expect(progressCard.textContent).toContain('Progress unavailable: full-game milestones are not yet verified.');
+    const accuracyCard = Array.from(container.querySelectorAll('.student-metric-card'))
+      .find((card) => card.textContent.includes('Accuracy'));
+    expect(accuracyCard.querySelector('strong').textContent).toBe('75%');
+  });
+
   test('renders defaults instead of crashing on malformed progress detail values', async () => {
     global.fetch = jest.fn(() => jsonResponse({
       progress: {

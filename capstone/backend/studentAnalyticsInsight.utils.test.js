@@ -51,6 +51,7 @@ test('uses only minimized deterministic facts and policy version in grounded ins
 
   assert.deepEqual(input, {
     grounding_policy_version: GROUNDING_POLICY_VERSION,
+    metrics_definition_version: 'student-metrics-v2',
     grade: 'Grade 3',
     results_recorded: 5,
     correct_answers: 3,
@@ -58,9 +59,12 @@ test('uses only minimized deterministic facts and policy version in grounded ins
     total_questions: 5,
     accuracy: 60,
     game_score: 12,
-    total_progress: 42,
+    total_progress: null,
+    total_progress_verified: false,
+    total_progress_source: 'unavailable',
     completed_quests: 1,
     current_quest: 'Fraction Forest',
+    current_difficulty: null,
     difficulty_accuracy: { easy: 100, medium: 50, hard: null },
     topic_performance: [{ topic: 'Fractions', accuracy: 60, correct_answers: 3, total_questions: 5 }],
     playtime_minutes: 24,
@@ -81,6 +85,17 @@ test('uses a stable cache fingerprint and invalidates pre-policy and changed met
   assert.equal(buildInsightFingerprint(input), buildInsightFingerprint(input));
   assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(changed));
   assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(prePolicyInput));
+});
+
+test('metrics semantics and current difficulty are fingerprinted without changing the grounding policy', () => {
+  const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics: { ...metrics, currentDifficulty: 'Easy', totalProgressVerified: false } });
+  assert.equal(input.grounding_policy_version, 'grounded-claims-v1');
+  assert.equal(input.metrics_definition_version, 'student-metrics-v2');
+  assert.equal(input.current_difficulty, 'Easy');
+  assert.equal(input.total_progress_verified, false);
+  const legacy = { ...input };
+  delete legacy.metrics_definition_version;
+  assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(legacy));
 });
 
 test('uses a mocked claim selection and returns only backend-rendered text', async () => {

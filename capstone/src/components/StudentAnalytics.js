@@ -16,7 +16,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { buildStudentProgressDetailUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
 import { buildAuthHeaders } from './session.utils';
-import { normalizeDifficultyDisplay, normalizeDisplayList, safeDisplayText } from './studentProgress.utils';
+import { getTotalProgressNote, normalizeDisplayList, resolveCurrentDifficulty, safeDisplayText } from './studentProgress.utils';
 import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { usePreparedReportPrint } from './usePreparedReportPrint';
@@ -151,14 +151,17 @@ export default function StudentAnalytics() {
   const resolvedStudentId = safeDisplayText(progress?.game_student_id, 'Not linked');
   const grade = safeDisplayText(progress?.grade_level || progress?.grade, 'N/A');
   const section = safeDisplayText(progress?.section, 'Not assigned');
-  const currentQuest = safeDisplayText(metrics?.currentQuest || progress?.current_quest, 'Not available');
-  const currentDifficulty = normalizeDifficultyDisplay(progress?.difficulty_level || progress?.difficulty);
+  const currentQuest = safeDisplayText(
+    metrics?.currentQuest !== undefined ? metrics.currentQuest : progress?.current_quest,
+    'Not available'
+  );
+  const currentDifficulty = resolveCurrentDifficulty({ ...progress, metrics });
   const currentScene = safeDisplayText(
     progress?.current_scene || progress?.currentScene || progress?.scene || progress?.current_map || progress?.currentMap,
     'Unknown'
   );
   const metricCards = [
-    { label: 'Total Progress', value: formatPercent(metrics?.totalProgress), icon: Target, tone: 'blue' },
+    { label: 'Total Progress', value: formatPercent(metrics?.totalProgress), note: getTotalProgressNote(metrics), icon: Target, tone: 'blue' },
     { label: 'Accuracy', value: formatPercent(metrics?.accuracy), icon: BarChart3, tone: 'green' },
     { label: 'Correct Answers', value: formatCount(metrics?.correctAnswers), icon: CheckCircle2, tone: 'green' },
     { label: 'Incorrect Answers', value: formatCount(metrics?.incorrectAnswers), icon: XCircle, tone: 'red' },
@@ -250,11 +253,12 @@ export default function StudentAnalytics() {
           </section>
 
           <section className="student-metrics-grid" aria-label="Student analytics summary">
-            {metricCards.map(({ label, value, icon: Icon, tone }) => (
+            {metricCards.map(({ label, value, note, icon: Icon, tone }) => (
               <div className="student-metric-card" key={label}>
                 <span className={`student-metric-icon ${tone}`}><Icon size={20} aria-hidden="true" /></span>
                 <strong>{value}</strong>
                 <span>{label}</span>
+                {note && <small>{note}</small>}
               </div>
             ))}
           </section>

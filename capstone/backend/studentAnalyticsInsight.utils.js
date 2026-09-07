@@ -18,6 +18,7 @@ function buildGroundedInsightInput({ gradeLevel, metrics = {} } = {}) {
   const difficulty = metrics.difficultyBreakdown || {};
   return {
     grounding_policy_version: GROUNDING_POLICY_VERSION,
+    metrics_definition_version: 'student-metrics-v2',
     grade: asText(gradeLevel) || null,
     results_recorded: metrics.validResultCount ?? null,
     correct_answers: metrics.correctAnswers ?? null,
@@ -25,9 +26,12 @@ function buildGroundedInsightInput({ gradeLevel, metrics = {} } = {}) {
     total_questions: metrics.totalQuestions ?? null,
     accuracy: metrics.accuracy ?? null,
     game_score: metrics.gameScore ?? null,
-    total_progress: metrics.totalProgress ?? null,
+    total_progress: metrics.totalProgressVerified === true ? metrics.totalProgress ?? null : null,
+    total_progress_verified: metrics.totalProgressVerified === true,
+    total_progress_source: metrics.totalProgressSource || 'unavailable',
     completed_quests: metrics.completedQuests ?? null,
     current_quest: metrics.currentQuest ?? null,
+    current_difficulty: metrics.currentDifficulty ?? null,
     difficulty_accuracy: {
       easy: difficulty.easy?.accuracy ?? null,
       medium: difficulty.medium?.accuracy ?? null,

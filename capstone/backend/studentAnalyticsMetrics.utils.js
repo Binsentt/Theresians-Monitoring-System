@@ -1,3 +1,5 @@
+const { resolveCurrentDifficulty } = require('./progressScene.utils');
+
 const toFiniteNumber = (value) => {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
@@ -91,6 +93,7 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
   const completedQuests = toNonNegativeInteger(progress.total_quests_completed);
   const gameScore = toFiniteNumber(progress.score);
   const currentQuest = normalizeTopic(progress.current_quest) || null;
+  const currentDifficulty = resolveCurrentDifficulty(progress);
   const completedPlaytime = (Array.isArray(playtimeSessions) ? playtimeSessions : [])
     .filter((session) => String(session?.status || '').trim().toLowerCase() !== 'playing')
     .map((session) => toNonNegativeInteger(session?.total_playtime_minutes))
@@ -116,11 +119,18 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
     totalQuestions,
     accuracy,
     gameScore,
-    totalProgress: totalProgressValue === null ? null : Number(totalProgressValue.toFixed(2)),
+    // The preserved legacy client percentage has no verified full-game milestone
+    // denominator. Keep it traceable without presenting it as game completion.
+    totalProgress: null,
+    reportedTotalProgress: totalProgressValue === null ? null : Number(totalProgressValue.toFixed(2)),
+    totalProgressSource: totalProgressValue === null ? 'unavailable' : 'legacy_client_snapshot',
+    totalProgressVerified: false,
+    totalProgressUnavailableReason: 'full_game_milestones_unverified',
     completedQuests,
     // There is no authoritative total-quest denominator in the current data model.
     questCompletionPercentage: null,
     currentQuest,
+    currentDifficulty: currentDifficulty === 'Unknown' ? null : currentDifficulty,
     difficultyBreakdown,
     topicPerformance,
     playtimeMinutes,

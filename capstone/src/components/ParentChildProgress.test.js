@@ -130,7 +130,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('001234');
     expect(container.textContent).toContain('Grade 3 - Jade');
     expect(container.textContent).toContain('Quiz Sessions');
-    expect(container.textContent).toContain('No game progress data available yet.');
+    expect(container.textContent).toContain('No quiz sessions recorded for this child.');
     expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Reset Progress')).toBe(true);
     expect(container.textContent).not.toContain('My Children');
     expect(mockNavigate).not.toHaveBeenCalledWith('/login');
@@ -287,6 +287,155 @@ describe('ParentChildProgress child selection and game warnings', () => {
 
     expect(container.textContent).toContain('Practice fractions for Ava.');
     expect(container.textContent).not.toContain('Practice shapes for Noah.');
+  });
+
+  test('uses the shared detail current quest instead of a conflicting child or list snapshot', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url.startsWith('/api/students/progress?')) {
+        return jsonResponse([{ student_id: 44, current_quest: 'Earlier list quest' }]);
+      }
+      if (url.startsWith('/api/student-progress/44?')) {
+        return jsonResponse({
+          progress: { student_id: 44, current_quest: 'Earlier detail alias' },
+          metrics: { currentQuest: 'Authoritative current quest', accuracy: 75, totalProgress: null },
+          aiInsight: { status: 'insufficient_data' },
+        });
+      }
+      return successPayloadForUrl(url, {
+        children: [{ id: 44, student_name: 'Ava Santos', current_quest: 'Earlier child query quest' }],
+        unlinked_count: 0,
+      });
+    });
+
+    await act(async () => root.render(<ParentChildProgress />));
+
+    const questCard = Array.from(container.querySelectorAll('.child-progress-stat'))
+      .find((card) => card.querySelector('span')?.textContent === 'Current Quest');
+    expect(questCard.querySelector('strong').textContent).toBe('Authoritative current quest');
+    expect(container.textContent).not.toContain('Earlier child query quest');
+    expect(container.textContent).not.toContain('Earlier list quest');
+  });
+
+  test.each(['parent', 'parent_teacher'])('shows the shared student facts in the %s child view', async (role) => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 19, role }));
+    global.fetch = jest.fn((url) => {
+      if (url.startsWith('/api/student-progress/44?')) {
+        return jsonResponse({
+          progress: { student_id: 44, difficulty_level: 'Difficult' },
+          metrics: {
+            currentQuest: 'Current canonical quest', currentDifficulty: 'Easy',
+            correctAnswers: 3, incorrectAnswers: 1, completedQuests: 1,
+            accuracy: 75, totalProgress: null, reportedTotalProgress: 75,
+            totalProgressUnavailableReason: 'full_game_milestones_unverified',
+            difficultyBreakdown: { easy: { accuracy: 75 }, medium: { accuracy: null }, hard: { accuracy: null } },
+          },
+          aiInsight: { status: 'insufficient_data' },
+        });
+      }
+      return successPayloadForUrl(url, {
+        children: [{ id: 44, student_name: 'Ava Santos' }], unlinked_count: 0,
+      });
+    });
+
+    await act(async () => root.render(<ParentChildProgress />));
+
+    const stats = Object.fromEntries(Array.from(container.querySelectorAll('.child-progress-stat'))
+      .map((card) => [card.querySelector('span')?.textContent, card.querySelector('strong')?.textContent]));
+    expect(stats).toEqual(expect.objectContaining({
+      'Current Quest': 'Current canonical quest', 'Current Difficulty': 'Easy',
+      'Correct Answers': '3', 'Incorrect Answers': '1', 'Completed Quests': '1',
+      Accuracy: '75%', Progress: 'Not available',
+    }));
+    const breakdown = container.querySelector('.child-difficulty-panel');
+    expect(breakdown.textContent).toContain('Easy75%');
+    expect(breakdown.textContent).toContain('NormalNot available');
+    expect(breakdown.textContent).toContain('DifficultNot available');
+    expect(breakdown.textContent).not.toContain('0%');
+    expect(container.textContent).toContain('Progress unavailable: full-game milestones are not yet verified.');
+    expect(container.textContent).not.toContain('No game progress data available yet.');
+  });
+
+  test.each(['quizzes', 'topics'])('keeps authoritative child metrics when %s are unavailable', async (resource) => {
+    global.fetch = jest.fn((url) => {
+      if (url.includes(`/${resource}?`)) return Promise.reject(new Error('Offline optional endpoint failure'));
+      return successPayloadForUrl(url, {
+        children: [{ id: 44, student_name: 'Ava Santos' }], unlinked_count: 0,
+      });
+    });
+
+    await act(async () => root.render(<ParentChildProgress />));
+
+    const accuracy = Array.from(container.querySelectorAll('.child-progress-stat'))
+      .find((card) => card.querySelector('span')?.textContent === 'Accuracy');
+    expect(accuracy.querySelector('strong').textContent).toBe('60%');
+    expect(container.textContent).toContain('Practice fractions for Ava.');
+  });
+
+  test('reloads authoritative detail after resetting the same child learning cycle', async () => {
+    let resetComplete = false;
+    let detailRequests = 0;
+    global.fetch = jest.fn((url) => {
+      if (url.startsWith('/api/student-progress/44/reset?')) {
+        resetComplete = true;
+        return jsonResponse({ success: true });
+      }
+      if (url.startsWith('/api/student-progress/44?')) {
+        detailRequests += 1;
+        return jsonResponse({
+          progress: { student_id: 44 },
+          metrics: { currentQuest: resetComplete ? null : 'Before reset quest', totalProgress: null },
+          aiInsight: { status: 'insufficient_data' },
+        });
+      }
+      return successPayloadForUrl(url, {
+        children: [{ id: 44, student_name: 'Ava Santos' }], unlinked_count: 0,
+      });
+    });
+    await act(async () => root.render(<ParentChildProgress />));
+    expect(container.textContent).toContain('Before reset quest');
+
+    await act(async () => Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Reset Progress').click());
+    await act(async () => {
+      const reason = document.body.querySelector('select[name="learning-cycle-reason"]');
+      reason.value = 'New Lesson';
+      reason.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await act(async () => Array.from(document.body.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Start New Learning Cycle').click());
+
+    expect(detailRequests).toBe(2);
+    expect(container.textContent).not.toContain('Before reset quest');
+  });
+
+  test('does not apply an earlier child insight after the selected child changes', async () => {
+    let finishInsight;
+    const pendingInsight = new Promise((resolve) => { finishInsight = resolve; });
+    global.fetch = jest.fn((url) => {
+      if (url.startsWith('/api/student-progress/44/ai-insight?')) return pendingInsight;
+      return successPayloadForUrl(url, {
+        children: [
+          { id: 44, student_name: 'Ava Santos' },
+          { id: 45, student_name: 'Noah Santos' },
+        ], unlinked_count: 0,
+      });
+    });
+    await act(async () => root.render(<ParentChildProgress />));
+    await act(async () => Array.from(container.querySelectorAll('.child-selector-card'))
+      .find((button) => button.textContent.includes('Ava Santos')).click());
+    await act(async () => Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Generate grounded insight').click());
+    await act(async () => Array.from(container.querySelectorAll('.child-selector-card'))
+      .find((button) => button.textContent.includes('Noah Santos')).click());
+    expect(container.textContent).toContain('Practice shapes for Noah.');
+
+    await act(async () => finishInsight({
+      ok: true,
+      json: async () => ({ status: 'generated', insight: { recommendations: ['Late Ava-only insight.'] } }),
+    }));
+
+    expect(container.textContent).toContain('Practice shapes for Noah.');
+    expect(container.textContent).not.toContain('Late Ava-only insight.');
   });
 
   test('loads only the chosen child after the parent selects from multiple children', async () => {

@@ -2,6 +2,12 @@ const SCENE_DIFFICULTY_MAP = {
   oak_leaf_village: 'Easy',
   city_of_knowledge: 'Normal',
   pinehill_village: 'Difficult',
+  player_house: 'Easy',
+  players_house: 'Easy',
+  teacher_house: 'Easy',
+  player_house_outside_door: 'Easy',
+  teacher_house_outside_door: 'Easy',
+  npc_house_outside_door: 'Easy',
 };
 
 const VALID_PLAYTIME_STATUS_LABELS = {
@@ -56,6 +62,18 @@ const normalizePlaytimeStatus = (status, fallback = 'Offline') => {
   return VALID_PLAYTIME_STATUS_LABELS[key] || VALID_PLAYTIME_STATUS_LABELS[normalizeKey(fallback).replace(/_/g, '')] || 'Offline';
 };
 
+const resolveCurrentDifficulty = (payload = {}) => {
+  const mapDifficulty = resolveDifficultyFromScene({ current_map: payload.current_map || payload.currentMap || payload.map || payload.map_name });
+  if (mapDifficulty !== 'Unknown') return mapDifficulty;
+  const sceneDifficulty = resolveDifficultyFromScene(payload);
+  if (sceneDifficulty !== 'Unknown') return sceneDifficulty;
+  const saved = String(payload.difficulty_level || payload.difficulty || '').trim().toLowerCase();
+  if (saved === 'easy') return 'Easy';
+  if (['normal', 'medium', 'average', 'normal / average'].includes(saved)) return 'Normal';
+  if (['difficult', 'hard'].includes(saved)) return 'Difficult';
+  return 'Unknown';
+};
+
 const getStudentDisplayName = (row = {}) => String(row.student_name || row.child_name || row.name || '').trim();
 
 const sortRowsByStudentName = (rows) => {
@@ -71,5 +89,6 @@ const sortRowsByStudentName = (rows) => {
 module.exports = {
   normalizePlaytimeStatus,
   resolveDifficultyFromScene,
+  resolveCurrentDifficulty,
   sortRowsByStudentName,
 };

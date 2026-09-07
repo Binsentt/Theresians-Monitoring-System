@@ -119,11 +119,13 @@ const {
 const {
   normalizePlaytimeStatus: normalizeMonitoringStatus,
   resolveDifficultyFromScene,
+  resolveCurrentDifficulty,
   sortRowsByStudentName,
 } = require('./progressScene.utils');
 const {
   buildStudentAnalyticsMetrics,
 } = require('./studentAnalyticsMetrics.utils');
+const { loadStudentAnalyticsEvidence, withStudentAnalyticsAliases } = require('./studentAnalyticsEvidence.service');
 const {
   buildGroundedInsightInput,
   buildInsightFingerprint,
@@ -1252,7 +1254,7 @@ const normalizeStudentProgressRow = (row) => {
   const incorrectAnswers = totalQuestions === null || correctAnswers === null
     ? null
     : Math.max(0, totalQuestions - correctAnswers);
-  const difficultyLevel = resolveDifficultyFromScene(row);
+  const difficultyLevel = resolveCurrentDifficulty(row);
   return {
     ...row,
     section: row.section || null,
@@ -1313,7 +1315,7 @@ const buildCanonicalStudentProgressQuery = (lifecycle = 'active') => `
   ) p ON true
   WHERE LOWER(a.role) = 'student'
     AND COALESCE(a.is_archived, false) = false
-    AND ${getStudentProgressArchivePredicate(lifecycle, 'a')}
+    AND ${lifecycle === 'all' ? 'true' : getStudentProgressArchivePredicate(lifecycle, 'a')}
 `;
 
 const calculateGameResultPercentage = ({ score, totalItems }) => {
@@ -3206,7 +3208,7 @@ const buildGradeSummary = (rows) => {
   return Object.entries(grouped).map(([grade, items]) => {
     const averageAvailable = (values) => {
       const available = values
-        .map((value) => Number(value))
+        .map(toNullableNumber)
         .filter((value) => Number.isFinite(value));
       return available.length
         ? Math.round(available.reduce((sum, value) => sum + value, 0) / available.length)
@@ -3299,11 +3301,11 @@ const buildStudentAnalyticsReadiness = ({ progress, quizSessions = [], activityL
       studentName: progress.student_name || progress.name || 'Unknown',
     },
     performanceSignals: {
-      currentScore: Number(progress.score || 0),
-      accuracyRate: Number(progress.accuracy_rate || progress.performance_percentage || 0),
-      progressPercentage: Number(progress.progress_percentage || 0),
-      totalQuestions: Number(progress.total_questions || 0),
-      correctAnswers: Number(progress.correct_answers || 0),
+      currentScore: toNullableNumber(progress.score),
+      accuracyRate: toNullableNumber(progress.accuracy_rate ?? progress.performance_percentage),
+      progressPercentage: toNullableNumber(progress.progress_percentage),
+      totalQuestions: toNullableNumber(progress.total_questions),
+      correctAnswers: toNullableNumber(progress.correct_answers),
     },
     topicMastery,
     weakTopicCandidates,
@@ -5840,7 +5842,7 @@ app.post('/api/game/progress', async (req, res) => {
   const grade_level = req.body?.grade_level || grade;
   const current_scene = req.body?.current_scene || req.body?.currentScene || req.body?.scene || req.body?.scene_name || null;
   const current_map = req.body?.current_map || req.body?.currentMap || req.body?.map || req.body?.map_name || null;
-  const difficulty_level = resolveDifficultyFromScene({ ...req.body, current_scene, current_map });
+  const difficulty_level = resolveCurrentDifficulty({ ...req.body, current_scene, current_map });
   const total_play_time = req.body?.total_play_time ?? req.body?.duration_seconds ?? req.body?.duration;
   const normalizedProgressPayload = {
     ...req.body,
@@ -8016,58 +8018,23 @@ app.get('/api/parent/children', requireParentAnalyticsAccess, async (req, res) =
   try {
     const parentId = Number(req.authenticatedUser.id);
 
-    const childrenResult = await pool.query(
-      `SELECT s.id,
-              s.id AS student_id,
-              s.game_student_id,
-              s.name,
-              s.name AS student_name,
-              s.email,
-              s.progress_archived_at,
-              s.progress_archive_reason,
-              COALESCE(p.grade_level, s.grade_level) AS grade_level,
-              NULLIF(s.section, '') AS section,
-              p.current_quest,
-              p.score,
-              CASE WHEN p.id IS NULL THEN NULL ELSE p.progress_percentage END AS completion_percentage,
-              CASE
-                WHEN COALESCE(SUM(gr.total_items), 0) > 0
-                  THEN ROUND((SUM(gr.score)::NUMERIC / NULLIF(SUM(gr.total_items), 0)) * 100, 2)
-                ELSE NULL
-              END AS accuracy,
-              COUNT(gr.id)::INTEGER AS total_quizzes,
-              MAX(gr.played_at) AS last_quiz_date
-       FROM public.teacher_student_relationships tsr
-       JOIN public.accounts parent
-         ON parent.id = tsr.teacher_id
-        AND COALESCE(parent.is_archived, false) = false
-       JOIN public.accounts s ON s.id = tsr.student_id
-       LEFT JOIN LATERAL (
-         SELECT progress.id, progress.grade_level, progress.section, progress.current_quest,
-                progress.score, progress.progress_percentage
-         FROM public.student_game_progress progress
-         WHERE progress.student_id = s.id
-           AND (
-             s.current_learning_cycle_started_at IS NULL
-             OR progress.updated_at >= s.current_learning_cycle_started_at
-           )
-         ORDER BY progress.updated_at DESC NULLS LAST, progress.id DESC
-         LIMIT 1
-       ) p ON true
-       LEFT JOIN public.game_results gr
-         ON gr.resolved_student_id = s.id
-        AND (
-          s.current_learning_cycle_started_at IS NULL
-          OR gr.played_at >= s.current_learning_cycle_started_at
-        )
-       WHERE tsr.teacher_id = $1
-         AND LOWER(tsr.relationship_type) = 'parent'
-         AND COALESCE(s.is_archived, false) = false
-       GROUP BY s.id, s.progress_archived_at, s.progress_archive_reason,
-                p.id, p.grade_level, p.section, p.current_quest, p.score, p.progress_percentage
-       ORDER BY s.name`,
-      [parentId]
-    );
+    const params = [];
+    const childrenQuery = buildCanonicalStudentProgressQuery('all')
+      + appendAnalyticsScopeFilter({ scope: { type: 'parent', parentId }, params, studentColumn: 'a.id' })
+      + ' ORDER BY a.name, a.id';
+    const evidence = await loadStudentAnalyticsEvidence({
+      progressQuery: childrenQuery, params, normalizeProgress: normalizeStudentProgressRow,
+    }, pool);
+    const children = evidence.map((entry) => ({
+      ...withStudentAnalyticsAliases(entry),
+      id: entry.progress.student_id,
+      name: entry.progress.student_name,
+      email: entry.progress.student_email,
+      completion_percentage: entry.metrics.totalProgress,
+      accuracy: entry.metrics.accuracy,
+      total_quizzes: entry.quizSessions.length,
+      last_quiz_date: entry.quizSessions.at(-1)?.played_at || null,
+    }));
 
     // Unlinked sessions only have the six-digit parent code until a student profile match is made.
     const unlinkedResult = await pool.query(
@@ -8082,7 +8049,7 @@ app.get('/api/parent/children', requireParentAnalyticsAccess, async (req, res) =
     );
 
     res.json({
-      children: childrenResult.rows,
+      children,
       unlinked_count: unlinkedResult.rows[0]?.unlinked_count || 0,
     });
   } catch (err) {
@@ -8202,19 +8169,10 @@ app.get('/api/students/progress', requireAnalyticsAccess, async (req, res) => {
     query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'a.id' });
     query += " ORDER BY LOWER(COALESCE(NULLIF(a.name, ''), NULLIF(p.student_name, ''), '')), a.id ASC";
 
-    const result = await pool.query(query, params);
-    const rows = sortRowsByStudentName(result.rows.map(normalizeStudentProgressRow).map((row) => {
-      const metrics = buildStudentAnalyticsMetrics({ progress: row });
-      return {
-        ...row,
-        correct_answers: metrics.correctAnswers,
-        incorrect_answers: metrics.incorrectAnswers,
-        total_questions: metrics.totalQuestions,
-        accuracy_rate: metrics.accuracy,
-        performance_percentage: metrics.accuracy,
-        difficultyBreakdown: metrics.difficultyBreakdown,
-      };
-    }));
+    const evidence = await loadStudentAnalyticsEvidence({
+      progressQuery: query, params, normalizeProgress: normalizeStudentProgressRow,
+    }, pool);
+    const rows = sortRowsByStudentName(evidence.map(withStudentAnalyticsAliases));
     res.json(rows);
   } catch (err) {
     console.error('Fetch students progress failed:', err.message);
@@ -8229,11 +8187,13 @@ app.get('/api/analytics/overview', requireAnalyticsAccess, async (req, res) => {
     let query = buildCanonicalStudentProgressQuery();
     query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'a.id' });
 
-    const result = await pool.query(query, params);
-    const rows = result.rows.map(normalizeStudentProgressRow).map((row) => {
-      const metrics = buildStudentAnalyticsMetrics({ progress: row });
-      return { ...row, metrics, analysis: generateStudentAnalysis(row) };
-    });
+    const evidence = await loadStudentAnalyticsEvidence({
+      progressQuery: query, params, normalizeProgress: normalizeStudentProgressRow,
+    }, pool);
+    const rows = evidence.map((entry) => ({
+      ...withStudentAnalyticsAliases(entry),
+      analysis: generateStudentAnalysis(entry.progress, entry.quizSessions),
+    }));
 
     const gradeSummary = buildGradeSummary(rows);
     const averageOfAvailable = (values) => {
@@ -8592,34 +8552,11 @@ app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, 
     let progressQuery = buildCanonicalStudentProgressQuery();
     progressQuery += ' AND a.id = $1';
     progressQuery += ' ORDER BY p.last_played DESC NULLS LAST, a.id ASC LIMIT 1';
-    const progressResult = await pool.query(progressQuery, [studentId]);
-    if (progressResult.rows.length === 0) return res.status(404).json({ error: 'Student progress not found' });
-
-    const [quizResult, playtimeResult] = await Promise.all([
-      pool.query(
-        `SELECT math_topic, difficulty, score, total_items, played_at
-         FROM public.game_results
-         WHERE resolved_student_id = $1
-           AND ($2::TIMESTAMPTZ IS NULL OR played_at >= $2)
-         ORDER BY played_at ASC NULLS LAST, id ASC
-         LIMIT 500`,
-        [studentId, progressResult.rows[0].current_learning_cycle_started_at || null]
-      ),
-      pool.query(
-        `SELECT total_playtime_minutes, status
-         FROM public.playtime_sessions
-         WHERE student_id = $1
-         ORDER BY date_played DESC, id DESC
-         LIMIT 500`,
-        [studentId]
-      ),
-    ]);
-    const progress = normalizeStudentProgressRow(progressResult.rows[0]);
-    const metrics = buildStudentAnalyticsMetrics({
-      progress,
-      quizSessions: quizResult.rows,
-      playtimeSessions: playtimeResult.rows,
-    });
+    const [evidence] = await loadStudentAnalyticsEvidence({
+      progressQuery, params: [studentId], normalizeProgress: normalizeStudentProgressRow,
+    }, pool);
+    if (!evidence) return res.status(404).json({ error: 'Student progress not found' });
+    const { progress, metrics } = evidence;
     const input = buildGroundedInsightInput({ gradeLevel: progress.grade_level, metrics });
     const inputFingerprint = buildInsightFingerprint(input);
     const cachedResult = await pool.query(
@@ -8692,45 +8629,23 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
     query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'a.id' });
     query += ' ORDER BY p.last_played DESC NULLS LAST, a.id ASC LIMIT 1';
 
-    const result = await pool.query(query, params);
+    const [evidence] = await loadStudentAnalyticsEvidence({
+      progressQuery: query, params, normalizeProgress: normalizeStudentProgressRow,
+    }, pool);
+    if (!evidence) return res.status(404).json({ error: 'Student progress not found' });
 
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Student progress not found' });
-
-    const progress = normalizeStudentProgressRow(result.rows[0]);
-    const cycleBoundary = progress.current_learning_cycle_started_at || null;
-    const [quizResult, activityResult, playtimeResult] = await Promise.all([
-      pool.query(
-        `SELECT math_topic, difficulty, percentage, score, total_items, played_at
-         FROM public.game_results
-         WHERE resolved_student_id = $1
-           AND ($2::TIMESTAMPTZ IS NULL OR played_at >= $2)
-         ORDER BY played_at ASC NULLS LAST, id ASC
-         LIMIT 100`,
-        [studentId, cycleBoundary]
-      ),
-      pool.query(
-        `SELECT student_id, activity_description, quest_progress, lesson_progress, activity_timestamp, last_played
-         FROM public.activity_logs
-         WHERE student_id = $1
-           AND ($2::TIMESTAMPTZ IS NULL OR activity_timestamp >= $2)
-         ORDER BY activity_timestamp DESC NULLS LAST, id DESC
-         LIMIT 100`,
-        [studentId, cycleBoundary]
-      ),
-      pool.query(
-        `SELECT total_playtime_minutes, status, date_played, end_time
-         FROM public.playtime_sessions
-         WHERE student_id = $1
-         ORDER BY date_played DESC, id DESC
-         LIMIT 100`,
-        [studentId]
-      ),
-    ]);
-    const metrics = buildStudentAnalyticsMetrics({
-      progress,
-      quizSessions: quizResult.rows,
-      playtimeSessions: playtimeResult.rows,
-    });
+    const cycleBoundary = evidence.progress.current_learning_cycle_started_at || null;
+    const activityResult = await pool.query(
+      `SELECT student_id, activity_description, quest_progress, lesson_progress, activity_timestamp, last_played
+       FROM public.activity_logs
+       WHERE student_id = $1
+         AND ($2::TIMESTAMPTZ IS NULL OR activity_timestamp >= $2)
+       ORDER BY activity_timestamp DESC NULLS LAST, id DESC
+       LIMIT 100`,
+      [studentId, cycleBoundary]
+    );
+    const { metrics, quizSessions } = evidence;
+    const progress = withStudentAnalyticsAliases(evidence);
     const insightInput = buildGroundedInsightInput({ gradeLevel: progress.grade_level, metrics });
     const insightFingerprint = buildInsightFingerprint(insightInput);
     const cachedInsightResult = await pool.query(
@@ -8745,10 +8660,10 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
       cachedInsight: cachedInsightResult.rows[0] || null,
       inputFingerprint: insightFingerprint,
     });
-    const analysis = generateStudentAnalysis(progress, quizResult.rows, activityResult.rows);
+    const analysis = generateStudentAnalysis(progress, quizSessions, activityResult.rows);
     const analyticsReadiness = buildStudentAnalyticsReadiness({
       progress,
-      quizSessions: quizResult.rows,
+      quizSessions,
       activityLogs: activityResult.rows,
     });
     res.json({ progress, metrics, analysis, analyticsReadiness, aiInsight });

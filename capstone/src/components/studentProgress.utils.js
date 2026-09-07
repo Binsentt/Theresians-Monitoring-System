@@ -82,6 +82,27 @@ export const resolveDifficultyFromScene = (row = {}) => {
   return 'Unknown';
 };
 
+export const getTotalProgressNote = (metrics) => (
+  metrics?.totalProgress === null && metrics?.totalProgressUnavailableReason === 'full_game_milestones_unverified'
+    ? 'Progress unavailable: full-game milestones are not yet verified.'
+    : ''
+);
+
+export const resolveCurrentDifficulty = (row = {}) => {
+  if (row.metrics?.currentDifficulty !== undefined) {
+    return normalizeDifficultyDisplay(row.metrics.currentDifficulty);
+  }
+  const recordedDifficulty = normalizeDifficultyDisplay(row.difficulty_level || row.difficulty);
+  return ['Easy', 'Normal', 'Difficult'].includes(recordedDifficulty)
+    ? recordedDifficulty
+    : resolveDifficultyFromScene(row);
+};
+
+const toNullableNumber = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  return toFiniteNumber(value, null);
+};
+
 const getStudentDisplayName = (student = {}) => safeDisplayText(
   student.student_name || student.child_name || student.name,
   ''
@@ -98,21 +119,28 @@ export const sortStudentsByName = (students) => {
 };
 
 export const normalizeStudentProgressRow = (row = {}) => {
-  const totalQuestions = Number(row.total_questions);
-  const correctAnswers = Number(row.correct_answers);
-  const hasAnswerTotals = Number.isFinite(totalQuestions) && Number.isFinite(correctAnswers);
+  const metricValue = (key, fallback) => row.metrics?.[key] !== undefined ? row.metrics[key] : fallback;
+  const totalQuestions = toNullableNumber(metricValue('totalQuestions', row.total_questions));
+  const correctAnswers = toNullableNumber(metricValue('correctAnswers', row.correct_answers));
+  const hasAnswerTotals = totalQuestions !== null && correctAnswers !== null;
   const fallbackIncorrectAnswers = hasAnswerTotals ? Math.max(totalQuestions - correctAnswers, 0) : null;
-  const difficultyLevel = resolveDifficultyFromScene(row);
+  const incorrectAnswers = metricValue('incorrectAnswers', row.incorrect_answers);
+  const accuracy = metricValue('accuracy', row.performance_percentage !== undefined ? row.performance_percentage : row.accuracy_rate);
+  const difficultyBreakdown = metricValue('difficultyBreakdown', row.difficultyBreakdown);
+  const difficultyLevel = resolveCurrentDifficulty(row);
 
   return {
     ...row,
     section: row.section || null,
-    incorrect_answers: toFiniteNumber(row.incorrect_answers ?? fallbackIncorrectAnswers, null),
-    performance_percentage: toFiniteNumber(row.performance_percentage ?? row.accuracy_rate, null),
+    current_quest: metricValue('currentQuest', row.current_quest),
+    total_questions: totalQuestions,
+    correct_answers: correctAnswers,
+    incorrect_answers: toNullableNumber(incorrectAnswers === undefined ? fallbackIncorrectAnswers : incorrectAnswers),
+    performance_percentage: toNullableNumber(accuracy),
     difficultyBreakdown: {
-      easy: toFiniteNumber(row.difficultyBreakdown?.easy?.accuracy ?? row.difficultyBreakdown?.easy, null),
-      medium: toFiniteNumber(row.difficultyBreakdown?.medium?.accuracy ?? row.difficultyBreakdown?.medium, null),
-      hard: toFiniteNumber(row.difficultyBreakdown?.hard?.accuracy ?? row.difficultyBreakdown?.hard, null),
+      easy: toNullableNumber(difficultyBreakdown?.easy?.accuracy ?? difficultyBreakdown?.easy),
+      medium: toNullableNumber(difficultyBreakdown?.medium?.accuracy ?? difficultyBreakdown?.medium),
+      hard: toNullableNumber(difficultyBreakdown?.hard?.accuracy ?? difficultyBreakdown?.hard),
     },
     difficulty: difficultyLevel,
     difficulty_level: difficultyLevel,
