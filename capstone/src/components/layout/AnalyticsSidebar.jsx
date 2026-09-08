@@ -68,6 +68,7 @@ const sidebarItems = {
     { key: 'dashboard', label: 'Dashboard', icon: <IconDashboard />, actionKey: 'dashboard', route: '/admin-dashboard' },
     { key: 'student-progress', label: 'Student Progress', icon: <IconProgress />, route: '/admin/student-progress' },
     { key: 'manage-users', label: 'Manage Users', icon: <IconUsers />, route: '/manage-users' },
+    { key: 'id-directory', label: 'ID Directory', icon: <IconUsers />, route: '/admin/id-directory' },
     { key: 'learning-manager', label: 'Lesson & Question Manager', icon: <IconActivity />, route: '/lesson-question-manager' },
     { key: 'announcements', label: 'Announcements', icon: <IconAnnouncement />, route: '/admin/announcements' },
     { key: 'top-achievers', label: 'Top Achievers', icon: <IconAchievers />, route: '/admin/top-achievers' },

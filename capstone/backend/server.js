@@ -715,7 +715,8 @@ const isWebsiteManagedAccountRole = (role) => (
   WEBSITE_MANAGED_ACCOUNT_ROLES.includes(normalizeAccountRole(role))
 );
 
-const accountHasTeacherAccess = (role) => ['teacher', 'parent_teacher'].includes(normalizeAccountRole(role));
+const TEACHER_DIRECTORY_ROLES = ['teacher', 'parent_teacher'];
+const accountHasTeacherAccess = (role) => TEACHER_DIRECTORY_ROLES.includes(normalizeAccountRole(role));
 const accountHasParentAccess = (role) => ['parent', 'parent_teacher'].includes(normalizeAccountRole(role));
 const PLAYTIME_DAILY_LIMIT_MINUTES = 60;
 const PLAYTIME_DAILY_LIMIT_SECONDS = PLAYTIME_DAILY_LIMIT_MINUTES * 60;
@@ -3768,6 +3769,84 @@ app.get('/api/accounts', requireAccountManagementAdmin, async (req, res) => {
     res.json(result.rows.map(serializeUser));
   } catch (err) {
     console.error('Fetch accounts failed:', err.message);
+    res.status(500).json({ error: 'Fetch failed' });
+  }
+});
+
+// The ID Directory is a read-only view over the same authoritative account and
+// relationship records used by Manage Users and Parent Add Child. It deliberately
+// exposes only directory fields, never credentials or profile secrets.
+app.get('/api/admin/id-directory', requireAccountManagementAdmin, async (req, res) => {
+  try {
+    const archived = String(req.query.archived).toLowerCase() === 'true';
+    const archivePredicate = archived
+      ? 'COALESCE(a.is_archived, false) = true'
+      : 'COALESCE(a.is_archived, false) = false';
+    const result = await pool.query(
+      `SELECT a.id,
+              CASE WHEN LOWER(a.role) = 'student' THEN 'student' ELSE 'teacher' END AS directory_type,
+              a.game_student_id AS student_id,
+              a.name AS student_name,
+              a.employee_id AS teacher_id,
+              a.name AS teacher_name,
+              a.email,
+              a.role,
+              a.grade_level,
+              a.section,
+              a.status,
+              a.is_archived,
+              a.created_at,
+              parent_link.parent_name,
+              parent_link.parent_relationship
+       FROM public.accounts a
+       LEFT JOIN LATERAL (
+         SELECT string_agg(DISTINCT parent.name, ', ' ORDER BY parent.name) AS parent_name,
+                string_agg(DISTINCT INITCAP(r.relationship_type), ', ' ORDER BY INITCAP(r.relationship_type)) AS parent_relationship
+         FROM public.teacher_student_relationships r
+         JOIN public.accounts parent ON parent.id = r.teacher_id
+         WHERE r.student_id = a.id
+           AND LOWER(r.relationship_type) = 'parent'
+           AND LOWER(parent.role) IN ('parent', 'parent_teacher')
+       ) parent_link ON TRUE
+       WHERE ${archivePredicate}
+         AND (LOWER(a.role) = 'student' OR LOWER(a.role) = ANY($1::text[]))
+       ORDER BY LOWER(a.name), a.id`,
+      [TEACHER_DIRECTORY_ROLES]
+    );
+
+    const students = [];
+    const teachers = [];
+    result.rows.forEach((row) => {
+      if (row.directory_type === 'student') {
+        students.push({
+          id: row.id,
+          student_id: row.student_id,
+          student_name: row.student_name,
+          grade_level: row.grade_level,
+          section: row.section,
+          parent_name: row.parent_name,
+          parent_relationship: row.parent_relationship,
+          status: row.status,
+          is_archived: !!row.is_archived,
+          created_at: row.created_at,
+        });
+      } else {
+        teachers.push({
+          id: row.id,
+          teacher_id: row.teacher_id,
+          teacher_name: row.teacher_name,
+          email: row.email,
+          role: row.role,
+          status: row.status,
+          is_archived: !!row.is_archived,
+          created_at: row.created_at,
+        });
+      }
+    });
+
+    res.json({ students, teachers, archived });
+  } catch (err) {
+    console.error('Fetch ID Directory failed:', err.message);
     res.status(500).json({ error: 'Fetch failed' });
   }
 });

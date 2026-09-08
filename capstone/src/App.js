@@ -15,6 +15,7 @@ import ParentActivityLog from './components/ParentActivityLog';
 import StudentAnalytics from './components/StudentAnalytics';
 import ScreenTimeMonitoring from './components/ScreenTimeMonitoring';
 import ManageUsers from './components/ManageUsers';
+import AdminIdDirectory from './components/AdminIdDirectory';
 import HomePageScreen from './components/HomePageScreen';
 import ResetPassword from './components/ResetPassword';
 import LoginScreen from './components/LoginScreen';
@@ -100,6 +101,7 @@ function App() {
           <Route path="/admin/screen-time" element={<ScreenTimeMonitoring mode="all" />} />
           <Route path="/admin/activity-log" element={<AdminActivityLog />} />
           <Route path="/admin/announcements" element={<AnnouncementPage mode="admin" />} />
+          <Route path="/admin/id-directory" element={<AdminIdDirectory />} />
 
           {/* Teacher Routes */}
           <Route path="/teacher-dashboard" element={<TeacherDashboard />} />

@@ -1,0 +1,61 @@
+import { normalizeRole } from './manageUsers.utils';
+
+const normalizeText = (value) => String(value ?? '').trim().toLowerCase();
+
+const valueForType = (row, type, field) => {
+  if (type === 'student') {
+    return row?.[field] ?? row?.[`student_${field}`] ?? '';
+  }
+  return row?.[field] ?? row?.[`teacher_${field}`] ?? '';
+};
+
+export const filterDirectoryRows = (rows, filters = {}, type) => {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const idFilter = normalizeText(filters.id);
+  const nameFilter = normalizeText(filters.name);
+  const gradeFilter = normalizeText(filters.grade);
+  const sectionFilter = normalizeText(filters.section);
+  const statusFilter = normalizeText(filters.status);
+  const emailFilter = normalizeText(filters.email);
+  const roleFilter = normalizeText(filters.role);
+
+  return safeRows.filter((row) => {
+    const id = normalizeText(valueForType(row, type, type === 'student' ? 'student_id' : 'teacher_id'));
+    const name = normalizeText(valueForType(row, type, type === 'student' ? 'student_name' : 'teacher_name'));
+    const grade = normalizeText(row?.grade_level ?? row?.gradeLevel);
+    const section = normalizeText(row?.section);
+    const status = normalizeText((row?.is_archived || row?.isArchived)
+      ? 'Archived'
+      : (row?.status || 'Active'));
+    const email = normalizeText(row?.email);
+    const role = normalizeText(row?.role);
+
+    return (!idFilter || id.includes(idFilter))
+      && (!nameFilter || name.includes(nameFilter))
+      && (!gradeFilter || grade.includes(gradeFilter))
+      && (!sectionFilter || section.includes(sectionFilter))
+      && (!statusFilter || status.includes(statusFilter))
+      && (!emailFilter || email.includes(emailFilter))
+      && (!roleFilter || role.includes(roleFilter));
+  });
+};
+
+export const formatDirectoryStatus = (row) => (
+  row?.is_archived || row?.isArchived
+    ? 'Archived'
+    : String(row?.status || '').trim() || 'Active'
+);
+
+export const formatDirectoryRole = (role) => {
+  const normalizedRole = normalizeRole(role);
+  if (!normalizedRole) return '—';
+  if (normalizedRole === 'parent_teacher') return 'Parent/Teacher';
+  return normalizedRole.charAt(0).toUpperCase() + normalizedRole.slice(1);
+};
+
+export const formatDirectoryDate = (value) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
+};
