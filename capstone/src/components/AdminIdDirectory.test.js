@@ -122,6 +122,8 @@ describe('Admin ID Directory', () => {
     expect(container.textContent).toContain('Students (12)');
     expect(container.textContent).toContain('Page 1 of 2');
     expect(container.querySelectorAll('table[aria-label="Student ID Directory"] tbody tr')).toHaveLength(10);
+    const pagination = container.querySelector('.id-directory-pagination');
+    expect(Array.from(container.querySelectorAll('.id-directory-pagination, .id-directory-table-wrap'))[0]).toBe(pagination);
     const next = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Next');
     await act(async () => next.click());
     expect(container.textContent).toContain('Page 2 of 2');
@@ -132,6 +134,86 @@ describe('Admin ID Directory', () => {
     expect(container.textContent).toContain('Students (1)');
     expect(container.textContent).not.toContain('Page 2 of 2');
     expect(container.textContent).toContain('Unique Last Student');
+  });
+
+  test('renders independent Teacher pagination before the table and resets filtered results to page one', async () => {
+    const teachers = Array.from({ length: 12 }, (_, index) => ({
+      ...directoryPayload.teachers[0],
+      id: 200 + index,
+      teacher_id: `T-${String(2000 + index)}`,
+      teacher_name: index === 11 ? 'Unique Last Teacher' : `Teacher ${index + 1}`,
+      email: index === 11 ? 'unique-last@example.com' : `teacher-${index + 1}@example.com`,
+    }));
+    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ ...directoryPayload, teachers }) });
+    await act(async () => root.render(<AdminIdDirectory />));
+
+    const teacherTab = Array.from(container.querySelectorAll('[role="tab"]')).find((tab) => tab.textContent === 'Teachers');
+    await act(async () => teacherTab.click());
+
+    const pagination = container.querySelector('.id-directory-pagination');
+    expect(container.textContent).toContain('Teachers (12)');
+    expect(container.textContent).toContain('Page 1 of 2');
+    expect(container.querySelectorAll('table[aria-label="Teacher ID Directory"] tbody tr')).toHaveLength(10);
+    expect(Array.from(container.querySelectorAll('.id-directory-pagination, .id-directory-table-wrap'))[0]).toBe(pagination);
+
+    const next = Array.from(pagination.querySelectorAll('button')).find((button) => button.textContent === 'Next');
+    await act(async () => next.click());
+    expect(container.textContent).toContain('Page 2 of 2');
+    expect(container.querySelectorAll('table[aria-label="Teacher ID Directory"] tbody tr')).toHaveLength(2);
+
+    const emailFilter = container.querySelectorAll('[aria-label="Teacher ID filters"] input')[2];
+    await act(async () => setInputValue(emailFilter, 'unique-last@example.com'));
+    expect(container.textContent).toContain('Teachers (1)');
+    expect(container.textContent).not.toContain('Page 2 of 2');
+    expect(container.textContent).toContain('Unique Last Teacher');
+  });
+
+  test('switching tabs resets both independent directory pages to page one', async () => {
+    const students = Array.from({ length: 12 }, (_, index) => ({
+      ...directoryPayload.students[0], id: 300 + index, student_id: `0030${String(index).padStart(4, '0')}`, student_name: `Student ${index + 1}`,
+    }));
+    const teachers = Array.from({ length: 12 }, (_, index) => ({
+      ...directoryPayload.teachers[0], id: 400 + index, teacher_id: `T-${3000 + index}`, teacher_name: `Teacher ${index + 1}`,
+    }));
+    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ students, teachers }) });
+    await act(async () => root.render(<AdminIdDirectory />));
+
+    const clickNext = async () => {
+      const next = Array.from(container.querySelectorAll('.id-directory-pagination button')).find((button) => button.textContent === 'Next');
+      await act(async () => next.click());
+    };
+    const tab = (label) => Array.from(container.querySelectorAll('[role="tab"]')).find((button) => button.textContent === label);
+
+    await clickNext();
+    expect(container.textContent).toContain('Page 2 of 2');
+    await act(async () => tab('Teachers').click());
+    expect(container.textContent).toContain('Page 1 of 2');
+    await clickNext();
+    expect(container.textContent).toContain('Page 2 of 2');
+    await act(async () => tab('Students').click());
+    expect(container.textContent).toContain('Page 1 of 2');
+  });
+
+  test('refreshing with fewer rows clamps the rendered directory without a phantom page', async () => {
+    const students = Array.from({ length: 12 }, (_, index) => ({
+      ...directoryPayload.students[0], id: 500 + index, student_id: `0050${String(index).padStart(4, '0')}`, student_name: `Student ${index + 1}`,
+    }));
+    const reducedStudents = students.slice(0, 5);
+    global.fetch
+      .mockReset()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...directoryPayload, students }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...directoryPayload, students: reducedStudents }) });
+    await act(async () => root.render(<AdminIdDirectory />));
+
+    const next = Array.from(container.querySelectorAll('.id-directory-pagination button')).find((button) => button.textContent === 'Next');
+    await act(async () => next.click());
+    expect(container.textContent).toContain('Page 2 of 2');
+
+    await act(async () => window.dispatchEvent(new Event('focus')));
+
+    expect(container.querySelector('.id-directory-pagination')).toBeNull();
+    expect(container.querySelectorAll('table[aria-label="Student ID Directory"] tbody tr')).toHaveLength(5);
+    expect(container.textContent).not.toContain('Page 2 of 2');
   });
 
   test('refreshes from the authoritative source when the page regains focus', async () => {

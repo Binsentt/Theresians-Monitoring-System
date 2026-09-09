@@ -252,7 +252,11 @@ export default function AdminIdDirectory() {
                 role="tab"
                 aria-selected={activeTab === 'students'}
                 className={activeTab === 'students' ? 'active' : ''}
-                onClick={() => setActiveTab('students')}
+                onClick={() => {
+                  setActiveTab('students');
+                  setStudentPage(1);
+                  setTeacherPage(1);
+                }}
               >
                 Students
               </button>
@@ -261,7 +265,11 @@ export default function AdminIdDirectory() {
                 role="tab"
                 aria-selected={activeTab === 'teachers'}
                 className={activeTab === 'teachers' ? 'active' : ''}
-                onClick={() => setActiveTab('teachers')}
+                onClick={() => {
+                  setActiveTab('teachers');
+                  setStudentPage(1);
+                  setTeacherPage(1);
+                }}
               >
                 Teachers
               </button>
@@ -281,8 +289,8 @@ export default function AdminIdDirectory() {
                 )}
                 contentClassName="id-directory-section-content"
               >
-                <StudentDirectoryTable rows={paginatedStudents.rows} />
                 <DirectoryPagination page={paginatedStudents} setPage={setStudentPage} />
+                <StudentDirectoryTable rows={paginatedStudents.rows} />
               </ContentSection>
             ) : (
               <ContentSection
@@ -298,8 +306,8 @@ export default function AdminIdDirectory() {
                 )}
                 contentClassName="id-directory-section-content"
               >
-                <TeacherDirectoryTable rows={paginatedTeachers.rows} />
                 <DirectoryPagination page={paginatedTeachers} setPage={setTeacherPage} />
+                <TeacherDirectoryTable rows={paginatedTeachers.rows} />
               </ContentSection>
             )}
           </PageContent>

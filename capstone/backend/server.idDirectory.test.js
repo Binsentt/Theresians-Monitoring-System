@@ -58,6 +58,13 @@ const requestJson = async (baseUrl, path, headers = {}) => {
   const response = await fetch(`${baseUrl}${path}`, { headers: { ...headers } });
   return { status: response.status, body: await response.json() };
 };
+const requestWithOptions = async (baseUrl, path, options = {}) => {
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+  });
+  return { status: response.status, body: await response.json() };
+};
 
 const reset = () => {
   queryHandler = async () => emptyResult;
@@ -106,6 +113,19 @@ test('ID Directory is server-protected and returns authoritative student and tea
           status: 'Offline',
           is_archived: false,
         },
+        {
+          id: 22,
+          directory_type: 'student',
+          student_id: '00123457',
+          student_name: 'Orphan Fixture Student',
+          grade_level: 'Grade 4',
+          section: 'St. Anne',
+          parent_name: null,
+          parent_relationship: null,
+          status: 'Active',
+          is_archived: false,
+          progress_archived_at: '2026-09-09T00:00:00.000Z',
+        },
       ]);
     }
     return emptyResult;
@@ -124,8 +144,68 @@ test('ID Directory is server-protected and returns authoritative student and tea
   assert.equal(response.status, 200);
   assert.equal(response.body.students[0].student_id, '00123456');
   assert.equal(response.body.students[0].parent_name, 'Paula Santos');
+  assert.equal(response.body.students[1].student_id, '00123457');
+  assert.equal(response.body.students[1].parent_name, null);
   assert.equal(response.body.teachers[0].teacher_id, 'T-1001');
   assert.match(directorySql, /from public\.accounts a/);
   assert.match(directorySql, /teacher_student_relationships/);
   assert.doesNotMatch(directorySql, /id_directory/);
+  assert.doesNotMatch(directorySql, /progress_archived_at/);
+});
+
+test('Teacher permanent deletion removes its directory ID without deleting Student accounts', async (t) => {
+  reset();
+  let accounts = [
+    { id: 31, role: 'teacher', employee_id: 'T-3100', name: 'Archived Teacher', email: 'teacher@example.com', is_archived: true },
+    { id: 44, role: 'student', game_student_id: '00440001', name: 'Preserved Student', status: 'Active', is_archived: false },
+  ];
+
+  queryHandler = async (sql, params) => {
+    if (sql.includes('left join lateral') && sql.includes('from public.accounts a')) {
+      const archived = sql.includes('coalesce(a.is_archived, false) = true');
+      return resultRows(accounts
+        .filter((account) => Boolean(account.is_archived) === archived)
+        .filter((account) => ['student', 'teacher', 'parent_teacher'].includes(account.role))
+        .map((account) => ({
+          ...account,
+          directory_type: account.role === 'student' ? 'student' : 'teacher',
+          student_id: account.game_student_id || null,
+          student_name: account.role === 'student' ? account.name : null,
+          teacher_id: account.employee_id || null,
+          teacher_name: account.role === 'student' ? null : account.name,
+          parent_name: null,
+          parent_relationship: null,
+        })));
+    }
+    if (sql.startsWith('select id, email, role, is_archived from public.accounts where id = $1')) {
+      const account = accounts.find((entry) => entry.id === Number(params[0]));
+      return resultRows(account ? [account] : []);
+    }
+    if (sql.startsWith('delete from public.accounts where id = $1')) {
+      const deletedId = Number(params[0]);
+      accounts = accounts.filter((account) => account.id !== deletedId);
+      return emptyResult;
+    }
+    return emptyResult;
+  };
+
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  const archivedBefore = await requestJson(baseUrl, '/api/admin/id-directory?archived=true', { Authorization: 'Bearer admin' });
+  assert.equal(archivedBefore.body.teachers.length, 1);
+
+  const deleted = await requestWithOptions(baseUrl, '/api/accounts/31?permanent=true', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer admin' },
+    body: JSON.stringify({ reason: 'Teacher left the school', permanent_confirmation: 'DELETE' }),
+  });
+  assert.equal(deleted.status, 200);
+
+  const archivedAfter = await requestJson(baseUrl, '/api/admin/id-directory?archived=true', { Authorization: 'Bearer admin' });
+  const activeAfter = await requestJson(baseUrl, '/api/admin/id-directory?archived=false', { Authorization: 'Bearer admin' });
+  assert.equal(archivedAfter.body.teachers.length, 0);
+  assert.equal(activeAfter.body.students.length, 1);
+  assert.equal(activeAfter.body.students[0].student_id, '00440001');
 });

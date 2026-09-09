@@ -35,6 +35,9 @@ test('server exposes scoped archive, bulk lifecycle, permanent delete, and canon
   );
   assert.match(permanentDeleteRoute, /progress_archived_at IS NOT NULL/);
   assert.doesNotMatch(permanentDeleteRoute, /progress_archived_at IS NULL/);
+  assert.doesNotMatch(permanentDeleteRoute, /DELETE FROM public\.accounts/i);
+  assert.doesNotMatch(permanentDeleteRoute, /DELETE FROM public\.teacher_student_relationships/i);
+  assert.match(permanentDeleteRoute, /accounts, and relationships remain preserved/i);
 
   const resetRoute = source.slice(
     source.indexOf("app.post('/api/student-progress/:studentId/reset'"),

@@ -109,35 +109,93 @@ test('Parent soft Delete and restore preserve child accounts and relationships',
   assert.equal(queries.some(({ sql }) => sql.startsWith('delete from public.teacher_student_relationships')), false);
 });
 
-test('archived Parent permanent deletion transaction removes owned children and releases IDs', async (t) => {
+test('archived Parent permanent deletion removes owned children from the account-authoritative directory', async (t) => {
   reset();
-  queryHandler = async (sql) => {
+  let accounts = [
+    { id: 19, name: 'Parent User', email: 'parent@example.com', role: 'parent', parent_id: '112832', is_archived: true },
+    { id: 44, name: 'Ava Santos', role: 'student', game_student_id: '00123456', grade_level: 'Grade 1', section: 'Amethyst', status: 'Active', is_archived: false },
+  ];
+  let relationships = [{ id: 7, teacher_id: 19, student_id: 44, relationship_type: 'Parent' }];
+  queryHandler = async (sql, params) => {
+    if (sql.includes('left join lateral') && sql.includes('from public.accounts a')) {
+      const archived = sql.includes('coalesce(a.is_archived, false) = true');
+      return resultRows(accounts
+        .filter((account) => Boolean(account.is_archived) === archived)
+        .filter((account) => ['student', 'teacher', 'parent_teacher'].includes(account.role))
+        .map((account) => ({
+          ...account,
+          directory_type: account.role === 'student' ? 'student' : 'teacher',
+          student_id: account.game_student_id || null,
+          student_name: account.role === 'student' ? account.name : null,
+          teacher_id: account.employee_id || null,
+          teacher_name: account.role === 'student' ? null : account.name,
+          parent_name: null,
+          parent_relationship: null,
+        })));
+    }
     if (sql.startsWith('select id, email, role, is_archived')) {
-      return resultRows([{ id: 19, email: 'parent@example.com', role: 'parent', is_archived: true, parent_id: '112832' }]);
+      const account = accounts.find((entry) => entry.id === Number(params[0]));
+      return resultRows(account ? [account] : []);
     }
     if (sql.includes('from public.accounts') && sql.includes('for update')) {
-      return resultRows([{ id: 19, name: 'Parent User', email: 'parent@example.com', role: 'parent', parent_id: '112832', is_archived: true }]);
+      const account = accounts.find((entry) => entry.id === Number(params[0]));
+      return resultRows(account ? [account] : []);
     }
     if (sql.includes('from public.teacher_student_relationships relationship') && sql.includes('join public.accounts student')) {
-      return resultRows([{ relationship_id: 7, student_id: 44, student_name: 'Ava Santos', game_student_id: '00123456' }]);
+      return resultRows(relationships.map((relationship) => {
+        const student = accounts.find((entry) => entry.id === relationship.student_id);
+        return {
+          relationship_id: relationship.id,
+          student_id: student.id,
+          student_name: student.name,
+          game_student_id: student.game_student_id,
+          grade_level: student.grade_level,
+          section: student.section,
+          is_archived: student.is_archived,
+        };
+      }));
     }
     if (sql.includes('other_parent')) return emptyResult;
-    if (sql.startsWith('delete from public.accounts') && sql.includes('any')) return resultRows([{ id: 44, game_student_id: '00123456' }]);
-    if (sql.startsWith('delete from public.accounts')) return resultRows([{ id: 19, role: 'parent', parent_id: '112832' }]);
+    if (sql.startsWith('delete from public.accounts') && sql.includes('any')) {
+      const deletedIds = params[0].map(Number);
+      const deleted = accounts.filter((account) => deletedIds.includes(account.id));
+      accounts = accounts.filter((account) => !deletedIds.includes(account.id));
+      relationships = relationships.filter((relationship) => !deletedIds.includes(relationship.student_id));
+      return resultRows(deleted.map(({ id, game_student_id }) => ({ id, game_student_id })));
+    }
+    if (sql.startsWith('delete from public.accounts')) {
+      const deletedId = Number(params[0]);
+      const deleted = accounts.find((account) => account.id === deletedId);
+      accounts = accounts.filter((account) => account.id !== deletedId);
+      relationships = relationships.filter((relationship) => relationship.teacher_id !== deletedId);
+      return resultRows(deleted ? [deleted] : []);
+    }
     return emptyResult;
   };
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => { reset(); await close(server); });
 
+  const directoryBefore = await requestJson(baseUrl, '/api/admin/id-directory', {
+    headers: { Authorization: 'Bearer admin' },
+  });
   const response = await requestJson(baseUrl, '/api/accounts/19?permanent=true', {
     method: 'DELETE',
     headers: { Authorization: 'Bearer admin' },
     body: JSON.stringify({ reason: 'Duplicate family account', permanent_confirmation: 'DELETE' }),
   });
+  const directoryAfter = await requestJson(baseUrl, '/api/admin/id-directory', {
+    headers: { Authorization: 'Bearer admin' },
+  });
 
+  assert.equal(directoryBefore.status, 200);
+  assert.deepEqual(directoryBefore.body.students.map((student) => student.student_id), ['00123456']);
   assert.equal(response.status, 200);
   assert.equal(response.body.deleted_child_count, 1);
+  assert.equal(directoryAfter.status, 200);
+  assert.deepEqual(directoryAfter.body.students, []);
+  assert.deepEqual(accounts, []);
+  assert.deepEqual(relationships, []);
   assert.equal(connectCount, 1);
   assert.ok(queries.some(({ sql }) => sql === 'begin'));
   assert.ok(queries.some(({ sql }) => sql.startsWith('delete from public.game_results')));

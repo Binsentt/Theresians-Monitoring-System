@@ -63,6 +63,17 @@ const accountsPayload = [
   }
 ];
 
+const buildManagedAccounts = (count, { archived = false } = {}) => (
+  Array.from({ length: count }, (_, index) => ({
+    id: 100 + index,
+    name: `Managed User ${String(index + 1).padStart(2, '0')}`,
+    email: `managed-${index + 1}@example.com`,
+    role: index >= count - 2 ? 'parent' : 'teacher',
+    status: archived ? 'Archived' : 'Active',
+    is_archived: archived,
+  }))
+);
+
 const setFieldValue = (field, value) => {
   const prototype = field.tagName === 'TEXTAREA'
     ? window.HTMLTextAreaElement.prototype
@@ -132,6 +143,123 @@ describe('ManageUsers edit flow', () => {
     });
     container.remove();
     delete global.fetch;
+  });
+
+  test('renders eight-row pagination controls before the actual users table and navigates records', async () => {
+    const managedAccounts = buildManagedAccounts(11);
+    global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => managedAccounts }));
+
+    await act(async () => root.render(<ManageUsers />));
+
+    const pagination = container.querySelector('.manage-users-pagination');
+    const tableContainer = container.querySelector('.table-container');
+    expect(pagination).not.toBeNull();
+    expect(container.textContent).toContain('Page 1 of 2');
+    expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(8);
+    expect(Array.from(container.querySelectorAll('.manage-users-pagination, .table-container'))[0]).toBe(pagination);
+
+    const next = Array.from(pagination.querySelectorAll('button')).find((button) => button.textContent === 'Next');
+    await act(async () => next.click());
+
+    expect(container.textContent).toContain('Page 2 of 2');
+    expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(3);
+    expect(tableContainer.textContent).toContain('Managed User 09');
+    expect(tableContainer.textContent).not.toContain('Managed User 01');
+  });
+
+  test('search and role filters run before paging and reset the rendered table to page one', async () => {
+    const managedAccounts = buildManagedAccounts(11);
+    global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => managedAccounts }));
+    await act(async () => root.render(<ManageUsers />));
+
+    const next = () => Array.from(container.querySelectorAll('.manage-users-pagination button'))
+      .find((button) => button.textContent === 'Next');
+    await act(async () => next().click());
+
+    const search = container.querySelector('input[placeholder="Search users..."]');
+    await act(async () => setFieldValue(search, 'Managed User 01'));
+    expect(container.textContent).toContain('Users List (1)');
+    expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(1);
+    expect(container.textContent).toContain('Managed User 01');
+
+    await act(async () => setFieldValue(search, ''));
+    expect(container.textContent).toContain('Page 1 of 2');
+    expect(container.querySelector('.table-container').textContent).toContain('Managed User 01');
+    expect(container.querySelector('.table-container').textContent).not.toContain('Managed User 09');
+
+    await act(async () => next().click());
+    const role = container.querySelector('.controls-wrapper select');
+    await act(async () => setSelectValue(role, 'Parent'));
+    expect(container.textContent).toContain('Users List (2)');
+    expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(2);
+
+    await act(async () => setSelectValue(role, 'All'));
+    expect(container.textContent).toContain('Page 1 of 2');
+    expect(container.querySelector('.table-container').textContent).toContain('Managed User 01');
+  });
+
+  test('archiving the sole record on the last page clamps the rendered table to the previous page', async () => {
+    let managedAccounts = buildManagedAccounts(17);
+    global.fetch = jest.fn((url, options = {}) => {
+      if (options.method === 'DELETE') {
+        const deletedId = Number(String(url).match(/\/api\/accounts\/(\d+)/)?.[1]);
+        managedAccounts = managedAccounts.filter((account) => account.id !== deletedId);
+        return Promise.resolve({ ok: true, json: async () => ({ success: true }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => managedAccounts });
+    });
+    await act(async () => root.render(<ManageUsers />));
+
+    const clickNext = async () => {
+      const next = Array.from(container.querySelectorAll('.manage-users-pagination button'))
+        .find((button) => button.textContent === 'Next');
+      await act(async () => next.click());
+    };
+    await clickNext();
+    await clickNext();
+    expect(container.textContent).toContain('Page 3 of 3');
+
+    const lastPageRow = container.querySelector('.sts-data-table tbody tr');
+    await act(async () => lastPageRow.querySelector('.delete-action-btn').click());
+    await act(async () => setFieldValue(document.body.querySelector('textarea[name="deletion-reason"]'), 'Pagination lifecycle check'));
+    await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue').click());
+    await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Delete Account').click());
+
+    expect(container.textContent).toContain('Page 2 of 2');
+    expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(8);
+    expect(container.querySelector('.table-container').textContent).toContain('Managed User 09');
+    expect(container.querySelector('.table-container').textContent).not.toContain('Managed User 17');
+  });
+
+  test('restoring the sole archived record on the last page also clamps to the previous page', async () => {
+    let archivedAccounts = buildManagedAccounts(17, { archived: true });
+    global.fetch = jest.fn((url, options = {}) => {
+      if (options.method === 'POST' && String(url).includes('/restore')) {
+        const restoredId = Number(String(url).match(/\/api\/accounts\/(\d+)/)?.[1]);
+        archivedAccounts = archivedAccounts.filter((account) => account.id !== restoredId);
+        return Promise.resolve({ ok: true, json: async () => ({ success: true }) });
+      }
+      const rows = String(url).includes('archived=true') ? archivedAccounts : [];
+      return Promise.resolve({ ok: true, json: async () => rows });
+    });
+    await act(async () => root.render(<ManageUsers />));
+    await act(async () => Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Show Archived').click());
+
+    const clickNext = async () => {
+      const next = Array.from(container.querySelectorAll('.manage-users-pagination button'))
+        .find((button) => button.textContent === 'Next');
+      await act(async () => next.click());
+    };
+    await clickNext();
+    await clickNext();
+    expect(container.textContent).toContain('Page 3 of 3');
+
+    await act(async () => container.querySelector('.sts-data-table tbody tr .restore-action-btn').click());
+    await act(async () => Promise.resolve());
+
+    expect(container.textContent).toContain('Page 2 of 2');
+    expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(8);
+    expect(container.querySelector('.table-container').textContent).not.toContain('Managed User 17');
   });
 
   test('opens the edit modal with the selected user data when Edit is clicked', async () => {
