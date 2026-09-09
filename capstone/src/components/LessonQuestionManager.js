@@ -202,6 +202,7 @@ export default function LessonQuestionManager() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
   const [notification, setNotification] = useState(null);
   const [curriculumRegistry, setCurriculumRegistry] = useState(null);
   const [files, setFiles] = useState([]);
@@ -401,6 +402,7 @@ export default function LessonQuestionManager() {
   }, [paginatedTrashRows.currentPage, trashPage]);
 
   const handleFormChange = (field, value) => {
+    setUploadError('');
     setFormErrors((current) => ({ ...current, [field]: '' }));
     if (field === 'file' || field === 'file_type') setFixedUploadValidation(null);
     if (field === 'file_type' && value !== 'lesson') setSelectedLessonSourceId('');
@@ -437,6 +439,7 @@ export default function LessonQuestionManager() {
     setSelectedLessonSourceId('');
     setFormErrors({});
     setFixedUploadValidation(null);
+    setUploadError('');
   };
 
   const saveLessonSource = async () => {
@@ -487,6 +490,7 @@ export default function LessonQuestionManager() {
     });
     const idempotencyKey = getOrCreateLessonGenerationIdempotencyKey(storageKey);
     try {
+      setUploadError('');
       uploadInFlightRef.current = true;
       setUploading(true);
       const response = await fetchLessonManagerApi(
@@ -517,7 +521,9 @@ export default function LessonQuestionManager() {
       setShowUploadForm(false);
     } catch (error) {
       console.error(error);
-      showNotification(error.message || 'Question generation failed. Please try again.', 'error');
+      const message = error.message || 'Question generation failed. Please try again.';
+      setUploadError(message);
+      showNotification(message, 'error');
     } finally {
       uploadInFlightRef.current = false;
       setUploading(false);
@@ -586,6 +592,7 @@ export default function LessonQuestionManager() {
       : null;
 
     try {
+      setUploadError('');
       uploadInFlightRef.current = true;
       setUploading(true);
       const response = await fetchLessonManagerApi(lessonManagerApiUrl('/api/learning-files/upload'), {
@@ -630,7 +637,9 @@ export default function LessonQuestionManager() {
       setShowUploadForm(false);
     } catch (error) {
       console.error(error);
-      showNotification(error.message || 'Upload failed. Please try again.', 'error');
+      const message = error.message || 'Upload failed. Please try again.';
+      setUploadError(message);
+      showNotification(message, 'error');
     } finally {
       uploadInFlightRef.current = false;
       setUploading(false);
@@ -859,6 +868,7 @@ export default function LessonQuestionManager() {
       difficulty,
     });
     setSelectedLessonSourceId('');
+    setUploadError('');
     setShowUploadForm(true);
   };
 
@@ -993,11 +1003,13 @@ export default function LessonQuestionManager() {
         const publishLabel = formatQuestionSetStatus(
           lifecycle.publishLabel || (row.publish_status === 'superseded' ? 'Replaced' : null)
         );
+        const failureLabel = String(lifecycle.failureLabel || '').trim();
         const lastGameFetch = formatGameFetchDate(row.last_fetched_at);
         return (
           <div className="manager-status-stack">
             <span className={`manager-status-pill ${tone}`}>{label}</span>
             {publishLabel && publishLabel !== label && <span className="manager-status-detail">{publishLabel}</span>}
+            {failureLabel && <span className="manager-status-detail">{failureLabel}</span>}
             {lastGameFetch && <span className="manager-status-detail">Last Game Fetch: {lastGameFetch}</span>}
           </div>
         );
@@ -1472,6 +1484,7 @@ export default function LessonQuestionManager() {
                       <strong>Uploading file...</strong>
                     </div>
                   )}
+                  {uploadError && <p className="manager-inline-error" role="alert">{uploadError}</p>}
                   <div className="upload-actions">
                     <button type="submit" className="btn btn-primary" disabled={uploading}>
                       {uploading ? 'Uploading...' : selectedLessonSourceId ? 'Generate Question Set' : 'Upload File'}

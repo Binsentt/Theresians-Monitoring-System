@@ -35,6 +35,15 @@ function sourceLabel(source) {
   return 'Fixed Question File';
 }
 
+function generationFailureLabel(errorCode) {
+  if (errorCode === 'QUESTION_AI_TIMEOUT') return 'Question generation timed out. Retry the upload.';
+  if (errorCode === 'QUESTION_AI_INVALID_RESPONSE') return 'Question AI returned unusable question data. Retry the upload.';
+  if (errorCode === 'QUESTION_AI_EMPTY_LESSON') return 'No readable lesson text was found.';
+  if (errorCode === 'QUESTION_AI_LESSON_TOO_LARGE') return 'The readable lesson text exceeds the safe size limit.';
+  if (errorCode === 'QUESTION_AI_NOT_CONFIGURED') return 'Question AI is not configured. Contact the administrator.';
+  return 'Question AI is unavailable. Retry after the service is restored.';
+}
+
 function deriveQuestionSetLifecycle(row = {}) {
   const generationStatus = normalizeGenerationStatus(row);
   const normalizedPublishStatus = normalizePublishStatus(row);
@@ -46,7 +55,8 @@ function deriveQuestionSetLifecycle(row = {}) {
       tone: 'failed',
       generationStatus,
       publishStatus: normalizedPublishStatus,
-      publishLabel: publishLabel(normalizedPublishStatus),
+      publishLabel: 'Not Generated',
+      failureLabel: generationFailureLabel(row.generation_error_code),
     };
   }
 
@@ -135,6 +145,7 @@ function toQuestionSetResponse(row = {}) {
 
 module.exports = {
   deriveQuestionSetLifecycle,
+  generationFailureLabel,
   normalizeGenerationStatus,
   normalizePublishStatus,
   sourceLabel,

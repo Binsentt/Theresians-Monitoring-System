@@ -12,6 +12,34 @@ class QuestionGenerationError extends Error {
   }
 }
 
+const toQuestionGenerationHttpFailure = (error) => {
+  if (!(error instanceof QuestionGenerationError)) return null;
+  if (error.providerDiagnostics?.category === 'quota_or_rate_limit') {
+    return {
+      status: 503,
+      code: error.code,
+      error: 'Question AI is temporarily unavailable. No questions were created. Please try again after the service is restored.',
+    };
+  }
+
+  const status = error.code === 'QUESTION_AI_NOT_CONFIGURED' ? 503
+    : error.code === 'QUESTION_AI_TIMEOUT' ? 504
+      : ['QUESTION_AI_EMPTY_LESSON', 'QUESTION_AI_LESSON_TOO_LARGE', 'QUESTION_AI_INVALID_REQUEST', 'QUESTION_AI_INVALID_RESPONSE'].includes(error.code) ? 422
+        : 502;
+  const message = error.code === 'QUESTION_AI_NOT_CONFIGURED'
+    ? 'Question AI is temporarily unavailable. Please contact the administrator.'
+    : error.code === 'QUESTION_AI_TIMEOUT'
+      ? 'Question generation timed out. Please try again.'
+      : error.code === 'QUESTION_AI_EMPTY_LESSON'
+        ? 'No readable lesson text was found in this source.'
+        : error.code === 'QUESTION_AI_LESSON_TOO_LARGE'
+          ? 'The readable lesson text exceeds the safe size limit.'
+          : error.code === 'QUESTION_AI_INVALID_RESPONSE'
+            ? 'Question generation returned unusable question data. Please try again.'
+            : 'Question generation could not be completed. Please review the lesson source and try again.';
+  return { status, code: error.code, error: message };
+};
+
 const asTrimmedString = (value) => String(value || '').trim();
 const SAFE_PROVIDER_DIAGNOSTIC_VALUE = /^[A-Za-z0-9._:-]{1,160}$/;
 
@@ -281,4 +309,5 @@ module.exports = {
   buildProviderDiagnostics,
   buildGenerationInput,
   generateLessonQuestions,
+  toQuestionGenerationHttpFailure,
 };

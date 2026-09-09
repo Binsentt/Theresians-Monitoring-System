@@ -6,6 +6,7 @@ const {
   QUESTION_GENERATION_MODEL,
   QuestionGenerationError,
   generateLessonQuestions,
+  toQuestionGenerationHttpFailure,
 } = require('./lessonQuestionGeneration');
 
 const validQuestions = [
@@ -190,6 +191,21 @@ test('lesson generation captures only safe OpenAI failure metadata for quota dia
   );
 
   assert.equal(providerCalls, 1);
+});
+
+test('quota exhaustion becomes a truthful retryable service error without blaming the PPTX source', () => {
+  const failure = toQuestionGenerationHttpFailure(new QuestionGenerationError(
+    'QUESTION_AI_GENERATION_FAILED',
+    'provider failure',
+    { category: 'quota_or_rate_limit', provider_code: 'credit_balance_exhausted' }
+  ));
+
+  assert.deepEqual(failure, {
+    status: 503,
+    code: 'QUESTION_AI_GENERATION_FAILED',
+    error: 'Question AI is temporarily unavailable. No questions were created. Please try again after the service is restored.',
+  });
+  assert.doesNotMatch(JSON.stringify(failure), /credit_balance|provider failure/i);
 });
 
 test('lesson generation rejects an empty lesson before making a provider request', async () => {

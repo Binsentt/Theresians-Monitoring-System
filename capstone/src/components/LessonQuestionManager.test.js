@@ -144,6 +144,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       trashFolders: [],
       publishResponse: null,
       approvalResponse: null,
+      uploadResponse: null,
     };
     global.fetch = jest.fn((url, options = {}) => {
       const value = String(url);
@@ -186,6 +187,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
         return okJson({ success: true, learningFile: fixtures.files[0] });
       }
       if (value.endsWith('/api/learning-files/upload') && options.method === 'POST') {
+        if (fixtures.uploadResponse) return fixtures.uploadResponse(options);
         fixtures.files = [{
           id: 77,
           title: 'addition-quiz',
@@ -551,6 +553,69 @@ describe('LessonQuestionManager upload and trash controls', () => {
       Authorization: 'Bearer lesson-manager-token',
       'Idempotency-Key': expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/),
     }));
+  });
+
+  test('PPTX provider failure stops loading, stays retryable, and explains the failure inside the modal', async () => {
+    let finishUpload;
+    fixtures.uploadResponse = () => new Promise((resolve) => {
+      finishUpload = () => resolve({
+        ok: false,
+        status: 502,
+        json: async () => ({
+          code: 'QUESTION_AI_GENERATION_FAILED',
+          error: 'Question AI is unavailable. Retry after the service is restored.',
+        }),
+      });
+    });
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await act(async () => {
+      clickByText(container, 'New');
+    });
+    await act(async () => {
+      clickByText(container, 'Upload File');
+    });
+    await act(async () => {
+      setSelectValue(getUploadModalSelects()[2], 'lesson');
+      const selects = getUploadModalSelects();
+      setSelectValue(selects[0], 'Grade 3');
+      setSelectValue(selects[1], 'Normal');
+      const countField = getUploadModal().querySelector('input[name="expected_question_count"]');
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(countField, '5');
+      countField.dispatchEvent(new Event('change', { bubbles: true }));
+      const fileInput = getUploadModal().querySelector('input[type="file"]');
+      const file = new File(['PK\u0003\u0004ppt/presentation.xml'], 'fractions.pptx', {
+        type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      });
+      Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    act(() => {
+      getUploadModal().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    expect(getUploadModal().textContent).toContain('Uploading file...');
+
+    act(() => {
+      getUploadModal().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(async () => {
+      finishUpload();
+    });
+
+    const uploadRequests = global.fetch.mock.calls.filter(([url, options]) => (
+      String(url).endsWith('/api/learning-files/upload') && options?.method === 'POST'
+    ));
+    expect(uploadRequests).toHaveLength(1);
+    expect(uploadRequests[0][1].body.get('file').name).toBe('fractions.pptx');
+    expect(uploadRequests[0][1].body.get('file').type).toBe('application/vnd.openxmlformats-officedocument.presentationml.presentation');
+    expect(uploadRequests[0][1].body.get('expected_question_count')).toBe('5');
+    expect(getUploadModal()).not.toBeNull();
+    expect(getUploadModal().textContent).not.toContain('Uploading file...');
+    expect(getUploadModal().textContent).toContain('Question AI is unavailable. Retry after the service is restored.');
+    expect(getUploadModal().querySelector('button[type="submit"]').disabled).toBe(false);
   });
 
   test('reuses a Lesson PDF source to generate an independent exact-scope child set', async () => {
@@ -1362,6 +1427,50 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(container.textContent).not.toContain('Staged');
     expect(container.textContent).toContain('Source Lesson: fractions.pdf');
     expect(container.textContent).not.toContain('Active in Game');
+  });
+
+  test('renders a failed AI set as not generated with its persistent recovery explanation', async () => {
+    fixtures.files = [{
+      id: 89,
+      title: 'failed-presentation',
+      file_name: 'failed-presentation.pptx',
+      grade_level: 'Grade 3',
+      difficulty: 'Normal',
+      file_type: 'lesson',
+      question_count: 0,
+      generation_status: 'failed',
+      generation_error_code: 'QUESTION_AI_GENERATION_FAILED',
+      publish_status: 'staged',
+      lifecycle: {
+        label: 'Failed',
+        tone: 'failed',
+        publishLabel: 'Not Generated',
+        failureLabel: 'Question AI is unavailable. Retry after the service is restored.',
+      },
+      published: false,
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    const gradeThreeCard = Array.from(container.querySelectorAll('.fixed-question-folder'))
+      .find((card) => card.querySelector('.system-grade-button')?.textContent.includes('Grade 3'));
+    await act(async () => {
+      gradeThreeCard.querySelector('.system-grade-button').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      Array.from(gradeThreeCard.querySelectorAll('.system-difficulty-button'))
+        .find((button) => button.textContent.trim() === 'Normal')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const failedRow = Array.from(container.querySelectorAll('tbody tr'))
+      .find((row) => row.textContent.includes('failed-presentation'));
+    expect(failedRow).toBeTruthy();
+    expect(failedRow.textContent).toContain('Failed');
+    expect(failedRow.textContent).toContain('Not Generated');
+    expect(failedRow.textContent).toContain('Question AI is unavailable. Retry after the service is restored.');
+    expect(failedRow.textContent).not.toContain('Pending');
   });
 
   test('Delete removes a staged upload from the table', async () => {

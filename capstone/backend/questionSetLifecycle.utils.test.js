@@ -32,10 +32,14 @@ test('uses the persisted active, superseded, generating, and failed states', () 
     deriveQuestionSetLifecycle({ generation_status: 'generating', publish_status: 'staged' }).label,
     'Generating'
   );
-  assert.equal(
-    deriveQuestionSetLifecycle({ generation_status: 'failed', publish_status: 'staged' }).label,
-    'Failed'
-  );
+  const failed = deriveQuestionSetLifecycle({
+    generation_status: 'failed',
+    generation_error_code: 'QUESTION_AI_GENERATION_FAILED',
+    publish_status: 'staged',
+  });
+  assert.equal(failed.label, 'Failed');
+  assert.equal(failed.publishLabel, 'Not Generated');
+  assert.equal(failed.failureLabel, 'Question AI is unavailable. Retry after the service is restored.');
 });
 
 test('reports an approved staged set as approved but not in the game', () => {

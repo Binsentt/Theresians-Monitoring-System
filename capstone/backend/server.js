@@ -83,6 +83,7 @@ const {
 const {
   QuestionGenerationError,
   generateLessonQuestions,
+  toQuestionGenerationHttpFailure,
 } = require('./lessonQuestionGeneration');
 const {
   LessonTextExtractionError,
@@ -4840,18 +4841,8 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
       ).catch((persistError) => console.error('Failed to persist lesson source generation status:', persistError.message));
     }
     if (error instanceof QuestionGenerationError) {
-      const status = error.code === 'QUESTION_AI_NOT_CONFIGURED' ? 503
-        : error.code === 'QUESTION_AI_TIMEOUT' ? 504
-          : error.code === 'QUESTION_AI_EMPTY_LESSON' || error.code === 'QUESTION_AI_LESSON_TOO_LARGE' ? 422
-            : 502;
-      const message = error.code === 'QUESTION_AI_NOT_CONFIGURED'
-        ? 'Question AI is temporarily unavailable. Please contact the administrator.'
-        : error.code === 'QUESTION_AI_EMPTY_LESSON'
-          ? 'No readable lesson text was found in this source.'
-          : error.code === 'QUESTION_AI_LESSON_TOO_LARGE'
-            ? 'The readable lesson text exceeds the safe size limit.'
-            : 'Question generation could not be completed. Please review the lesson source and try again.';
-      return res.status(status).json({ error: message, code: error.code });
+      const failure = toQuestionGenerationHttpFailure(error);
+      return res.status(failure.status).json({ error: failure.error, code: failure.code });
     }
     console.error('Lesson source generation failed:', error.message);
     return res.status(500).json({ error: 'Question generation could not be completed.' });
@@ -5202,22 +5193,8 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
       cleanTemporaryUpload(storedFilePath || req.file?.path);
     }
     if (err instanceof QuestionGenerationError) {
-      const status = err.code === 'QUESTION_AI_NOT_CONFIGURED' ? 503
-        : err.code === 'QUESTION_AI_TIMEOUT' ? 504
-        : err.code === 'QUESTION_AI_EMPTY_LESSON' || err.code === 'QUESTION_AI_LESSON_TOO_LARGE' || err.code === 'QUESTION_AI_INVALID_REQUEST' || err.code === 'QUESTION_AI_INVALID_RESPONSE' ? 422
-            : 502;
-      const error = err.code === 'QUESTION_AI_NOT_CONFIGURED'
-        ? 'Question AI is temporarily unavailable. Please contact the administrator.'
-        : err.code === 'QUESTION_AI_TIMEOUT'
-          ? 'Question generation timed out. Please try again.'
-          : err.code === 'QUESTION_AI_EMPTY_LESSON'
-            ? 'No readable lesson text was found in this source.'
-            : err.code === 'QUESTION_AI_LESSON_TOO_LARGE'
-              ? 'The readable lesson text exceeds the safe size limit.'
-            : err.code === 'QUESTION_AI_INVALID_RESPONSE'
-              ? 'Question generation returned unusable question data. Please try again.'
-              : 'Question generation could not be completed. Please review the lesson source and try again.';
-      return res.status(status).json({ error, code: err.code });
+      const failure = toQuestionGenerationHttpFailure(err);
+      return res.status(failure.status).json({ error: failure.error, code: failure.code });
     }
     res.status(500).json({ error: 'Upload failed' });
   }
