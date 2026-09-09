@@ -62,6 +62,19 @@ const normalizePlaytimeStatus = (status, fallback = 'Offline') => {
   return VALID_PLAYTIME_STATUS_LABELS[key] || VALID_PLAYTIME_STATUS_LABELS[normalizeKey(fallback).replace(/_/g, '')] || 'Offline';
 };
 
+const SCENE_LOCATION_MAP = {
+  oak_leaf_village: 'Oakleaf Village',
+  oakleaf_village: 'Oakleaf Village',
+  teacher_house: "Teacher's House",
+  teachers_house: "Teacher's House",
+  city_of_knowledge: 'City of Knowledge',
+  school: 'School',
+  city_school: 'School',
+  deep_forest: 'Deep Forest',
+  pinehill_village: 'Pinehill Village',
+  pine_hill_village: 'Pinehill Village',
+};
+
 const resolveCurrentDifficulty = (payload = {}) => {
   const mapDifficulty = resolveDifficultyFromScene({ current_map: payload.current_map || payload.currentMap || payload.map || payload.map_name });
   if (mapDifficulty !== 'Unknown') return mapDifficulty;
@@ -72,6 +85,20 @@ const resolveCurrentDifficulty = (payload = {}) => {
   if (['normal', 'medium', 'average', 'normal / average'].includes(saved)) return 'Normal';
   if (['difficult', 'hard'].includes(saved)) return 'Difficult';
   return 'Unknown';
+};
+
+const resolveCurrentLocation = (payload = {}) => {
+  const candidates = [
+    payload.current_scene,
+    payload.currentScene,
+    payload.current_map,
+    payload.currentMap,
+  ];
+  for (const candidate of candidates) {
+    const location = SCENE_LOCATION_MAP[normalizeKey(candidate)];
+    if (location) return location;
+  }
+  return 'Not available';
 };
 
 const getStudentDisplayName = (row = {}) => String(row.student_name || row.child_name || row.name || '').trim();
@@ -90,5 +117,6 @@ module.exports = {
   normalizePlaytimeStatus,
   resolveDifficultyFromScene,
   resolveCurrentDifficulty,
+  resolveCurrentLocation,
   sortRowsByStudentName,
 };

@@ -148,6 +148,7 @@ describe('StudentAnalytics defensive rendering', () => {
         current_quest: 'Oak Leaf Village Quest',
         difficulty_level: 'Easy',
         current_scene: 'oak_leaf_village.tscn',
+        current_location: 'Oakleaf Village',
         accuracy_rate: 82,
         progress_percentage: 74,
         correct_answers: 41,
@@ -199,8 +200,9 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('Grade & Section');
     expect(container.textContent).toContain('Grade 3 - Section A');
     expect(container.querySelector('.student-profile-meta > div:last-child').textContent).toContain('Oak Leaf Village Quest');
-    expect(container.textContent).toContain('Current Scene');
-    expect(container.textContent).toContain('oak_leaf_village.tscn');
+    expect(container.textContent).toContain('Current Location');
+    expect(container.textContent).toContain('Oakleaf Village');
+    expect(container.textContent).not.toContain('oak_leaf_village.tscn');
     expect(container.textContent).toContain('Game Score');
     expect(container.textContent).toContain('925');
     expect(container.textContent).not.toContain('Total Playtime');

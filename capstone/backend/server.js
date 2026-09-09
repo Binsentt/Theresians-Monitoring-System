@@ -120,6 +120,7 @@ const {
   normalizePlaytimeStatus: normalizeMonitoringStatus,
   resolveDifficultyFromScene,
   resolveCurrentDifficulty,
+  resolveCurrentLocation,
   sortRowsByStudentName,
 } = require('./progressScene.utils');
 const {
@@ -127,6 +128,11 @@ const {
 } = require('./studentAnalyticsMetrics.utils');
 const { loadStudentAnalyticsEvidence, withStudentAnalyticsAliases } = require('./studentAnalyticsEvidence.service');
 const { resolveStudentAiInsight } = require('./studentAiInsight.service');
+const {
+  permanentlyDeleteManagedStudent,
+  permanentlyDeleteParentFamily,
+  unlinkManagedChild,
+} = require('./familyLifecycle.service');
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -1383,6 +1389,7 @@ const normalizeStudentProgressRow = (row) => {
     incorrect_answers: incorrectAnswers,
     difficulty: difficultyLevel,
     difficulty_level: difficultyLevel,
+    current_location: resolveCurrentLocation(row),
   };
 };
 
@@ -3783,6 +3790,145 @@ app.post('/api/accounts', requireAccountManagementAdmin, async (req, res) => {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     if (err.code === '23505') return res.status(409).json({ error: 'Employee ID, email, or Student ID already exists' });
     return res.status(500).json({ error: 'Create account failed' });
+  }
+});
+
+const resolveManagedParentAccount = async (queryClient, parentId, { forUpdate = false, requireActive = false } = {}) => {
+  const normalizedParentId = Number.parseInt(parentId, 10);
+  if (!Number.isInteger(normalizedParentId) || normalizedParentId <= 0) {
+    const error = new Error('Invalid Parent account ID.');
+    error.statusCode = 400;
+    throw error;
+  }
+  const result = await queryClient.query(
+    `SELECT id, name, email, role, parent_id, is_archived
+     FROM public.accounts
+     WHERE id = $1
+     ${forUpdate ? 'FOR UPDATE' : ''}`,
+    [normalizedParentId]
+  );
+  const parent = result.rows[0];
+  if (!parent) {
+    const error = new Error('Parent account not found.');
+    error.statusCode = 404;
+    throw error;
+  }
+  if (!accountHasParentAccess(parent.role)) {
+    const error = new Error('Selected account must be a Parent account.');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (requireActive && parent.is_archived) {
+    const error = new Error('Restore this Parent account before adding children.');
+    error.statusCode = 409;
+    throw error;
+  }
+  return parent;
+};
+
+const getManagedParentChildren = async (queryClient, parentId) => {
+  const result = await queryClient.query(
+    `SELECT relationship.id AS relationship_id,
+            student.id AS student_id,
+            student.name AS student_name,
+            student.email AS student_email,
+            student.game_student_id,
+            student.grade_level,
+            student.section,
+            student.is_archived,
+            relationship.created_at
+     FROM public.teacher_student_relationships relationship
+     JOIN public.accounts student ON student.id = relationship.student_id
+     WHERE relationship.teacher_id = $1
+       AND LOWER(relationship.relationship_type) = 'parent'
+       AND LOWER(student.role) = 'student'
+     ORDER BY student.name, student.id`,
+    [parentId]
+  );
+  return result.rows;
+};
+
+const serializeManagedChild = (student, operation = undefined) => ({
+  relationship_id: student.relationship_id,
+  student_id: student.student_id ?? student.id,
+  student_name: student.student_name ?? student.name,
+  student_email: student.student_email ?? student.email,
+  game_student_id: student.game_student_id,
+  grade_level: student.grade_level,
+  section: student.section,
+  is_archived: Boolean(student.is_archived),
+  ...(operation ? { operation } : {}),
+});
+
+app.get('/api/accounts/:parentId/children', requireAccountManagementAdmin, async (req, res) => {
+  try {
+    const parent = await resolveManagedParentAccount(pool, req.params.parentId);
+    const children = await getManagedParentChildren(pool, parent.id);
+    return res.json({ parent: serializeUser(parent), children: children.map((child) => serializeManagedChild(child)) });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Unable to load managed children.' });
+  }
+});
+
+app.post('/api/accounts/:parentId/children', requireAccountManagementAdmin, async (req, res) => {
+  const childResult = normalizeAdminParentChildren(req.body?.children, 'parent');
+  if (childResult.error) return res.status(400).json({ error: childResult.error });
+
+  const client = await pool.connect();
+  let parent;
+  const createdChildren = [];
+  try {
+    await client.query('BEGIN');
+    parent = await resolveManagedParentAccount(client, req.params.parentId, { forUpdate: true, requireActive: true });
+    const preparedChildren = await prepareAdminParentChildren(client, childResult.children);
+    for (const child of preparedChildren) {
+      const student = child.operation === 'create'
+        ? await createAdminChildAccount(client, parent.id, child)
+        : child.student;
+      const relationship = await ensureParentStudentRelationship(client, {
+        teacherId: parent.id,
+        studentId: student.id,
+        relationshipType: 'parent',
+      });
+      createdChildren.push(serializeManagedChild({ ...student, relationship_id: relationship?.id }, child.operation));
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+    if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
+    if (error.code === '23505') return res.status(409).json({ error: 'Student ID or Parent relationship already exists.' });
+    console.error('Add managed children failed:', error.message);
+    return res.status(500).json({ error: 'Unable to add children.' });
+  }
+  client.release();
+  await writeAdminAuditLog(req.authenticatedUser, 'Add Parent Child', parent, { operationType: 'add_child' });
+  return res.status(201).json({ success: true, children: createdChildren });
+});
+
+app.delete('/api/accounts/:parentId/children/:studentId', requireAccountManagementAdmin, async (req, res) => {
+  try {
+    const permanent = String(req.query.permanent).toLowerCase() === 'true';
+    if (permanent && req.body?.permanent_confirmation !== 'DELETE') {
+      return res.status(400).json({ error: 'Type DELETE to confirm permanent Student deletion.' });
+    }
+    if (permanent) {
+      const result = await permanentlyDeleteManagedStudent(pool, req.params.parentId, req.params.studentId);
+      await writeAdminAuditLog(req.authenticatedUser, 'Delete Student Account', result.deletedStudent, {
+        reason: normalizeOptionalText(req.body?.reason),
+        operationType: 'permanent_delete_student',
+      });
+      return res.json({ success: true, message: 'Student permanently deleted', deleted_student: result.deletedStudent });
+    }
+    const result = await unlinkManagedChild(pool, req.params.parentId, req.params.studentId);
+    await writeAdminAuditLog(req.authenticatedUser, 'Unlink Parent Child', result.relationship, {
+      reason: normalizeOptionalText(req.body?.reason),
+      operationType: 'unlink_child',
+    });
+    return res.json({ success: true, message: 'Child unlinked; Student account preserved.' });
+  } catch (error) {
+    if (!error.statusCode) console.error('Managed child removal failed:', error.message);
+    return res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Unable to update the managed child.' });
   }
 });
 
@@ -6762,6 +6908,15 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
     };
 
     if (permanent) {
+      if (accountHasParentAccess(accountRole)) {
+        const familyResult = await permanentlyDeleteParentFamily(pool, id);
+        await writeAdminAuditLog(req.authenticatedUser, 'Delete Account', targetAccount, auditOptions);
+        return res.json({
+          success: true,
+          message: 'Parent family permanently deleted',
+          deleted_child_count: familyResult.deletedStudents.length,
+        });
+      }
       await pool.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [id]);
       await pool.query('DELETE FROM public.accounts WHERE id = $1', [id]);
       await writeAdminAuditLog(req.authenticatedUser, 'Delete Account', targetAccount, auditOptions);
@@ -6784,7 +6939,7 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
     res.json({ success: true, message: 'Account archived' });
   } catch (err) {
     console.error('Delete/archive failed:', err.message);
-    res.status(500).json({ error: 'Delete/archive failed' });
+    res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Delete/archive failed' });
   }
 });
 
@@ -7007,8 +7162,8 @@ const handleTopAchieversRequest = async (req, res) => {
           COALESCE(NULLIF(TRIM(p.student_name), ''), a.name, 'Unknown') AS student_name,
           a.email AS student_email,
           a.game_student_id,
-          p.grade_level,
-          p.section,
+          COALESCE(NULLIF(TRIM(a.grade_level), ''), p.grade_level) AS grade_level,
+          COALESCE(NULLIF(TRIM(a.section), ''), p.section) AS section,
           p.current_quest,
           p.score,
           p.correct_answers,
@@ -7056,7 +7211,6 @@ const handleTopAchieversRequest = async (req, res) => {
       ) ranked_progress
       WHERE student_rank = 1
       ORDER BY progress_percentage DESC, accuracy_rate DESC, correct_answers DESC, quests_completed DESC
-      LIMIT 50
     `;
 
     const result = await pool.query(query, params);
@@ -8079,7 +8233,7 @@ app.get(
   (req, res) => handlePlaytimeListRequest(req, res, { scope: 'children' })
 );
 
-app.get('/api/sections/registry', requireAuthenticatedRoles(['admin', 'parent', 'parent_teacher']), (req, res) => {
+app.get('/api/sections/registry', requireAuthenticatedRoles(['admin', 'teacher', 'parent', 'parent_teacher']), (req, res) => {
   return res.json(getPublicSectionRegistrySnapshot());
 });
 

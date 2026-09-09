@@ -426,6 +426,10 @@ export default function ParentChildProgress() {
                         <strong>{isFocusStudentProgressArchived ? 'No Data' : currentDifficulty}</strong>
                       </div>
                       <div className="child-progress-stat">
+                        <span>Current Location</span>
+                        <strong>{isFocusStudentProgressArchived ? 'No Data' : safeDisplayText(selectedChildProgress?.current_location, 'Not available')}</strong>
+                      </div>
+                      <div className="child-progress-stat">
                         <span>Score</span>
                         <strong>{isFocusStudentProgressArchived ? 'No Data' : selectedChildMetrics?.gameScore ?? 'Not available'}</strong>
                       </div>

@@ -109,6 +109,31 @@ describe('Admin ID Directory', () => {
     expect(container.textContent).toContain('No student IDs match the current filters.');
   });
 
+  test('filters before paging, resets page on filters, and keeps truthful per-tab counts', async () => {
+    const students = Array.from({ length: 12 }, (_, index) => ({
+      ...directoryPayload.students[0],
+      id: 100 + index,
+      student_id: `001234${String(index).padStart(2, '0')}`,
+      student_name: index === 11 ? 'Unique Last Student' : `Student ${index + 1}`,
+    }));
+    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ ...directoryPayload, students }) });
+    await act(async () => root.render(<AdminIdDirectory />));
+
+    expect(container.textContent).toContain('Students (12)');
+    expect(container.textContent).toContain('Page 1 of 2');
+    expect(container.querySelectorAll('table[aria-label="Student ID Directory"] tbody tr')).toHaveLength(10);
+    const next = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Next');
+    await act(async () => next.click());
+    expect(container.textContent).toContain('Page 2 of 2');
+    expect(container.querySelectorAll('table[aria-label="Student ID Directory"] tbody tr')).toHaveLength(2);
+
+    const nameFilter = container.querySelectorAll('[aria-label="Student ID filters"] input')[1];
+    await act(async () => setInputValue(nameFilter, 'Unique Last Student'));
+    expect(container.textContent).toContain('Students (1)');
+    expect(container.textContent).not.toContain('Page 2 of 2');
+    expect(container.textContent).toContain('Unique Last Student');
+  });
+
   test('refreshes from the authoritative source when the page regains focus', async () => {
     global.fetch
       .mockResolvedValueOnce({ ok: true, json: async () => directoryPayload })

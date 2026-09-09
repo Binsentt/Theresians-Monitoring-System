@@ -339,7 +339,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
     global.fetch = jest.fn((url) => {
       if (url.startsWith('/api/student-progress/44?')) {
         return jsonResponse({
-          progress: { student_id: 44, difficulty_level: 'Difficult' },
+          progress: { student_id: 44, difficulty_level: 'Difficult', current_location: 'Oakleaf Village' },
           metrics: {
             currentQuest: 'Current canonical quest', currentDifficulty: 'Easy',
             correctAnswers: 3, incorrectAnswers: 1, completedQuests: 1,
@@ -361,6 +361,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
       .map((card) => [card.querySelector('span')?.textContent, card.querySelector('strong')?.textContent]));
     expect(stats).toEqual(expect.objectContaining({
       'Current Quest': 'Current canonical quest', 'Current Difficulty': 'Easy',
+      'Current Location': 'Oakleaf Village',
       'Correct Answers': '3', 'Incorrect Answers': '1', 'Completed Quests': '1',
       Accuracy: '75%', Progress: 'Not available',
     }));

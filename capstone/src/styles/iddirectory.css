@@ -137,6 +137,36 @@
   color: var(--error-color, #dc2626);
 }
 
+.id-directory-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 12px 4px;
+  color: var(--text-muted, #64748b);
+  font-size: 0.88rem;
+}
+
+.id-directory-pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.id-directory-pagination button {
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 6px;
+  padding: 7px 12px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #0b2447);
+  cursor: pointer;
+}
+
+.id-directory-pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 @media (max-width: 767px) {
   .id-directory-toolbar {
     align-items: flex-start;
@@ -159,5 +189,10 @@
 
   .id-directory-table {
     min-width: 700px;
+  }
+
+  .id-directory-pagination {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

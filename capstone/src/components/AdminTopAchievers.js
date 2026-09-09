@@ -11,6 +11,7 @@ import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext, matchesTableSearch, paginateTableRows } from './tableReporting.utils';
 import { BulkStudentProgressLifecycleAction } from './StudentProgressLifecycleActions';
+import { fetchSectionRegistry, getSectionsForGrade } from '../sectionRegistry';
 import '../styles/topachievers.css';
 
 export default function AdminTopAchievers() {
@@ -24,6 +25,7 @@ export default function AdminTopAchievers() {
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [sectionRegistry, setSectionRegistry] = useState({ grades: [] });
   const pageSize = 10;
 
   useEffect(() => {
@@ -42,9 +44,12 @@ export default function AdminTopAchievers() {
         setUser(loggedInUser);
 
         // Fetch top achievers data (admin sees all)
-        const response = await fetch(apiUrl('/api/top-achievers'), {
-          headers: buildAuthHeaders(),
-        });
+        const requestOptions = { headers: buildAuthHeaders() };
+        const [response, registry] = await Promise.all([
+          fetch(apiUrl('/api/top-achievers'), requestOptions),
+          fetchSectionRegistry(fetch, requestOptions),
+        ]);
+        setSectionRegistry(registry);
         if (response.ok) {
           const data = await response.json();
           setTopAchievers(Array.isArray(data) ? data : []);
@@ -62,11 +67,8 @@ export default function AdminTopAchievers() {
     initializeComponent();
   }, [navigate, refreshToken]);
 
-  // Extract unique grades and sections
-  const grades = [...new Set(topAchievers.map(a => a.grade_level).filter(Boolean))].sort();
-  const sections = selectedGrade
-    ? [...new Set(topAchievers.filter(a => a.grade_level === selectedGrade).map(a => a.section).filter(Boolean))].sort()
-    : [...new Set(topAchievers.map(a => a.section).filter(Boolean))].sort();
+  const grades = sectionRegistry.grades.map((entry) => entry.grade_level);
+  const sections = getSectionsForGrade(sectionRegistry, selectedGrade);
 
   // Filter achievers based on selected filters
   const filteredAchievers = useMemo(() => topAchievers.filter(achiever => {
@@ -189,7 +191,7 @@ export default function AdminTopAchievers() {
                         setSelectedSection(e.target.value);
                         setPage(1);
                       }}
-                      disabled={!selectedGrade && sections.length === 0}
+                      disabled={!selectedGrade}
                     >
                       <option value="">
                         {selectedGrade ? 'All Sections' : 'Select Grade First'}

@@ -5,6 +5,7 @@ const {
   normalizePlaytimeStatus,
   resolveDifficultyFromScene,
   resolveCurrentDifficulty,
+  resolveCurrentLocation,
   sortRowsByStudentName,
 } = require('./progressScene.utils');
 
@@ -14,6 +15,18 @@ test('resolves difficulty from Godot scene and map fields only', () => {
   assert.equal(resolveDifficultyFromScene({ currentScene: 'pinehill_village.tscn' }), 'Difficult');
   assert.equal(resolveDifficultyFromScene({ scene: 'unknown_scene.tscn', difficulty_level: 'Easy' }), 'Unknown');
   assert.equal(resolveDifficultyFromScene({ difficulty_level: 'Easy' }), 'Unknown');
+});
+
+test('resolves canonical human Current Location from recorded scene/map fields only', () => {
+  assert.equal(resolveCurrentLocation({ current_scene: 'res://Scenes/oak_leaf_village.tscn' }), 'Oakleaf Village');
+  assert.equal(resolveCurrentLocation({ current_scene: 'res://interiors/teacher_house.tscn' }), "Teacher's House");
+  assert.equal(resolveCurrentLocation({ current_map: 'city_of_knowledge' }), 'City of Knowledge');
+  assert.equal(resolveCurrentLocation({ current_scene: 'res://world/school.tscn' }), 'School');
+  assert.equal(resolveCurrentLocation({ current_map: 'deep_forest.tscn' }), 'Deep Forest');
+  assert.equal(resolveCurrentLocation({ current_map: 'res://scenes/2nd Village/Pinehill Village.tscn' }), 'Pinehill Village');
+  assert.equal(resolveCurrentLocation({ current_scene: 'unknown.tscn', current_map: 'pinehill_village.tscn' }), 'Pinehill Village');
+  assert.equal(resolveCurrentLocation({ current_quest: 'Oakleaf Village' }), 'Not available');
+  assert.equal(resolveCurrentLocation({}), 'Not available');
 });
 
 test('current difficulty uses verified playable context before validated saved battle scope', () => {

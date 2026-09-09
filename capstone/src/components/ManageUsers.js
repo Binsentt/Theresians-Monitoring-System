@@ -33,6 +33,7 @@ import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext } from './tableReporting.utils';
 import AdminParentChildren from './AdminParentChildren';
+import AdminManagedChildrenPanel from './AdminManagedChildrenPanel';
 import {
   createAdminChildDraft,
   toAdminParentChildrenPayload,
@@ -96,9 +97,6 @@ export default function ManageUsers() {
   const [teacherRelations, setTeacherRelations] = useState([]);
   const [relationEmail, setRelationEmail] = useState('');
   const [relationMessage, setRelationMessage] = useState('');
-  const [parentRelations, setParentRelations] = useState([]);
-  const [parentRelationEmail, setParentRelationEmail] = useState('');
-  const [parentRelationMessage, setParentRelationMessage] = useState('');
   const [teacherClassAssignments, setTeacherClassAssignments] = useState([]);
   const [classAssignmentForm, setClassAssignmentForm] = useState({ grade_level: '', section: '' });
   const [editingClassAssignmentId, setEditingClassAssignmentId] = useState(null);
@@ -256,7 +254,8 @@ export default function ManageUsers() {
   }, []);
 
   useEffect(() => {
-    if (!showAddForm || !isParentRole(selectedRole)) return undefined;
+    const needsRegistry = (showAddForm && isParentRole(selectedRole)) || (editingUser && isParentRole(editingUser.role));
+    if (!needsRegistry) return undefined;
     let mounted = true;
     setSectionRegistryLoading(true);
     setSectionRegistryError('');
@@ -274,7 +273,7 @@ export default function ManageUsers() {
         if (mounted) setSectionRegistryLoading(false);
       });
     return () => { mounted = false; };
-  }, [showAddForm, selectedRole]);
+  }, [editingUser, showAddForm, selectedRole]);
 
   const loadUsers = async () => {
     try {
@@ -368,9 +367,6 @@ export default function ManageUsers() {
     setEditTouched({});
     setRelationEmail('');
     setRelationMessage('');
-    setParentRelations([]);
-    setParentRelationEmail('');
-    setParentRelationMessage('');
     setTeacherClassAssignments([]);
     setClassAssignmentForm({ grade_level: '', section: '' });
     setEditingClassAssignmentId(null);
@@ -390,7 +386,6 @@ export default function ManageUsers() {
     });
     if (isTeacherRole(u.role)) loadTeacherRelationships(u.id, 'teacher');
     else setTeacherRelations([]);
-    if (isParentRole(u.role)) loadTeacherRelationships(u.id, 'parent');
     if (isTeacherRole(u.role)) {
       loadTeacherClassAssignments(u.id);
     }
@@ -411,7 +406,7 @@ export default function ManageUsers() {
 
   const loadTeacherRelationships = async (teacherId, relationshipType) => {
     const expectedType = String(relationshipType || '').toLowerCase();
-    const setRelations = expectedType === 'parent' ? setParentRelations : setTeacherRelations;
+    const setRelations = setTeacherRelations;
     try {
       const response = await fetch(apiUrl(`/api/teacher-student-relationships?teacherId=${teacherId}`), {
         headers: buildAuthHeaders(),
@@ -460,39 +455,9 @@ export default function ManageUsers() {
     }
   };
 
-  const handleAddParentRelation = async () => {
-    if (!parentRelationEmail) {
-      setParentRelationMessage('Student email is required to link a child.');
-      return;
-    }
-
-    try {
-      const response = await fetch(apiUrl('/api/teacher-student-relationships'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
-        body: JSON.stringify({
-          teacherId: editingUser.id,
-          studentEmail: parentRelationEmail,
-          relationship_type: 'Parent',
-        }),
-      });
-      const data = await response.json();
-      if (response.ok) {
-        setParentRelationMessage('Child linked successfully.');
-        setParentRelationEmail('');
-        loadTeacherRelationships(editingUser.id, 'parent');
-      } else {
-        setParentRelationMessage(data.error || 'Could not link child.');
-      }
-    } catch (error) {
-      console.error('Failed to add parent relation:', error);
-      setParentRelationMessage('Connection error while linking child.');
-    }
-  };
-
   const handleRemoveTeacherRelation = async (relationId, relationshipType = 'teacher') => {
     const isParentRelationship = String(relationshipType).toLowerCase() === 'parent';
-    const setMessage = isParentRelationship ? setParentRelationMessage : setRelationMessage;
+    const setMessage = setRelationMessage;
     try {
       const response = await fetch(apiUrl(`/api/teacher-student-relationships/${relationId}`), {
         method: 'DELETE',
@@ -500,7 +465,7 @@ export default function ManageUsers() {
       });
       if (response.ok) {
         setMessage(isParentRelationship ? 'Child link removed.' : 'Relationship removed.');
-        loadTeacherRelationships(editingUser.id, isParentRelationship ? 'parent' : 'teacher');
+        loadTeacherRelationships(editingUser.id, 'teacher');
       } else {
         setMessage(isParentRelationship ? 'Failed to remove child link.' : 'Failed to remove relationship.');
       }
@@ -1154,7 +1119,7 @@ export default function ManageUsers() {
                             ) : showArchived ? (
                               <>
                                 <button type="button" className="restore-action-btn manage-user-action-btn" onClick={() => handleRestoreUser(u)}>Restore</button>
-                                <button type="button" className="delete-action-btn manage-user-action-btn" onClick={() => openDeleteDialog(u, 'permanent')}>Permanent Delete</button>
+                                <button type="button" className="delete-action-btn manage-user-action-btn" onClick={() => openDeleteDialog(u, 'permanent')}>Delete Permanently</button>
                               </>
                             ) : (
                               <>
@@ -1167,7 +1132,7 @@ export default function ManageUsers() {
                                 >
                                   {regeneratingUserId === u.id ? 'Sending...' : 'Send Temporary Password'}
                                 </button>
-                                <button type="button" className="delete-action-btn manage-user-action-btn" onClick={() => openDeleteDialog(u)}>Archive Account</button>
+                                <button type="button" className="delete-action-btn manage-user-action-btn" onClick={() => openDeleteDialog(u)}>Delete</button>
                               </>
                             )}
                           </td>
@@ -1246,9 +1211,14 @@ export default function ManageUsers() {
                 <div className="modal-content delete-modal" role="dialog" aria-modal="true" aria-labelledby="account-delete-title" onClick={(e) => e.stopPropagation()}>
                   {!showDeleteConfirmation ? (
                     <>
-                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Permanent Delete Account' : 'Archive Account'}</h2>
-                      <p>You are about to {deleteOperation === 'permanent' ? 'permanently delete' : 'archive'} <strong>{deletingUser.name || deletingUser.email}</strong>.</p>
+                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Delete Permanently' : 'Delete Account'}</h2>
+                      <p>{deleteOperation === 'permanent'
+                        ? <>You are about to permanently delete <strong>{deletingUser.name || deletingUser.email}</strong>.</>
+                        : <>You are about to delete <strong>{deletingUser.name || deletingUser.email}</strong> from active users. This account can be restored.</>}</p>
                       {deleteOperation === 'permanent' && <p className="error-text">This action is irreversible.</p>}
+                      {deleteOperation === 'permanent' && isParentRole(deletingUser.role) && (
+                        <p className="error-text">This also permanently deletes all exclusively owned child Student accounts and their dependent records.</p>
+                      )}
                       <p className="delete-account-role">Role: {formatRoleLabel(deletingUser.role)}</p>
                       <label className="deletion-reason-label" htmlFor="deletion-reason">Reason for {deleteOperation === 'permanent' ? 'permanently deleting' : 'archiving'} this account:</label>
                       <textarea
@@ -1272,8 +1242,8 @@ export default function ManageUsers() {
                     </>
                   ) : (
                     <>
-                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Confirm Permanent Delete' : 'Confirm Archive Account'}</h2>
-                      <p>{deleteOperation === 'permanent' ? 'This action is irreversible. Type DELETE to permanently delete this archived account.' : 'Are you sure you want to archive this account?'}</p>
+                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Confirm Permanent Delete' : 'Confirm Delete Account'}</h2>
+                      <p>{deleteOperation === 'permanent' ? 'This action is irreversible. Type DELETE to permanently delete this archived account.' : 'This removes the account from active users. It can be restored later.'}</p>
                       {deleteOperation === 'permanent' && (
                         <label className="deletion-reason-label" htmlFor="permanent-delete-confirmation">
                           Type DELETE to confirm permanent deletion.
@@ -1295,7 +1265,7 @@ export default function ManageUsers() {
                           onClick={handleDeleteUser}
                           disabled={deleting || (deleteOperation === 'permanent' && permanentDeleteConfirmation !== 'DELETE')}
                         >
-                          {deleting ? 'Deleting...' : (deleteOperation === 'permanent' ? 'Permanently Delete Account' : 'Yes, Archive Account')}
+                          {deleting ? 'Deleting...' : (deleteOperation === 'permanent' ? 'Permanently Delete Account' : 'Yes, Delete Account')}
                         </button>
                       </div>
                     </>
@@ -1594,66 +1564,11 @@ export default function ManageUsers() {
                     )}
 
                     {isParentRole(editingUser.role) && (
-                      <div className="form-container-card edit-user-teacher-panel">
-                        <h3>Linked Children</h3>
-                        <p className="edit-user-helper-text">
-                          Parent-child links remain separate from Teacher class assignments and individual student exceptions.
-                        </p>
-                        <div className="form-group edit-user-teacher-input">
-                          <label>Student Email</label>
-                          <input
-                            type="email"
-                            value={parentRelationEmail}
-                            onChange={(e) => setParentRelationEmail(e.target.value)}
-                            className="sts-input"
-                            placeholder="student@gmail.com"
-                          />
-                        </div>
-                        <div className="modal-actions edit-user-teacher-actions">
-                          <button
-                            type="button"
-                            className="sts-add-btn"
-                            onClick={handleAddParentRelation}
-                          >
-                            Add Child
-                          </button>
-                        </div>
-                        {parentRelationMessage && <p className="info-text">{parentRelationMessage}</p>}
-                        {parentRelations.length === 0 ? (
-                          <p className="empty-table-msg">No linked children yet.</p>
-                        ) : (
-                          <div className="table-container">
-                            <table className="sts-data-table">
-                              <thead>
-                                <tr>
-                                  <th>STUDENT NAME</th>
-                                  <th>STUDENT ID</th>
-                                  <th>EMAIL</th>
-                                  <th>ACTION</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {parentRelations.map((relation) => (
-                                  <tr key={relation.id}>
-                                    <td>{relation.student_name || 'Unknown'}</td>
-                                    <td>{relation.game_student_id || 'Not linked'}</td>
-                                    <td>{relation.student_email || 'N/A'}</td>
-                                    <td>
-                                      <button
-                                        type="button"
-                                        className="delete-action-btn"
-                                        onClick={() => handleRemoveTeacherRelation(relation.id, 'parent')}
-                                      >
-                                        Remove
-                                      </button>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </div>
+                      <AdminManagedChildrenPanel
+                        parentId={editingUser.id}
+                        sectionRegistry={sectionRegistry}
+                        authHeaders={buildAuthHeaders()}
+                      />
                     )}
 
                     <div className="modal-actions edit-user-footer">

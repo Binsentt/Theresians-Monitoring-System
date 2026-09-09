@@ -116,6 +116,9 @@ export default function StudentProgress() {
 
   const paginatedStudents = filteredStudents.slice((page - 1) * pageSize, page * pageSize);
   const pageCount = Math.max(1, Math.ceil(filteredStudents.length / pageSize));
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
   const hasActiveStudentFilters = Boolean(searchQuery || selectedGrade || selectedSection);
   const reportScope = [selectedGrade, selectedSection, searchQuery ? `Search: ${searchQuery}` : ''].filter(Boolean).join(' / ') || 'All authorised students';
 

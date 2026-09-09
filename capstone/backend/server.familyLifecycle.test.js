@@ -1,0 +1,240 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const Module = require('node:module');
+
+const emptyResult = { rows: [] };
+let queryHandler = async () => emptyResult;
+let tokenPayloads = {};
+let authenticatedAccounts = {};
+let queries = [];
+let connectCount = 0;
+
+const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
+const resultRows = (rows) => ({ rows });
+const runQuery = async (sql, params = []) => {
+  const compacted = compactSql(sql);
+  queries.push({ sql: compacted, params });
+  if (compacted.startsWith('select * from public.accounts where id = $1')) {
+    const account = authenticatedAccounts[Number(params[0])];
+    if (account) return resultRows([account]);
+  }
+  return (await queryHandler(compacted, params, sql)) || emptyResult;
+};
+const mockPool = {
+  query: runQuery,
+  connect: async () => {
+    connectCount += 1;
+    return { query: runQuery, release: () => {} };
+  },
+};
+
+const dbPath = require.resolve('./database/db');
+require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: mockPool };
+
+const passthrough = () => (req, res, next) => next();
+const originalLoad = Module._load;
+Module._load = function loadWithStubs(request, parent, isMain) {
+  if (request === 'bcrypt') return { compare: async () => false, hash: async (value) => `hashed:${value}` };
+  if (request === 'cors') return () => passthrough();
+  if (request === 'jsonwebtoken') return { sign: () => 'token', verify: (token) => tokenPayloads[token] || {} };
+  if (request === 'multer') return () => ({ single: passthrough, array: passthrough, fields: passthrough });
+  if (request === 'pdf-parse') return async () => ({ text: '' });
+  return originalLoad.call(this, request, parent, isMain);
+};
+
+let app;
+try {
+  ({ app } = require('./server'));
+} finally {
+  Module._load = originalLoad;
+}
+
+const listen = () => new Promise((resolve) => {
+  const server = app.listen(0, () => resolve(server));
+});
+const close = (server) => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+const requestJson = async (baseUrl, path, options = {}) => {
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+  });
+  return { status: response.status, body: await response.json() };
+};
+
+const reset = () => {
+  queries = [];
+  connectCount = 0;
+  queryHandler = async () => emptyResult;
+  tokenPayloads = {
+    admin: { userId: 1, sessionVersion: 0 },
+    parent: { userId: 19, sessionVersion: 0 },
+    parentTeacher: { userId: 20, sessionVersion: 0 },
+  };
+  authenticatedAccounts = {
+    1: { id: 1, name: 'Ada Admin', email: 'ada@example.com', role: 'admin', is_archived: false, session_version: 0 },
+    19: { id: 19, name: 'Parent User', role: 'parent', is_archived: false, session_version: 0 },
+    20: { id: 20, name: 'Parent Teacher', role: 'parent_teacher', is_archived: false, session_version: 0 },
+  };
+};
+
+test('Parent soft Delete and restore preserve child accounts and relationships', async (t) => {
+  reset();
+  queryHandler = async (sql, params) => {
+    if (sql.startsWith('select id, email, role, is_archived')) {
+      return resultRows([{ id: 19, email: 'parent@example.com', role: 'parent', is_archived: false, parent_id: '112832' }]);
+    }
+    if (sql.startsWith('update public.accounts set is_archived = true')) {
+      return resultRows([{ id: 19, role: 'parent', is_archived: true }]);
+    }
+    if (sql.startsWith('select id, role from public.accounts')) return resultRows([{ id: 19, role: 'parent' }]);
+    if (sql.startsWith('update public.accounts set is_archived = false')) {
+      return resultRows([{ id: 19, role: 'parent', is_archived: false }]);
+    }
+    return emptyResult;
+  };
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  const archived = await requestJson(baseUrl, '/api/accounts/19', {
+    method: 'DELETE', headers: { Authorization: 'Bearer admin' }, body: JSON.stringify({ reason: 'Duplicate family account' }),
+  });
+  const restored = await requestJson(baseUrl, '/api/accounts/19/restore', {
+    method: 'POST', headers: { Authorization: 'Bearer admin' },
+  });
+
+  assert.equal(archived.status, 200);
+  assert.equal(restored.status, 200);
+  assert.equal(queries.some(({ sql }) => sql.startsWith('delete from public.accounts')), false);
+  assert.equal(queries.some(({ sql }) => sql.startsWith('delete from public.teacher_student_relationships')), false);
+});
+
+test('archived Parent permanent deletion transaction removes owned children and releases IDs', async (t) => {
+  reset();
+  queryHandler = async (sql) => {
+    if (sql.startsWith('select id, email, role, is_archived')) {
+      return resultRows([{ id: 19, email: 'parent@example.com', role: 'parent', is_archived: true, parent_id: '112832' }]);
+    }
+    if (sql.includes('from public.accounts') && sql.includes('for update')) {
+      return resultRows([{ id: 19, name: 'Parent User', email: 'parent@example.com', role: 'parent', parent_id: '112832', is_archived: true }]);
+    }
+    if (sql.includes('from public.teacher_student_relationships relationship') && sql.includes('join public.accounts student')) {
+      return resultRows([{ relationship_id: 7, student_id: 44, student_name: 'Ava Santos', game_student_id: '00123456' }]);
+    }
+    if (sql.includes('other_parent')) return emptyResult;
+    if (sql.startsWith('delete from public.accounts') && sql.includes('any')) return resultRows([{ id: 44, game_student_id: '00123456' }]);
+    if (sql.startsWith('delete from public.accounts')) return resultRows([{ id: 19, role: 'parent', parent_id: '112832' }]);
+    return emptyResult;
+  };
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  const response = await requestJson(baseUrl, '/api/accounts/19?permanent=true', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer admin' },
+    body: JSON.stringify({ reason: 'Duplicate family account', permanent_confirmation: 'DELETE' }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.deleted_child_count, 1);
+  assert.equal(connectCount, 1);
+  assert.ok(queries.some(({ sql }) => sql === 'begin'));
+  assert.ok(queries.some(({ sql }) => sql.startsWith('delete from public.game_results')));
+  assert.ok(queries.some(({ sql }) => sql.startsWith('delete from public.playtime_sessions')));
+  assert.ok(queries.some(({ sql }) => sql.startsWith('delete from public.accounts') && sql.includes('any')));
+  assert.ok(queries.some(({ sql }) => sql === 'commit'));
+});
+
+test('Admin lists and atomically links another eligible existing child', async (t) => {
+  reset();
+  queryHandler = async (sql, params) => {
+    if (sql.includes('from public.teacher_student_relationships relationship') && sql.includes('grade_level')) {
+      return resultRows([{ relationship_id: 7, student_id: 44, student_name: 'Ava Santos', game_student_id: '00123456', grade_level: 'Grade 1', section: 'Amethyst' }]);
+    }
+    if (sql.includes('from public.accounts') && !sql.includes(' s ')
+        && (sql.includes('for update') || sql.startsWith('select id, name, email, role, parent_id, is_archived'))) {
+      return resultRows([{ id: 19, role: 'parent', parent_id: '112832', is_archived: false }]);
+    }
+    if (sql.includes('from public.accounts s') && sql.includes('where s.game_student_id = $1')) {
+      return resultRows([{ id: 45, name: 'Noah Santos', game_student_id: params[0], grade_level: 'Grade 1', section: 'Amber', is_archived: false }]);
+    }
+    if (sql.includes('active_parent_relationship')) return emptyResult;
+    if (sql.startsWith('select id from public.teacher_student_relationships')) return emptyResult;
+    if (sql.startsWith('insert into public.teacher_student_relationships')) return resultRows([{ id: 8 }]);
+    return emptyResult;
+  };
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  const listed = await requestJson(baseUrl, '/api/accounts/19/children', { headers: { Authorization: 'Bearer admin' } });
+  const linked = await requestJson(baseUrl, '/api/accounts/19/children', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer admin' },
+    body: JSON.stringify({ children: [{ operation: 'link', student_id: '00123457' }] }),
+  });
+
+  assert.equal(listed.status, 200);
+  assert.deepEqual(listed.body.children[0], {
+    relationship_id: 7,
+    student_id: 44,
+    student_name: 'Ava Santos',
+    game_student_id: '00123456',
+    grade_level: 'Grade 1',
+    section: 'Amethyst',
+    is_archived: false,
+  });
+  assert.equal(linked.status, 201);
+  assert.equal(linked.body.children[0].game_student_id, '00123457');
+  assert.ok(queries.some(({ sql }) => sql === 'begin'));
+  assert.ok(queries.some(({ sql }) => sql === 'commit'));
+});
+
+test('Admin unlink preserves the Student and explicit permanent deletion requires typed confirmation', async (t) => {
+  reset();
+  queryHandler = async (sql) => {
+    if (sql.includes('from public.accounts') && sql.includes('for update')) {
+      return resultRows([{ id: 19, role: 'parent', parent_id: '112832', is_archived: false }]);
+    }
+    if (sql.startsWith('delete from public.teacher_student_relationships')) {
+      return resultRows([{ id: 7, teacher_id: 19, student_id: 44, relationship_type: 'Parent' }]);
+    }
+    return emptyResult;
+  };
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  const rejected = await requestJson(baseUrl, '/api/accounts/19/children/44?permanent=true', {
+    method: 'DELETE', headers: { Authorization: 'Bearer admin' }, body: JSON.stringify({}),
+  });
+  const unlinked = await requestJson(baseUrl, '/api/accounts/19/children/44', {
+    method: 'DELETE', headers: { Authorization: 'Bearer admin' }, body: JSON.stringify({}),
+  });
+
+  assert.equal(rejected.status, 400);
+  assert.match(rejected.body.error, /type delete/i);
+  assert.equal(unlinked.status, 200);
+  assert.equal(queries.some(({ sql }) => sql.startsWith('delete from public.accounts')), false);
+});
+
+test('Parent and Parent-Teacher cannot list, add, unlink, or delete managed children', async (t) => {
+  reset();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  for (const token of ['parent', 'parentTeacher']) {
+    for (const [path, options] of [
+      ['/api/accounts/19/children', {}],
+      ['/api/accounts/19/children', { method: 'POST', body: JSON.stringify({ children: [] }) }],
+      ['/api/accounts/19/children/44', { method: 'DELETE' }],
+      ['/api/accounts/19/children/44?permanent=true', { method: 'DELETE', body: JSON.stringify({ permanent_confirmation: 'DELETE' }) }],
+    ]) {
+      const response = await requestJson(baseUrl, path, { ...options, headers: { Authorization: `Bearer ${token}` } });
+      assert.equal(response.status, 403);
+    }
+  }
+  assert.equal(connectCount, 0);
+});

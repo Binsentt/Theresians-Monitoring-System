@@ -90,6 +90,9 @@ describe('ManageUsers edit flow', () => {
     localStorage.clear();
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
     global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/accounts/8/children')) {
+        return Promise.resolve({ ok: true, json: async () => ({ children: [] }) });
+      }
       if (String(url).includes('/api/accounts')) {
         return Promise.resolve({
           ok: true,
@@ -151,7 +154,7 @@ describe('ManageUsers edit flow', () => {
     expect(document.body.querySelector('input[value="maria@gmail.com"]')).toBeTruthy();
   });
 
-  test.each(['Edit', 'Archive Account'])('%s dialog escapes a transformed scrolled page and restores keyboard focus', async (label) => {
+  test.each(['Edit', 'Delete'])('%s dialog escapes a transformed scrolled page and restores keyboard focus', async (label) => {
     container.style.transform = 'translateY(0)';
     container.classList.add('page-content');
     container.scrollTop = 798;
@@ -272,7 +275,7 @@ describe('ManageUsers edit flow', () => {
     const actionButtons = Array.from(actions.querySelectorAll('button'));
 
     expect(actions.classList.contains('manage-user-actions')).toBe(true);
-    expect(actionButtons.map((button) => button.textContent)).toEqual(['Edit', 'Send Temporary Password', 'Archive Account']);
+    expect(actionButtons.map((button) => button.textContent)).toEqual(['Edit', 'Send Temporary Password', 'Delete']);
     actionButtons.forEach((button) => {
       expect(button.classList.contains('manage-user-action-btn')).toBe(true);
     });
@@ -313,10 +316,10 @@ describe('ManageUsers edit flow', () => {
 
   test('requires typed DELETE before permanently deleting an archived account', async () => {
     const archivedAccount = {
-      ...accountsPayload[0],
+      ...accountsPayload[1],
       id: 77,
-      name: 'Archived Teacher',
-      email: 'archived.teacher@example.com',
+      name: 'Archived Parent',
+      email: 'archived.parent@example.com',
     };
     global.fetch = jest.fn((url, options = {}) => {
       if (String(url).includes('/api/accounts?archived=true')) {
@@ -338,7 +341,7 @@ describe('ManageUsers edit flow', () => {
     });
 
     const permanentDelete = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Permanent Delete'
+      (button) => button.textContent === 'Delete Permanently'
     );
     expect(permanentDelete).toBeTruthy();
 
@@ -346,6 +349,7 @@ describe('ManageUsers edit flow', () => {
       permanentDelete.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(document.body.textContent).toContain('This action is irreversible.');
+    expect(document.body.textContent).toContain('all exclusively owned child Student accounts');
 
     await act(async () => {
       setFieldValue(document.body.querySelector('textarea[name="deletion-reason"]'), 'Duplicate account cleanup.');
@@ -452,7 +456,8 @@ describe('ManageUsers edit flow', () => {
       deleteButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(document.body.textContent).toContain('Archive Account');
+    expect(document.body.textContent).toContain('Delete Account');
+    expect(document.body.textContent).toContain('can be restored');
     expect(document.body.textContent).toContain('Maria Santos');
     expect(document.body.textContent).toContain('Teacher');
     const continueButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue');
@@ -470,8 +475,8 @@ describe('ManageUsers edit flow', () => {
       continueButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(document.body.textContent).toContain('Are you sure you want to archive this account?');
-    const confirmButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Archive Account');
+    expect(document.body.textContent).toContain('This removes the account from active users. It can be restored later.');
+    const confirmButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Delete Account');
     await act(async () => {
       confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
@@ -499,10 +504,10 @@ describe('ManageUsers edit flow', () => {
       editButtons[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(document.body.textContent).toContain('Linked Children');
-    expect(document.body.textContent).toContain('Student Email');
+    expect(document.body.textContent).toContain('Children (0)');
+    expect(document.body.textContent).toContain('Add Child');
     expect(document.body.textContent).toContain('Parent ID');
-    expect(global.fetch).toHaveBeenCalledWith('/api/teacher-student-relationships?teacherId=8', expect.objectContaining({
+    expect(global.fetch).toHaveBeenCalledWith('/api/accounts/8/children', expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer manage-users-token' }),
     }));
   });
@@ -554,6 +559,15 @@ describe('ManageUsers edit flow', () => {
       parent_id: '482916',
     };
     global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/accounts/11/children')) {
+        return Promise.resolve({ ok: true, json: async () => ({ children: [{
+          student_id: 52,
+          student_name: 'Linked Child',
+          game_student_id: '001102',
+          grade_level: 'Grade 1',
+          section: 'Amethyst',
+        }] }) });
+      }
       if (String(url).includes('/api/accounts')) {
         return Promise.resolve({ ok: true, json: async () => [...accountsPayload, parentTeacher] });
       }
@@ -586,12 +600,24 @@ describe('ManageUsers edit flow', () => {
     expect(document.body.textContent).toContain('Class Assignments');
     expect(document.body.textContent).toContain('Individual Student Exceptions');
     expect(document.body.textContent).toContain('Assigned Exception');
-    expect(document.body.textContent).toContain('Linked Children');
+    expect(document.body.textContent).toContain('Children (1)');
     expect(document.body.textContent).toContain('Linked Child');
   });
 
   test('Linked Children shows the authoritative Student ID returned by the backend', async () => {
     global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/accounts/8/children')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ children: [{
+            student_id: 44,
+            student_name: 'Child One',
+            game_student_id: '001234',
+            grade_level: 'Grade 1',
+            section: 'Amethyst',
+          }] }),
+        });
+      }
       if (String(url).includes('/api/accounts')) {
         return Promise.resolve({ ok: true, json: async () => accountsPayload });
       }

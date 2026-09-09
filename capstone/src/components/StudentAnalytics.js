@@ -154,10 +154,7 @@ export default function StudentAnalytics() {
     'Not available'
   );
   const currentDifficulty = resolveCurrentDifficulty({ ...progress, metrics });
-  const currentScene = safeDisplayText(
-    progress?.current_scene || progress?.currentScene || progress?.scene || progress?.current_map || progress?.currentMap,
-    'Unknown'
-  );
+  const currentLocation = safeDisplayText(progress?.current_location, 'Not available');
   const metricCards = [
     { label: 'Total Progress', value: formatPercent(metrics?.totalProgress), note: getTotalProgressNote(metrics), icon: Target, tone: 'blue' },
     { label: 'Accuracy', value: formatPercent(metrics?.accuracy), icon: BarChart3, tone: 'green' },
@@ -194,6 +191,7 @@ export default function StudentAnalytics() {
     ['Student Information', 'Section', section],
     ['Student Information', 'Current Quest', currentQuest],
     ['Student Information', 'Current Difficulty', currentDifficulty],
+    ['Student Information', 'Current Location', currentLocation],
     ...reportSummary.map((metric) => ['Performance Summary', metric.label, metric.value]),
     ...difficultyRows.map((row) => ['Difficulty Performance', row.label, formatPercent(row.value)]),
     ...topicRows.map((row) => ['Topic Performance', row.topic, formatPercent(row.accuracy)]),
@@ -269,7 +267,7 @@ export default function StudentAnalytics() {
               <div className="student-performance-meta">
                 <div><span>Current Quest</span><strong>{currentQuest}</strong></div>
                 <div><span>Current Difficulty</span><strong>{currentDifficulty}</strong></div>
-                <div><span>Current Scene</span><strong>{currentScene}</strong></div>
+                <div><span>Current Location</span><strong>{currentLocation}</strong></div>
                 <div><span>Recorded Results</span><strong>{formatCount(metrics?.validResultCount)}</strong></div>
               </div>
               <div className="student-progress-bars">

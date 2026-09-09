@@ -1518,6 +1518,37 @@
   grid-column: 1 / -1;
 }
 
+.admin-managed-children-add {
+  margin-bottom: 1rem;
+}
+
+.managed-child-confirmation {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid #dc2626;
+  border-radius: 10px;
+  background: rgba(220, 38, 38, 0.05);
+}
+
+.managed-child-confirmation h4,
+.managed-child-confirmation p {
+  margin: 0 0 0.75rem;
+}
+
+.managed-child-confirmation input {
+  display: block;
+  width: 100%;
+  margin-bottom: 0.75rem;
+  padding: 0.7rem;
+  border: 1px solid var(--border-color, #d9e0e8);
+  border-radius: 6px;
+}
+
+.managed-child-confirmation button + button,
+.admin-managed-children td button + button {
+  margin-left: 0.5rem;
+}
+
 @media (max-width: 768px) {
   .admin-parent-children-heading,
   .admin-parent-child-card {

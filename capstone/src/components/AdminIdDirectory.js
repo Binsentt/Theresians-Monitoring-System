@@ -7,6 +7,7 @@ import logoImage from '../assets/images/STS_Logo.png';
 import { apiUrl } from '../api';
 import { buildAuthHeaders, clearStoredSession } from './session.utils';
 import { normalizeRole } from './manageUsers.utils';
+import { paginateTableRows } from './tableReporting.utils';
 import {
   filterDirectoryRows,
   formatDirectoryDate,
@@ -113,6 +114,20 @@ function TeacherDirectoryTable({ rows }) {
   );
 }
 
+function DirectoryPagination({ page, setPage }) {
+  if (page.totalPages <= 1) return null;
+  return (
+    <div className="id-directory-pagination" aria-label="ID Directory pagination">
+      <span>Showing {page.start} - {page.end} of {page.totalItems}</span>
+      <div>
+        <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page.currentPage === 1}>Previous</button>
+        <span>Page {page.currentPage} of {page.totalPages}</span>
+        <button type="button" onClick={() => setPage((value) => Math.min(page.totalPages, value + 1))} disabled={page.currentPage === page.totalPages}>Next</button>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminIdDirectory() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
@@ -121,6 +136,8 @@ export default function AdminIdDirectory() {
   const [teacherFilters, setTeacherFilters] = useState(emptyFilters);
   const [showArchived, setShowArchived] = useState(false);
   const [activeTab, setActiveTab] = useState('students');
+  const [studentPage, setStudentPage] = useState(1);
+  const [teacherPage, setTeacherPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -185,6 +202,16 @@ export default function AdminIdDirectory() {
     () => filterDirectoryRows(directory.teachers, teacherFilters, 'teacher'),
     [directory.teachers, teacherFilters]
   );
+  const paginatedStudents = paginateTableRows(filteredStudents, studentPage, 10);
+  const paginatedTeachers = paginateTableRows(filteredTeachers, teacherPage, 10);
+
+  useEffect(() => {
+    if (studentPage !== paginatedStudents.currentPage) setStudentPage(paginatedStudents.currentPage);
+  }, [paginatedStudents.currentPage, studentPage]);
+
+  useEffect(() => {
+    if (teacherPage !== paginatedTeachers.currentPage) setTeacherPage(paginatedTeachers.currentPage);
+  }, [paginatedTeachers.currentPage, teacherPage]);
 
   if (loading) {
     return (
@@ -245,32 +272,34 @@ export default function AdminIdDirectory() {
                 title={`Students (${filteredStudents.length})`}
                 actions={(
                   <div className="id-directory-filters" aria-label="Student ID filters">
-                    <DirectoryFilter label="ID" value={studentFilters.id} onChange={(value) => updateFilter(setStudentFilters, 'id', value)} />
-                    <DirectoryFilter label="Name" value={studentFilters.name} onChange={(value) => updateFilter(setStudentFilters, 'name', value)} />
-                    <DirectoryFilter label="Grade" value={studentFilters.grade} onChange={(value) => updateFilter(setStudentFilters, 'grade', value)} />
-                    <DirectoryFilter label="Section" value={studentFilters.section} onChange={(value) => updateFilter(setStudentFilters, 'section', value)} />
-                    <DirectoryFilter label="Status" value={studentFilters.status} onChange={(value) => updateFilter(setStudentFilters, 'status', value)} />
+                    <DirectoryFilter label="ID" value={studentFilters.id} onChange={(value) => { updateFilter(setStudentFilters, 'id', value); setStudentPage(1); }} />
+                    <DirectoryFilter label="Name" value={studentFilters.name} onChange={(value) => { updateFilter(setStudentFilters, 'name', value); setStudentPage(1); }} />
+                    <DirectoryFilter label="Grade" value={studentFilters.grade} onChange={(value) => { updateFilter(setStudentFilters, 'grade', value); setStudentPage(1); }} />
+                    <DirectoryFilter label="Section" value={studentFilters.section} onChange={(value) => { updateFilter(setStudentFilters, 'section', value); setStudentPage(1); }} />
+                    <DirectoryFilter label="Status" value={studentFilters.status} onChange={(value) => { updateFilter(setStudentFilters, 'status', value); setStudentPage(1); }} />
                   </div>
                 )}
                 contentClassName="id-directory-section-content"
               >
-                <StudentDirectoryTable rows={filteredStudents} />
+                <StudentDirectoryTable rows={paginatedStudents.rows} />
+                <DirectoryPagination page={paginatedStudents} setPage={setStudentPage} />
               </ContentSection>
             ) : (
               <ContentSection
                 title={`Teachers (${filteredTeachers.length})`}
                 actions={(
                   <div className="id-directory-filters" aria-label="Teacher ID filters">
-                    <DirectoryFilter label="ID" value={teacherFilters.id} onChange={(value) => updateFilter(setTeacherFilters, 'id', value)} />
-                    <DirectoryFilter label="Name" value={teacherFilters.name} onChange={(value) => updateFilter(setTeacherFilters, 'name', value)} />
-                    <DirectoryFilter label="Email" value={teacherFilters.email} onChange={(value) => updateFilter(setTeacherFilters, 'email', value)} />
-                    <DirectoryFilter label="Role" value={teacherFilters.role} onChange={(value) => updateFilter(setTeacherFilters, 'role', value)} />
-                    <DirectoryFilter label="Status" value={teacherFilters.status} onChange={(value) => updateFilter(setTeacherFilters, 'status', value)} />
+                    <DirectoryFilter label="ID" value={teacherFilters.id} onChange={(value) => { updateFilter(setTeacherFilters, 'id', value); setTeacherPage(1); }} />
+                    <DirectoryFilter label="Name" value={teacherFilters.name} onChange={(value) => { updateFilter(setTeacherFilters, 'name', value); setTeacherPage(1); }} />
+                    <DirectoryFilter label="Email" value={teacherFilters.email} onChange={(value) => { updateFilter(setTeacherFilters, 'email', value); setTeacherPage(1); }} />
+                    <DirectoryFilter label="Role" value={teacherFilters.role} onChange={(value) => { updateFilter(setTeacherFilters, 'role', value); setTeacherPage(1); }} />
+                    <DirectoryFilter label="Status" value={teacherFilters.status} onChange={(value) => { updateFilter(setTeacherFilters, 'status', value); setTeacherPage(1); }} />
                   </div>
                 )}
                 contentClassName="id-directory-section-content"
               >
-                <TeacherDirectoryTable rows={filteredTeachers} />
+                <TeacherDirectoryTable rows={paginatedTeachers.rows} />
+                <DirectoryPagination page={paginatedTeachers} setPage={setTeacherPage} />
               </ContentSection>
             )}
           </PageContent>

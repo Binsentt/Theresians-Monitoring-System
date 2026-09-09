@@ -188,6 +188,7 @@ test('all authorized role contexts receive the same Student metrics', async (t) 
   for (const [token, scope] of [['teacher', ''], ['parent', '?scope=parent'], ['parentTeacher', ''], ['parentTeacher', '?scope=parent']]) {
     const detail = await get(`/api/student-progress/44${scope}`, token);
     assert.deepEqual(detail.metrics, expected.metrics);
+    assert.equal(detail.progress.current_location, 'Oakleaf Village');
     const [row] = await get(`/api/students/progress${scope}`, token);
     assert.equal(row.accuracy_rate, expected.metrics.accuracy, `${token}${scope} list/detail accuracy`);
     assert.equal(row.current_quest, expected.metrics.currentQuest);
