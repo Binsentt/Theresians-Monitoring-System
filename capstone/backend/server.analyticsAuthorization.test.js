@@ -352,14 +352,24 @@ test('grounded insight endpoint returns a current cache without another provider
   assert.deepEqual(response.body.insight, cachedInsight);
 });
 
-test('grounded insight requires five valid results before contacting OpenAI', async (t) => {
+test('grounded insight treats four valid results as preliminary and generates once', async (t) => {
   reset();
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const originalFetch = global.fetch;
-  t.after(async () => { global.fetch = originalFetch; reset(); await close(server); });
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'test-key';
+  t.after(async () => {
+    global.fetch = originalFetch;
+    if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalOpenAiKey;
+    reset();
+    await close(server);
+  });
 
-  queryHandler = async (sql) => {
+  let cachedInsight = null;
+  let providerCalls = 0;
+  queryHandler = async (sql, params) => {
     if (sql.startsWith('select p.*') && sql.includes('from public.student_game_progress p')) {
       return resultRows([{
         student_id: 44,
@@ -378,12 +388,34 @@ test('grounded insight requires five valid results before contacting OpenAI', as
         math_topic: 'Fractions',
       })));
     }
-    if (sql.includes('from public.playtime_sessions') || sql.includes('from public.student_ai_insights')) return resultRows([]);
+    if (sql.includes('from public.playtime_sessions')) return resultRows([]);
+    if (sql.includes('from public.student_ai_insights')) return cachedInsight ? resultRows([cachedInsight]) : resultRows([]);
+    if (sql.startsWith('insert into public.student_ai_insights')) {
+      cachedInsight = {
+        input_fingerprint: params[1],
+        insight: JSON.parse(params[2]),
+        generated_at: '2026-09-09T00:00:00.000Z',
+        stale_at: null,
+      };
+      return resultRows([{ insight: cachedInsight.insight, generated_at: cachedInsight.generated_at }]);
+    }
     return emptyResult;
   };
   global.fetch = async (url, options) => {
     if (String(url).startsWith(baseUrl)) return originalFetch(url, options);
-    throw new Error('provider must not be called below the five-result threshold');
+    providerCalls += 1;
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ output_text: JSON.stringify({
+        grounding_policy_version: 'grounded-claims-v1',
+        performance_claim_ids: ['results_recorded', 'overall_accuracy'],
+        strength_claim_ids: [],
+        weakness_claim_ids: ['overall_accuracy_weakness'],
+        recommendation_claim_ids: ['practice_overall_accuracy'],
+      }) }),
+    };
   };
 
   const response = await requestJson(baseUrl, '/api/student-progress/44/ai-insight', {
@@ -391,10 +423,13 @@ test('grounded insight requires five valid results before contacting OpenAI', as
     headers: authHeaders('admin'),
   });
 
-  assert.equal(response.status, 422);
-  assert.equal(response.body.status, 'insufficient_data');
+  assert.equal(response.status, 200);
+  assert.equal(response.body.status, 'generated');
+  assert.equal(response.body.data_level, 'limited_data');
+  assert.equal(response.body.preliminary, true);
   assert.equal(response.body.valid_result_count, 4);
-  assert.equal(response.body.required_result_count, 5);
+  assert.equal(response.body.sufficient_result_count, 5);
+  assert.equal(providerCalls, 1);
 });
 
 test('invalid grounded provider output is not cached and deterministic progress remains available', async (t) => {
@@ -464,11 +499,12 @@ test('invalid grounded provider output is not cached and deterministic progress 
   });
   const deterministicDetails = await requestJson(baseUrl, '/api/student-progress/44', { headers: authHeaders('admin') });
 
-  assert.equal(failedInsight.status, 502);
+  assert.equal(failedInsight.status, 200);
   assert.equal(failedInsight.body.status, 'unavailable');
   assert.equal(insertCalls, 0);
   assert.equal(deterministicDetails.status, 200);
   assert.equal(deterministicDetails.body.metrics.accuracy, 60);
+  assert.equal(deterministicDetails.body.aiInsight.status, 'unavailable');
 });
 
 test('valid grounded output caches by fingerprint and regenerates a stale entry', async (t) => {

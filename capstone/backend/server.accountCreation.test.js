@@ -158,6 +158,16 @@ const requestJson = async (baseUrl, path, options = {}) => {
   };
 };
 
+const validParentChild = (studentId = '00123456') => ({
+  operation: 'create',
+  first_name: 'Ava',
+  last_name: 'Santos',
+  middle_initial: 'M',
+  grade_level: 'Grade 1',
+  section: 'Amethyst',
+  student_id: studentId,
+});
+
 test('admin account creation accepts optional profile fields and emails entered address', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -172,6 +182,12 @@ test('admin account creation accepts optional profile fields and emails entered 
     if (sql.includes('select 1 from public.accounts where parent_id')) {
       return emptyResult;
     }
+    if (sql.includes('game_student_id') && sql.includes('for update')) return emptyResult;
+    if (sql.startsWith('insert into public.accounts') && sql.includes('first_name')) {
+      return resultRows([{ id: 191, name: params[0], first_name: params[1], last_name: params[2], grade_level: params[4], section: params[5], game_student_id: params[8] }]);
+    }
+    if (sql.startsWith('select id from public.teacher_student_relationships')) return emptyResult;
+    if (sql.startsWith('insert into public.teacher_student_relationships')) return resultRows([{ id: 501 }]);
     if (sql.startsWith('insert into public.accounts')) {
       insertParams = params;
       return resultRows([{
@@ -201,6 +217,7 @@ test('admin account creation accepts optional profile fields and emails entered 
       name: 'Paula Parent',
       email: 'paula.parent@gmail.com',
       role: 'parent',
+      children: [validParentChild()],
     }),
   });
 
@@ -211,8 +228,9 @@ test('admin account creation accepts optional profile fields and emails entered 
     assert.equal(insertParams[10], true);
   assert.ok(insertParams[12] instanceof Date);
   assert.ok(insertParams[13] instanceof Date);
-  assert.equal(await serverDependencyStubs.bcrypt.compare(hashedPasswordInputs.at(-1), insertParams[2]), true);
-  const escapedGeneratedPassword = hashedPasswordInputs.at(-1)
+  const parentGeneratedPassword = hashedPasswordInputs.at(-2);
+  assert.equal(await serverDependencyStubs.bcrypt.compare(parentGeneratedPassword, insertParams[2]), true);
+  const escapedGeneratedPassword = parentGeneratedPassword
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -238,6 +256,12 @@ test('teacher account creation emails the entered address with the account role'
 
   let insertParams = null;
   setQueryHandler(async (sql, params) => {
+    if (sql.includes('game_student_id') && sql.includes('for update')) return emptyResult;
+    if (sql.startsWith('insert into public.accounts') && sql.includes('first_name')) {
+      return resultRows([{ id: 190, name: params[0], first_name: params[1], last_name: params[2], grade_level: params[4], section: params[5], game_student_id: params[8] }]);
+    }
+    if (sql.startsWith('select id from public.teacher_student_relationships')) return emptyResult;
+    if (sql.startsWith('insert into public.teacher_student_relationships')) return resultRows([{ id: 502 }]);
     if (sql.startsWith('insert into public.accounts')) {
       insertParams = params;
       return resultRows([{
@@ -929,6 +953,7 @@ test('admin account management writes audit log entries for create edit archive 
       name: 'New Parent',
       email: 'new.parent@gmail.com',
       role: 'parent',
+      children: [validParentChild()],
     }),
   });
   const editResponse = await requestJson(baseUrl, '/api/accounts/42', {
@@ -1626,6 +1651,12 @@ test('active Parent/Teacher accounts receive a canonical Parent ID and pass Godo
 
   setQueryHandler(async (sql, params) => {
     if (sql.startsWith('select 1 from public.accounts where parent_id = $1')) return emptyResult;
+    if (sql.includes('game_student_id') && sql.includes('for update')) return emptyResult;
+    if (sql.startsWith('insert into public.accounts') && sql.includes('first_name')) {
+      return resultRows([{ id: 391, name: params[0], first_name: params[1], last_name: params[2], grade_level: params[4], section: params[5], game_student_id: params[8] }]);
+    }
+    if (sql.startsWith('select id from public.teacher_student_relationships')) return emptyResult;
+    if (sql.startsWith('insert into public.teacher_student_relationships')) return resultRows([{ id: 503 }]);
     if (sql.startsWith('insert into public.accounts')) {
       insertParams = params;
       return resultRows([{
@@ -1661,6 +1692,7 @@ test('active Parent/Teacher accounts receive a canonical Parent ID and pass Godo
       email: 'pat.combined@example.com',
       role: 'Parent/Teacher',
       employee_id: '1234567890',
+      children: [validParentChild()],
     }),
   });
 
@@ -1727,6 +1759,12 @@ test('Parent ID generation retries a duplicate code before creating a Parent acc
       codeChecks.push(params[0]);
       return codeChecks.length === 1 ? resultRows([{ id: 99 }]) : emptyResult;
     }
+    if (sql.includes('game_student_id') && sql.includes('for update')) return emptyResult;
+    if (sql.startsWith('insert into public.accounts') && sql.includes('first_name')) {
+      return resultRows([{ id: 392, name: params[0], first_name: params[1], last_name: params[2], grade_level: params[4], section: params[5], game_student_id: params[8] }]);
+    }
+    if (sql.startsWith('select id from public.teacher_student_relationships')) return emptyResult;
+    if (sql.startsWith('insert into public.teacher_student_relationships')) return resultRows([{ id: 504 }]);
     if (sql.startsWith('insert into public.accounts')) {
       insertedParentId = params[11];
       return resultRows([{
@@ -1748,6 +1786,7 @@ test('Parent ID generation retries a duplicate code before creating a Parent acc
       name: 'Retry Parent',
       email: 'retry.parent@example.com',
       role: 'parent',
+      children: [validParentChild()],
     }),
   });
 

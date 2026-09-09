@@ -72,6 +72,11 @@ const setFieldValue = (field, value) => {
   field.dispatchEvent(new Event('change', { bubbles: true }));
 };
 
+const setSelectValue = (field, value) => {
+  Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set.call(field, value);
+  field.dispatchEvent(new Event('change', { bubbles: true }));
+};
+
 describe('ManageUsers edit flow', () => {
   let container;
   let root;
@@ -103,6 +108,13 @@ describe('ManageUsers edit flow', () => {
         return Promise.resolve({
           ok: true,
           json: async () => ({ assignments: [] }),
+        });
+      }
+
+      if (String(url).includes('/api/sections/registry')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ grades: [{ grade_level: 'Grade 1', sections: ['Amethyst', 'Amber'] }] }),
         });
       }
 
@@ -629,8 +641,63 @@ describe('ManageUsers edit flow', () => {
     expect(document.body.querySelector('input[type="password"]')).toBeNull();
   });
 
+  test('Admin creates a Parent with multiple create/link child rows in one account request', async () => {
+    let submittedPayload = null;
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url) === '/api/sections/registry') {
+        return Promise.resolve({ ok: true, json: async () => ({ grades: [{ grade_level: 'Grade 1', sections: ['Amethyst', 'Amber'] }] }) });
+      }
+      if (String(url) === '/api/accounts' && options.method === 'POST') {
+        submittedPayload = JSON.parse(options.body);
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ user: { id: 88, role: 'parent', parent_id: '482915' }, children: [] }),
+        });
+      }
+      if (String(url).includes('/api/accounts')) return Promise.resolve({ ok: true, json: async () => accountsPayload });
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => root.render(<ManageUsers />));
+    await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Add').click());
+
+    expect(document.body.textContent).toContain('Child 1');
+    await act(async () => document.body.querySelector('button[data-action="add-child"]').click());
+    expect(document.body.textContent).toContain('Child 2');
+
+    await act(async () => {
+      setFieldValue(document.body.querySelector('input[placeholder="John"]'), 'Paula');
+      setFieldValue(document.body.querySelector('input[placeholder="Doe"]'), 'Parent');
+      setFieldValue(document.body.querySelector('input[placeholder="user@gmail.com"]'), 'paula@example.edu');
+      setFieldValue(document.body.querySelector('input[aria-label="Child 1 first name"]'), 'Ava');
+      setFieldValue(document.body.querySelector('input[aria-label="Child 1 last name"]'), 'Santos');
+      setSelectValue(document.body.querySelector('select[aria-label="Child 1 grade"]'), 'Grade 1');
+    });
+    await act(async () => {
+      setSelectValue(document.body.querySelector('select[aria-label="Child 1 section"]'), 'Amethyst');
+      setFieldValue(document.body.querySelector('input[aria-label="Child 1 Student ID"]'), '00123456');
+      setSelectValue(document.body.querySelector('select[aria-label="Child 2 account action"]'), 'link');
+    });
+    await act(async () => setFieldValue(document.body.querySelector('input[aria-label="Child 2 Student ID"]'), '654321'));
+    await act(async () => document.body.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+
+    expect(submittedPayload.children).toEqual([
+      {
+        operation: 'create', student_id: '00123456', first_name: 'Ava', middle_initial: '',
+        last_name: 'Santos', grade_level: 'Grade 1', section: 'Amethyst',
+      },
+      { operation: 'link', student_id: '654321' },
+    ]);
+  });
+
   test('Add User form does not require birthday or gender for admin-created parent accounts', async () => {
     global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).includes('/api/sections/registry')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ grades: [{ grade_level: 'Grade 1', sections: ['Amethyst', 'Amber'] }] }),
+        });
+      }
       if (String(url).includes('/api/accounts') && options.method === 'POST') {
         return Promise.resolve({
           ok: true,
@@ -667,6 +734,13 @@ describe('ManageUsers edit flow', () => {
       setFieldValue(inputs[0], 'Paula');
       setFieldValue(inputs[2], 'Parent');
       setFieldValue(inputs[3], 'paula@gmail.com');
+      setFieldValue(document.body.querySelector('input[aria-label="Child 1 first name"]'), 'Ava');
+      setFieldValue(document.body.querySelector('input[aria-label="Child 1 last name"]'), 'Santos');
+      setSelectValue(document.body.querySelector('select[aria-label="Child 1 grade"]'), 'Grade 1');
+    });
+    await act(async () => {
+      setSelectValue(document.body.querySelector('select[aria-label="Child 1 section"]'), 'Amethyst');
+      setFieldValue(document.body.querySelector('input[aria-label="Child 1 Student ID"]'), '00123456');
     });
 
     await act(async () => {

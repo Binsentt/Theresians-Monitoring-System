@@ -83,7 +83,7 @@ const validChild = {
   student_id: '00123456',
 };
 
-test('parent child creation is authenticated, scoped, and duplicate-safe', async (t) => {
+test('Parent child mutation is forbidden while registry reads remain available', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -91,7 +91,7 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     await close(server);
   });
 
-  await t.test('creates an eight-digit child account and canonical Parent relationship from the session', async () => {
+  await t.test('forbids Parent child creation without writing an account or relationship', async () => {
     let accountInsert = null;
     let relationshipInsert = null;
     queryHandler = async (sql, params) => {
@@ -114,14 +114,13 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
       body: JSON.stringify({ ...validChild, parent_id: '999999' }),
     });
 
-    assert.equal(response.status, 201);
-    assert.equal(response.body.child.game_student_id, '00123456');
-    assert.equal(accountInsert.includes('999999'), false);
-    assert.equal(accountInsert.at(-1), '00123456');
-    assert.deepEqual(relationshipInsert, [19, 44, 'parent']);
+    assert.equal(response.status, 403);
+    assert.match(response.body.error, /only an administrator/i);
+    assert.equal(accountInsert, null);
+    assert.equal(relationshipInsert, null);
   });
 
-  await t.test('normalizes an approved Section label before storing the canonical child profile', async () => {
+  await t.test('does not normalize or store a Parent-submitted child profile', async () => {
     let accountInsert = null;
     queryHandler = async (sql, params) => {
       if (sql.includes('from public.accounts s') && sql.includes('where s.game_student_id = $1')) return emptyResult;
@@ -140,9 +139,8 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
       body: JSON.stringify({ ...validChild, section: '  Jade  ', student_id: '00124680' }),
     });
 
-    assert.equal(response.status, 201);
-    assert.ok(accountInsert.includes('Jade'));
-    assert.equal(accountInsert.includes('  Jade  '), false);
+    assert.equal(response.status, 403);
+    assert.equal(accountInsert, null);
   });
 
   await t.test('rejects a missing required Section before a child-account write', async () => {
@@ -158,8 +156,8 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
       body: JSON.stringify({ ...validChild, section: '   ', student_id: '00124780' }),
     });
 
-    assert.equal(response.status, 400);
-    assert.match(response.body.error, /Section is required/i);
+    assert.equal(response.status, 403);
+    assert.match(response.body.error, /only an administrator/i);
     assert.equal(wrote, false);
   });
 
@@ -181,12 +179,12 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
 
     assert.equal(registryResponse.status, 200);
     assert.deepEqual(registryResponse.body.grades[0], { grade_level: 'Grade 1', sections: ['Amethyst', 'Amber'] });
-    assert.equal(invalidResponse.status, 400);
-    assert.match(invalidResponse.body.error, /not available for Grade 1/i);
+    assert.equal(invalidResponse.status, 403);
+    assert.match(invalidResponse.body.error, /only an administrator/i);
     assert.equal(wrote, false);
   });
 
-  await t.test('allows Parent/Teacher only through the authenticated parent identity', async () => {
+  await t.test('forbids Parent/Teacher child mutation', async () => {
     let relationshipInsert = null;
     queryHandler = async (sql, params) => {
       if (sql.includes('from public.accounts s') && sql.includes('where s.game_student_id = $1')) return emptyResult;
@@ -205,8 +203,9 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
       body: JSON.stringify({ ...validChild, first_name: 'Noah', student_id: '00124580', parent_id: '112832' }),
     });
 
-    assert.equal(response.status, 201);
-    assert.deepEqual(relationshipInsert, [20, 45, 'parent']);
+    assert.equal(response.status, 403);
+    assert.match(response.body.error, /only an administrator/i);
+    assert.equal(relationshipInsert, null);
   });
 
   await t.test('rejects unauthenticated and teacher-only callers before writes', async () => {
@@ -241,8 +240,8 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     const alreadyLinked = await requestJson(baseUrl, '/api/parent/children', {
       method: 'POST', headers: { Authorization: 'Bearer parent-token' }, body: JSON.stringify(validChild),
     });
-    assert.equal(alreadyLinked.status, 409);
-    assert.match(alreadyLinked.body.error, /already linked/i);
+    assert.equal(alreadyLinked.status, 403);
+    assert.match(alreadyLinked.body.error, /only an administrator/i);
 
     queryHandler = async (sql) => {
       if (sql.includes('from public.accounts s') && sql.includes('where s.game_student_id = $1')) {
@@ -254,8 +253,8 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
     const differentParent = await requestJson(baseUrl, '/api/parent/children', {
       method: 'POST', headers: { Authorization: 'Bearer parent-token' }, body: JSON.stringify(validChild),
     });
-    assert.equal(differentParent.status, 409);
-    assert.match(differentParent.body.error, /another parent/i);
+    assert.equal(differentParent.status, 403);
+    assert.match(differentParent.body.error, /only an administrator/i);
     assert.equal(wrote, false);
   });
 
@@ -273,8 +272,8 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
       method: 'POST', headers: { Authorization: 'Bearer parent-token' }, body: JSON.stringify({ ...validChild, student_id: '001234' }),
     });
 
-    assert.equal(response.status, 409);
-    assert.match(response.body.error, /already linked/i);
+    assert.equal(response.status, 403);
+    assert.match(response.body.error, /only an administrator/i);
     assert.equal(wrote, false);
   });
 
@@ -289,8 +288,8 @@ test('parent child creation is authenticated, scoped, and duplicate-safe', async
       method: 'POST', headers: { Authorization: 'Bearer parent-token' }, body: JSON.stringify({ ...validChild, student_id: '001235' }),
     });
 
-    assert.equal(response.status, 400);
-    assert.equal(response.body.error, 'Student ID must be exactly 8 digits.');
+    assert.equal(response.status, 403);
+    assert.match(response.body.error, /only an administrator/i);
     assert.equal(wrote, false);
   });
 });

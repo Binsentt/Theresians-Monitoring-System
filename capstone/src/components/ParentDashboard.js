@@ -10,7 +10,6 @@ import { buildScopedApiUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
 import { buildAuthHeaders, getStoredUserSession } from './session.utils';
 import { formatPercent, normalizeDisplayList, safeDisplayText } from './studentProgress.utils';
-import ParentAddChildModal from './ParentAddChildModal';
 import { apiUrl } from '../api';
 import '../styles/parentdashboard.css';
 
@@ -48,7 +47,6 @@ export default function ParentDashboard() {
   const [analyticsSummary, setAnalyticsSummary] = useState(null);
   const [analyticsRecommendations, setAnalyticsRecommendations] = useState([]);
   const [error, setError] = useState('');
-  const [showAddChild, setShowAddChild] = useState(false);
 
   useEffect(() => {
     loadUser();
@@ -148,11 +146,6 @@ export default function ParentDashboard() {
     navigate('/parent/child-progress');
   };
 
-  const handleChildCreated = () => {
-    setShowAddChild(false);
-    loadDashboardData();
-  };
-
   if (loading) {
     const loadingRole = normalizeRole(getStoredUserSession()?.role);
     return (
@@ -185,9 +178,6 @@ export default function ParentDashboard() {
               <p>Welcome back, {user?.name || 'Parent'}.</p>
             </div>
             <div className="parent-dashboard-actions">
-              <button type="button" className="btn-secondary" onClick={() => setShowAddChild(true)}>
-                Add Child
-              </button>
               <button type="button" className="btn-primary" onClick={handleViewChildProgress}>
                 View Child Progress
               </button>
@@ -219,7 +209,7 @@ export default function ParentDashboard() {
               {dashboardLoading ? (
                 <div className="fallback-note">Loading connected children...</div>
               ) : connectedChildren.length === 0 ? (
-                <div className="fallback-note">No children are linked yet. Add a child to connect their Game Student ID.</div>
+                <div className="fallback-note">No children are linked yet. Please ask an administrator to create or link a Student.</div>
               ) : (
                 <ResponsiveGrid minWidth="260px">
                   {connectedChildren.map((child) => (
@@ -284,12 +274,6 @@ export default function ParentDashboard() {
               </ContentSection>
             )}
           </PageContent>
-          {showAddChild && (
-            <ParentAddChildModal
-              onClose={() => setShowAddChild(false)}
-              onCreated={handleChildCreated}
-            />
-          )}
         </MainContent>
       }
     />

@@ -110,7 +110,7 @@ describe('ParentDashboard defensive game data rendering', () => {
       root.render(<ParentDashboard />);
     });
 
-    expect(container.textContent).toContain('Add Child');
+    expect(container.textContent).not.toContain('Add Child');
     expect(container.textContent).toContain('Ava Santos');
     expect(container.textContent).toContain('001234');
     expect(container.textContent).toContain('Accuracy: No Data');
@@ -121,7 +121,7 @@ describe('ParentDashboard defensive game data rendering', () => {
     expect(container.textContent).toContain('Completion: 42%');
   });
 
-  test('keeps Parent/Teacher in the parent-scoped dashboard with Add Child available', async () => {
+  test('keeps Parent/Teacher in the parent-scoped dashboard without child-mutation controls', async () => {
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 19, role: 'Parent/Teacher', name: 'Dual Role User' }));
     global.fetch = jest.fn((url) => {
       if (url.startsWith('/api/user/19')) return jsonResponse({ id: 19, role: 'parent_teacher', name: 'Dual Role User' });
@@ -139,7 +139,7 @@ describe('ParentDashboard defensive game data rendering', () => {
     });
 
     expect(container.textContent).toContain('Parent Dashboard');
-    expect(container.textContent).toContain('Add Child');
+    expect(container.textContent).not.toContain('Add Child');
     expect(container.textContent).toContain('Ava Santos');
     expect(global.fetch.mock.calls.map(([url]) => url)).toEqual(expect.arrayContaining([
       '/api/top-achievers?scope=parent',

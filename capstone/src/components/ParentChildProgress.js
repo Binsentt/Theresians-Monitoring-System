@@ -13,7 +13,6 @@ import {
   formatPercent,
   getTotalProgressNote,
   normalizeDifficultyDisplay,
-  normalizeDisplayList,
   normalizeStudentProgressPayload,
   resolveCurrentDifficulty,
   safeDisplayText,
@@ -21,6 +20,7 @@ import {
   toFiniteNumber,
 } from './studentProgress.utils';
 import { LearningCycleResetAction } from './LearningCycleResetAction';
+import GroundedAiAnalysis from './GroundedAiAnalysis';
 import '../styles/studentprogress.css';
 
 export default function ParentChildProgress() {
@@ -230,10 +230,6 @@ export default function ParentChildProgress() {
     }));
   }, [quizSessions]);
 
-  const selectedRecommendations = useMemo(() => (
-    normalizeDisplayList(selectedChildAiInsight?.insight?.recommendations)
-  ), [selectedChildAiInsight]);
-
   const currentQuest = selectedChildMetrics?.currentQuest !== undefined
     ? selectedChildMetrics.currentQuest
     : selectedChildProgress?.current_quest;
@@ -256,7 +252,7 @@ export default function ParentChildProgress() {
       );
       const payload = await response.json();
       if (childRequestVersion.current !== requestVersion) return;
-      if (payload?.status === 'insufficient_data') {
+      if (payload?.status === 'insufficient_data' || payload?.status === 'no_data') {
         setSelectedChildAiInsight(payload);
         return;
       }
@@ -596,28 +592,12 @@ export default function ParentChildProgress() {
               </div>
 
               <div className="analytics-insights-panel">
-                <div className="insights-header">
-                  <h2>Grounded AI Insight</h2>
-                  <p>Optional child-specific interpretation of the recorded gameplay metrics.</p>
-                </div>
-                {loading || childDetailsLoading ? (
-                  <div className="fallback-note">Loading child analytics...</div>
-                ) : selectedRecommendations.length > 0 ? (
-                  <ul className="recommendation-list">
-                    {selectedRecommendations.map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="fallback-note">
-                    {insightError || selectedChildAiInsight?.message || 'Generate an insight only when you want an interpretation of this child’s recorded metrics.'}
-                  </div>
-                )}
-                {!isFocusStudentProgressArchived && selectedChildAiInsight?.status !== 'insufficient_data' && focusStudentId && (
-                  <button type="button" className="btn btn-primary" onClick={generateChildInsight} disabled={insightLoading}>
-                    {insightLoading ? 'Generating insight...' : selectedChildAiInsight?.status === 'stale' ? 'Generate refreshed insight' : 'Generate grounded insight'}
-                  </button>
-                )}
+                <GroundedAiAnalysis
+                  aiInsight={selectedChildAiInsight}
+                  error={insightError}
+                  loading={loading || childDetailsLoading || insightLoading}
+                  onRefresh={!isFocusStudentProgressArchived && focusStudentId ? generateChildInsight : undefined}
+                />
               </div>
             </ContentSection>
 

@@ -212,6 +212,29 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('Difficult');
   });
 
+  test('labels an automatically generated four-result analysis as preliminary', async () => {
+    global.fetch = jest.fn(() => jsonResponse({
+      progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
+      metrics: { validResultCount: 4, accuracy: 75, totalQuestions: 4 },
+      aiInsight: {
+        status: 'generated', data_level: 'limited_data', preliminary: true, valid_result_count: 4,
+        insight: {
+          performance_insight: 'Recorded overall accuracy is 75%.',
+          strengths: ['Recorded Easy accuracy is 75%.'],
+          weaknesses: [],
+          recommendations: ['Record more gameplay evidence.'],
+        },
+      },
+    }));
+
+    await act(async () => root.render(<StudentAnalytics />));
+
+    expect(container.textContent).toContain('Preliminary insight');
+    expect(container.textContent).toContain('4 recorded results');
+    expect(container.textContent).toContain('Recorded overall accuracy is 75%.');
+    expect(container.textContent).toContain('Record more gameplay evidence.');
+  });
+
   test('offers a dedicated selected-student analytics print report without dashboard controls', async () => {
     global.fetch = jest.fn(() => jsonResponse({
       progress: { student_id: 44, game_student_id: '001234', student_name: 'Ava Santos', grade_level: 'Grade 3', section: 'Section A' },

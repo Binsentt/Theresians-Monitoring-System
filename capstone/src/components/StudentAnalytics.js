@@ -1,13 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle,
   BarChart3,
   BookOpen,
   CheckCircle2,
   ChevronLeft,
   Layers,
-  Lightbulb,
-  MapPin,
   Target,
   Trophy,
   XCircle,
@@ -20,6 +17,7 @@ import { getTotalProgressNote, normalizeDisplayList, resolveCurrentDifficulty, s
 import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { usePreparedReportPrint } from './usePreparedReportPrint';
+import GroundedAiAnalysis from './GroundedAiAnalysis';
 import '../styles/studentprogress.css';
 
 const toNullableNumber = (value) => {
@@ -120,7 +118,7 @@ export default function StudentAnalytics() {
         },
       });
       const data = await response.json();
-      if (data?.status === 'insufficient_data') {
+      if (data?.status === 'insufficient_data' || data?.status === 'no_data') {
         setAiInsight(data);
         return;
       }
@@ -174,7 +172,6 @@ export default function StudentAnalytics() {
     { label: 'Quest Completion', value: toNullableNumber(metrics?.questCompletionPercentage), tone: 'orange' },
   ];
   const insightMessage = insightError || aiInsight?.message || 'Generate an insight only when you want an interpretation of the recorded metrics.';
-  const canGenerateInsight = aiInsight?.status !== 'insufficient_data';
   const topicRows = useMemo(() => Object.entries(metrics?.topicPerformance || metrics?.topic_breakdown || {})
     .map(([topic, value]) => ({
       topic: safeDisplayText(topic, ''),
@@ -309,39 +306,12 @@ export default function StudentAnalytics() {
             </div>
           </section>
 
-          <section className="student-insights-grid">
-            <div className="student-dashboard-card student-insight-card">
-              <div className="student-card-heading">
-                <span className="student-card-icon green"><Lightbulb size={20} aria-hidden="true" /></span>
-                <div><h2>Grounded AI Insight</h2><p>Optional interpretation of the server-calculated metrics.</p></div>
-              </div>
-              {insight?.performance_insight ? (
-                <strong className="student-insight-highlight">{insight.performance_insight}</strong>
-              ) : (
-                <p className="student-insight-copy">{insightMessage}</p>
-              )}
-              {canGenerateInsight && (
-                <button type="button" className="btn btn-primary student-insight-action" onClick={generateInsight} disabled={insightLoading}>
-                  {insightLoading ? 'Generating insight...' : aiInsight?.status === 'stale' ? 'Generate refreshed insight' : 'Generate grounded insight'}
-                </button>
-              )}
-            </div>
-
-            <div className="student-dashboard-card student-insight-list">
-              <div className="student-card-heading"><span className="student-card-icon blue"><CheckCircle2 size={20} aria-hidden="true" /></span><div><h2>Strengths</h2><p>Only shown after a grounded insight is generated.</p></div></div>
-              {strengths.length > 0 ? <ul>{strengths.map((item, index) => <li key={`strength-${index}`}>{item}</li>)}</ul> : <p>No grounded interpretation is available yet.</p>}
-            </div>
-
-            <div className="student-dashboard-card student-insight-list">
-              <div className="student-card-heading"><span className="student-card-icon red"><AlertTriangle size={20} aria-hidden="true" /></span><div><h2>Weaknesses</h2><p>Only shown after a grounded insight is generated.</p></div></div>
-              {weaknesses.length > 0 ? <ul>{weaknesses.map((item, index) => <li key={`weak-${index}`}>{item}</li>)}</ul> : <p>No grounded interpretation is available yet.</p>}
-            </div>
-
-            <div className="student-dashboard-card student-insight-list">
-              <div className="student-card-heading"><span className="student-card-icon orange"><MapPin size={20} aria-hidden="true" /></span><div><h2>Recommendations</h2><p>Only shown after a grounded insight is generated.</p></div></div>
-              {recommendations.length > 0 ? <ul>{recommendations.map((item, index) => <li key={`reco-${index}`}>{item}</li>)}</ul> : <p>No grounded interpretation is available yet.</p>}
-            </div>
-          </section>
+          <GroundedAiAnalysis
+            aiInsight={aiInsight}
+            error={insightError}
+            loading={insightLoading}
+            onRefresh={generateInsight}
+          />
         </>
       )}
     </div>

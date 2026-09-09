@@ -126,11 +126,7 @@ const {
   buildStudentAnalyticsMetrics,
 } = require('./studentAnalyticsMetrics.utils');
 const { loadStudentAnalyticsEvidence, withStudentAnalyticsAliases } = require('./studentAnalyticsEvidence.service');
-const {
-  buildGroundedInsightInput,
-  buildInsightFingerprint,
-  generateGroundedStudentInsight,
-} = require('./studentAnalyticsInsight.utils');
+const { resolveStudentAiInsight } = require('./studentAiInsight.service');
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -205,10 +201,10 @@ const sendSystemEmail = async (message, options = {}) => {
 
 const generateSixDigitCode = () => String(Math.floor(100000 + Math.random() * 900000));
 
-const generateUniqueParentCode = async () => {
+const generateUniqueParentCode = async (queryClient = pool) => {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const code = generateSixDigitCode();
-    const existing = await pool.query('SELECT 1 FROM public.accounts WHERE parent_id = $1 LIMIT 1', [code]);
+    const existing = await queryClient.query('SELECT 1 FROM public.accounts WHERE parent_id = $1 LIMIT 1', [code]);
     if (existing.rows.length === 0) return code;
   }
   throw new Error('Unable to generate unique Parent ID');
@@ -1217,6 +1213,131 @@ const resolveParentChildProfile = (payload = {}) => {
     studentId,
     fullName,
   };
+};
+
+const normalizeAdminParentChildren = (children, role) => {
+  if (!accountHasParentAccess(role)) {
+    return Array.isArray(children) && children.length > 0
+      ? { error: 'Children can only be included when creating a Parent account.' }
+      : { children: [] };
+  }
+  if (!Array.isArray(children) || children.length === 0) {
+    return { error: 'At least one child is required when creating a Parent account.' };
+  }
+
+  const seenStudentIds = new Set();
+  const normalizedChildren = [];
+  for (const child of children) {
+    const operation = String(child?.operation || 'create').trim().toLowerCase();
+    if (!['create', 'link'].includes(operation)) {
+      return { error: 'Child operation must be create or link.' };
+    }
+    const studentId = normalizeExistingStudentCode(child?.student_id ?? child?.studentId ?? child?.game_student_id);
+    if (!studentId) {
+      return { error: 'Student ID must be either 6 or 8 digits.' };
+    }
+    if (seenStudentIds.has(studentId)) {
+      return { error: `Duplicate Student ID: ${studentId}.` };
+    }
+    seenStudentIds.add(studentId);
+
+    if (operation === 'link') {
+      normalizedChildren.push({ operation, studentId });
+      continue;
+    }
+    if (!normalizeNewStudentCode(studentId)) {
+      return { error: 'New Student IDs must be exactly 8 digits.' };
+    }
+    const profile = resolveParentChildProfile(child);
+    if (profile.error) return profile;
+    normalizedChildren.push({ operation, studentId, profile });
+  }
+  return { children: normalizedChildren };
+};
+
+const createAdminChildAccount = async (client, parentId, child) => {
+  const studentPassword = await hashPassword(generateRandomPassword());
+  const studentEmail = buildGameStudentEmail(parentId, `${child.profile.fullName}-${child.studentId}`);
+  const result = await client.query(
+    `INSERT INTO public.accounts (
+       name, first_name, last_name, middle_initial, grade_level, section,
+       email, password, role, status, is_archived, must_change_password, game_student_id
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'student', 'Offline', false, false, $9)
+     RETURNING id, name, first_name, last_name, middle_initial, grade_level, section, game_student_id`,
+    [
+      child.profile.fullName,
+      child.profile.firstName,
+      child.profile.lastName,
+      child.profile.middleInitial,
+      child.profile.gradeLevel,
+      child.profile.section,
+      studentEmail,
+      studentPassword,
+      child.studentId,
+    ]
+  );
+  if (!result.rows[0]?.id) throw new Error('Unable to create the child game profile.');
+  return result.rows[0];
+};
+
+const resolveAdminLinkedStudent = async (client, studentId) => {
+  const result = await client.query(
+    `SELECT s.id, s.name, s.first_name, s.last_name, s.middle_initial,
+            s.grade_level, s.section, s.game_student_id, s.is_archived
+     FROM public.accounts s
+     WHERE s.game_student_id = $1
+       AND LOWER(s.role) = 'student'
+     FOR UPDATE`,
+    [studentId]
+  );
+  const student = result.rows[0];
+  if (!student || Boolean(student.is_archived)) {
+    const error = new Error('Active Student account not found.');
+    error.statusCode = 404;
+    throw error;
+  }
+  const activeParent = await client.query(
+    `SELECT true AS active_parent_relationship
+     FROM public.teacher_student_relationships relationship
+     JOIN public.accounts parent ON parent.id = relationship.teacher_id
+     WHERE relationship.student_id = $1
+       AND LOWER(relationship.relationship_type) = 'parent'
+       AND LOWER(parent.role) IN ('parent', 'parent_teacher')
+       AND COALESCE(parent.is_archived, false) = false
+     LIMIT 1`,
+    [student.id]
+  );
+  if (activeParent.rows.length > 0) {
+    const error = new Error('This Student is already linked to a Parent account.');
+    error.statusCode = 409;
+    throw error;
+  }
+  return student;
+};
+
+const prepareAdminParentChildren = async (client, children) => {
+  const prepared = [];
+  for (const child of children) {
+    if (child.operation === 'link') {
+      prepared.push({ ...child, student: await resolveAdminLinkedStudent(client, child.studentId) });
+      continue;
+    }
+    const existing = await client.query(
+      `SELECT id
+       FROM public.accounts
+       WHERE game_student_id = $1
+       FOR UPDATE`,
+      [child.studentId]
+    );
+    if (existing.rows.length > 0) {
+      const error = new Error('This Student ID is already in use. Choose Link Existing Student instead.');
+      error.statusCode = 409;
+      throw error;
+    }
+    prepared.push(child);
+  }
+  return prepared;
 };
 
 const resolveOptionalBirthday = (birthday) => {
@@ -3351,42 +3472,6 @@ const markLearningFilesFetchedByGame = async (questions) => {
   );
 };
 
-const MIN_GROUNDED_INSIGHT_RESULTS = 5;
-
-const buildAiInsightState = ({ metrics, cachedInsight, inputFingerprint }) => {
-  if (metrics.validResultCount < MIN_GROUNDED_INSIGHT_RESULTS) {
-    return {
-      status: 'insufficient_data',
-      required_result_count: MIN_GROUNDED_INSIGHT_RESULTS,
-      valid_result_count: metrics.validResultCount,
-      message: 'Not enough gameplay data yet to generate a reliable analysis.',
-    };
-  }
-
-  if (
-    cachedInsight
-    && cachedInsight.input_fingerprint === inputFingerprint
-    && !cachedInsight.stale_at
-  ) {
-    return {
-      status: 'cached',
-      required_result_count: MIN_GROUNDED_INSIGHT_RESULTS,
-      valid_result_count: metrics.validResultCount,
-      generated_at: cachedInsight.generated_at || null,
-      insight: cachedInsight.insight,
-    };
-  }
-
-  return {
-    status: cachedInsight ? 'stale' : 'not_generated',
-    required_result_count: MIN_GROUNDED_INSIGHT_RESULTS,
-    valid_result_count: metrics.validResultCount,
-    message: cachedInsight
-      ? 'New gameplay data is available. Generate a refreshed insight when you are ready.'
-      : 'Generate a grounded insight from the recorded gameplay results.',
-  };
-};
-
 const markStudentInsightStale = async (queryClient, studentId) => {
   if (!studentId) return;
   await queryClient.query(
@@ -3604,7 +3689,7 @@ app.put('/api/account/password', requireWebsiteManagedAccount, async (req, res) 
 });
 
 app.post('/api/accounts', requireAccountManagementAdmin, async (req, res) => {
-  const { name, email, role, mobile_number, address, birthday, gender, employee_id } = req.body;
+  const { name, email, role, mobile_number, address, birthday, gender, employee_id, children } = req.body;
   try {
     const finalName = (name || '').trim();
     const normalizedEmail = (email || '').toLowerCase().trim();
@@ -3614,75 +3699,90 @@ app.post('/api/accounts', requireAccountManagementAdmin, async (req, res) => {
 
     const mobileResult = normalizePhilippineMobile(mobile_number);
     if (mobileResult.error) return res.status(400).json({ error: mobileResult.error });
-
     const finalRole = normalizeAccountRole(role || 'Parent');
     if (!isWebsiteManagedAccountRole(finalRole)) {
       return res.status(400).json({ error: 'Manage Users can only create website accounts.' });
     }
-
     const birthdayResult = resolveOptionalBirthday(birthday);
-    if (birthdayResult.error) {
-      return res.status(400).json({ error: birthdayResult.error });
-    }
-
+    if (birthdayResult.error) return res.status(400).json({ error: birthdayResult.error });
     const employeeIdResult = resolveEmployeeIdForRole(finalRole, employee_id);
-    if (employeeIdResult.error) {
-      return res.status(400).json({ error: employeeIdResult.error });
-    }
+    if (employeeIdResult.error) return res.status(400).json({ error: employeeIdResult.error });
+    const childResult = normalizeAdminParentChildren(children, finalRole);
+    if (childResult.error) return res.status(400).json({ error: childResult.error });
 
     const { password: generatedPassword, mustChangePassword } = resolveGeneratedAccountPassword(null, generateRandomPassword);
     const hashedPassword = await hashPassword(generatedPassword);
-    const parentCode = accountHasParentAccess(finalRole) ? await generateUniqueParentCode() : null;
     const temporaryPasswordIssuedAt = new Date();
     const temporaryPasswordExpiresAt = getTemporaryPasswordExpiry(temporaryPasswordIssuedAt);
+    const client = await pool.connect();
+    let createdRow;
+    const createdChildren = [];
+    try {
+      await client.query('BEGIN');
+      const preparedChildren = await prepareAdminParentChildren(client, childResult.children);
+      const parentCode = accountHasParentAccess(finalRole) ? await generateUniqueParentCode(client) : null;
+      const result = await client.query(
+        `INSERT INTO public.accounts (name, email, password, role, mobile_number, address, birthday, gender, employee_id, status, is_archived, must_change_password, parent_id, temporary_password_issued_at, temporary_password_expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11, $12, $13, $14)
+         RETURNING *`,
+        [
+          finalName, normalizedEmail, hashedPassword, finalRole, mobileResult.mobileNumber,
+          normalizeOptionalText(address), birthdayResult.birthday, normalizeOptionalText(gender),
+          employeeIdResult.employeeId, 'Offline', mustChangePassword, parentCode,
+          temporaryPasswordIssuedAt, temporaryPasswordExpiresAt,
+        ]
+      );
+      createdRow = result.rows[0];
+      if (!createdRow?.id) throw new Error('Unable to create account.');
 
-    const result = await pool.query(
-      `INSERT INTO public.accounts (name, email, password, role, mobile_number, address, birthday, gender, employee_id, status, is_archived, must_change_password, parent_id, temporary_password_issued_at, temporary_password_expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11, $12, $13, $14)
-       RETURNING *`,
-      [
-        finalName,
-        normalizedEmail,
-        hashedPassword,
-        finalRole,
-        mobileResult.mobileNumber,
-        normalizeOptionalText(address),
-        birthdayResult.birthday,
-        normalizeOptionalText(gender),
-        employeeIdResult.employeeId,
-        'Offline',
-        mustChangePassword,
-        parentCode,
-        temporaryPasswordIssuedAt,
-        temporaryPasswordExpiresAt,
-      ]
+      for (const child of preparedChildren) {
+        const student = child.operation === 'create'
+          ? await createAdminChildAccount(client, createdRow.id, child)
+          : child.student;
+        await ensureParentStudentRelationship(client, {
+          teacherId: createdRow.id,
+          studentId: student.id,
+          relationshipType: 'parent',
+        });
+        createdChildren.push({
+          id: student.id,
+          student_id: student.id,
+          student_name: student.name,
+          first_name: student.first_name,
+          last_name: student.last_name,
+          middle_initial: student.middle_initial,
+          grade_level: student.grade_level,
+          section: student.section,
+          game_student_id: student.game_student_id,
+          operation: child.operation,
+        });
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    const created = serializeUser(createdRow);
+    const emailSent = await resolveCredentialEmailDelivery(
+      () => generateCredentialsEmail(normalizedEmail, generatedPassword, finalRole, finalName),
+      getCredentialEmailTimeoutMs()
     );
-
-    const created = serializeUser(result.rows[0]);
-    const shouldSendCredentialEmail = isWebsiteManagedAccountRole(finalRole);
-    const emailSent = shouldSendCredentialEmail
-      ? await resolveCredentialEmailDelivery(
-        () => generateCredentialsEmail(normalizedEmail, generatedPassword, finalRole, finalName),
-        getCredentialEmailTimeoutMs()
-      )
-      : true;
-    const responsePayload = buildAccountCreationResponse({
-      createdUser: created,
-      emailSent,
-      role: finalRole,
-    });
-
+    const responsePayload = {
+      ...buildAccountCreationResponse({ createdUser: created, emailSent, role: finalRole }),
+      children: createdChildren,
+    };
     if (normalizeAccountRole(req.authenticatedUser?.role) === 'admin') {
       await writeAdminAuditLog(req.authenticatedUser, 'Create Account', created);
     }
-
-    res.status(201).json(responsePayload);
+    return res.status(201).json(responsePayload);
   } catch (err) {
     console.error('Create account failed:', err.message);
-    if (err.code === '23505') {
-      return res.status(409).json({ error: 'Employee ID or email already exists' });
-    }
-    res.status(500).json({ error: 'Create account failed' });
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    if (err.code === '23505') return res.status(409).json({ error: 'Employee ID, email, or Student ID already exists' });
+    return res.status(500).json({ error: 'Create account failed' });
   }
 });
 
@@ -7979,118 +8079,12 @@ app.get(
   (req, res) => handlePlaytimeListRequest(req, res, { scope: 'children' })
 );
 
-app.get('/api/sections/registry', requireParentAnalyticsAccess, (req, res) => {
+app.get('/api/sections/registry', requireAuthenticatedRoles(['admin', 'parent', 'parent_teacher']), (req, res) => {
   return res.json(getPublicSectionRegistrySnapshot());
 });
 
 app.post('/api/parent/children', requireParentAnalyticsAccess, async (req, res) => {
-  const childProfile = resolveParentChildProfile(req.body);
-  if (childProfile.error) return res.status(400).json({ error: childProfile.error });
-
-  const parentId = Number(req.authenticatedUser?.id);
-  if (!Number.isInteger(parentId) || parentId <= 0) {
-    return res.status(401).json({ error: 'Authentication is required.' });
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const existingStudentResult = await client.query(
-      `SELECT s.id,
-              s.game_student_id,
-              EXISTS (
-                SELECT 1
-                FROM public.teacher_student_relationships own_link
-                WHERE own_link.student_id = s.id
-                  AND own_link.teacher_id = $2
-                  AND LOWER(own_link.relationship_type) = 'parent'
-              ) AS linked_to_authenticated_parent,
-              EXISTS (
-                SELECT 1
-                FROM public.teacher_student_relationships other_link
-                WHERE other_link.student_id = s.id
-                  AND other_link.teacher_id <> $2
-                  AND LOWER(other_link.relationship_type) = 'parent'
-              ) AS linked_to_another_parent
-       FROM public.accounts s
-       WHERE s.game_student_id = $1
-       FOR UPDATE`,
-      [childProfile.studentId, parentId]
-    );
-    const existingStudent = existingStudentResult.rows[0];
-    if (existingStudent) {
-      await client.query('ROLLBACK');
-      if (existingStudent.linked_to_authenticated_parent) {
-        return res.status(409).json({ error: 'This Student ID is already linked to your account.' });
-      }
-      return res.status(409).json({ error: 'This Student ID is already linked to another parent or needs administrator resolution.' });
-    }
-
-    const newStudentCode = normalizeNewStudentCode(childProfile.studentId);
-    if (!newStudentCode) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Student ID must be exactly 8 digits.' });
-    }
-
-    const studentPassword = await hashPassword(generateRandomPassword());
-    const studentEmail = buildGameStudentEmail(parentId, `${childProfile.fullName}-${newStudentCode}`);
-    const studentResult = await client.query(
-      `INSERT INTO public.accounts (
-         name, first_name, last_name, middle_initial, grade_level, section,
-         email, password, role, status, is_archived, must_change_password, game_student_id
-       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'student', 'Offline', false, false, $9)
-       RETURNING id, name, first_name, last_name, middle_initial, grade_level, section, game_student_id`,
-      [
-        childProfile.fullName,
-        childProfile.firstName,
-        childProfile.lastName,
-        childProfile.middleInitial,
-        childProfile.gradeLevel,
-        childProfile.section,
-        studentEmail,
-        studentPassword,
-        newStudentCode,
-      ]
-    );
-    const child = studentResult.rows[0];
-    if (!child?.id) throw new Error('Unable to create the child game profile.');
-
-    await ensureParentStudentRelationship(client, {
-      teacherId: parentId,
-      studentId: child.id,
-      relationshipType: 'parent',
-    });
-    await client.query(
-      `INSERT INTO public.activity_logs (student_id, student_name, grade_level, section, activity_description, role, status)
-       VALUES ($1, $2, $3, $4, 'Child Added', 'parent', 'Active')`,
-      [child.id, child.name, child.grade_level, child.section]
-    );
-    await client.query('COMMIT');
-    return res.status(201).json({
-      success: true,
-      child: {
-        id: child.id,
-        student_id: child.id,
-        student_name: child.name,
-        first_name: child.first_name,
-        last_name: child.last_name,
-        middle_initial: child.middle_initial,
-        grade_level: child.grade_level,
-        section: child.section,
-        game_student_id: child.game_student_id,
-      },
-    });
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
-    console.error('Parent child creation failed:', error.message);
-    if (error.code === '23505') {
-      return res.status(409).json({ error: 'This Student ID is already in use. Contact an administrator if you need help.' });
-    }
-    return res.status(500).json({ error: 'Unable to add child at this time.' });
-  } finally {
-    client.release();
-  }
+  return res.status(403).json({ error: 'Only an administrator can create or link children.' });
 });
 
 app.get('/api/parent/children', requireParentAnalyticsAccess, async (req, res) => {
@@ -8636,58 +8630,14 @@ app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, 
     }, pool);
     if (!evidence) return res.status(404).json({ error: 'Student progress not found' });
     const { progress, metrics } = evidence;
-    const input = buildGroundedInsightInput({ gradeLevel: progress.grade_level, metrics });
-    const inputFingerprint = buildInsightFingerprint(input);
-    const cachedResult = await pool.query(
-      `SELECT input_fingerprint, insight, generated_at, stale_at
-       FROM public.student_ai_insights
-       WHERE student_id = $1
-       LIMIT 1`,
-      [studentId]
-    );
-    const cachedInsight = cachedResult.rows[0] || null;
-    const currentState = buildAiInsightState({ metrics, cachedInsight, inputFingerprint });
-    if (currentState.status === 'insufficient_data' || currentState.status === 'cached') {
-      return res.status(currentState.status === 'insufficient_data' ? 422 : 200).json(currentState);
-    }
-
-    let insight;
-    try {
-      insight = await generateGroundedStudentInsight({ input });
-    } catch (error) {
-      if (error instanceof QuestionGenerationError && error.providerDiagnostics) {
-        console.error('Grounded AI provider diagnostics:', error.providerDiagnostics);
-      }
-      const status = error?.code === 'ANALYTICS_AI_NOT_CONFIGURED' ? 503 : 502;
-      return res.status(status).json({
-        status: 'unavailable',
-        error: status === 503
-          ? 'Grounded AI Insights are not configured on the backend service.'
-          : 'Grounded AI Insights are unavailable right now.',
-      });
-    }
-
-    const savedResult = await pool.query(
-      `INSERT INTO public.student_ai_insights (
-         student_id, input_fingerprint, insight, generated_by, generated_at, stale_at, updated_at
-       ) VALUES ($1, $2, $3::jsonb, $4, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP)
-       ON CONFLICT (student_id) DO UPDATE
-       SET input_fingerprint = EXCLUDED.input_fingerprint,
-           insight = EXCLUDED.insight,
-           generated_by = EXCLUDED.generated_by,
-           generated_at = CURRENT_TIMESTAMP,
-           stale_at = NULL,
-           updated_at = CURRENT_TIMESTAMP
-       RETURNING insight, generated_at`,
-      [studentId, inputFingerprint, JSON.stringify(insight), req.authenticatedUser.id]
-    );
-    return res.json({
-      status: currentState.status === 'stale' ? 'regenerated' : 'generated',
-      required_result_count: MIN_GROUNDED_INSIGHT_RESULTS,
-      valid_result_count: metrics.validResultCount,
-      generated_at: savedResult.rows[0]?.generated_at || null,
-      insight: savedResult.rows[0]?.insight || insight,
+    const aiInsight = await resolveStudentAiInsight({
+      studentId,
+      gradeLevel: progress.grade_level,
+      metrics,
+      actorId: req.authenticatedUser.id,
+      pool,
     });
+    return res.status(aiInsight.status === 'no_data' ? 422 : 200).json(aiInsight);
   } catch (err) {
     console.error('Generate grounded student insight failed:', err.message);
     return res.status(500).json({ error: 'Failed to generate grounded AI insight' });
@@ -8725,19 +8675,12 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
     );
     const { metrics, quizSessions } = evidence;
     const progress = withStudentAnalyticsAliases(evidence);
-    const insightInput = buildGroundedInsightInput({ gradeLevel: progress.grade_level, metrics });
-    const insightFingerprint = buildInsightFingerprint(insightInput);
-    const cachedInsightResult = await pool.query(
-      `SELECT input_fingerprint, insight, generated_at, stale_at
-       FROM public.student_ai_insights
-       WHERE student_id = $1
-       LIMIT 1`,
-      [studentId]
-    );
-    const aiInsight = buildAiInsightState({
+    const aiInsight = await resolveStudentAiInsight({
+      studentId,
+      gradeLevel: progress.grade_level,
       metrics,
-      cachedInsight: cachedInsightResult.rows[0] || null,
-      inputFingerprint: insightFingerprint,
+      actorId: req.authenticatedUser.id,
+      pool,
     });
     const analysis = generateStudentAnalysis(progress, quizSessions, activityResult.rows);
     const analyticsReadiness = buildStudentAnalyticsReadiness({

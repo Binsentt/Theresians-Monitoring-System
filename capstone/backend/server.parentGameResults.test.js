@@ -1442,7 +1442,7 @@ test('student monitoring keeps the external six-digit game Student ID beside the
   assert.equal(response.body[0].game_student_id, '001234');
 });
 
-test('student analytics reports insufficient data instead of inferring hard-question weaknesses', async (t) => {
+test('student analytics reports no AI data instead of inferring hard-question weaknesses', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -1487,7 +1487,7 @@ test('student analytics reports insufficient data instead of inferring hard-ques
   assert.deepEqual(response.body.analysis.difficultyBreakdown, { easy: null, medium: null, hard: null });
   assert.deepEqual(response.body.analysis.recommendations, []);
   assert.equal(response.body.analysis.weaknesses.length, 0);
-  assert.equal(response.body.aiInsight.status, 'insufficient_data');
+  assert.equal(response.body.aiInsight.status, 'no_data');
 });
 
 test('student analytics derives difficulty recommendations from recorded question attempts', async (t) => {
@@ -1536,5 +1536,5 @@ test('student analytics derives difficulty recommendations from recorded questio
   assert.deepEqual(response.body.analysis.strengths, []);
   assert.deepEqual(response.body.analysis.weaknesses, []);
   assert.deepEqual(response.body.analysis.recommendations, []);
-  assert.equal(response.body.aiInsight.status, 'insufficient_data');
+  assert.equal(response.body.aiInsight.status, 'no_data');
 });

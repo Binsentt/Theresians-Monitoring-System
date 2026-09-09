@@ -21,6 +21,7 @@ import {
   validateOptionalAdultBirthday,
 } from './manageUsers.utils';
 import { apiUrl } from '../api';
+import { fetchSectionRegistry } from '../sectionRegistry';
 import { buildAuthHeaders, clearStoredSession } from './session.utils';
 import {
   PARENT_CHILD_GRADE_OPTIONS,
@@ -31,6 +32,12 @@ import {
 import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext } from './tableReporting.utils';
+import AdminParentChildren from './AdminParentChildren';
+import {
+  createAdminChildDraft,
+  toAdminParentChildrenPayload,
+  validateAdminParentChildren,
+} from './adminParentChildren.utils';
 import '../styles/manageusers.css';
 
 export default function ManageUsers() {
@@ -59,6 +66,12 @@ export default function ManageUsers() {
     employee_id: ''
   });
   const [adding, setAdding] = useState(false);
+  const [parentChildren, setParentChildren] = useState(() => [createAdminChildDraft()]);
+  const [parentChildErrors, setParentChildErrors] = useState([]);
+  const [parentChildFormError, setParentChildFormError] = useState('');
+  const [sectionRegistry, setSectionRegistry] = useState(null);
+  const [sectionRegistryLoading, setSectionRegistryLoading] = useState(false);
+  const [sectionRegistryError, setSectionRegistryError] = useState('');
   const [addErrors, setAddErrors] = useState({});
   const [addTouched, setAddTouched] = useState({});
   const [validationModal, setValidationModal] = useState(null);
@@ -242,6 +255,27 @@ export default function ManageUsers() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  useEffect(() => {
+    if (!showAddForm || !isParentRole(selectedRole)) return undefined;
+    let mounted = true;
+    setSectionRegistryLoading(true);
+    setSectionRegistryError('');
+    fetchSectionRegistry((url, options = {}) => fetch(url, {
+      ...options,
+      headers: { ...buildAuthHeaders(), ...(options.headers || {}) },
+    }))
+      .then((registry) => {
+        if (mounted) setSectionRegistry(registry);
+      })
+      .catch(() => {
+        if (mounted) setSectionRegistryError('Unable to load available Sections. Please try again.');
+      })
+      .finally(() => {
+        if (mounted) setSectionRegistryLoading(false);
+      });
+    return () => { mounted = false; };
+  }, [showAddForm, selectedRole]);
+
   const loadUsers = async () => {
     try {
       const response = await fetch(apiUrl(`/api/accounts?archived=${showArchived}`), {
@@ -264,9 +298,14 @@ export default function ManageUsers() {
     const selectedRoleValue = normalizeRole(selectedRole);
     const roleIsTeacher = isTeacherRole(selectedRoleValue);
     const errors = validateUserForm(newUser, selectedRoleValue);
+    const childValidation = isParentRole(selectedRoleValue)
+      ? validateAdminParentChildren(parentChildren, sectionRegistry)
+      : { isValid: true, formError: '', errors: [] };
     setAddTouched({ firstName: true, middleName: true, lastName: true, email: true, mobile_number: true, birthday: true, employee_id: true });
     setAddErrors(errors);
-    if (Object.keys(errors).length > 0) {
+    setParentChildErrors(childValidation.errors);
+    setParentChildFormError(childValidation.formError);
+    if (Object.keys(errors).length > 0 || !childValidation.isValid) {
       return;
     }
 
@@ -283,6 +322,7 @@ export default function ManageUsers() {
         role: selectedRoleValue,
       };
       if (roleIsTeacher) payload.employee_id = newUser.employee_id;
+      if (isParentRole(selectedRoleValue)) payload.children = toAdminParentChildrenPayload(parentChildren);
 
       const response = await fetch(apiUrl('/api/accounts'), {
         method: 'POST',
@@ -295,6 +335,9 @@ export default function ManageUsers() {
         setNewUser({ firstName: '', middleName: '', lastName: '', email: '', mobile_number: '', street: '', city: '', province: '', birthday: '', gender: '', employee_id: '' });
         setAddErrors({});
         setAddTouched({});
+        setParentChildren([createAdminChildDraft()]);
+        setParentChildErrors([]);
+        setParentChildFormError('');
         setShowAddForm(false);
         setSelectedRole('Parent');
         loadUsers();
@@ -1039,6 +1082,24 @@ export default function ManageUsers() {
                         maxLength={10}
                       />
                       {addErrors.employee_id && <p className="error-text">{addErrors.employee_id}</p>}
+                    </div>
+                  )}
+
+                  {isParentRole(selectedRole) && (
+                    <div className="admin-parent-children-wrapper">
+                      {sectionRegistryLoading && <p className="field-help">Loading available Sections...</p>}
+                      {sectionRegistryError && <p className="error-text" role="alert">{sectionRegistryError}</p>}
+                      <AdminParentChildren
+                        value={parentChildren}
+                        onChange={(children) => {
+                          setParentChildren(children);
+                          setParentChildErrors([]);
+                          setParentChildFormError('');
+                        }}
+                        sectionRegistry={sectionRegistry}
+                        errors={parentChildErrors}
+                        formError={parentChildFormError}
+                      />
                     </div>
                   )}
 

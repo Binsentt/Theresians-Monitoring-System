@@ -1367,3 +1367,31 @@
     padding-left: 10px;
   }
 }
+.grounded-ai-performance-label {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  color: var(--text-secondary, #475467);
+}
+
+.grounded-ai-status {
+  margin: 0 0 0.85rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.grounded-ai-status.preliminary {
+  color: #7a4f01;
+  background: #fff7db;
+  border: 1px solid #f4d77a;
+}
+
+.grounded-ai-status.warning {
+  color: #912018;
+  background: #fff1f0;
+  border: 1px solid #f3b7b2;
+}
+
+.analytics-insights-panel .grounded-ai-analysis {
+  margin: 0;
+}

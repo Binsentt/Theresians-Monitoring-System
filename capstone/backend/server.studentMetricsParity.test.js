@@ -44,6 +44,15 @@ const query = async (rawSql, params = [], readFixture = fixture) => {
   }
   if (sql.includes('from public.playtime_sessions')) return { rows: readFixture.playtime || [] };
   if (sql.includes('from public.student_ai_insights')) return { rows: readFixture.cached ? [readFixture.cached] : [] };
+  if (sql.includes('insert into public.student_ai_insights')) {
+    readFixture.cached = {
+      input_fingerprint: params[1],
+      insight: JSON.parse(params[2]),
+      generated_at: '2026-09-09T00:00:00.000Z',
+      stale_at: null,
+    };
+    return { rows: [{ insight: readFixture.cached.insight, generated_at: readFixture.cached.generated_at }] };
+  }
   if (sql.includes('from public.activity_logs')) return empty;
   return empty;
 };
@@ -87,7 +96,7 @@ Module._load = function load(request, parent, isMain) {
 let app;
 try { ({ app } = require('./server')); } finally { Module._load = originalLoad; }
 
-const setup = async (t, answers = [1, 1, 1, 0]) => {
+const setup = async (t, answers = [1, 1, 1, 0], { providerSelection = null } = {}) => {
   fixture = {
     progress: {
       student_id: 44, student_name: 'Canonical Student', student_role: 'student', game_student_id: '00123456',
@@ -105,21 +114,61 @@ const setup = async (t, answers = [1, 1, 1, 0]) => {
   const server = await new Promise((resolve) => { const running = app.listen(0, () => resolve(running)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   const originalFetch = global.fetch;
+  const originalApiKey = process.env.OPENAI_API_KEY;
+  let providerCalls = 0;
+  if (providerSelection) process.env.OPENAI_API_KEY = 'test-only-provider-key';
   global.fetch = async (url, options) => {
+    if (String(url) === 'https://api.openai.com/v1/responses' && providerSelection) {
+      providerCalls += 1;
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: async () => ({ output_text: JSON.stringify(providerSelection) }),
+      };
+    }
     assert.ok(String(url).startsWith(base), 'Tests must never contact a live provider');
     return originalFetch(url, options);
   };
   t.after(async () => {
     global.fetch = originalFetch;
+    if (originalApiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalApiKey;
     fixture = null;
     await new Promise((resolve) => server.close(resolve));
   });
-  return async (route, token = 'admin', method = 'GET') => {
+  const get = async (route, token = 'admin', method = 'GET') => {
     const response = await global.fetch(`${base}${route}`, { method, headers: { Authorization: `Bearer ${token}` } });
     assert.equal(response.status, 200, `${token} ${route}`);
     return response.json();
   };
+  get.providerCallCount = () => providerCalls;
+  return get;
 };
+
+test('authorized detail reads automatically share a preliminary grounded insight for four valid results', async (t) => {
+  const get = await setup(t, [1, 1, 1, 0], {
+    providerSelection: {
+      grounding_policy_version: 'grounded-claims-v1',
+      performance_claim_ids: ['results_recorded', 'answer_counts', 'overall_accuracy', 'current_difficulty'],
+      strength_claim_ids: ['overall_accuracy_strength', 'difficulty_easy_strength'],
+      weakness_claim_ids: [],
+      recommendation_claim_ids: [],
+    },
+  });
+
+  const admin = await get('/api/student-progress/44');
+  const teacher = await get('/api/student-progress/44', 'teacher');
+  const parent = await get('/api/student-progress/44?scope=parent', 'parent');
+
+  assert.equal(admin.metrics.accuracy, 75);
+  assert.equal(admin.aiInsight.status, 'generated');
+  assert.equal(admin.aiInsight.data_level, 'limited_data');
+  assert.equal(admin.aiInsight.preliminary, true);
+  assert.equal(teacher.aiInsight.status, 'cached');
+  assert.deepEqual(parent.aiInsight.insight, admin.aiInsight.insight);
+  assert.equal(get.providerCallCount(), 1);
+});
 
 test('Student list uses the same recorded answer counts and difficulty breakdown as detail', async (t) => {
   const get = await setup(t);

@@ -57,7 +57,15 @@ const successPayloadForUrl = (url, childrenPayload) => {
       totalProgress: 42,
       totalQuestions: 5,
     },
-    aiInsight: { status: 'cached', insight: { recommendations: ['Practice fractions for Ava.'] } },
+    aiInsight: {
+      status: 'cached', data_level: 'sufficient_data', valid_result_count: 5,
+      insight: {
+        performance_insight: 'Ava recorded 60% accuracy.',
+        strengths: ['Ava has recorded Easy evidence.'],
+        weaknesses: ['Ava has limited Normal evidence.'],
+        recommendations: ['Practice fractions for Ava.'],
+      },
+    },
     analyticsReadiness: {
       aiIntegration: { ready: true },
     },
@@ -73,7 +81,13 @@ const successPayloadForUrl = (url, childrenPayload) => {
       totalProgress: 35,
       totalQuestions: 5,
     },
-    aiInsight: { status: 'cached', insight: { recommendations: ['Practice shapes for Noah.'] } },
+    aiInsight: {
+      status: 'cached', data_level: 'sufficient_data', valid_result_count: 5,
+      insight: {
+        performance_insight: 'Noah recorded 50% accuracy.',
+        strengths: [], weaknesses: [], recommendations: ['Practice shapes for Noah.'],
+      },
+    },
     analyticsReadiness: {
       aiIntegration: { ready: true },
     },
@@ -128,6 +142,10 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('Ava Santos');
     expect(container.textContent).toContain('Student ID');
     expect(container.textContent).toContain('001234');
+    expect(container.textContent).toContain('Ava recorded 60% accuracy.');
+    expect(container.textContent).toContain('Ava has recorded Easy evidence.');
+    expect(container.textContent).toContain('Ava has limited Normal evidence.');
+    expect(container.textContent).toContain('Practice fractions for Ava.');
     expect(container.textContent).toContain('Grade 3 - Jade');
     expect(container.textContent).toContain('Quiz Sessions');
     expect(container.textContent).toContain('No quiz sessions recorded for this child.');
@@ -413,6 +431,15 @@ describe('ParentChildProgress child selection and game warnings', () => {
     const pendingInsight = new Promise((resolve) => { finishInsight = resolve; });
     global.fetch = jest.fn((url) => {
       if (url.startsWith('/api/student-progress/44/ai-insight?')) return pendingInsight;
+      if (url.startsWith('/api/student-progress/44?')) return jsonResponse({
+        progress: { student_id: 44, student_name: 'Ava Santos' },
+        metrics: { accuracy: 60, totalQuestions: 5 },
+        aiInsight: {
+          status: 'unavailable', data_level: 'sufficient_data', is_stale: true,
+          message: 'New evidence is available, but the insight service is unavailable.',
+          insight: { performance_insight: 'Prior Ava evidence.', strengths: [], weaknesses: [], recommendations: ['Practice fractions for Ava.'] },
+        },
+      });
       return successPayloadForUrl(url, {
         children: [
           { id: 44, student_name: 'Ava Santos' },
@@ -424,7 +451,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
     await act(async () => Array.from(container.querySelectorAll('.child-selector-card'))
       .find((button) => button.textContent.includes('Ava Santos')).click());
     await act(async () => Array.from(container.querySelectorAll('button'))
-      .find((button) => button.textContent === 'Generate grounded insight').click());
+      .find((button) => button.textContent === 'Retry grounded insight').click());
     await act(async () => Array.from(container.querySelectorAll('.child-selector-card'))
       .find((button) => button.textContent.includes('Noah Santos')).click());
     expect(container.textContent).toContain('Practice shapes for Noah.');

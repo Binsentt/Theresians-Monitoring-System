@@ -23,7 +23,15 @@ const query = async (sql, params = []) => {
   return (await queryHandler(compacted, params, sql)) || emptyResult;
 };
 const dbPath = require.resolve('./database/db');
-require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: { query } };
+require.cache[dbPath] = {
+  id: dbPath,
+  filename: dbPath,
+  loaded: true,
+  exports: {
+    query,
+    connect: async () => ({ query, release() {} }),
+  },
+};
 
 const passthrough = () => (req, res, next) => next();
 const originalLoad = Module._load;
@@ -92,7 +100,7 @@ test('account APIs enforce the Philippine mobile format server-side', async (t) 
       const response = await requestJson(baseUrl, '/api/accounts', {
         method: 'POST',
         headers: { Authorization: 'Bearer admin-token' },
-        body: JSON.stringify({ name: 'Valid Parent', email: `valid.${mobile_number || 'blank'}@example.com`, role: 'parent', mobile_number }),
+        body: JSON.stringify({ name: 'Valid Admin', email: `valid.${mobile_number || 'blank'}@example.com`, role: 'admin', mobile_number }),
       });
       assert.equal(response.status, 201);
     }
