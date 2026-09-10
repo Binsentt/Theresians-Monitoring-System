@@ -171,16 +171,15 @@ export default function AdminManagedChildrenPanel({ parentId, sectionRegistry, a
               ))}
             </tbody>
           </table>
-          {paginatedChildren.totalPages > 1 && (
-            <div className="pagination-row no-print">
-              <button type="button" disabled={paginatedChildren.currentPage === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button>
-              <span>Page {paginatedChildren.currentPage} of {paginatedChildren.totalPages}</span>
-              <button type="button" disabled={paginatedChildren.currentPage === paginatedChildren.totalPages} onClick={() => setPage((current) => Math.min(paginatedChildren.totalPages, current + 1))}>Next</button>
-            </div>
-          )}
-          <PrintableTableReport title="Parent Children" context={searchQuery ? `Search: ${searchQuery}` : 'All linked children'} rows={filteredChildren} columns={printColumns} />
         </div>
       )}
+      <div className="pagination-row no-print" aria-label="Parent children pagination">
+        <span>{paginatedChildren.totalItems === 0 ? '0 records' : `Showing ${paginatedChildren.start} - ${paginatedChildren.end} of ${paginatedChildren.totalItems} records`}</span>
+        <button type="button" disabled={paginatedChildren.currentPage === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button>
+        <span>Page {paginatedChildren.currentPage} of {paginatedChildren.totalPages}</span>
+        <button type="button" disabled={paginatedChildren.currentPage === paginatedChildren.totalPages} onClick={() => setPage((current) => Math.min(paginatedChildren.totalPages, current + 1))}>Next</button>
+      </div>
+      <PrintableTableReport title="Parent Children" context={searchQuery ? `Search: ${searchQuery}` : 'All linked children'} rows={filteredChildren} columns={printColumns} />
 
       {pending?.operation === 'unlink' && (
         <div className="managed-child-confirmation" role="dialog" aria-modal="true" aria-label="Confirm Remove Child">

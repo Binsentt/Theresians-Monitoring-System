@@ -145,7 +145,7 @@ describe('ManageUsers edit flow', () => {
     delete global.fetch;
   });
 
-  test('renders eight-row pagination controls before the actual users table and navigates records', async () => {
+  test('renders eight-row pagination controls below the actual users table and navigates records', async () => {
     const managedAccounts = buildManagedAccounts(11);
     global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => managedAccounts }));
 
@@ -156,7 +156,8 @@ describe('ManageUsers edit flow', () => {
     expect(pagination).not.toBeNull();
     expect(container.textContent).toContain('Page 1 of 2');
     expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(8);
-    expect(Array.from(container.querySelectorAll('.manage-users-pagination, .table-container'))[0]).toBe(pagination);
+    expect(Array.from(container.querySelectorAll('.manage-users-pagination, .table-container'))[0]).toBe(tableContainer);
+    expect(Array.from(container.querySelectorAll('.manage-users-pagination, .table-container')).at(-1)).toBe(pagination);
 
     const next = Array.from(pagination.querySelectorAll('button')).find((button) => button.textContent === 'Next');
     await act(async () => next.click());

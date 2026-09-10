@@ -243,12 +243,6 @@ export default function AdminDashboard() {
                   placeholder="Name, email, role, or school ID"
                 />
               </div>
-              <div className="pagination-row no-print">
-                <span>{formatTableRange(paginatedRecentUsers)}</span>
-                <button type="button" onClick={() => setUserPage((value) => Math.max(1, value - 1))} disabled={paginatedRecentUsers.currentPage === 1}>Previous</button>
-                <span>Page {paginatedRecentUsers.currentPage} of {paginatedRecentUsers.totalPages}</span>
-                <button type="button" onClick={() => setUserPage((value) => Math.min(paginatedRecentUsers.totalPages, value + 1))} disabled={paginatedRecentUsers.currentPage === paginatedRecentUsers.totalPages}>Next</button>
-              </div>
               <DataTable
                 columns={[
                   {
@@ -279,6 +273,12 @@ export default function AdminDashboard() {
                 data={paginatedRecentUsers.rows}
                 emptyMessage="No users found. Add your first user!"
               />
+              <div className="pagination-row no-print">
+                <span>{formatTableRange(paginatedRecentUsers)}</span>
+                <button type="button" onClick={() => setUserPage((value) => Math.max(1, value - 1))} disabled={paginatedRecentUsers.currentPage === 1}>Previous</button>
+                <span>Page {paginatedRecentUsers.currentPage} of {paginatedRecentUsers.totalPages}</span>
+                <button type="button" onClick={() => setUserPage((value) => Math.min(paginatedRecentUsers.totalPages, value + 1))} disabled={paginatedRecentUsers.currentPage === paginatedRecentUsers.totalPages}>Next</button>
+              </div>
               <PrintableTableReport
                 title="Registered Parent and Teacher Accounts"
                 context={userSearch ? `Search: ${userSearch}` : 'All enabled accounts'}

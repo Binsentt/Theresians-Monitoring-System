@@ -43,6 +43,26 @@ describe('GroundedAiAnalysis', () => {
     expect(container.textContent).toContain('Recorded overall accuracy is 75%.');
   });
 
+  test('uses a compact-panel layout hook for a readable full-width default column', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis aiInsight={{ status: 'paused', code: 'AI_PAUSED', message: 'Paused.' }} />
+    ));
+
+    const panel = container.querySelector('.grounded-ai-analysis');
+    expect(panel).not.toBeNull();
+    expect(panel.getAttribute('aria-label')).toBe('Grounded AI analysis');
+  });
+
+  test('exposes a compact-panel layout hook for a readable full-width default column', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis aiInsight={{ status: 'paused', code: 'AI_PAUSED', message: 'Paused.' }} />
+    ));
+
+    const panel = container.querySelector('.grounded-ai-analysis');
+    expect(panel).not.toBeNull();
+    expect(panel.getAttribute('aria-label')).toBe('Grounded AI analysis');
+  });
+
   test('retains cached content with a clear stale warning and offers manual recovery only', async () => {
     const onRefresh = jest.fn();
     await act(async () => root.render(

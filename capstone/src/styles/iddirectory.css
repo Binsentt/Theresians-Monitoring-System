@@ -48,7 +48,7 @@
 .id-directory-filter {
   display: grid;
   gap: 4px;
-  min-width: 110px;
+  min-width: min(100%, 320px);
   color: var(--text-muted, #64748b);
   font-size: 0.72rem;
   font-weight: 600;
@@ -89,6 +89,7 @@
 .id-directory-table {
   width: 100%;
   min-width: 820px;
+  table-layout: auto;
   border-collapse: collapse;
 }
 
@@ -123,6 +124,18 @@
 
 .id-directory-table tbody tr:last-child td {
   border-bottom: none;
+}
+
+.id-directory-table td:first-child {
+  white-space: nowrap;
+  min-width: 110px;
+}
+
+.id-directory-table td:nth-child(2),
+.id-directory-table td:nth-child(5) {
+  white-space: normal;
+  overflow-wrap: break-word;
+  min-width: 150px;
 }
 
 .id-directory-empty {

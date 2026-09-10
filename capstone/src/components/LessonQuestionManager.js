@@ -242,6 +242,10 @@ export default function LessonQuestionManager() {
   const [formErrors, setFormErrors] = useState({});
   const [replacementConfirmation, setReplacementConfirmation] = useState(null);
   const [removalConfirmation, setRemovalConfirmation] = useState(null);
+  const [pendingDeletion, setPendingDeletion] = useState(null);
+  const [deletionReason, setDeletionReason] = useState('');
+  const [deletionError, setDeletionError] = useState('');
+  const [deleting, setDeleting] = useState(false);
   const [selectedLessonSourceId, setSelectedLessonSourceId] = useState('');
   const [savingLessonSource, setSavingLessonSource] = useState(false);
   const pageSize = 10;
@@ -709,33 +713,100 @@ export default function LessonQuestionManager() {
     }
   };
 
-  const moveFileToTrash = async (file) => {
+  const closeDeletionDialog = () => {
+    if (deleting) return;
+    setPendingDeletion(null);
+    setDeletionReason('');
+    setDeletionError('');
+  };
+
+  const openDeletionDialog = (request) => {
+    setPendingDeletion(request);
+    setDeletionReason('');
+    setDeletionError('');
+  };
+
+  const confirmDeletion = async () => {
+    if (!pendingDeletion || deleting) return;
+    const reason = String(deletionReason || '').trim();
+    if (!reason) {
+      setDeletionError('A deletion reason is required.');
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      let response;
+      let data;
+      if (pendingDeletion.kind === 'file-trash') {
+        response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${pendingDeletion.file.id}`), {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason }),
+        });
+        data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Delete failed');
+        setFiles((current) => current.filter((item) => item.id !== pendingDeletion.file.id));
+        await loadFilesAndFolders();
+        showNotification('File deleted.');
+      } else if (pendingDeletion.kind === 'file-permanent') {
+        response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${pendingDeletion.file.id}/permanent`), {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason }),
+        });
+        data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Permanent delete failed');
+        showNotification('File permanently deleted.');
+        await loadFilesAndFolders();
+      } else if (pendingDeletion.kind === 'question') {
+        response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${pendingDeletion.file.id}/questions/${pendingDeletion.question.id}`), {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason }),
+        });
+        data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Unable to delete this question.');
+        setPreviewQuestions((current) => current.filter((item) => item.id !== pendingDeletion.question.id));
+        if (data.file) setQuestionPreviewDetails(normalizeManagedLearningFile(data.file));
+        if (data.validation) setPreviewValidation(data.validation);
+        if (data.review_fingerprint) setReviewSnapshotKey(String(data.review_fingerprint));
+        setReviewComplete(false);
+        showNotification('Question deleted. Review approval is required again before Push to Game.');
+      } else if (pendingDeletion.kind === 'trash-bulk') {
+        response = await fetchLessonManagerApi(lessonManagerApiUrl('/api/learning-files/trash'), {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_ids: pendingDeletion.fileIds, reason }),
+        });
+        data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Unable to empty Trash.');
+        showNotification('Trash emptied.');
+        await loadFilesAndFolders();
+      }
+      setPendingDeletion(null);
+      setDeletionReason('');
+      setDeletionError('');
+    } catch (error) {
+      console.error(error);
+      setDeletionError(error.message || 'Deletion failed.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const moveFileToTrash = (file) => {
     if (file.published || file.publish_status === 'active') {
       showNotification('This question set is Active in Game. Remove from Game before deleting this question set.', 'error');
       return;
     }
-    const confirmMessage = `Delete "${file.title}" from Pending question sets?`;
-    if (!window.confirm(confirmMessage)) return;
-    const reason = String(window.prompt('Reason for deleting this question set (required):') || '').trim();
-    if (!reason) {
-      showNotification('A deletion reason is required.', 'error');
-      return;
-    }
-    try {
-      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}`), {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Delete failed');
-      setFiles((current) => current.filter((item) => item.id !== file.id));
-      await loadFilesAndFolders();
-      showNotification('File deleted.');
-    } catch (error) {
-      console.error(error);
-      showNotification(error.message || 'Delete failed.', 'error');
-    }
+    openDeletionDialog({
+      kind: 'file-trash',
+      file,
+      title: `Delete "${file.title}" from Pending question sets?`,
+      scope: 'Pending question set and its managed source records',
+      actionLabel: 'Delete Question Set',
+    });
   };
 
   const restoreFile = async (file) => {
@@ -758,27 +829,15 @@ export default function LessonQuestionManager() {
     }
   };
 
-  const permanentDeleteFile = async (file) => {
-    if (!window.confirm(`Permanently delete "${file.title}"?`)) return;
-    const reason = String(window.prompt('Reason for permanently deleting this question set (required):') || '').trim();
-    if (!reason) {
-      showNotification('A deletion reason is required.', 'error');
-      return;
-    }
-    try {
-      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/permanent`), {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Permanent delete failed');
-      showNotification('File permanently deleted.');
-      loadFilesAndFolders();
-    } catch (error) {
-      console.error(error);
-      showNotification(error.message || 'Permanent delete failed.', 'error');
-    }
+  const permanentDeleteFile = (file) => {
+    openDeletionDialog({
+      kind: 'file-permanent',
+      file,
+      title: `Permanently delete "${file.title}"?`,
+      scope: 'Trashed question set and all dependent managed question records',
+      actionLabel: 'Delete Permanently',
+      irreversible: true,
+    });
   };
 
   const removeFileFromGame = async (file) => {
@@ -956,31 +1015,17 @@ export default function LessonQuestionManager() {
     }
   };
 
-  const deletePreviewQuestion = async (question, index) => {
+  const deletePreviewQuestion = (question, index) => {
     if (!previewFile || previewFile.published || previewFile.publish_status === 'active') return;
-    if (!window.confirm(`Delete Question ${index + 1} from this pending question set?`)) return;
-    const reason = String(window.prompt('Reason for deleting this question (required):') || '').trim();
-    if (!reason) {
-      showNotification('A deletion reason is required.', 'error');
-      return;
-    }
-    try {
-      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${previewFile.id}/questions/${question.id}`), {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Unable to delete this question.');
-      setPreviewQuestions((current) => current.filter((item) => item.id !== question.id));
-      if (data.file) setQuestionPreviewDetails(normalizeManagedLearningFile(data.file));
-      if (data.validation) setPreviewValidation(data.validation);
-      if (data.review_fingerprint) setReviewSnapshotKey(String(data.review_fingerprint));
-      setReviewComplete(false);
-      showNotification('Question deleted. Review approval is required again before Push to Game.');
-    } catch (error) {
-      showNotification(error.message || 'Unable to delete this question.', 'error');
-    }
+    openDeletionDialog({
+      kind: 'question',
+      file: previewFile,
+      question,
+      title: `Delete Question ${index + 1} from this pending question set?`,
+      scope: `${previewFile.title || previewFile.file_name} · pending question set`,
+      target: question.question,
+      actionLabel: 'Delete Question',
+    });
   };
 
   const approvePreviewQuestionSet = async () => {
@@ -1046,29 +1091,16 @@ export default function LessonQuestionManager() {
     }
   };
 
-  const handleEmptyTrash = async () => {
+  const handleEmptyTrash = () => {
     if (trashRows.length === 0) return;
-    if (!window.confirm('Permanently delete every file in Trash?')) return;
-    const reason = String(window.prompt('Reason for permanently deleting all selected question sets (required):') || '').trim();
-    if (!reason) {
-      showNotification('A deletion reason is required.', 'error');
-      return;
-    }
-
-    try {
-      const response = await fetchLessonManagerApi(lessonManagerApiUrl('/api/learning-files/trash'), {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_ids: trashFiles.map((file) => file.id), reason }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Unable to empty Trash.');
-      showNotification('Trash emptied.');
-      loadFilesAndFolders();
-    } catch (error) {
-      console.error(error);
-      showNotification(error.message || 'Unable to empty Trash.', 'error');
-    }
+    openDeletionDialog({
+      kind: 'trash-bulk',
+      fileIds: trashFiles.map((file) => file.id),
+      title: 'Permanently delete every file in Trash?',
+      scope: `${trashFiles.length} trashed question sets and their dependent managed records`,
+      actionLabel: 'Delete All Trash',
+      irreversible: true,
+    });
   };
 
   const openUploadModal = () => {
@@ -1371,6 +1403,46 @@ export default function LessonQuestionManager() {
               </div>
             )}
 
+            {pendingDeletion && (
+              <ModalPortal onClose={closeDeletionDialog}>
+                <div className="manager-modal-backdrop" role="presentation" onMouseDown={closeDeletionDialog}>
+                  <div className="manager-modal question-manager-deletion-dialog" role="dialog" aria-modal="true" aria-labelledby="question-manager-deletion-title" onMouseDown={(event) => event.stopPropagation()}>
+                    <div className="manager-modal-header">
+                      <div>
+                        <h2 id="question-manager-deletion-title">{pendingDeletion.title}</h2>
+                        {pendingDeletion.target && <p><strong>Target:</strong> {pendingDeletion.target}</p>}
+                        <p><strong>Scope:</strong> {pendingDeletion.scope}</p>
+                        {pendingDeletion.irreversible && <p className="manager-inline-error">This action is irreversible.</p>}
+                      </div>
+                      <button type="button" className="icon-button" aria-label="Cancel deletion" onClick={closeDeletionDialog} disabled={deleting}>x</button>
+                    </div>
+                    <label className="form-label" htmlFor="question-manager-deletion-reason">Reason for deletion <span aria-hidden="true">*</span></label>
+                    <textarea
+                      id="question-manager-deletion-reason"
+                      name="deletion-reason"
+                      className={deletionError ? 'input-field error' : 'input-field'}
+                      value={deletionReason}
+                      onChange={(event) => {
+                        setDeletionReason(event.target.value.slice(0, 1000));
+                        if (deletionError) setDeletionError('');
+                      }}
+                      maxLength={1000}
+                      rows={4}
+                      aria-invalid={Boolean(deletionError)}
+                      disabled={deleting}
+                    />
+                    {deletionError && <p className="manager-inline-error" role="alert">{deletionError}</p>}
+                    <div className="preview-actions">
+                      <button type="button" className="btn btn-secondary" onClick={closeDeletionDialog} disabled={deleting}>Cancel</button>
+                      <button type="button" className="btn btn-danger" onClick={confirmDeletion} disabled={deleting}>
+                        {deleting ? 'Deleting...' : pendingDeletion.actionLabel}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </ModalPortal>
+            )}
+
             <div className="drive-workspace">
               <div className="drive-manager-toolbar" aria-label="Lesson manager actions">
                 <div className="drive-new-wrap">
@@ -1500,13 +1572,13 @@ export default function LessonQuestionManager() {
                         showPrintHeading={false}
                       />
                     </div>
+                    <DataTable columns={tableColumns} data={paginatedFiles.rows} emptyMessage={tableEmptyMessage} className="drive-table" />
                     <div className="pagination-row no-print">
                       <span>{formatTableRange(paginatedFiles)}</span>
                       <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={paginatedFiles.currentPage === 1}>Previous</button>
                       <span>Page {paginatedFiles.currentPage} of {paginatedFiles.totalPages}</span>
                       <button type="button" onClick={() => setPage((current) => Math.min(paginatedFiles.totalPages, current + 1))} disabled={paginatedFiles.currentPage === paginatedFiles.totalPages}>Next</button>
                     </div>
-                    <DataTable columns={tableColumns} data={paginatedFiles.rows} emptyMessage={tableEmptyMessage} className="drive-table" />
                     <PrintableTableReport
                       title="Lesson & Question Files Report"
                       context={selectedFolderPath}
@@ -1548,13 +1620,13 @@ export default function LessonQuestionManager() {
                         showPrintHeading={false}
                       />
                     </div>
+                    <DataTable columns={trashColumns} data={paginatedTrashRows.rows} emptyMessage="Trash is empty." className="drive-table" />
                     <div className="pagination-row no-print">
                       <span>{formatTableRange(paginatedTrashRows)}</span>
                       <button type="button" onClick={() => setTrashPage((current) => Math.max(1, current - 1))} disabled={paginatedTrashRows.currentPage === 1}>Previous</button>
                       <span>Page {paginatedTrashRows.currentPage} of {paginatedTrashRows.totalPages}</span>
                       <button type="button" onClick={() => setTrashPage((current) => Math.min(paginatedTrashRows.totalPages, current + 1))} disabled={paginatedTrashRows.currentPage === paginatedTrashRows.totalPages}>Next</button>
                     </div>
-                    <DataTable columns={trashColumns} data={paginatedTrashRows.rows} emptyMessage="Trash is empty." className="drive-table" />
                     <PrintableTableReport
                       title="Question Library Trash Report"
                       context="Trash Bin"

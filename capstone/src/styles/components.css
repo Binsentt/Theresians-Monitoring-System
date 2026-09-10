@@ -427,7 +427,9 @@ label {
   padding: var(--spacing-md, 16px) var(--spacing-sm, 12px);
   color: var(--text-primary, #0b2447);
   vertical-align: middle;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
+  white-space: normal;
 }
 
 .recent-user-name-col {

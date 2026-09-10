@@ -67,7 +67,7 @@
 
 .al-filters {
   display: grid;
-  grid-template-columns: repeat(4, minmax(min(100%, 180px), 1fr));
+  grid-template-columns: minmax(min(100%, 320px), 2fr) minmax(150px, auto);
   gap: 14px;
   margin-bottom: 18px;
   padding: 18px;
@@ -264,6 +264,28 @@
   padding: 16px;
   color: var(--text-primary, #0b2447);
   vertical-align: middle;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.al-table td:nth-child(2),
+.al-table td:nth-child(3) {
+  white-space: nowrap;
+}
+
+.al-table td:nth-child(1),
+.al-table td:nth-child(5) {
+  min-width: 170px;
+}
+
+.al-pagination {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.al-pagination .pagination-range {
+  color: var(--text-muted, #64748b);
+  font-weight: 600;
 }
 
 .student-detail-stack,

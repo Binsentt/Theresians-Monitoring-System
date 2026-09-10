@@ -487,10 +487,15 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
   test('requires and sends a reason when deleting an individual staged question', async () => {
     fixtures.files = [buildReviewRequiredFile({ id: 77 })];
-    window.confirm = jest.fn(() => true);
     await act(async () => root.render(<LessonQuestionManager />));
     await act(async () => clickByText(container, 'Preview'));
     await act(async () => document.body.querySelector('button[aria-label="Delete question 1"]').click());
+    expect(global.fetch.mock.calls.some(([url, options]) => String(url).includes('/questions/770') && options?.method === 'DELETE')).toBe(false);
+    const dialog = document.body.querySelector('[role="dialog"][aria-labelledby="question-manager-deletion-title"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog.textContent).toContain('What is 2 + 3?');
+    await act(async () => setFieldValue(dialog.querySelector('textarea[name="deletion-reason"]'), 'Required QA deletion reason.'));
+    await act(async () => clickByText(dialog, 'Delete Question'));
     const request = global.fetch.mock.calls.find(([url, options]) => String(url).includes('/questions/770') && options?.method === 'DELETE');
     expect(JSON.parse(request[1].body).reason).toBe('Required QA deletion reason.');
   });
@@ -1023,7 +1028,6 @@ describe('LessonQuestionManager upload and trash controls', () => {
   });
 
   test('empty trash uses the single atomic bulk-delete contract', async () => {
-    window.confirm = jest.fn(() => true);
     fixtures.trashFiles = [
       { id: 31, title: 'Deleted Quiz', file_name: 'deleted.csv', deleted_at: '2026-05-20T00:00:00.000Z' },
       { id: 32, title: 'Deleted Review', file_name: 'deleted.docx', deleted_at: '2026-05-20T00:00:00.000Z' },
@@ -1038,6 +1042,11 @@ describe('LessonQuestionManager upload and trash controls', () => {
     await act(async () => {
       clickByText(container, 'Empty Trash');
     });
+
+    const dialog = document.body.querySelector('[role="dialog"][aria-labelledby="question-manager-deletion-title"]');
+    expect(dialog).not.toBeNull();
+    await act(async () => setFieldValue(dialog.querySelector('textarea[name="deletion-reason"]'), 'Required QA deletion reason.'));
+    await act(async () => clickByText(dialog, 'Delete All Trash'));
 
     expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/trash', {
       method: 'DELETE',
@@ -1611,7 +1620,6 @@ describe('LessonQuestionManager upload and trash controls', () => {
   });
 
   test('Delete removes a staged upload from the table', async () => {
-    window.confirm = jest.fn(() => true);
     fixtures.files = [{
       id: 77,
       title: 'addition-quiz',
@@ -1634,6 +1642,10 @@ describe('LessonQuestionManager upload and trash controls', () => {
       clickByText(container, 'Delete');
     });
 
+    const dialog = document.body.querySelector('[role="dialog"][aria-labelledby="question-manager-deletion-title"]');
+    await act(async () => setFieldValue(dialog.querySelector('textarea[name="deletion-reason"]'), 'Required QA deletion reason.'));
+    await act(async () => clickByText(dialog, 'Delete Question Set'));
+
     const request = global.fetch.mock.calls.find(([url, options]) => String(url).includes('/api/learning-files/77') && options?.method === 'DELETE');
     expect(JSON.parse(request[1].body).reason).toBe('Required QA deletion reason.');
 
@@ -1641,7 +1653,6 @@ describe('LessonQuestionManager upload and trash controls', () => {
   });
 
   test('keeps the Lesson Manager mounted while a delete refreshes in place', async () => {
-    window.confirm = jest.fn(() => true);
     fixtures.files = [{
       id: 77,
       title: 'addition-quiz',
@@ -1674,6 +1685,12 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     await act(async () => {
       clickByText(container, 'Delete');
+    });
+
+    const dialog = document.body.querySelector('[role="dialog"][aria-labelledby="question-manager-deletion-title"]');
+    await act(async () => {
+      setFieldValue(dialog.querySelector('textarea[name="deletion-reason"]'), 'Required QA deletion reason.');
+      clickByText(dialog, 'Delete Question Set');
       await Promise.resolve();
       await Promise.resolve();
     });

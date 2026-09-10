@@ -411,31 +411,34 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
             </table>
           </div>
 
-          {totalPages > 1 && (
-            <div className="al-pagination">
-              <button
-                type="button"
-                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                disabled={currentPage === 1}
-                className="pagination-btn"
-              >
-                Previous
-              </button>
-              <span className="pagination-info">
-                Page {currentPage} of {totalPages}
-              </span>
-              <button
-                type="button"
-                onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-                disabled={currentPage === totalPages}
-                className="pagination-btn"
-              >
-                Next
-              </button>
-            </div>
-          )}
         </>
       )}
+      <div className="al-pagination no-print" aria-label="Activity Log pagination">
+        <span className="pagination-range">
+          {activities.length === 0
+            ? '0 records'
+            : `Showing ${(currentPage - 1) * itemsPerPage + 1} - ${Math.min((currentPage - 1) * itemsPerPage + activities.length, pagination.total || activities.length)} of ${pagination.total || activities.length} records`}
+        </span>
+        <button
+          type="button"
+          onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+          disabled={currentPage === 1}
+          className="pagination-btn"
+        >
+          Previous
+        </button>
+        <span className="pagination-info">
+          Page {currentPage} of {totalPages}
+        </span>
+        <button
+          type="button"
+          onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+          disabled={currentPage === totalPages}
+          className="pagination-btn"
+        >
+          Next
+        </button>
+      </div>
       <PrintableTableReport
         title={reportLabel.replace(/^Print /, '')}
         context={reportScope}

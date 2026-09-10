@@ -569,7 +569,7 @@
     border-collapse: collapse;
     margin-top: 15px;
     min-width: 1000px;
-    table-layout: fixed;
+    table-layout: auto;
 }
 
 .sts-data-table th {
@@ -593,6 +593,20 @@
     border-bottom: 1px solid rgba(15, 23, 42, 0.06);
     color: var(--text-muted);
     vertical-align: middle;
+    white-space: normal;
+    overflow-wrap: break-word;
+}
+
+.sts-data-table td.user-name-cell,
+.sts-data-table td.email-cell {
+    min-width: 180px;
+    overflow-wrap: break-word;
+}
+
+.sts-data-table td:nth-child(4),
+.sts-data-table td:nth-child(5),
+.sts-data-table td:nth-child(6) {
+    white-space: nowrap;
 }
 
 .sts-data-table th:nth-child(1),

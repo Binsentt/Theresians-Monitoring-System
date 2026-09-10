@@ -119,7 +119,7 @@ describe('Admin ID Directory', () => {
     expect(Array.from(controls.querySelectorAll('button')).every((button) => button.disabled)).toBe(true);
   });
 
-  test('filters before paging, resets page on filters, and keeps truthful per-tab counts', async () => {
+  test('filters before paging, resets page on filters, and keeps truthful per-tab counts with pagination below the table', async () => {
     const students = Array.from({ length: 12 }, (_, index) => ({
       ...directoryPayload.students[0],
       id: 100 + index,
@@ -133,7 +133,8 @@ describe('Admin ID Directory', () => {
     expect(container.textContent).toContain('Page 1 of 2');
     expect(container.querySelectorAll('table[aria-label="Student ID Directory"] tbody tr')).toHaveLength(10);
     const pagination = container.querySelector('.id-directory-pagination');
-    expect(Array.from(container.querySelectorAll('.id-directory-pagination, .id-directory-table-wrap'))[0]).toBe(pagination);
+    expect(Array.from(container.querySelectorAll('.id-directory-pagination, .id-directory-table-wrap'))[0]).toBe(container.querySelector('.id-directory-table-wrap'));
+    expect(Array.from(container.querySelectorAll('.id-directory-pagination, .id-directory-table-wrap')).at(-1)).toBe(pagination);
     const next = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Next');
     await act(async () => next.click());
     expect(container.textContent).toContain('Page 2 of 2');
@@ -172,7 +173,7 @@ describe('Admin ID Directory', () => {
     printSpy.mockRestore();
   });
 
-  test('renders independent Teacher pagination before the table and resets filtered results to page one', async () => {
+  test('renders independent Teacher pagination below the table and resets filtered results to page one', async () => {
     const teachers = Array.from({ length: 12 }, (_, index) => ({
       ...directoryPayload.teachers[0],
       id: 200 + index,
@@ -190,7 +191,8 @@ describe('Admin ID Directory', () => {
     expect(container.textContent).toContain('Teachers (12)');
     expect(container.textContent).toContain('Page 1 of 2');
     expect(container.querySelectorAll('table[aria-label="Teacher ID Directory"] tbody tr')).toHaveLength(10);
-    expect(Array.from(container.querySelectorAll('.id-directory-pagination, .id-directory-table-wrap'))[0]).toBe(pagination);
+    expect(Array.from(container.querySelectorAll('.id-directory-pagination, .id-directory-table-wrap'))[0]).toBe(container.querySelector('.id-directory-table-wrap'));
+    expect(Array.from(container.querySelectorAll('.id-directory-pagination, .id-directory-table-wrap')).at(-1)).toBe(pagination);
 
     const next = Array.from(pagination.querySelectorAll('button')).find((button) => button.textContent === 'Next');
     await act(async () => next.click());

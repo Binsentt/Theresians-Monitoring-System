@@ -128,6 +128,13 @@ describe('ScreenTimeMonitoring', () => {
       root.render(<ScreenTimeMonitoring mode="all" />);
     });
     await waitForContent(container, 'No playtime records available yet.');
+    await waitForContent(container, 'Page 1 of 1');
+
+    const emptyPagination = container.querySelector('.pagination-row');
+    expect(emptyPagination).not.toBeNull();
+    expect(emptyPagination.textContent).toContain('0 records');
+    expect(emptyPagination.textContent).toContain('Page 1 of 1');
+    expect(Array.from(emptyPagination.querySelectorAll('button')).every((button) => button.disabled)).toBe(true);
 
     const printButton = container.querySelector('button[aria-label="Print Filtered Report"]');
     expect(printButton.disabled).toBe(false);
@@ -186,6 +193,10 @@ describe('ScreenTimeMonitoring', () => {
 
     expect(container.querySelectorAll('.screen-time-table tbody tr')).toHaveLength(10);
     expect(container.textContent).toContain('Page 1 of 2');
+    const tableWrapper = container.querySelector('.screen-time-table-wrap');
+    const pagination = container.querySelector('.pagination-row');
+    expect(Array.from(container.querySelectorAll('.screen-time-table-wrap, .pagination-row'))[0]).toBe(tableWrapper);
+    expect(Array.from(container.querySelectorAll('.screen-time-table-wrap, .pagination-row')).at(-1)).toBe(pagination);
     const summaryValues = Object.fromEntries(Array.from(container.querySelectorAll('.screen-time-summary-card')).map((card) => [
       card.querySelector('span').textContent,
       card.querySelector('strong').textContent,
@@ -195,6 +206,30 @@ describe('ScreenTimeMonitoring', () => {
       'Total playtime': '5 hr 21 min',
       'Playing now': '4',
     });
+  });
+
+  test('uses one effective duration source for rows and summary fallback', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
+    localStorage.setItem('rememberToken', 'remember-token');
+    global.fetch = jest.fn(() => jsonResponse({
+      data: [
+        { ...playtimePayload.data[0], id: 41, student_name: 'Seconds First', total_playtime_seconds: 240, total_playtime_minutes: 99 },
+        { ...playtimePayload.data[0], id: 42, student_name: 'Two Sessions', total_playtime_seconds: 60, total_playtime_minutes: 1 },
+        { ...playtimePayload.data[0], id: 43, student_name: 'Unknown Duration', total_playtime_seconds: null, total_playtime_minutes: null },
+      ],
+      pagination: { page: 1, limit: 10, total: 3, pages: 1 },
+    }));
+
+    act(() => root.render(<ScreenTimeMonitoring mode="all" />));
+    await waitForContent(container, 'Seconds First');
+
+    const table = container.querySelector('.screen-time-table');
+    expect(table.textContent).toContain('4 min');
+    expect(table.textContent).toContain('1 min');
+    expect(table.textContent).toContain('Unknown');
+    const totalPlaytimeCard = Array.from(container.querySelectorAll('.screen-time-summary-card'))
+      .find((card) => card.querySelector('span')?.textContent === 'Total playtime');
+    expect(totalPlaytimeCard.querySelector('strong').textContent).toBe('5 min');
   });
 
   test('prepares the full authorised filtered dataset without changing the visible page', async () => {

@@ -196,6 +196,8 @@
   border-radius: var(--border-radius-lg, 12px);
   min-height: 100%;
   min-width: 0;
+  container-type: inline-size;
+  container-name: analytics-panel;
 }
 
 .insights-header h2 {
@@ -1394,4 +1396,34 @@
 
 .analytics-insights-panel .grounded-ai-analysis {
   margin: 0;
+}
+
+.grounded-ai-analysis {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  min-width: 0;
+}
+
+.grounded-ai-analysis .student-dashboard-card {
+  min-width: 0;
+  min-height: 0;
+}
+
+.grounded-ai-analysis .student-card-heading {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.grounded-ai-analysis .student-card-heading > div {
+  min-width: 0;
+}
+
+.grounded-ai-analysis .student-card-icon {
+  flex: 0 0 auto;
+}
+
+@container analytics-panel (min-width: 900px) {
+  .analytics-insights-panel .grounded-ai-analysis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }

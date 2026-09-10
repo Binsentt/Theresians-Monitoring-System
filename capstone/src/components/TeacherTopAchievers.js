@@ -196,12 +196,20 @@ export default function TeacherTopAchievers() {
               {error ? (
                 <div className="error-message">{error}</div>
               ) : filteredAchievers.length === 0 ? (
-                <div className="empty-message">
-                  {hasActiveFilters
-                    ? 'No students match the selected filters.'
-                    : 'No leaderboard data available yet.'
-                  }
-                </div>
+                <>
+                  <div className="empty-message">
+                    {hasActiveFilters
+                      ? 'No students match the selected filters.'
+                      : 'No leaderboard data available yet.'
+                    }
+                  </div>
+                  <div className="pagination-row no-print" aria-label="Top Achievers pagination">
+                    <span>0 records</span>
+                    <button type="button" disabled>Previous</button>
+                    <span>Page 1 of 1</span>
+                    <button type="button" disabled>Next</button>
+                  </div>
+                </>
               ) : (
                 <>
                   <div className="top-achievers-container">
@@ -264,13 +272,12 @@ export default function TeacherTopAchievers() {
                     </tbody>
                   </table>
                   </div>
-                  {paginatedAchievers.totalPages > 1 && (
-                    <div className="pagination-row no-print">
-                      <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={paginatedAchievers.currentPage === 1}>Previous</button>
-                      <span>Page {paginatedAchievers.currentPage} of {paginatedAchievers.totalPages}</span>
-                      <button type="button" onClick={() => setPage((current) => Math.min(paginatedAchievers.totalPages, current + 1))} disabled={paginatedAchievers.currentPage === paginatedAchievers.totalPages}>Next</button>
-                    </div>
-                  )}
+                  <div className="pagination-row no-print" aria-label="Top Achievers pagination">
+                    <span>{paginatedAchievers.totalItems === 0 ? '0 records' : `Showing ${paginatedAchievers.start} - ${paginatedAchievers.end} of ${paginatedAchievers.totalItems} records`}</span>
+                    <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={paginatedAchievers.currentPage === 1}>Previous</button>
+                    <span>Page {paginatedAchievers.currentPage} of {paginatedAchievers.totalPages}</span>
+                    <button type="button" onClick={() => setPage((current) => Math.min(paginatedAchievers.totalPages, current + 1))} disabled={paginatedAchievers.currentPage === paginatedAchievers.totalPages}>Next</button>
+                  </div>
                 </>
               )}
               <PrintableTableReport

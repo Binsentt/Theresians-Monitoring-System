@@ -32,8 +32,8 @@ Do not commit passwords, OTPs, tokens, or production identifiers. Create synthet
 ## Manual checklist
 
 1. Sign in as the synthetic Admin and confirm the sidebar keeps `Manage Users`, then `ID Directory`, then `Lesson & Question Manager`.
-2. Open Manage Users. Confirm normal list/search/individual actions remain available and pagination is above the table when multiple pages exist.
-3. Open ID Directory. Confirm Students and Teachers tabs, authoritative account rows, filters, and pagination above the table. A newly created synthetic Student must appear after reopening/refocusing the page, including an orphan Student; do not hide it to make the list look clean.
+2. Open Manage Users. Confirm normal list/search/individual actions remain available and the single pagination footer appears below the table's horizontal-scroll wrapper. It remains visible for loaded zero-, one-, and multi-page datasets, with truthful ranges and disabled controls when no adjacent page exists.
+3. Open ID Directory. Confirm Students and Teachers tabs, authoritative account rows, filters, and the single pagination footer below each table's horizontal-scroll wrapper. A newly created synthetic Student must appear after reopening/refocusing the page, including an orphan Student; do not hide it to make the list look clean.
 4. Open Lesson & Question Manager. Confirm the persistent banner exactly says: `AI generation is temporarily paused. Recorded data and available questions remain accessible.`
 5. In the paused state, upload a disposable supported lesson source through the existing fixed/manual workflow. The source may be saved for review, but no provider call, generated question set, empty approval, or fabricated question content may appear. The row should read `Source Ready` / `Not Generated` (or the equivalent paused labels).
 6. Open an existing genuine cached insight, if the fixture has one. It remains visible with an accurate current/stale timestamp and paused status; the retry control is not offered as a way around the pause. With no evidence, deterministic metrics remain available and the state is not presented as a fabricated AI recommendation.

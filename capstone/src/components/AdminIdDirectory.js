@@ -96,7 +96,7 @@ function TeacherDirectoryTable({ rows }) {
 function DirectoryPagination({ page, setPage }) {
   return (
     <div className="id-directory-pagination" aria-label="ID Directory pagination">
-      <span>Showing {page.start} - {page.end} of {page.totalItems}</span>
+      <span>{page.totalItems === 0 ? '0 records' : `Showing ${page.start} - ${page.end} of ${page.totalItems} records`}</span>
       <div>
         <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page.currentPage === 1}>Previous</button>
         <span>Page {page.currentPage} of {page.totalPages}</span>
@@ -267,8 +267,8 @@ export default function AdminIdDirectory() {
                 )}
                 contentClassName="id-directory-section-content"
               >
-                <DirectoryPagination page={paginatedStudents} setPage={setStudentPage} />
                 <StudentDirectoryTable rows={paginatedStudents.rows} />
+                <DirectoryPagination page={paginatedStudents} setPage={setStudentPage} />
                 <PrintableTableReport
                   title="Student ID Directory"
                   context={studentSearch ? `Search: ${studentSearch}` : 'All active Student accounts'}
@@ -298,8 +298,8 @@ export default function AdminIdDirectory() {
                 )}
                 contentClassName="id-directory-section-content"
               >
-                <DirectoryPagination page={paginatedTeachers} setPage={setTeacherPage} />
                 <TeacherDirectoryTable rows={paginatedTeachers.rows} />
+                <DirectoryPagination page={paginatedTeachers} setPage={setTeacherPage} />
                 <PrintableTableReport
                   title="Teacher ID Directory"
                   context={teacherSearch ? `Search: ${teacherSearch}` : 'All active Teacher accounts'}

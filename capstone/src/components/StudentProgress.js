@@ -290,11 +290,11 @@ export default function StudentProgress() {
             )}
           </div>
 
-          <div className="pagination-row no-print">
+          {!loading && !error && <div className="pagination-row no-print">
             <button disabled={page <= 1} onClick={() => setPage((prev) => Math.max(prev - 1, 1))}>Previous</button>
-            <span>Page {page} of {pageCount}</span>
+            <span>{filteredStudents.length === 0 ? '0 records · ' : `Showing ${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, filteredStudents.length)} of ${filteredStudents.length} · `}Page {page} of {pageCount}</span>
             <button disabled={page >= pageCount} onClick={() => setPage((prev) => Math.min(prev + 1, pageCount))}>Next</button>
-          </div>
+          </div>}
           <PrintableTableReport
             title="Student Progress List"
             context={reportScope}

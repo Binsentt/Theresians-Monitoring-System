@@ -1079,35 +1079,6 @@ export default function ManageUsers() {
               </div>
             )}
 
-            {(
-              <div className="manage-users-pagination no-print">
-                <span className="manage-users-pagination-summary">
-                  Showing {paginatedUsers.totalItems === 0 ? 0 : paginatedUsers.startIndex + 1} - {paginatedUsers.endIndex} of {paginatedUsers.totalItems} users
-                </span>
-                <div className="manage-users-pagination-controls">
-                  <button
-                    type="button"
-                    className="pagination-btn"
-                    onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-                    disabled={paginatedUsers.currentPage === 1}
-                  >
-                    Previous
-                  </button>
-                  <span className="pagination-info">
-                    Page {paginatedUsers.currentPage} of {paginatedUsers.totalPages}
-                  </span>
-                  <button
-                    type="button"
-                    className="pagination-btn"
-                    onClick={() => setCurrentPage((prev) => Math.min(prev + 1, paginatedUsers.totalPages))}
-                    disabled={paginatedUsers.currentPage === paginatedUsers.totalPages}
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            )}
-
             <div className="table-container">
               <table className="sts-data-table">
                 <thead>
@@ -1175,6 +1146,34 @@ export default function ManageUsers() {
                   )}
                 </tbody>
               </table>
+            </div>
+            <div className="manage-users-pagination no-print">
+              <span className="manage-users-pagination-summary">
+                {paginatedUsers.totalItems === 0
+                  ? '0 records'
+                  : `Showing ${paginatedUsers.startIndex + 1} - ${paginatedUsers.endIndex} of ${paginatedUsers.totalItems} users`}
+              </span>
+              <div className="manage-users-pagination-controls">
+                <button
+                  type="button"
+                  className="pagination-btn"
+                  onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                  disabled={paginatedUsers.currentPage === 1}
+                >
+                  Previous
+                </button>
+                <span className="pagination-info">
+                  Page {paginatedUsers.currentPage} of {paginatedUsers.totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="pagination-btn"
+                  onClick={() => setCurrentPage((prev) => Math.min(prev + 1, paginatedUsers.totalPages))}
+                  disabled={paginatedUsers.currentPage === paginatedUsers.totalPages}
+                >
+                  Next
+                </button>
+              </div>
             </div>
             <PrintableTableReport
               title="User List"

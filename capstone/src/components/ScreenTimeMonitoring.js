@@ -49,6 +49,7 @@ const normalizeMonitoringStatus = (status) => {
 const normalizePlaytimeRecords = (items, filters) => {
   const normalized = (Array.isArray(items) ? items : []).map((record) => ({
     ...record,
+    effective_duration_seconds: getEffectiveDurationSeconds(record),
     status: normalizeMonitoringStatus(record.status),
   }));
 
@@ -74,12 +75,28 @@ const formatTime = (value) => {
 };
 
 const formatDuration = (minutes) => {
-  const value = Math.max(0, Math.floor(Number(minutes) || 0));
+  const numericMinutes = Number(minutes);
+  if (!Number.isFinite(numericMinutes) || numericMinutes < 0) return 'Unknown';
+  const value = Math.max(0, Math.floor(numericMinutes));
   if (value < 60) return `${value} min`;
   const hours = Math.floor(value / 60);
   const remaining = value % 60;
   return remaining ? `${hours} hr ${remaining} min` : `${hours} hr`;
 };
+
+const getEffectiveDurationSeconds = (record = {}) => {
+  const seconds = Number(record.total_playtime_seconds);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds;
+  const minutes = Number(record.total_playtime_minutes);
+  if (Number.isFinite(minutes) && minutes >= 0) return minutes * 60;
+  return null;
+};
+
+const formatDurationSeconds = (seconds) => (
+  Number.isFinite(Number(seconds)) && Number(seconds) >= 0
+    ? formatDuration(Number(seconds) / 60)
+    : 'Unknown'
+);
 
 const buildQueryString = (filters, mode, page, limit) => {
   const params = new URLSearchParams();
@@ -174,7 +191,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
         } : {
           total_records: Number(nextPagination.total || nextRecords.length),
           total_playtime_seconds: completeDatasetIsVisible
-            ? nextRecords.reduce((sum, record) => sum + (Number(record.total_playtime_seconds) || ((Number(record.total_playtime_minutes) || 0) * 60)), 0)
+            ? nextRecords.reduce((sum, record) => sum + (record.effective_duration_seconds ?? 0), 0)
             : null,
           playing_count: completeDatasetIsVisible
             ? nextRecords.filter((record) => normalizeRole(record.status) === 'playing').length
@@ -218,7 +235,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     { header: 'Date Played', value: (row) => formatDate(row.date_played) },
     { header: 'Start Time', value: (row) => formatTime(row.start_time) },
     { header: 'End Time', value: (row) => formatTime(row.end_time) },
-    { header: 'Total Playtime', value: (row) => formatDuration(row.total_playtime_minutes) },
+    { header: 'Total Playtime', value: (row) => formatDurationSeconds(row.effective_duration_seconds ?? getEffectiveDurationSeconds(row)) },
     { header: 'Status', value: (row) => row.status },
   ];
 
@@ -431,7 +448,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                           <td>{formatDate(record.date_played)}</td>
                           <td>{formatTime(record.start_time)}</td>
                           <td>{formatTime(record.end_time)}</td>
-                          <td>{formatDuration(record.total_playtime_minutes)}</td>
+                          <td>{formatDurationSeconds(record.effective_duration_seconds)}</td>
                           <td><span className={`screen-time-status ${String(record.status || '').toLowerCase().replace(/\s+/g, '-')}`}>{record.status || 'Unknown'}</span></td>
                           <td className="no-print">
                             <TablePrintButton
@@ -450,13 +467,12 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                     </tbody>
                   </table>
                 </div>
-                {pagination.pages > 1 && (
-                  <div className="pagination-row no-print">
-                    <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}>Previous</button>
-                    <span>Page {page} of {pagination.pages}</span>
-                    <button type="button" onClick={() => setPage((current) => Math.min(pagination.pages, current + 1))} disabled={page === pagination.pages}>Next</button>
-                  </div>
-                )}
+                {!loading && !error && <div className="pagination-row no-print" aria-label="Screen Time pagination">
+                  <span>{visibleRange.totalItems === 0 ? '0 records' : `Showing ${visibleRange.start} - ${visibleRange.end} of ${visibleRange.totalItems} records`}</span>
+                  <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}>Previous</button>
+                  <span>Page {page} of {Math.max(1, pagination.pages || 1)}</span>
+                  <button type="button" onClick={() => setPage((current) => Math.min(Math.max(1, pagination.pages || 1), current + 1))} disabled={page >= Math.max(1, pagination.pages || 1)}>Next</button>
+                </div>}
                 <PrintableTableReport
                   title={reportTitle}
                   context={reportScope}
