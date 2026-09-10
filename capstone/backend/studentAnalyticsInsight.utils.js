@@ -4,6 +4,11 @@ const {
   buildProviderDiagnostics,
 } = require('./lessonQuestionGeneration');
 const {
+  AI_PAUSED_CODE,
+  AI_PAUSED_MESSAGE,
+  isAiGenerationEnabled,
+} = require('./aiRuntimePolicy');
+const {
   GROUNDING_POLICY_VERSION,
   buildGroundedClaimCatalog,
   buildClaimSelectionSchema,
@@ -58,7 +63,16 @@ const extractOutputText = (responseBody) => {
     .join('\n');
 };
 
-async function generateGroundedStudentInsight({ input, apiKey = process.env.OPENAI_API_KEY, fetchImpl = global.fetch, timeoutMs = 25000 } = {}) {
+async function generateGroundedStudentInsight({
+  input,
+  aiGenerationEnabled = isAiGenerationEnabled(),
+  apiKey = process.env.OPENAI_API_KEY,
+  fetchImpl = global.fetch,
+  timeoutMs = 25000,
+} = {}) {
+  if (!aiGenerationEnabled) {
+    throw new QuestionGenerationError(AI_PAUSED_CODE, AI_PAUSED_MESSAGE);
+  }
   if (!asText(apiKey)) {
     throw new QuestionGenerationError('ANALYTICS_AI_NOT_CONFIGURED', 'Grounded AI Insights are not configured on the backend service.');
   }

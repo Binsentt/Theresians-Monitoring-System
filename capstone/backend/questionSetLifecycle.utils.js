@@ -3,6 +3,7 @@ const GENERATION_STATUSES = new Set([
   'ready_for_review',
   'failed',
   'not_applicable',
+  'source_ready',
 ]);
 
 const PUBLISH_STATUSES = new Set(['staged', 'active', 'superseded']);
@@ -47,6 +48,17 @@ function generationFailureLabel(errorCode) {
 function deriveQuestionSetLifecycle(row = {}) {
   const generationStatus = normalizeGenerationStatus(row);
   const normalizedPublishStatus = normalizePublishStatus(row);
+
+  if (generationStatus === 'source_ready') {
+    return {
+      code: 'source_ready',
+      label: 'Source Ready',
+      tone: 'staged',
+      generationStatus,
+      publishStatus: normalizedPublishStatus,
+      publishLabel: 'Not Generated',
+    };
+  }
 
   if (generationStatus === 'failed') {
     return {

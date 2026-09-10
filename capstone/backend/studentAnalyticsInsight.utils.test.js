@@ -7,8 +7,13 @@ const {
 const {
   buildGroundedInsightInput,
   buildInsightFingerprint,
-  generateGroundedStudentInsight,
+  generateGroundedStudentInsight: generateGroundedStudentInsightWithPolicy,
 } = require('./studentAnalyticsInsight.utils');
+
+const generateGroundedStudentInsight = (input) => generateGroundedStudentInsightWithPolicy({
+  aiGenerationEnabled: true,
+  ...input,
+});
 
 const metrics = {
   validResultCount: 5,
@@ -115,6 +120,22 @@ test('uses a mocked claim selection and returns only backend-rendered text', asy
   assert.match(insight.performance_insight, /Current quest: Fraction Forest/);
   assert.deepEqual(insight.strengths, ['Recorded Easy accuracy is 100%, meeting the current positive-evidence boundary.']);
   assert.equal(JSON.stringify(insight).includes('85%'), false);
+});
+
+test('paused grounded insight returns AI_PAUSED before any provider request', async () => {
+  let providerCalls = 0;
+  await assert.rejects(
+    generateGroundedStudentInsight({
+      input: inputFor(),
+      aiGenerationEnabled: false,
+      apiKey: 'provider-key-must-not-be-used',
+      fetchImpl: async () => {
+        providerCalls += 1;
+      },
+    }),
+    (error) => error.code === 'AI_PAUSED'
+  );
+  assert.equal(providerCalls, 0);
 });
 
 test('rejects provider free-form insight text instead of displaying it', async () => {

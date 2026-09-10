@@ -86,6 +86,11 @@ const {
   toQuestionGenerationHttpFailure,
 } = require('./lessonQuestionGeneration');
 const {
+  AI_PAUSED_CODE,
+  AI_PAUSED_MESSAGE,
+  getAiRuntimeState,
+} = require('./aiRuntimePolicy');
+const {
   LessonTextExtractionError,
   extractLessonText,
   validateLessonUploadFile,
@@ -4842,6 +4847,10 @@ const validateLessonGenerationScope = ({ grade_level, difficulty, expected_quest
   };
 };
 
+app.get('/api/learning-files/ai-status', requireLessonQuestionManagerAccess, (_req, res) => {
+  return res.json(getAiRuntimeState());
+});
+
 app.get('/api/learning-files/lesson-sources', requireLessonQuestionManagerAccess, async (_req, res) => {
   try {
     const result = await pool.query(
@@ -4925,6 +4934,10 @@ app.post('/api/learning-files/lesson-sources', requireLessonQuestionManagerAcces
 app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestionManagerAccess, async (req, res) => {
   let childLearningFile = null;
   try {
+    const aiRuntimeState = getAiRuntimeState();
+    if (!aiRuntimeState.enabled) {
+      return res.status(503).json({ error: AI_PAUSED_MESSAGE, code: AI_PAUSED_CODE });
+    }
     const sourceId = Number.parseInt(req.params.id, 10);
     if (!Number.isSafeInteger(sourceId) || sourceId < 1) return res.status(400).json({ error: 'Invalid lesson source ID.' });
     const scope = validateLessonGenerationScope(req.body || {});
@@ -5136,6 +5149,42 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     if (folderResolution.error) {
       cleanTemporaryUpload(req.file.path);
       return res.status(400).json({ error: folderResolution.error });
+    }
+
+    if (normalizedType === 'lesson' && !getAiRuntimeState().enabled) {
+      const sourceBytes = fs.readFileSync(req.file.path);
+      const sourceContentFingerprint = crypto.createHash('sha256').update(sourceBytes).digest('hex');
+      const storedFileName = generateUploadFileName(req.file.originalname);
+      storedFilePath = path.join(uploadsDir, storedFileName);
+      fs.renameSync(req.file.path, storedFilePath);
+      const sourceResult = await pool.query(
+        `INSERT INTO public.learning_files (
+           title, file_name, file_url, grade_level, difficulty, math_topic, document_topic,
+           file_type, subject, folder_id, published, source, uploaded_by, file_size,
+           generation_status, publish_status, content_role, source_content_fingerprint,
+           source_file_mime_type
+         ) VALUES ($1, $2, $3, '', NULL, NULL, NULL, 'lesson', 'Mathematics', $4, false, 'lesson', $5, $6,
+                   'source_ready', 'staged', 'lesson_source', $7, $8)
+         RETURNING *`,
+        [
+          String(title).trim(),
+          req.file.originalname,
+          buildFileUrl(storedFileName),
+          folderResolution.folderId,
+          req.authenticatedUser.id,
+          req.file.size || null,
+          sourceContentFingerprint,
+          req.file.mimetype || 'application/pdf',
+        ]
+      );
+      storedFilePath = null;
+      return res.status(201).json({
+        success: true,
+        code: AI_PAUSED_CODE,
+        message: AI_PAUSED_MESSAGE,
+        generation_status: 'not_generated',
+        lessonSource: normalizeLearningFileRow(sourceResult.rows[0]),
+      });
     }
 
     let requestedQuestionCount = null;

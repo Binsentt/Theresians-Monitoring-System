@@ -96,7 +96,7 @@ Module._load = function load(request, parent, isMain) {
 let app;
 try { ({ app } = require('./server')); } finally { Module._load = originalLoad; }
 
-const setup = async (t, answers = [1, 1, 1, 0], { providerSelection = null } = {}) => {
+const setup = async (t, answers = [1, 1, 1, 0], { providerSelection = null, aiGenerationEnabled = 'true' } = {}) => {
   fixture = {
     progress: {
       student_id: 44, student_name: 'Canonical Student', student_role: 'student', game_student_id: '00123456',
@@ -115,6 +115,8 @@ const setup = async (t, answers = [1, 1, 1, 0], { providerSelection = null } = {
   const base = `http://127.0.0.1:${server.address().port}`;
   const originalFetch = global.fetch;
   const originalApiKey = process.env.OPENAI_API_KEY;
+  const originalAiGenerationEnabled = process.env.AI_GENERATION_ENABLED;
+  process.env.AI_GENERATION_ENABLED = aiGenerationEnabled;
   let providerCalls = 0;
   if (providerSelection) process.env.OPENAI_API_KEY = 'test-only-provider-key';
   global.fetch = async (url, options) => {
@@ -134,6 +136,8 @@ const setup = async (t, answers = [1, 1, 1, 0], { providerSelection = null } = {
     global.fetch = originalFetch;
     if (originalApiKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = originalApiKey;
+    if (originalAiGenerationEnabled === undefined) delete process.env.AI_GENERATION_ENABLED;
+    else process.env.AI_GENERATION_ENABLED = originalAiGenerationEnabled;
     fixture = null;
     await new Promise((resolve) => server.close(resolve));
   });
@@ -145,6 +149,26 @@ const setup = async (t, answers = [1, 1, 1, 0], { providerSelection = null } = {
   get.providerCallCount = () => providerCalls;
   return get;
 };
+
+test('automatic analytics detail reads return AI_PAUSED with zero outbound provider requests', async (t) => {
+  const get = await setup(t, [1, 1, 1, 0], {
+    aiGenerationEnabled: 'false',
+    providerSelection: {
+      grounding_policy_version: 'grounded-claims-v1',
+      performance_claim_ids: ['overall_accuracy'],
+      strength_claim_ids: [],
+      weakness_claim_ids: [],
+      recommendation_claim_ids: [],
+    },
+  });
+
+  const detail = await get('/api/student-progress/44');
+  assert.equal(detail.metrics.accuracy, 75);
+  assert.equal(detail.aiInsight.status, 'paused');
+  assert.equal(detail.aiInsight.code, 'AI_PAUSED');
+  assert.equal(detail.aiInsight.insight, null);
+  assert.equal(get.providerCallCount(), 0);
+});
 
 test('authorized detail reads automatically share a preliminary grounded insight for four valid results', async (t) => {
   const get = await setup(t, [1, 1, 1, 0], {

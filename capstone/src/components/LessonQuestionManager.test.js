@@ -145,6 +145,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     localStorage.setItem('rememberToken', 'lesson-manager-token');
     window.prompt = jest.fn(() => 'Required QA deletion reason.');
     fixtures = {
+      aiRuntimeState: { enabled: true, status: 'enabled' },
       files: [],
       lessonSources: [],
       folders: [],
@@ -158,8 +159,20 @@ describe('LessonQuestionManager upload and trash controls', () => {
       const value = String(url);
       const scopedValue = value.replace(/\?scope=teacher$/, '');
       if (scopedValue.endsWith('/api/curriculum/registry')) return okJson(curriculumRegistryFixture);
+      if (scopedValue.endsWith('/api/learning-files/ai-status')) return okJson(fixtures.aiRuntimeState);
       if (scopedValue.endsWith('/api/learning-files/storage-summary')) {
         return okJson({ used_bytes: 601, source_file_bytes: 480, question_content_bytes: 121 });
+      }
+      if (scopedValue.endsWith('/api/learning-files/lesson-sources') && options.method === 'POST') {
+        const source = {
+          id: 702,
+          title: 'Paused lesson source',
+          file_name: options.body.get('file').name,
+          content_role: 'lesson_source',
+          generation_status: 'source_ready',
+        };
+        fixtures.lessonSources = [source, ...fixtures.lessonSources];
+        return okJson({ success: true, lessonSource: source });
       }
       if (scopedValue.endsWith('/api/learning-files/lesson-sources')) return okJson(fixtures.lessonSources);
       const lessonSourceGenerationMatch = value.match(/\/api\/learning-files\/lesson-sources\/(\d+)\/generate/);
@@ -520,12 +533,12 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.querySelector('[aria-labelledby="replace-active-question-set-title"]').parentElement.parentElement).toBe(document.body);
     expect(document.body.textContent).toContain('Current Addition');
     expect(document.body.textContent).toContain('replacement-addition.docx');
-    expect(global.fetch).toHaveBeenCalledTimes(6);
+    expect(global.fetch).toHaveBeenCalledTimes(7);
 
     await act(async () => {
       clickByText(document.body, 'Cancel');
     });
-    expect(global.fetch).toHaveBeenCalledTimes(6);
+    expect(global.fetch).toHaveBeenCalledTimes(7);
 
     await act(async () => {
       clickByText(container, 'Push to Game');
@@ -582,6 +595,60 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     expect(document.body.textContent).toContain('Question Count is required for Lesson PDF or PPTX files.');
     expect(global.fetch).not.toHaveBeenCalledWith('/api/learning-files/upload', expect.anything());
+  });
+
+  test('paused AI keeps a new lesson source, exposes Not Generated, and blocks reusable-source generation', async () => {
+    fixtures.aiRuntimeState = {
+      enabled: false,
+      status: 'paused',
+      code: 'AI_PAUSED',
+      message: 'AI generation is temporarily paused. Recorded data and available questions remain accessible.',
+    };
+    fixtures.lessonSources = [{ id: 701, title: 'Existing source', file_name: 'existing.pdf', content_role: 'lesson_source' }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    expect(container.textContent).toContain('AI generation is temporarily paused. Recorded data and available questions remain accessible.');
+
+    await act(async () => clickByText(container, 'New'));
+    await act(async () => clickByText(container, 'Upload File'));
+    await act(async () => {
+      setSelectValue(getUploadModalSelects()[2], 'lesson');
+      const selects = getUploadModalSelects();
+      setSelectValue(selects[0], 'Grade 1');
+      setSelectValue(selects[1], 'Easy');
+      const fileInput = getUploadModal().querySelector('input[type="file"]');
+      const file = new File(['%PDF-1.4 paused lesson'], 'paused-lesson.pdf', { type: 'application/pdf' });
+      Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    expect(getUploadModal().textContent).toContain('Paused / Not Generated');
+    expect(getUploadModal().textContent).not.toContain('Question Count');
+    expect(getUploadModal().querySelector('button[type="submit"]').textContent).toContain('Save Lesson Source');
+    await act(async () => {
+      getUploadModal().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    const sourceSaveRequests = global.fetch.mock.calls.filter(([url, options]) => (
+      String(url).endsWith('/api/learning-files/lesson-sources') && options?.method === 'POST'
+    ));
+    expect(sourceSaveRequests).toHaveLength(1);
+    expect(sourceSaveRequests[0][1].body.get('file').name).toBe('paused-lesson.pdf');
+    expect(global.fetch.mock.calls.some(([url, options]) => (
+      String(url).endsWith('/api/learning-files/upload') && options?.method === 'POST'
+    ))).toBe(false);
+
+    await act(async () => {
+      setSelectValue(getUploadModalSelects()[3], '701');
+    });
+    const pausedButton = getUploadModal().querySelector('button[type="submit"]');
+    expect(pausedButton.textContent).toContain('AI Generation Paused');
+    expect(pausedButton.disabled).toBe(true);
+    expect(global.fetch.mock.calls.some(([url, options]) => (
+      String(url).includes('/generate') && options?.method === 'POST'
+    ))).toBe(false);
   });
 
   test('sends one stable idempotency key for a Lesson PDF submit and blocks a duplicate immediate submit', async () => {

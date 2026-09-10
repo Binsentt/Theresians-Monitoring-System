@@ -23,12 +23,13 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
   const preliminary = state.preliminary === true || state.data_level === 'limited_data';
   const stale = state.is_stale === true || state.status === 'stale';
   const unavailable = state.status === 'unavailable';
+  const paused = state.status === 'paused' || state.code === 'AI_PAUSED';
   const noData = state.status === 'no_data' || state.data_level === 'no_data';
   const strengths = normalizeDisplayList(insight?.strengths);
   const weaknesses = normalizeDisplayList(insight?.weaknesses);
   const recommendations = normalizeDisplayList(insight?.recommendations);
   const message = safeDisplayText(error || state.message, 'Grounded analysis is loading from recorded gameplay evidence.');
-  const showRecovery = Boolean(onRefresh && !noData && (unavailable || stale || error));
+  const showRecovery = Boolean(onRefresh && !noData && !paused && (unavailable || stale || error));
   const generatedAt = state.generated_at ? new Date(state.generated_at) : null;
   const generatedLabel = generatedAt && !Number.isNaN(generatedAt.getTime())
     ? generatedAt.toLocaleString()
@@ -54,14 +55,14 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
             Preliminary insight — based on {validResultCount ?? 'fewer than 5'} recorded result{validResultCount === 1 ? '' : 's'}.
           </p>
         )}
-        {(unavailable || stale || error) && (
+        {(paused || unavailable || stale || error) && (
           <p className="grounded-ai-status warning" role="status">
-            {stale ? `Insight is stale. ${message}` : message}
+            {paused ? `${stale ? 'Insight is stale. ' : ''}${message}` : stale ? `Insight is stale. ${message}` : message}
           </p>
         )}
         {insight?.performance_insight
           ? <strong className="student-insight-highlight">{safeDisplayText(insight.performance_insight, '')}</strong>
-          : !(unavailable || stale || error) && <p className="student-insight-copy">{message}</p>}
+          : !(paused || unavailable || stale || error) && <p className="student-insight-copy">{message}</p>}
         <p className="grounded-ai-evidence-meta">
           Evidence: {validResultCount ?? 0} valid results · Generated: {generatedLabel} · {cacheLabel}
         </p>

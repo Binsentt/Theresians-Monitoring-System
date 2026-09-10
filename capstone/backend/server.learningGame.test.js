@@ -6,6 +6,13 @@ const os = require('node:os');
 const path = require('node:path');
 const { buildLearningFileApprovalFingerprint } = require('./learningFileApproval.utils');
 
+const priorAiGenerationEnabled = process.env.AI_GENERATION_ENABLED;
+process.env.AI_GENERATION_ENABLED = 'true';
+test.after(() => {
+  if (priorAiGenerationEnabled === undefined) delete process.env.AI_GENERATION_ENABLED;
+  else process.env.AI_GENERATION_ENABLED = priorAiGenerationEnabled;
+});
+
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
 let parsedPdfText = '';
@@ -129,6 +136,110 @@ const requestJson = async (baseUrl, path, options = {}) => {
     body: await response.json(),
   };
 };
+
+test('AI runtime status and generation route enforce a server-side pause before database or provider work', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const previous = process.env.AI_GENERATION_ENABLED;
+  process.env.AI_GENERATION_ENABLED = 'false';
+  let dataQueries = 0;
+  t.after(async () => {
+    process.env.AI_GENERATION_ENABLED = previous;
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+  setQueryHandler(async () => {
+    dataQueries += 1;
+    return emptyResult;
+  });
+
+  const status = await requestJson(baseUrl, '/api/learning-files/ai-status');
+  const generation = await requestJson(baseUrl, '/api/learning-files/lesson-sources/701/generate', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': 'paused-generation-request-701' },
+    body: JSON.stringify({ grade_level: 'Grade 1', difficulty: 'Easy', expected_question_count: 5 }),
+  });
+
+  assert.deepEqual(status, {
+    status: 200,
+    body: {
+      enabled: false,
+      status: 'paused',
+      code: 'AI_PAUSED',
+      message: 'AI generation is temporarily paused. Recorded data and available questions remain accessible.',
+    },
+  });
+  assert.deepEqual(generation, {
+    status: 503,
+    body: {
+      error: 'AI generation is temporarily paused. Recorded data and available questions remain accessible.',
+      code: 'AI_PAUSED',
+    },
+  });
+  assert.equal(dataQueries, 0);
+});
+
+test('paused legacy lesson upload preserves the source without creating an empty or failed question set', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const previous = process.env.AI_GENERATION_ENABLED;
+  process.env.AI_GENERATION_ENABLED = 'false';
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'paused-lesson-source-test-'));
+  const inputPath = path.join(tempDir, 'paused-lesson.pdf');
+  fs.writeFileSync(inputPath, '%PDF-1.4\npaused lesson source\n%%EOF');
+  nextUploadedFile = {
+    path: inputPath,
+    originalname: 'paused-lesson.pdf',
+    mimetype: 'application/pdf',
+    size: fs.statSync(inputPath).size,
+  };
+  const statements = [];
+  let outputPath = null;
+  t.after(async () => {
+    process.env.AI_GENERATION_ENABLED = previous;
+    nextUploadedFile = null;
+    setQueryHandler(async () => emptyResult);
+    if (outputPath && fs.existsSync(outputPath)) fs.rmSync(outputPath, { force: true });
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    await close(server);
+  });
+  setQueryHandler(async (sql, params) => {
+    statements.push(sql);
+    if (sql.startsWith('insert into public.learning_files')) {
+      outputPath = path.join(__dirname, 'uploads', path.basename(params[2]));
+      return resultRows([{
+        id: 9701,
+        title: params[0],
+        file_name: params[1],
+        file_url: params[2],
+        file_type: 'lesson',
+        content_role: 'lesson_source',
+        generation_status: 'source_ready',
+        published: false,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/upload', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: 'Paused lesson',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      file_type: 'lesson',
+    }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal(response.body.code, 'AI_PAUSED');
+  assert.equal(response.body.generation_status, 'not_generated');
+  assert.equal(response.body.lessonSource.content_role, 'lesson_source');
+  assert.equal(response.body.lessonSource.generation_status, 'source_ready');
+  assert.ok(statements.some((sql) => sql.startsWith('insert into public.learning_files')));
+  assert.equal(statements.some((sql) => sql.includes('insert into public.questions')), false);
+  assert.equal(statements.some((sql) => sql.includes("'generating'")), false);
+});
 
 test('staged preview question edits are structural, transactional, audited, and invalidate approval', async (t) => {
   const server = await listen();

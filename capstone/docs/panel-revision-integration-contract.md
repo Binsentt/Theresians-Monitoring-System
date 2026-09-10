@@ -153,6 +153,14 @@ Important machine codes include `LEARNING_CYCLE_CHANGED`, `PLAYTIME_HEARTBEAT_ST
 - Railway reports staged patch `7f468f6c-1d69-481a-80f6-c12ef9cc78d3`, with 11 named service-variable changes and an unreconciled environment-level count. It must not be accepted, discarded, or bundled with a source release until its exact contents are independently reviewed.
 - Leaderboard, activity idempotency, Easy/Oakleaf mapping, and screen-time summaries are backend-contract verified. No website-only test claims current Godot/device end-to-end verification.
 
+## AI runtime pause and non-AI QA boundary
+
+- **IMPLEMENTED** `GET /api/learning-files/ai-status` exposes the server runtime state without exposing provider credentials.
+- When `AI_GENERATION_ENABLED` is not explicitly `true`, lesson generation and grounded insight provider calls are stopped before key lookup or outbound fetch. The stable machine code is `AI_PAUSED` and the user-facing message is: `AI generation is temporarily paused. Recorded data and available questions remain accessible.`
+- A paused lesson source may still be persisted as `source_ready`/`not_generated` for later review. It must not create generated questions, an approval record, an empty approved set, or fabricated AI output.
+- Genuine cached insight remains visible with its evidence fingerprint and timestamp. Current evidence is labeled current; changed evidence is labeled stale. No retry control bypasses the pause.
+- The local manual browser checklist is [non-ai-manual-qa.md](non-ai-manual-qa.md). It uses only synthetic accounts and a disposable local database. It is not production verification and does not authorize Railway deployment or a live OpenAI request.
+
 ## Acceptance fixtures
 
 All automated fixtures are disposable/mocked; they are not production IDs.

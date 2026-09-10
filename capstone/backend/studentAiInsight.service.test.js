@@ -1,7 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { resolveStudentAiInsight } = require('./studentAiInsight.service');
+const { resolveStudentAiInsight: resolveStudentAiInsightWithPolicy } = require('./studentAiInsight.service');
+
+const resolveStudentAiInsight = (input) => resolveStudentAiInsightWithPolicy({
+  aiGenerationEnabled: true,
+  ...input,
+});
 
 const empty = { rows: [] };
 const compact = (sql) => String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
@@ -111,6 +116,93 @@ test('four Grade 1 Oakleaf Easy results generate a real preliminary 75 percent i
   assert.equal(providerInput.accuracy, 75);
   assert.equal(providerInput.current_difficulty, 'Easy');
   assert.equal(state.insight.performance_insight, 'Recorded overall accuracy is 75%.');
+});
+
+test('paused insight with no cache returns a stable state without provider, transaction, or write', async () => {
+  const harness = createHarness();
+  let providerCalls = 0;
+  const state = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics: metricsFor([1, 1, 1, 0]),
+    actorId: 1,
+    aiGenerationEnabled: false,
+    pool: harness.pool,
+    generateInsight: async () => {
+      providerCalls += 1;
+      return generatedInsight('must not run');
+    },
+  });
+
+  assert.equal(state.status, 'paused');
+  assert.equal(state.code, 'AI_PAUSED');
+  assert.equal(state.insight, null);
+  assert.equal(state.is_stale, false);
+  assert.equal(providerCalls, 0);
+  assert.equal(harness.calls.some(({ sql }) => sql === 'begin'), false);
+  assert.equal(harness.calls.some(({ sql }) => sql.includes('insert into public.student_ai_insights')), false);
+});
+
+test('paused insight preserves a stale genuine cache with its timestamp and makes no provider call', async () => {
+  const harness = createHarness();
+  harness.setSaved({
+    input_fingerprint: 'older-fingerprint',
+    insight: generatedInsight('Previously generated evidence.'),
+    generated_at: '2026-09-08T00:00:00.000Z',
+    stale_at: null,
+  });
+  let providerCalls = 0;
+  const state = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics: metricsFor([1, 1, 1, 1, 0]),
+    actorId: 2,
+    aiGenerationEnabled: false,
+    pool: harness.pool,
+    generateInsight: async () => {
+      providerCalls += 1;
+      return generatedInsight('must not run');
+    },
+  });
+
+  assert.equal(state.status, 'paused');
+  assert.equal(state.code, 'AI_PAUSED');
+  assert.equal(state.is_stale, true);
+  assert.equal(state.generated_at, '2026-09-08T00:00:00.000Z');
+  assert.equal(state.insight.performance_insight, 'Previously generated evidence.');
+  assert.equal(providerCalls, 0);
+  assert.equal(harness.calls.some(({ sql }) => sql === 'begin'), false);
+});
+
+test('paused insight exposes a matching genuine cache as current without a provider call', async () => {
+  const harness = createHarness();
+  const metrics = metricsFor([1, 1, 1, 0]);
+  const { buildGroundedInsightInput, buildInsightFingerprint } = require('./studentAnalyticsInsight.utils');
+  const fingerprint = buildInsightFingerprint(buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics }));
+  harness.setSaved({
+    input_fingerprint: fingerprint,
+    insight: generatedInsight('Current generated evidence.'),
+    generated_at: '2026-09-09T00:00:00.000Z',
+    stale_at: null,
+  });
+  let providerCalls = 0;
+  const state = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics,
+    actorId: 2,
+    aiGenerationEnabled: false,
+    pool: harness.pool,
+    generateInsight: async () => {
+      providerCalls += 1;
+      return generatedInsight('must not run');
+    },
+  });
+
+  assert.equal(state.status, 'paused');
+  assert.equal(state.is_stale, false);
+  assert.equal(state.insight.performance_insight, 'Current generated evidence.');
+  assert.equal(providerCalls, 0);
 });
 
 test('Admin, Teacher, and Parent reads share one generated insight for unchanged evidence', async () => {

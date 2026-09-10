@@ -69,6 +69,32 @@ describe('GroundedAiAnalysis', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
+  test('shows the paused contract, preserves genuine cached content, and offers no retry', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis
+        aiInsight={{
+          status: 'paused',
+          code: 'AI_PAUSED',
+          data_level: 'sufficient_data',
+          is_stale: true,
+          generated_at: '2026-09-08T00:00:00.000Z',
+          message: 'AI generation is temporarily paused. Recorded data and available questions remain accessible.',
+          insight: {
+            performance_insight: 'Previously generated evidence.',
+            strengths: [], weaknesses: [], recommendations: [],
+          },
+        }}
+        onRefresh={jest.fn()}
+      />
+    ));
+
+    expect(container.textContent).toContain('AI generation is temporarily paused.');
+    expect(container.textContent).toContain('Previously generated evidence.');
+    expect(container.textContent).toContain('stale');
+    expect(container.textContent).toContain('2026');
+    expect(container.querySelector('button')).toBeNull();
+  });
+
   test('shows truthful no-data state without invented analysis or a generation action', async () => {
     await act(async () => root.render(
       <GroundedAiAnalysis

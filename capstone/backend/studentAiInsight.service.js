@@ -3,6 +3,11 @@ const {
   buildInsightFingerprint,
   generateGroundedStudentInsight,
 } = require('./studentAnalyticsInsight.utils');
+const {
+  AI_PAUSED_CODE,
+  AI_PAUSED_MESSAGE,
+  isAiGenerationEnabled,
+} = require('./aiRuntimePolicy');
 
 const SUFFICIENT_INSIGHT_RESULT_COUNT = 5;
 
@@ -59,11 +64,22 @@ const buildUnavailableState = ({ baseState, cachedInsight }) => ({
     : 'Grounded AI Insights are unavailable right now. Recorded analytics remain available.',
 });
 
+const buildPausedState = ({ baseState, cachedInsight, isStale = Boolean(cachedInsight?.insight) }) => ({
+  ...baseState,
+  status: 'paused',
+  code: AI_PAUSED_CODE,
+  is_stale: isStale,
+  generated_at: cachedInsight?.generated_at || null,
+  insight: cachedInsight?.insight || null,
+  message: AI_PAUSED_MESSAGE,
+});
+
 async function resolveStudentAiInsight({
   studentId,
   gradeLevel,
   metrics = {},
   actorId = null,
+  aiGenerationEnabled = isAiGenerationEnabled(),
   pool,
   generateInsight = generateGroundedStudentInsight,
   logger = console,
@@ -85,6 +101,13 @@ async function resolveStudentAiInsight({
   const input = buildGroundedInsightInput({ gradeLevel, metrics });
   const inputFingerprint = buildInsightFingerprint(input);
   const initialCache = await readCachedInsight(pool, studentId);
+  if (!aiGenerationEnabled) {
+    return buildPausedState({
+      baseState,
+      cachedInsight: initialCache,
+      isStale: Boolean(initialCache?.insight) && !isCurrentCache(initialCache, inputFingerprint),
+    });
+  }
   if (isCurrentCache(initialCache, inputFingerprint)) {
     return buildCachedState({ baseState, cachedInsight: initialCache });
   }
@@ -105,7 +128,7 @@ async function resolveStudentAiInsight({
 
     let insight;
     try {
-      insight = await generateInsight({ input });
+      insight = await generateInsight({ input, aiGenerationEnabled });
     } catch (error) {
       await client.query('ROLLBACK');
       transactionStarted = false;

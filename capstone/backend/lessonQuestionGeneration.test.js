@@ -5,9 +5,14 @@ const {
   MAX_LESSON_TEXT_CHARS,
   QUESTION_GENERATION_MODEL,
   QuestionGenerationError,
-  generateLessonQuestions,
+  generateLessonQuestions: generateLessonQuestionsWithPolicy,
   toQuestionGenerationHttpFailure,
 } = require('./lessonQuestionGeneration');
+
+const generateLessonQuestions = (input) => generateLessonQuestionsWithPolicy({
+  aiGenerationEnabled: true,
+  ...input,
+});
 
 const validQuestions = [
   {
@@ -42,6 +47,37 @@ test('lesson generation fails with a configuration error before calling OpenAI w
   );
 
   assert.equal(called, false);
+});
+
+test('paused lesson generation returns AI_PAUSED before any provider request', async () => {
+  let providerCalls = 0;
+
+  await assert.rejects(
+    generateLessonQuestions({
+      lessonText: 'A lesson about addition.',
+      title: 'Addition lesson',
+      gradeLevel: 'Grade 1',
+      difficulty: 'Easy',
+      mathTopic: 'Basic Addition',
+      questionCount: 2,
+      aiGenerationEnabled: false,
+      apiKey: 'provider-key-must-not-be-used',
+      fetchImpl: async () => {
+        providerCalls += 1;
+      },
+    }),
+    (error) => error instanceof QuestionGenerationError && error.code === 'AI_PAUSED'
+  );
+
+  assert.equal(providerCalls, 0);
+  assert.deepEqual(
+    toQuestionGenerationHttpFailure(new QuestionGenerationError('AI_PAUSED', 'internal detail')),
+    {
+      status: 503,
+      code: 'AI_PAUSED',
+      error: 'AI generation is temporarily paused. Recorded data and available questions remain accessible.',
+    }
+  );
 });
 
 test('lesson generation sends only lesson context to the server-side Responses API and validates the requested count', async () => {

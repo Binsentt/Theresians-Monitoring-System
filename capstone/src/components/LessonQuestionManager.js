@@ -43,6 +43,7 @@ const initialFilterState = {
 
 const MAX_LESSON_QUESTION_COUNT = 50;
 const LESSON_GENERATION_IDEMPOTENCY_STORAGE_PREFIX = 'theresians.lesson-generation.';
+const AI_PAUSED_MESSAGE = 'AI generation is temporarily paused. Recorded data and available questions remain accessible.';
 
 const fetchLessonManagerApi = (url, options = {}) => fetch(url, {
   ...options,
@@ -202,6 +203,12 @@ export default function LessonQuestionManager() {
   const [curriculumRegistry, setCurriculumRegistry] = useState(null);
   const [files, setFiles] = useState([]);
   const [lessonSources, setLessonSources] = useState([]);
+  const [aiRuntimeState, setAiRuntimeState] = useState({
+    enabled: false,
+    status: 'paused',
+    code: 'AI_PAUSED',
+    message: AI_PAUSED_MESSAGE,
+  });
   const [trashFiles, setTrashFiles] = useState([]);
   const [storageSummary, setStorageSummary] = useState({ used_bytes: 0, source_file_bytes: 0, question_content_bytes: 0 });
   const [form, setForm] = useState(initialFormState);
@@ -324,6 +331,30 @@ export default function LessonQuestionManager() {
     }
   };
 
+  const loadAiRuntimeState = async ({ role } = {}) => {
+    try {
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl('/api/learning-files/ai-status', role));
+      if (!response.ok) throw new Error('Failed to load AI runtime status');
+      const state = await response.json();
+      setAiRuntimeState(state?.enabled === true
+        ? { enabled: true, status: 'enabled' }
+        : {
+          enabled: false,
+          status: 'paused',
+          code: 'AI_PAUSED',
+          message: state?.message || AI_PAUSED_MESSAGE,
+        });
+    } catch (error) {
+      console.error(error);
+      setAiRuntimeState({
+        enabled: false,
+        status: 'paused',
+        code: 'AI_PAUSED',
+        message: AI_PAUSED_MESSAGE,
+      });
+    }
+  };
+
   useEffect(() => {
     const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
     const role = normalizeRole(loggedInUser?.role);
@@ -335,6 +366,7 @@ export default function LessonQuestionManager() {
     loadCurriculumRegistry({ role });
     loadFilesAndFolders({ initial: true, role });
     loadLessonSources({ role });
+    loadAiRuntimeState({ role });
   }, [navigate]);
 
   const folderView = useMemo(() => getQuestionFolderView(files, {
@@ -345,6 +377,7 @@ export default function LessonQuestionManager() {
   const difficultyLevels = useMemo(() => getDifficultyLevels(curriculumRegistry), [curriculumRegistry]);
   const questionFolderStructure = useMemo(() => getQuestionFolderStructure(curriculumRegistry), [curriculumRegistry]);
   const uploadType = form.file_type;
+  const aiGenerationPaused = aiRuntimeState.enabled !== true;
   const selectedFolderPath = selectedFolder.grade_level
     ? `Questions / ${selectedFolder.grade_level}${selectedFolder.difficulty ? ` / ${selectedFolder.difficulty}` : ''}`
     : 'Questions';
@@ -487,7 +520,9 @@ export default function LessonQuestionManager() {
       const source = normalizeManagedLearningFile(data.lessonSource || {});
       setLessonSources((current) => [source, ...current.filter((item) => item.id !== source.id)]);
       setSelectedLessonSourceId(String(source.id));
-      showNotification('Lesson source saved. Select its Grade, Difficulty, and Question Count to generate a child set.');
+      showNotification(aiGenerationPaused
+        ? 'Lesson source saved. AI generation is paused; no question set was created.'
+        : 'Lesson source saved. Select its Grade, Difficulty, and Question Count to generate a child set.');
     } catch (error) {
       console.error(error);
       showNotification(error.message || 'Unable to save the Lesson source.', 'error');
@@ -573,6 +608,14 @@ export default function LessonQuestionManager() {
       || !isValidDifficulty(form.difficulty, curriculumRegistry)
     ) {
       showNotification('Invalid grade level or difficulty for this Mathematics content.', 'error');
+      return;
+    }
+    if (uploadType === 'lesson' && aiGenerationPaused) {
+      if (usingReusableLessonSource) {
+        setUploadError(aiRuntimeState.message || AI_PAUSED_MESSAGE);
+        return;
+      }
+      await saveLessonSource();
       return;
     }
     const requestedCount = String(form.expected_question_count || '').trim();
@@ -1317,6 +1360,11 @@ export default function LessonQuestionManager() {
           </TopBar>
 
           <PageContent>
+            {aiGenerationPaused && (
+              <div className="manager-ai-pause-banner" role="status">
+                {aiRuntimeState.message || AI_PAUSED_MESSAGE}
+              </div>
+            )}
             {notification && (
               <div className={`manager-notification ${notification.type === 'error' ? 'notification-error' : 'notification-success'}`} role="status">
                 {notification.message}
@@ -1608,7 +1656,7 @@ export default function LessonQuestionManager() {
                         {getQuestionFolderPath(form.grade_level, form.difficulty)}
                       </div>
                     </div>
-                    {form.file_type === 'lesson' && (
+                    {form.file_type === 'lesson' && !aiGenerationPaused && (
                       <div className="form-group">
                         <label className="form-label required" htmlFor="expected-question-count">Question Count</label>
                         <input
@@ -1638,7 +1686,7 @@ export default function LessonQuestionManager() {
                           onChange={(event) => handleFormChange('file', event.target.files[0] || null)}
                         />
                       )}
-                      {form.file_type === 'lesson' && !selectedLessonSourceId && form.file && (
+                      {form.file_type === 'lesson' && !aiGenerationPaused && !selectedLessonSourceId && form.file && (
                         <button type="button" className="secondary-button" onClick={saveLessonSource} disabled={savingLessonSource || uploading}>
                           {savingLessonSource ? 'Saving Lesson Source...' : 'Save as Reusable Lesson Source'}
                         </button>
@@ -1647,6 +1695,11 @@ export default function LessonQuestionManager() {
                         <p className="fixed-question-upload-help">Fixed Questions supported: DOCX, PDF. JSON/CSV remain available for developer compatibility.</p>
                       )}
                     </div>
+                    {form.file_type === 'lesson' && aiGenerationPaused && (
+                      <p className="fixed-question-upload-help" role="status">
+                        Status: Paused / Not Generated. The lesson source can still be saved for later generation.
+                      </p>
+                    )}
                   </div>
                   {fixedUploadValidation && (
                     <section className="fixed-question-validation-review" aria-live="polite">
@@ -1673,8 +1726,16 @@ export default function LessonQuestionManager() {
                   )}
                   {uploadError && <p className="manager-inline-error" role="alert">{uploadError}</p>}
                   <div className="upload-actions">
-                    <button type="submit" className="btn btn-primary" disabled={uploading}>
-                      {uploading ? 'Uploading...' : selectedLessonSourceId ? 'Generate Question Set' : 'Upload File'}
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={uploading || (form.file_type === 'lesson' && aiGenerationPaused && Boolean(selectedLessonSourceId))}
+                    >
+                      {uploading
+                        ? 'Uploading...'
+                        : form.file_type === 'lesson' && aiGenerationPaused
+                          ? selectedLessonSourceId ? 'AI Generation Paused' : 'Save Lesson Source'
+                          : selectedLessonSourceId ? 'Generate Question Set' : 'Upload File'}
                     </button>
                     <button type="button" className="btn btn-secondary" onClick={() => { resetForm(); setShowUploadForm(false); }} disabled={uploading}>Cancel</button>
                   </div>

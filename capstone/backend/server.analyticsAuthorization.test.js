@@ -348,7 +348,9 @@ test('grounded insight endpoint returns a current cache without another provider
   });
 
   assert.equal(response.status, 200);
-  assert.equal(response.body.status, 'cached');
+  assert.equal(response.body.status, 'paused');
+  assert.equal(response.body.code, 'AI_PAUSED');
+  assert.equal(response.body.is_stale, false);
   assert.deepEqual(response.body.insight, cachedInsight);
 });
 
@@ -358,11 +360,15 @@ test('grounded insight treats four valid results as preliminary and generates on
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const originalFetch = global.fetch;
   const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  const originalAiGenerationEnabled = process.env.AI_GENERATION_ENABLED;
+  process.env.AI_GENERATION_ENABLED = 'true';
   process.env.OPENAI_API_KEY = 'test-key';
   t.after(async () => {
     global.fetch = originalFetch;
     if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = originalOpenAiKey;
+    if (originalAiGenerationEnabled === undefined) delete process.env.AI_GENERATION_ENABLED;
+    else process.env.AI_GENERATION_ENABLED = originalAiGenerationEnabled;
     reset();
     await close(server);
   });
@@ -438,15 +444,19 @@ test('invalid grounded provider output is not cached and deterministic progress 
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const originalFetch = global.fetch;
   const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  const originalAiGenerationEnabled = process.env.AI_GENERATION_ENABLED;
   let insertCalls = 0;
   t.after(async () => {
     global.fetch = originalFetch;
     if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = originalOpenAiKey;
+    if (originalAiGenerationEnabled === undefined) delete process.env.AI_GENERATION_ENABLED;
+    else process.env.AI_GENERATION_ENABLED = originalAiGenerationEnabled;
     reset();
     await close(server);
   });
   process.env.OPENAI_API_KEY = 'test-key';
+  process.env.AI_GENERATION_ENABLED = 'true';
 
   const progress = {
     student_id: 44,
@@ -513,6 +523,7 @@ test('valid grounded output caches by fingerprint and regenerates a stale entry'
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const originalFetch = global.fetch;
   const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  const originalAiGenerationEnabled = process.env.AI_GENERATION_ENABLED;
   let providerCalls = 0;
   let insertCalls = 0;
   let cachedInsight = null;
@@ -520,10 +531,13 @@ test('valid grounded output caches by fingerprint and regenerates a stale entry'
     global.fetch = originalFetch;
     if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = originalOpenAiKey;
+    if (originalAiGenerationEnabled === undefined) delete process.env.AI_GENERATION_ENABLED;
+    else process.env.AI_GENERATION_ENABLED = originalAiGenerationEnabled;
     reset();
     await close(server);
   });
   process.env.OPENAI_API_KEY = 'test-key';
+  process.env.AI_GENERATION_ENABLED = 'true';
 
   const progress = {
     student_id: 44,

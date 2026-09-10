@@ -2,6 +2,11 @@ const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const QUESTION_GENERATION_MODEL = 'gpt-5-mini';
 const MAX_LESSON_TEXT_CHARS = 24000;
 const QUESTION_GENERATION_TIMEOUT_MS = 30000;
+const {
+  AI_PAUSED_CODE,
+  AI_PAUSED_MESSAGE,
+  isAiGenerationEnabled,
+} = require('./aiRuntimePolicy');
 
 class QuestionGenerationError extends Error {
   constructor(code, message, providerDiagnostics = null) {
@@ -14,6 +19,13 @@ class QuestionGenerationError extends Error {
 
 const toQuestionGenerationHttpFailure = (error) => {
   if (!(error instanceof QuestionGenerationError)) return null;
+  if (error.code === AI_PAUSED_CODE) {
+    return {
+      status: 503,
+      code: AI_PAUSED_CODE,
+      error: AI_PAUSED_MESSAGE,
+    };
+  }
   if (error.providerDiagnostics?.category === 'quota_or_rate_limit') {
     return {
       status: 503,
@@ -204,10 +216,14 @@ const generateLessonQuestions = async ({
   gradeLevel,
   difficulty,
   questionCount,
+  aiGenerationEnabled = isAiGenerationEnabled(),
   apiKey = process.env.OPENAI_API_KEY,
   fetchImpl = global.fetch,
   timeoutMs = QUESTION_GENERATION_TIMEOUT_MS,
 }) => {
+  if (!aiGenerationEnabled) {
+    throw new QuestionGenerationError(AI_PAUSED_CODE, AI_PAUSED_MESSAGE);
+  }
   if (!asTrimmedString(apiKey)) {
     throw new QuestionGenerationError(
       'QUESTION_AI_NOT_CONFIGURED',
