@@ -102,11 +102,21 @@ describe('Admin ID Directory', () => {
 
   test('filters rows immediately without changing the source records', async () => {
     await act(async () => root.render(<AdminIdDirectory />));
-    const idFilter = container.querySelector('[aria-label="Student ID filters"] input');
+    const idFilter = container.querySelector('[aria-label="Search Student ID Directory"]');
 
     await act(async () => setInputValue(idFilter, 'not-found'));
 
     expect(container.textContent).toContain('No student IDs match the current filters.');
+  });
+
+  test('uses one visible search field and always shows truthful disabled pagination for one page', async () => {
+    await act(async () => root.render(<AdminIdDirectory />));
+
+    expect(container.querySelectorAll('[aria-label="Student ID Directory controls"] input[type="search"]')).toHaveLength(1);
+    expect(container.textContent).toContain('Showing 1 - 1 of 1');
+    expect(container.textContent).toContain('Page 1 of 1');
+    const controls = container.querySelector('.id-directory-pagination');
+    expect(Array.from(controls.querySelectorAll('button')).every((button) => button.disabled)).toBe(true);
   });
 
   test('filters before paging, resets page on filters, and keeps truthful per-tab counts', async () => {
@@ -129,11 +139,37 @@ describe('Admin ID Directory', () => {
     expect(container.textContent).toContain('Page 2 of 2');
     expect(container.querySelectorAll('table[aria-label="Student ID Directory"] tbody tr')).toHaveLength(2);
 
-    const nameFilter = container.querySelectorAll('[aria-label="Student ID filters"] input')[1];
+    const nameFilter = container.querySelector('[aria-label="Search Student ID Directory"]');
     await act(async () => setInputValue(nameFilter, 'Unique Last Student'));
     expect(container.textContent).toContain('Students (1)');
-    expect(container.textContent).not.toContain('Page 2 of 2');
+    expect(container.textContent).toContain('Page 1 of 1');
     expect(container.textContent).toContain('Unique Last Student');
+  });
+
+  test('prints all 17 filtered Student rows while the live page remains limited to 10', async () => {
+    const students = Array.from({ length: 17 }, (_, index) => ({
+      ...directoryPayload.students[0],
+      id: 600 + index,
+      student_id: `0001${String(index).padStart(4, '0')}`,
+      student_name: `Printable Student ${index + 1}`,
+      grade_level: 'Grade 4',
+    }));
+    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ ...directoryPayload, students }) });
+    const printSpy = jest.spyOn(window, 'print').mockImplementation(() => {});
+
+    await act(async () => root.render(<AdminIdDirectory />));
+    const search = container.querySelector('[aria-label="Search Student ID Directory"]');
+    await act(async () => setInputValue(search, 'Grade 4'));
+
+    expect(container.querySelectorAll('table[aria-label="Student ID Directory"] tbody tr')).toHaveLength(10);
+    await act(async () => container.querySelector('button[aria-label="Print Student Directory"]').click());
+
+    const report = document.querySelector('#print-report-root .printable-table-report');
+    expect(report.querySelectorAll('tbody tr')).toHaveLength(17);
+    expect(report.textContent).toContain('Records: 17');
+
+    act(() => window.dispatchEvent(new Event('afterprint')));
+    printSpy.mockRestore();
   });
 
   test('renders independent Teacher pagination before the table and resets filtered results to page one', async () => {
@@ -161,10 +197,10 @@ describe('Admin ID Directory', () => {
     expect(container.textContent).toContain('Page 2 of 2');
     expect(container.querySelectorAll('table[aria-label="Teacher ID Directory"] tbody tr')).toHaveLength(2);
 
-    const emailFilter = container.querySelectorAll('[aria-label="Teacher ID filters"] input')[2];
+    const emailFilter = container.querySelector('[aria-label="Search Teacher ID Directory"]');
     await act(async () => setInputValue(emailFilter, 'unique-last@example.com'));
     expect(container.textContent).toContain('Teachers (1)');
-    expect(container.textContent).not.toContain('Page 2 of 2');
+    expect(container.textContent).toContain('Page 1 of 1');
     expect(container.textContent).toContain('Unique Last Teacher');
   });
 
@@ -211,7 +247,7 @@ describe('Admin ID Directory', () => {
 
     await act(async () => window.dispatchEvent(new Event('focus')));
 
-    expect(container.querySelector('.id-directory-pagination')).toBeNull();
+    expect(container.querySelector('.id-directory-pagination')).not.toBeNull();
     expect(container.querySelectorAll('table[aria-label="Student ID Directory"] tbody tr')).toHaveLength(5);
     expect(container.textContent).not.toContain('Page 2 of 2');
   });

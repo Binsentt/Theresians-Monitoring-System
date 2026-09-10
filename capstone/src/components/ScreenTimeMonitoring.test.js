@@ -98,6 +98,8 @@ describe('ScreenTimeMonitoring', () => {
     expect(container.textContent).toContain('Ava Santos');
     expect(container.textContent).toContain('30 min');
     expect(container.textContent).toContain('Completed');
+    expect(container.querySelectorAll('.screen-time-filters input')).toHaveLength(1);
+    expect(container.querySelector('.screen-time-filters input').placeholder).toContain('name, ID, grade');
     expect(container.querySelector('button[aria-label="Print Filtered Report"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="Print Student Record"]')).not.toBeNull();
     const reportToolbar = container.querySelector('.screen-time-results');
@@ -174,6 +176,7 @@ describe('ScreenTimeMonitoring', () => {
         game_student_id: index === 0 ? '001234' : String(100000 + index),
       })),
       pagination: { page: 1, limit: 10, total: 11, pages: 2 },
+      summary: { total_records: 11, total_playtime_seconds: 19260, playing_count: 4 },
     }));
 
     act(() => {
@@ -183,6 +186,15 @@ describe('ScreenTimeMonitoring', () => {
 
     expect(container.querySelectorAll('.screen-time-table tbody tr')).toHaveLength(10);
     expect(container.textContent).toContain('Page 1 of 2');
+    const summaryValues = Object.fromEntries(Array.from(container.querySelectorAll('.screen-time-summary-card')).map((card) => [
+      card.querySelector('span').textContent,
+      card.querySelector('strong').textContent,
+    ]));
+    expect(summaryValues).toEqual({
+      Records: '11',
+      'Total playtime': '5 hr 21 min',
+      'Playing now': '4',
+    });
   });
 
   test('prepares the full authorised filtered dataset without changing the visible page', async () => {

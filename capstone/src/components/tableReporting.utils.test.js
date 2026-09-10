@@ -19,6 +19,12 @@ describe('table reporting utilities', () => {
     expect(matchesTableSearch(rows[0], '1234', ['student_name', 'game_student_id'])).toBe(false);
   });
 
+  test('matches normalized multi-term searches across different displayed fields', () => {
+    expect(matchesTableSearch(rows[0], '  ANA   Grade 1  ', ['student_name', 'game_student_id', 'grade_level'])).toBe(true);
+    expect(matchesTableSearch(rows[0], 'Grade 1 001234', ['student_name', 'game_student_id', 'grade_level'])).toBe(true);
+    expect(matchesTableSearch(rows[0], 'Ana Grade 2', ['student_name', 'game_student_id', 'grade_level'])).toBe(false);
+  });
+
   test('paginates the already filtered rows and clamps an invalid page', () => {
     expect(paginateTableRows(rows, 3, 2)).toEqual({
       rows: [rows[2]],

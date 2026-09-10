@@ -92,6 +92,7 @@ describe('AnalyticsSidebar role items', () => {
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1 }));
     localStorage.setItem('token', 'token-value');
     localStorage.setItem('rememberToken', 'thirty-day-token');
+    global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => ({ success: true }) }));
     mockNavigate.mockReset();
 
     await act(async () => {
@@ -108,15 +109,21 @@ describe('AnalyticsSidebar role items', () => {
       logoutButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
+    expect(global.fetch).toHaveBeenCalledWith('/api/logout-status', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer token-value' },
+    });
+
     expect(localStorage.getItem('loggedInUser')).toBeNull();
     expect(localStorage.getItem('token')).toBeNull();
     expect(localStorage.getItem('rememberToken')).toBeNull();
     expect(mockNavigate).toHaveBeenCalledWith('/');
 
     act(() => {
-      root.unmount();
+    root.unmount();
     });
     container.remove();
+    delete global.fetch;
   });
 
   test('uses tablet overlay navigation at 991px and desktop navigation at 992px', async () => {

@@ -26,7 +26,7 @@ import { apiUrl } from '../api';
 import { fetchCurriculumRegistry } from '../curriculumRegistry';
 import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
-import { formatReportContext, paginateTableRows } from './tableReporting.utils';
+import { formatReportContext, formatTableRange, matchesTableSearch, paginateTableRows } from './tableReporting.utils';
 import '../styles/lessonQuestionManager.css';
 
 const initialFormState = {
@@ -39,11 +39,6 @@ const initialFormState = {
 
 const initialFilterState = {
   search: '',
-  folder: '',
-  grade_level: '',
-  difficulty: '',
-  file_type: '',
-  status: '',
 };
 
 const MAX_LESSON_QUESTION_COUNT = 50;
@@ -219,6 +214,11 @@ export default function LessonQuestionManager() {
   const [previewQuestions, setPreviewQuestions] = useState([]);
   const [previewValidation, setPreviewValidation] = useState(null);
   const [previewQuestionsLoading, setPreviewQuestionsLoading] = useState(false);
+  const [editingPreviewQuestionId, setEditingPreviewQuestionId] = useState(null);
+  const [previewQuestionDraft, setPreviewQuestionDraft] = useState(null);
+  const [previewQuestionErrors, setPreviewQuestionErrors] = useState([]);
+  const [previewQuestionSaving, setPreviewQuestionSaving] = useState(false);
+  const [previewQuestionDirty, setPreviewQuestionDirty] = useState(false);
   const [approvingPreview, setApprovingPreview] = useState(false);
   const [reviewComplete, setReviewComplete] = useState(false);
   const [reviewSnapshotKey, setReviewSnapshotKey] = useState('');
@@ -231,6 +231,7 @@ export default function LessonQuestionManager() {
   const [filters, setFilters] = useState(initialFilterState);
   const [page, setPage] = useState(1);
   const [trashPage, setTrashPage] = useState(1);
+  const [trashSearch, setTrashSearch] = useState('');
   const [formErrors, setFormErrors] = useState({});
   const [replacementConfirmation, setReplacementConfirmation] = useState(null);
   const [removalConfirmation, setRemovalConfirmation] = useState(null);
@@ -339,9 +340,7 @@ export default function LessonQuestionManager() {
   const folderView = useMemo(() => getQuestionFolderView(files, {
     grade_level: selectedFolder.grade_level,
     difficulty: selectedFolder.difficulty,
-    search: filters.search,
-    file_type: filters.file_type,
-  }, curriculumRegistry), [curriculumRegistry, files, filters.file_type, filters.search, selectedFolder.difficulty, selectedFolder.grade_level]);
+  }, curriculumRegistry), [curriculumRegistry, files, selectedFolder.difficulty, selectedFolder.grade_level]);
   const gradeLevels = useMemo(() => getGradeLevels(curriculumRegistry), [curriculumRegistry]);
   const difficultyLevels = useMemo(() => getDifficultyLevels(curriculumRegistry), [curriculumRegistry]);
   const questionFolderStructure = useMemo(() => getQuestionFolderStructure(curriculumRegistry), [curriculumRegistry]);
@@ -352,11 +351,25 @@ export default function LessonQuestionManager() {
   const currentlyViewing = selectedFolder.grade_level
     ? `${selectedFolder.grade_level}${selectedFolder.difficulty ? ` - ${selectedFolder.difficulty}` : ''}`
     : 'All Question Files';
-  const displayedFiles = useMemo(() => folderView.files.filter((file) => (
-    !filters.status || getQuestionSetStatus(file) === filters.status
-  )), [filters.status, folderView.files]);
+  const displayedFiles = useMemo(() => folderView.files.filter((file) => matchesTableSearch({
+    ...file,
+    source_label: file.source_label || (file.file_type === 'lesson' ? 'Lesson PDF or PPTX File' : 'Fixed Question File'),
+    lifecycle_status: getQuestionSetStatus(file),
+    modified_date: formatUploadDate(file.published_at || file.generated_at || file.uploaded_at),
+  }, filters.search, [
+    'title',
+    'file_name',
+    'grade_level',
+    'difficulty',
+    'math_topic',
+    'document_topic',
+    'folder_name',
+    'file_type',
+    'source_label',
+    'lifecycle_status',
+    'modified_date',
+  ])), [filters.search, folderView.files]);
   const paginatedFiles = paginateTableRows(displayedFiles, page, pageSize);
-  const statusOptions = useMemo(() => Array.from(new Set(folderView.files.map(getQuestionSetStatus).filter(Boolean))).sort(), [folderView.files]);
   const previewFile = questionPreviewDetails || questionPreviewFile;
   const previewPublicationEligibility = getPublicationEligibility(previewFile || {});
   const previewReviewEligibility = getReviewEligibility(previewFile || {});
@@ -394,12 +407,19 @@ export default function LessonQuestionManager() {
       trashType: 'File',
       trashName: file.title,
     })),
-  ].sort((left, right) => new Date(right.deleted_at || 0) - new Date(left.deleted_at || 0)), [trashFiles]);
+  ].sort((left, right) => new Date(right.deleted_at || 0) - new Date(left.deleted_at || 0))
+    .filter((row) => matchesTableSearch(row, trashSearch, [
+      'trashName', 'title', 'file_name', 'grade_level', 'difficulty', 'math_topic', 'file_type', 'deleted_at',
+    ])), [trashFiles, trashSearch]);
   const paginatedTrashRows = paginateTableRows(trashRows, trashPage, pageSize);
 
   useEffect(() => {
     if (trashPage !== paginatedTrashRows.currentPage) setTrashPage(paginatedTrashRows.currentPage);
   }, [paginatedTrashRows.currentPage, trashPage]);
+
+  useEffect(() => {
+    setTrashPage(1);
+  }, [trashSearch]);
 
   const handleFormChange = (field, value) => {
     setUploadError('');
@@ -653,8 +673,17 @@ export default function LessonQuestionManager() {
     }
     const confirmMessage = `Delete "${file.title}" from Pending question sets?`;
     if (!window.confirm(confirmMessage)) return;
+    const reason = String(window.prompt('Reason for deleting this question set (required):') || '').trim();
+    if (!reason) {
+      showNotification('A deletion reason is required.', 'error');
+      return;
+    }
     try {
-      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}`), { method: 'DELETE' });
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}`), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Delete failed');
       setFiles((current) => current.filter((item) => item.id !== file.id));
@@ -688,8 +717,17 @@ export default function LessonQuestionManager() {
 
   const permanentDeleteFile = async (file) => {
     if (!window.confirm(`Permanently delete "${file.title}"?`)) return;
+    const reason = String(window.prompt('Reason for permanently deleting this question set (required):') || '').trim();
+    if (!reason) {
+      showNotification('A deletion reason is required.', 'error');
+      return;
+    }
     try {
-      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/permanent`), { method: 'DELETE' });
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/permanent`), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Permanent delete failed');
       showNotification('File permanently deleted.');
@@ -740,6 +778,7 @@ export default function LessonQuestionManager() {
   };
 
   const closeQuestionPreview = () => {
+    if (previewQuestionDirty && !window.confirm('Discard unsaved question changes?')) return;
     setQuestionPreviewFile(null);
     setQuestionPreviewDetails(null);
     setPreviewQuestions([]);
@@ -748,6 +787,11 @@ export default function LessonQuestionManager() {
     setApprovingPreview(false);
     setReviewComplete(false);
     setReviewSnapshotKey('');
+    setEditingPreviewQuestionId(null);
+    setPreviewQuestionDraft(null);
+    setPreviewQuestionErrors([]);
+    setPreviewQuestionSaving(false);
+    setPreviewQuestionDirty(false);
   };
 
   const openQuestionSetPreview = async (file) => {
@@ -759,6 +803,10 @@ export default function LessonQuestionManager() {
     setApprovingPreview(false);
     setReviewComplete(false);
     setReviewSnapshotKey('');
+    setEditingPreviewQuestionId(null);
+    setPreviewQuestionDraft(null);
+    setPreviewQuestionErrors([]);
+    setPreviewQuestionDirty(false);
     try {
       const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/questions`));
       const data = await response.json();
@@ -772,6 +820,123 @@ export default function LessonQuestionManager() {
       showNotification(error.message || 'Unable to preview generated questions.', 'error');
     } finally {
       setPreviewQuestionsLoading(false);
+    }
+  };
+
+  const beginPreviewQuestionEdit = (question) => {
+    const options = Array.isArray(question.options) ? question.options.slice(0, 4) : [];
+    while (options.length < 4) options.push('');
+    setEditingPreviewQuestionId(question.id);
+    setPreviewQuestionDraft({
+      question: String(question.question || ''),
+      options,
+      correct_answer: String(question.correct_answer || ''),
+      math_topic: String(question.math_topic || previewFile?.math_topic || ''),
+      topic_id: question.topic_id || previewFile?.topic_id || null,
+    });
+    setPreviewQuestionErrors([]);
+    setPreviewQuestionDirty(false);
+  };
+
+  const updatePreviewQuestionDraft = (field, value) => {
+    setPreviewQuestionDraft((current) => ({ ...current, [field]: value }));
+    setPreviewQuestionDirty(true);
+    setPreviewQuestionErrors([]);
+  };
+
+  const updatePreviewQuestionOption = (optionIndex, value) => {
+    setPreviewQuestionDraft((current) => {
+      const options = [...current.options];
+      const priorValue = options[optionIndex];
+      options[optionIndex] = value;
+      return {
+        ...current,
+        options,
+        correct_answer: current.correct_answer === priorValue ? value : current.correct_answer,
+      };
+    });
+    setPreviewQuestionDirty(true);
+    setPreviewQuestionErrors([]);
+  };
+
+  const validatePreviewQuestionDraft = (draft) => {
+    const options = (draft?.options || []).map((option) => String(option || '').trim());
+    const errors = [];
+    if (!String(draft?.question || '').trim()) errors.push('Question text is required.');
+    if (options.length !== 4) errors.push('Exactly four answer choices are required.');
+    if (options.some((option) => !option)) errors.push('All four answer choices must be nonempty.');
+    if (new Set(options.map((option) => option.toLowerCase())).size !== options.length) errors.push('Answer choices must be distinct.');
+    if (options.filter((option) => option.toLowerCase() === String(draft?.correct_answer || '').trim().toLowerCase()).length !== 1) {
+      errors.push('The correct answer must match one of the four choices.');
+    }
+    return errors;
+  };
+
+  const savePreviewQuestion = async () => {
+    if (!previewFile || !editingPreviewQuestionId || previewQuestionSaving) return;
+    const errors = validatePreviewQuestionDraft(previewQuestionDraft);
+    if (errors.length > 0) {
+      setPreviewQuestionErrors(errors);
+      return;
+    }
+    setPreviewQuestionSaving(true);
+    try {
+      const payload = {
+        question: previewQuestionDraft.question.trim(),
+        options: previewQuestionDraft.options.map((option) => option.trim()),
+        correct_answer: previewQuestionDraft.correct_answer.trim(),
+        math_topic: previewQuestionDraft.math_topic.trim() || null,
+        topic_id: previewQuestionDraft.topic_id || null,
+      };
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${previewFile.id}/questions/${editingPreviewQuestionId}`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to save this question.');
+      setPreviewQuestions((current) => current.map((question) => (
+        question.id === editingPreviewQuestionId ? { ...question, ...data.question } : question
+      )));
+      if (data.file) setQuestionPreviewDetails(normalizeManagedLearningFile(data.file));
+      if (data.validation) setPreviewValidation(data.validation);
+      if (data.review_fingerprint) setReviewSnapshotKey(String(data.review_fingerprint));
+      setReviewComplete(false);
+      setEditingPreviewQuestionId(null);
+      setPreviewQuestionDraft(null);
+      setPreviewQuestionDirty(false);
+      showNotification('Question saved. Review approval is required again before Push to Game.');
+    } catch (error) {
+      setPreviewQuestionErrors([error.message || 'Unable to save this question.']);
+    } finally {
+      setPreviewQuestionSaving(false);
+    }
+  };
+
+  const deletePreviewQuestion = async (question, index) => {
+    if (!previewFile || previewFile.published || previewFile.publish_status === 'active') return;
+    if (!window.confirm(`Delete Question ${index + 1} from this pending question set?`)) return;
+    const reason = String(window.prompt('Reason for deleting this question (required):') || '').trim();
+    if (!reason) {
+      showNotification('A deletion reason is required.', 'error');
+      return;
+    }
+    try {
+      const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${previewFile.id}/questions/${question.id}`), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to delete this question.');
+      setPreviewQuestions((current) => current.filter((item) => item.id !== question.id));
+      if (data.file) setQuestionPreviewDetails(normalizeManagedLearningFile(data.file));
+      if (data.validation) setPreviewValidation(data.validation);
+      if (data.review_fingerprint) setReviewSnapshotKey(String(data.review_fingerprint));
+      setReviewComplete(false);
+      showNotification('Question deleted. Review approval is required again before Push to Game.');
+    } catch (error) {
+      showNotification(error.message || 'Unable to delete this question.', 'error');
     }
   };
 
@@ -841,12 +1006,17 @@ export default function LessonQuestionManager() {
   const handleEmptyTrash = async () => {
     if (trashRows.length === 0) return;
     if (!window.confirm('Permanently delete every file in Trash?')) return;
+    const reason = String(window.prompt('Reason for permanently deleting all selected question sets (required):') || '').trim();
+    if (!reason) {
+      showNotification('A deletion reason is required.', 'error');
+      return;
+    }
 
     try {
       const response = await fetchLessonManagerApi(lessonManagerApiUrl('/api/learning-files/trash'), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_ids: trashFiles.map((file) => file.id) }),
+        body: JSON.stringify({ file_ids: trashFiles.map((file) => file.id), reason }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to empty Trash.');
@@ -906,19 +1076,16 @@ export default function LessonQuestionManager() {
 
   const selectGradeFolder = (gradeLevel) => {
     setSelectedFolder({ grade_level: gradeLevel, difficulty: '' });
-    setFilters((prev) => ({ ...prev, file_type: '', status: '' }));
     setPage(1);
   };
 
   const selectDifficultyFolder = (gradeLevel, difficulty) => {
     setSelectedFolder({ grade_level: gradeLevel, difficulty });
-    setFilters((prev) => ({ ...prev, file_type: '', status: '' }));
     setPage(1);
   };
 
   const clearSelectedFolder = () => {
     setSelectedFolder({ grade_level: '', difficulty: '' });
-    setFilters((prev) => ({ ...prev, file_type: '', status: '' }));
     setPage(1);
   };
 
@@ -1046,7 +1213,7 @@ export default function LessonQuestionManager() {
           <button type="button" className="drive-action-button" onClick={() => openQuestionSetPreview(row)}><FileText size={16} />Preview</button>
           <button
             type="button"
-            className="drive-action-button"
+            className="drive-action-button danger"
             onClick={() => moveFileToTrash(row)}
             disabled={isActiveQuestionSet}
             title={isActiveQuestionSet ? 'Remove from Game before deleting this question set.' : undefined}
@@ -1097,12 +1264,21 @@ export default function LessonQuestionManager() {
           <button type="button" className="drive-action-button" onClick={() => restoreFile(row)}>
             <RotateCcw size={16} />Restore
           </button>
-          <button type="button" className="drive-action-button" onClick={() => permanentDeleteFile(row)}>
+          <button type="button" className="drive-action-button danger" onClick={() => permanentDeleteFile(row)}>
             <Trash2 size={16} />Permanently Delete
           </button>
         </div>
       ),
     },
+  ];
+
+  const trashReportColumns = [
+    { header: 'No.', value: (_, index) => index + 1 },
+    { header: 'Name', value: (row) => row.trashName || row.title || row.file_name },
+    { header: 'Type', value: (row) => row.trashType || 'File' },
+    { header: 'Grade', value: (row) => row.grade_level || '-' },
+    { header: 'Difficulty', value: (row) => row.difficulty || '-' },
+    { header: 'Deleted date', value: (row) => formatUploadDate(row.deleted_at) },
   ];
 
   if (loading) {
@@ -1247,37 +1423,23 @@ export default function LessonQuestionManager() {
 
                     <div className="manager-modal-fields folder-file-filters">
                       <div className="form-group">
-                        <label className="form-label">Search Files</label>
+                        <label className="form-label" htmlFor="question-library-search">Search Files</label>
                         <input
+                          id="question-library-search"
                           type="text"
                           className="input-field"
                           value={filters.search}
                           onChange={(event) => handleFilterChange('search', event.target.value)}
-                          placeholder="Search file name or metadata"
+                          placeholder="Search name, grade, difficulty, type, status, topic, or date"
                         />
                       </div>
-                      <div className="form-group">
-                        <label className="form-label">File Type</label>
-                        <select className="select-field" value={filters.file_type} onChange={(event) => handleFilterChange('file_type', event.target.value)}>
-                          <option value="">All file types</option>
-                          <option value="lesson">Lesson PDF or PPTX File</option>
-                          <option value="fixed_questions">Fixed Question File</option>
-                        </select>
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Status</label>
-                        <select className="select-field" value={filters.status} onChange={(event) => handleFilterChange('status', event.target.value)}>
-                          <option value="">All statuses</option>
-                          {statusOptions.map((status) => <option key={status} value={status}>{status}</option>)}
-                        </select>
-                      </div>
-                      {(filters.search || filters.file_type || filters.status) && (
+                      {filters.search && (
                         <div className="form-group folder-filter-action">
                           <button type="button" className="btn btn-secondary" onClick={() => {
-                            setFilters((current) => ({ ...current, search: '', file_type: '', status: '' }));
+                            setFilters({ search: '' });
                             setPage(1);
                           }}>
-                            Clear Filters
+                            Clear Search
                           </button>
                         </div>
                       )}
@@ -1290,14 +1452,13 @@ export default function LessonQuestionManager() {
                         showPrintHeading={false}
                       />
                     </div>
+                    <div className="pagination-row no-print">
+                      <span>{formatTableRange(paginatedFiles)}</span>
+                      <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={paginatedFiles.currentPage === 1}>Previous</button>
+                      <span>Page {paginatedFiles.currentPage} of {paginatedFiles.totalPages}</span>
+                      <button type="button" onClick={() => setPage((current) => Math.min(paginatedFiles.totalPages, current + 1))} disabled={paginatedFiles.currentPage === paginatedFiles.totalPages}>Next</button>
+                    </div>
                     <DataTable columns={tableColumns} data={paginatedFiles.rows} emptyMessage={tableEmptyMessage} className="drive-table" />
-                    {paginatedFiles.totalPages > 1 && (
-                      <div className="pagination-row no-print">
-                        <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={paginatedFiles.currentPage === 1}>Previous</button>
-                        <span>Page {paginatedFiles.currentPage} of {paginatedFiles.totalPages}</span>
-                        <button type="button" onClick={() => setPage((current) => Math.min(paginatedFiles.totalPages, current + 1))} disabled={paginatedFiles.currentPage === paginatedFiles.totalPages}>Next</button>
-                      </div>
-                    )}
                     <PrintableTableReport
                       title="Lesson & Question Files Report"
                       context={selectedFolderPath}
@@ -1314,18 +1475,44 @@ export default function LessonQuestionManager() {
                         <h2>Trash Bin</h2>
                         <p className="empty-text">Restore items or remove them permanently.</p>
                       </div>
-                      <button type="button" className="btn btn-secondary" onClick={handleEmptyTrash} disabled={trashRows.length === 0}>
+                      <button type="button" className="btn btn-danger" onClick={handleEmptyTrash} disabled={trashRows.length === 0}>
                         <Trash2 size={16} />Empty Trash
                       </button>
                     </div>
-                    <DataTable columns={trashColumns} data={paginatedTrashRows.rows} emptyMessage="Trash is empty." className="drive-table" />
-                    {paginatedTrashRows.totalPages > 1 && (
-                      <div className="pagination-row no-print">
-                        <button type="button" onClick={() => setTrashPage((current) => Math.max(1, current - 1))} disabled={paginatedTrashRows.currentPage === 1}>Previous</button>
-                        <span>Page {paginatedTrashRows.currentPage} of {paginatedTrashRows.totalPages}</span>
-                        <button type="button" onClick={() => setTrashPage((current) => Math.min(paginatedTrashRows.totalPages, current + 1))} disabled={paginatedTrashRows.currentPage === paginatedTrashRows.totalPages}>Next</button>
+                    <div className="manager-modal-fields trash-file-filters">
+                      <div className="form-group">
+                        <label className="form-label" htmlFor="question-trash-search">Search Trash</label>
+                        <input
+                          id="question-trash-search"
+                          type="text"
+                          className="input-field"
+                          value={trashSearch}
+                          onChange={(event) => setTrashSearch(event.target.value)}
+                          placeholder="Search name, grade, difficulty, type, topic, or deleted date"
+                        />
                       </div>
-                    )}
+                    </div>
+                    <div className="table-report-controls">
+                      <TablePrintButton
+                        reportTitle="Question Library Trash Report"
+                        reportContext={formatReportContext({ scope: 'Trash Bin', recordCount: trashRows.length })}
+                        label="Print Report"
+                        showPrintHeading={false}
+                      />
+                    </div>
+                    <div className="pagination-row no-print">
+                      <span>{formatTableRange(paginatedTrashRows)}</span>
+                      <button type="button" onClick={() => setTrashPage((current) => Math.max(1, current - 1))} disabled={paginatedTrashRows.currentPage === 1}>Previous</button>
+                      <span>Page {paginatedTrashRows.currentPage} of {paginatedTrashRows.totalPages}</span>
+                      <button type="button" onClick={() => setTrashPage((current) => Math.min(paginatedTrashRows.totalPages, current + 1))} disabled={paginatedTrashRows.currentPage === paginatedTrashRows.totalPages}>Next</button>
+                    </div>
+                    <DataTable columns={trashColumns} data={paginatedTrashRows.rows} emptyMessage="Trash is empty." className="drive-table" />
+                    <PrintableTableReport
+                      title="Question Library Trash Report"
+                      context="Trash Bin"
+                      rows={trashRows}
+                      columns={trashReportColumns}
+                    />
                   </section>
                 )}
 
@@ -1543,16 +1730,55 @@ export default function LessonQuestionManager() {
                                 ref={index === previewQuestions.length - 1 ? finalQuestionCardRef : null}
                                 className={`generated-question-card ${questionIsValid ? 'valid' : 'invalid'}`}
                               >
-                                <strong>{index + 1}. {question.question}</strong>
-                                <ol type="A">
-                                  {(question.options || []).map((option, optionIndex) => (
-                                    <li key={`${option}-${optionIndex}`} className={option === question.correct_answer ? 'correct-option' : ''}>
-                                      {option}{option === question.correct_answer ? ' (Correct)' : ''}
-                                    </li>
-                                  ))}
-                                </ol>
-                                <p className="question-review-metadata">{formatQuestionGradeLabel(question.grade_level || previewFile.grade_level)} · {question.difficulty || previewFile.difficulty}</p>
-                                {questionIsValid ? <p className="question-validation-valid">Valid</p> : questionErrors.map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
+                                {editingPreviewQuestionId === question.id ? (
+                                  <div className="question-preview-editor">
+                                    <label>
+                                      Question text
+                                      <textarea aria-label={`Question ${index + 1} text`} value={previewQuestionDraft.question} onChange={(event) => updatePreviewQuestionDraft('question', event.target.value)} />
+                                    </label>
+                                    {previewQuestionDraft.options.map((option, optionIndex) => (
+                                      <label key={optionIndex}>
+                                        Choice {String.fromCharCode(65 + optionIndex)}
+                                        <input aria-label={`Question ${index + 1} choice ${String.fromCharCode(65 + optionIndex)}`} value={option} onChange={(event) => updatePreviewQuestionOption(optionIndex, event.target.value)} />
+                                      </label>
+                                    ))}
+                                    <label>
+                                      Correct answer
+                                      <select aria-label={`Question ${index + 1} correct answer`} value={previewQuestionDraft.correct_answer} onChange={(event) => updatePreviewQuestionDraft('correct_answer', event.target.value)}>
+                                        <option value="">Select the correct answer</option>
+                                        {previewQuestionDraft.options.map((option, optionIndex) => <option key={optionIndex} value={option}>{option || `Choice ${String.fromCharCode(65 + optionIndex)}`}</option>)}
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Topic metadata
+                                      <input aria-label={`Question ${index + 1} topic metadata`} value={previewQuestionDraft.math_topic} onChange={(event) => updatePreviewQuestionDraft('math_topic', event.target.value)} />
+                                    </label>
+                                    {previewQuestionErrors.map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
+                                    <div className="edit-actions">
+                                      <button type="button" className="btn btn-primary" aria-label={`Save question ${index + 1}`} onClick={savePreviewQuestion} disabled={previewQuestionSaving}>{previewQuestionSaving ? 'Saving...' : 'Save'}</button>
+                                      <button type="button" className="btn btn-secondary" onClick={() => { setEditingPreviewQuestionId(null); setPreviewQuestionDraft(null); setPreviewQuestionErrors([]); setPreviewQuestionDirty(false); }} disabled={previewQuestionSaving}>Cancel</button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <strong>{index + 1}. {question.question}</strong>
+                                    <ol type="A">
+                                      {(question.options || []).map((option, optionIndex) => (
+                                        <li key={`${option}-${optionIndex}`} className={option === question.correct_answer ? 'correct-option' : ''}>
+                                          {option}{option === question.correct_answer ? ' (Correct)' : ''}
+                                        </li>
+                                      ))}
+                                    </ol>
+                                    <p className="question-review-metadata">{formatQuestionGradeLabel(question.grade_level || previewFile.grade_level)} · {question.difficulty || previewFile.difficulty}{question.math_topic ? ` · ${question.math_topic}` : ''}</p>
+                                    {questionIsValid ? <p className="question-validation-valid">Valid</p> : questionErrors.map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
+                                    {!(previewFile.published || previewFile.publish_status === 'active') && (
+                                      <div className="edit-actions">
+                                        <button type="button" className="btn btn-secondary" aria-label={`Edit question ${index + 1}`} onClick={() => beginPreviewQuestionEdit(question)}>Edit</button>
+                                        <button type="button" className="btn btn-danger" aria-label={`Delete question ${index + 1}`} onClick={() => deletePreviewQuestion(question, index)}>Delete Question</button>
+                                      </div>
+                                    )}
+                                  </>
+                                )}
                               </article>
                             </React.Fragment>
                           );

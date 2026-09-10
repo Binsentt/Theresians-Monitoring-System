@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { clearStoredSession } from '../session.utils';
+import { clearStoredSession, revokeCurrentSession } from '../session.utils';
 import '../../styles/analyticsSidebar.css';
 
 const IconDashboard = () => (
@@ -167,8 +167,9 @@ export default function AnalyticsSidebar({ role = 'admin', activeItem, onSelect,
     return getSidebarItemsForRole(role, parentTeacherScope);
   }, [location.pathname, role]);
 
-  const handleClick = (item) => {
+  const handleClick = async (item) => {
     if (item.actionKey === 'logout') {
+      await revokeCurrentSession();
       clearStoredSession();
       navigate('/');
       if (isMobile) {

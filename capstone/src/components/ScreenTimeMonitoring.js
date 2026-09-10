@@ -14,8 +14,6 @@ import { collectAuthorizedReportRows, formatReportContext } from './tableReporti
 import { usePreparedReportPrint } from './usePreparedReportPrint';
 import '../styles/screenTime.css';
 
-const GRADES = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
-const STATUSES = ['Active', 'Playing', 'Online', 'Offline', 'Completed', 'In Progress'];
 const SORT_OPTIONS = [
   { value: 'date', label: 'Date' },
   { value: 'student_name', label: 'Student Name' },
@@ -24,13 +22,6 @@ const SORT_OPTIONS = [
 
 const initialFilters = {
   search: '',
-  date: '',
-  grade_level: '',
-  section: '',
-  student_name: '',
-  student_id: '',
-  parent_id: '',
-  status: '',
   lifecycle: 'active',
   sort_by: 'student_name',
 };
@@ -118,6 +109,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   const [filters, setFilters] = useState(initialFilters);
   const [records, setRecords] = useState([]);
   const [pagination, setPagination] = useState({ total: 0, pages: 1, page: 1 });
+  const [summary, setSummary] = useState({ total_records: 0, total_playtime_seconds: 0, playing_count: 0 });
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -167,13 +159,33 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
         if (!response.ok) throw new Error('Failed to load playtime sessions');
         const payload = await response.json();
         if (cancelled) return;
-        setRecords(normalizePlaytimeRecords(payload.data, filters));
-        setPagination(payload.pagination || { total: 0, pages: 1, page: 1 });
+        const nextRecords = normalizePlaytimeRecords(payload.data, filters);
+        const nextPagination = payload.pagination || { total: 0, pages: 1, page: 1 };
+        const hasCompleteSummary = payload.summary
+          && Number.isFinite(Number(payload.summary.total_playtime_seconds))
+          && Number.isFinite(Number(payload.summary.playing_count));
+        const completeDatasetIsVisible = Number(nextPagination.total || nextRecords.length) <= nextRecords.length;
+        setRecords(nextRecords);
+        setPagination(nextPagination);
+        setSummary(hasCompleteSummary ? {
+          total_records: Number(payload.summary.total_records ?? nextPagination.total ?? nextRecords.length),
+          total_playtime_seconds: Math.max(0, Number(payload.summary.total_playtime_seconds) || 0),
+          playing_count: Math.max(0, Number(payload.summary.playing_count) || 0),
+        } : {
+          total_records: Number(nextPagination.total || nextRecords.length),
+          total_playtime_seconds: completeDatasetIsVisible
+            ? nextRecords.reduce((sum, record) => sum + (Number(record.total_playtime_seconds) || ((Number(record.total_playtime_minutes) || 0) * 60)), 0)
+            : null,
+          playing_count: completeDatasetIsVisible
+            ? nextRecords.filter((record) => normalizeRole(record.status) === 'playing').length
+            : null,
+        });
       } catch (err) {
         console.error('Screen time load failed:', err);
         if (!cancelled) {
           setRecords([]);
           setPagination({ total: 0, pages: 1, page: 1 });
+          setSummary({ total_records: 0, total_playtime_seconds: 0, playing_count: 0 });
           setError('Unable to load screen time records right now.');
         }
       } finally {
@@ -195,13 +207,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   const activeItem = isChildView ? 'my-child-screen-time' : 'screen-time';
   const activeReportScope = [
     filters.lifecycle === 'archived' ? 'Archived History' : 'Active Students',
-    filters.grade_level,
-    filters.section,
-    filters.date,
-    filters.student_id ? `Student ID: ${filters.student_id}` : '',
-    filters.student_name ? `Student: ${filters.student_name}` : '',
     filters.search ? `Search: ${filters.search}` : '',
-    filters.status,
   ].filter(Boolean).join(' / ') || (isChildView ? 'Linked children' : 'All authorised records');
   const reportColumns = [
     { header: 'No.', value: (_, index) => index + 1 },
@@ -217,14 +223,12 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   ];
 
   const summaryCards = useMemo(() => {
-    const totalMinutes = records.reduce((sum, record) => sum + (Number(record.total_playtime_minutes) || 0), 0);
-    const playingCount = records.filter((record) => normalizeRole(record.status) === 'playing').length;
     return [
-      { label: 'Records', value: pagination.total || records.length },
-      { label: 'Total playtime', value: formatDuration(totalMinutes) },
-      { label: 'Playing now', value: playingCount },
+      { label: 'Records', value: summary.total_records },
+      { label: 'Total playtime', value: summary.total_playtime_seconds === null ? 'Unavailable' : formatDuration(summary.total_playtime_seconds / 60) },
+      { label: 'Playing now', value: summary.playing_count === null ? 'Unavailable' : summary.playing_count },
     ];
-  }, [pagination.total, records]);
+  }, [summary]);
 
   const setFilter = (name, value) => {
     setFilters((current) => ({ ...current, [name]: value }));
@@ -340,7 +344,9 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                       className="screen-time-input"
                       value={filters.search}
                       onChange={(event) => setFilter('search', event.target.value)}
-                      placeholder={isChildView ? 'Search child...' : 'Search records...'}
+                      placeholder={isChildView
+                        ? 'Search child name, ID, grade, section, date, duration, or status...'
+                        : 'Search name, ID, grade, section, parent ID, date, duration, or status...'}
                     />
                   </label>
 
@@ -353,86 +359,6 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                     >
                       <option value="active">Active Students</option>
                       <option value="archived">Archived History</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    Date
-                    <input
-                      className="screen-time-input"
-                      type="date"
-                      value={filters.date}
-                      onChange={(event) => setFilter('date', event.target.value)}
-                    />
-                  </label>
-
-                  {!isChildView && (
-                    <>
-                      <label>
-                        Grade Level
-                        <select
-                          className="screen-time-input"
-                          value={filters.grade_level}
-                          onChange={(event) => setFilter('grade_level', event.target.value)}
-                        >
-                          <option value="">All Grades</option>
-                          {GRADES.map((grade) => <option key={grade} value={grade}>{grade}</option>)}
-                        </select>
-                      </label>
-
-                      <label>
-                        Section
-                        <input
-                          className="screen-time-input"
-                          value={filters.section}
-                          onChange={(event) => setFilter('section', event.target.value)}
-                          placeholder="Section"
-                        />
-                      </label>
-                    </>
-                  )}
-
-                  <label>
-                    {isChildView ? 'Child Name' : 'Student Name'}
-                    <input
-                      className="screen-time-input"
-                      value={filters.student_name}
-                      onChange={(event) => setFilter('student_name', event.target.value)}
-                      placeholder={isChildView ? 'Child name' : 'Student name'}
-                    />
-                  </label>
-
-                  <label>
-                    Student ID
-                    <input
-                      className="screen-time-input"
-                      value={filters.student_id}
-                      onChange={(event) => setFilter('student_id', event.target.value.replace(/\D/g, ''))}
-                      placeholder="Student ID"
-                    />
-                  </label>
-
-                  {!isChildView && (
-                    <label>
-                      Parent ID
-                      <input
-                        className="screen-time-input"
-                        value={filters.parent_id}
-                        onChange={(event) => setFilter('parent_id', event.target.value.replace(/\D/g, '').slice(0, 6))}
-                        placeholder="Parent ID"
-                      />
-                    </label>
-                  )}
-
-                  <label>
-                    Status
-                    <select
-                      className="screen-time-input"
-                      value={filters.status}
-                      onChange={(event) => setFilter('status', event.target.value)}
-                    >
-                      <option value="">All Statuses</option>
-                      {STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
                     </select>
                   </label>
 

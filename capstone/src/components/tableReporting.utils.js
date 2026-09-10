@@ -1,19 +1,18 @@
-const studentIdentifierField = (field) => /(^|_)(game_)?student_id$/i.test(String(field || ''));
+const schoolIdentifierField = (field) => /(^|_)(game_)?(student|parent|teacher|employee)_id$/i.test(String(field || ''));
 
-const normalizeText = (value) => String(value ?? '').trim().toLowerCase();
+const normalizeText = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 
 export function matchesTableSearch(row, query, fields) {
-  const normalizedQuery = normalizeText(query);
-  if (!normalizedQuery) return true;
+  const terms = normalizeText(query).split(' ').filter(Boolean);
+  if (terms.length === 0) return true;
 
-  return (Array.isArray(fields) ? fields : []).some((field) => {
-    const value = normalizeText(row?.[field]);
-    if (!value) return false;
+  const values = (Array.isArray(fields) ? fields : [])
+    .map((field) => ({ field, value: normalizeText(row?.[field]) }))
+    .filter(({ value }) => Boolean(value));
 
-    return studentIdentifierField(field)
-      ? value === normalizedQuery
-      : value.includes(normalizedQuery);
-  });
+  return terms.every((term) => values.some(({ field, value }) => (
+    schoolIdentifierField(field) ? value === term : value.includes(term)
+  )));
 }
 
 export function paginateTableRows(rows, requestedPage = 1, pageSize = 10) {

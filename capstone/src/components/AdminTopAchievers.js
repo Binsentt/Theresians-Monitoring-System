@@ -11,7 +11,6 @@ import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext, matchesTableSearch, paginateTableRows } from './tableReporting.utils';
 import { BulkStudentProgressLifecycleAction } from './StudentProgressLifecycleActions';
-import { fetchSectionRegistry, getSectionsForGrade } from '../sectionRegistry';
 import '../styles/topachievers.css';
 
 export default function AdminTopAchievers() {
@@ -20,12 +19,9 @@ export default function AdminTopAchievers() {
   const [topAchievers, setTopAchievers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedGrade, setSelectedGrade] = useState('');
-  const [selectedSection, setSelectedSection] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [sectionRegistry, setSectionRegistry] = useState({ grades: [] });
   const pageSize = 10;
 
   useEffect(() => {
@@ -45,11 +41,7 @@ export default function AdminTopAchievers() {
 
         // Fetch top achievers data (admin sees all)
         const requestOptions = { headers: buildAuthHeaders() };
-        const [response, registry] = await Promise.all([
-          fetch(apiUrl('/api/top-achievers'), requestOptions),
-          fetchSectionRegistry(fetch, requestOptions),
-        ]);
-        setSectionRegistry(registry);
+        const response = await fetch(apiUrl('/api/top-achievers'), requestOptions);
         if (response.ok) {
           const data = await response.json();
           setTopAchievers(Array.isArray(data) ? data : []);
@@ -67,16 +59,11 @@ export default function AdminTopAchievers() {
     initializeComponent();
   }, [navigate, refreshToken]);
 
-  const grades = sectionRegistry.grades.map((entry) => entry.grade_level);
-  const sections = getSectionsForGrade(sectionRegistry, selectedGrade);
-
-  // Filter achievers based on selected filters
-  const filteredAchievers = useMemo(() => topAchievers.filter(achiever => {
-    const matchesGrade = !selectedGrade || achiever.grade_level === selectedGrade;
-    const matchesSection = !selectedSection || achiever.section === selectedSection;
-    const matchesSearch = matchesTableSearch(achiever, searchQuery, ['student_name', 'game_student_id']);
-    return matchesGrade && matchesSection && matchesSearch;
-  }), [searchQuery, selectedGrade, selectedSection, topAchievers]);
+  const filteredAchievers = useMemo(() => topAchievers.filter((achiever) => matchesTableSearch(
+    achiever,
+    searchQuery,
+    ['student_name', 'game_student_id', 'grade_level', 'section', 'completion_percentage', 'accuracy', 'quests_completed']
+  )), [searchQuery, topAchievers]);
   const paginatedAchievers = paginateTableRows(filteredAchievers, page, pageSize);
 
   useEffect(() => {
@@ -87,14 +74,12 @@ export default function AdminTopAchievers() {
 
   // Reset all filters
   const resetFilters = () => {
-    setSelectedGrade('');
-    setSelectedSection('');
     setSearchQuery('');
     setPage(1);
   };
 
   // Check if any filters are active
-  const hasActiveFilters = selectedGrade || selectedSection || searchQuery;
+  const hasActiveFilters = searchQuery;
   const formatPercent = (value) => {
     if (value === null || value === undefined || value === '') return 'No Data';
     const numericValue = Number(value);
@@ -114,9 +99,7 @@ export default function AdminTopAchievers() {
     const remainingMinutes = minutes % 60;
     return hours > 0 ? `${hours}h ${remainingMinutes}m` : `${Math.max(1, minutes)}m`;
   };
-  const reportScope = [selectedGrade, selectedSection, searchQuery ? `Search: ${searchQuery}` : '']
-    .filter(Boolean)
-    .join(' / ') || 'All authorised students';
+  const reportScope = searchQuery ? `Search: ${searchQuery}` : 'All authorised students';
   const reportColumns = [
     { header: '#', value: (_, index) => index + 1 },
     { header: 'Student ID', value: (row) => row.game_student_id },
@@ -167,46 +150,10 @@ export default function AdminTopAchievers() {
               <div className="filters-section">
                 <div className="filters-row">
                   <div className="filter-group">
-                    <label>Grade Level</label>
-                    <select
-                      value={selectedGrade}
-                      onChange={(e) => {
-                        setSelectedGrade(e.target.value);
-                        setSelectedSection(''); // Reset section when grade changes
-                        setPage(1);
-                      }}
-                    >
-                      <option value="">All Grades</option>
-                      {grades.map(grade => (
-                        <option key={grade} value={grade}>{grade}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="filter-group">
-                    <label>Section</label>
-                    <select
-                      value={selectedSection}
-                      onChange={(e) => {
-                        setSelectedSection(e.target.value);
-                        setPage(1);
-                      }}
-                      disabled={!selectedGrade}
-                    >
-                      <option value="">
-                        {selectedGrade ? 'All Sections' : 'Select Grade First'}
-                      </option>
-                      {sections.map(section => (
-                        <option key={section} value={section}>{section}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="filter-group">
-                    <label>Search Students</label>
+                    <label>Search Top Achievers</label>
                     <input
                       type="search"
-                      placeholder="Search by student name or Student ID..."
+                      placeholder="Search name, ID, grade, section, progress, or accuracy..."
                       value={searchQuery}
                       onChange={(e) => {
                         setSearchQuery(e.target.value);

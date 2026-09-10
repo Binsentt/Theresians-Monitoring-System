@@ -22,7 +22,7 @@ import {
 } from './manageUsers.utils';
 import { apiUrl } from '../api';
 import { fetchSectionRegistry } from '../sectionRegistry';
-import { buildAuthHeaders, clearStoredSession } from './session.utils';
+import { buildAuthHeaders, clearStoredSession, revokeCurrentSession } from './session.utils';
 import {
   PARENT_CHILD_GRADE_OPTIONS,
   validateEmail as validateEmailFormat,
@@ -48,7 +48,6 @@ export default function ManageUsers() {
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedRole, setSelectedRole] = useState('Parent');
-  const [roleFilter, setRoleFilter] = useState('All');
   const [showArchived, setShowArchived] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
@@ -70,6 +69,7 @@ export default function ManageUsers() {
   const [parentChildren, setParentChildren] = useState(() => [createAdminChildDraft()]);
   const [parentChildErrors, setParentChildErrors] = useState([]);
   const [parentChildFormError, setParentChildFormError] = useState('');
+  const [parentChildAvailability, setParentChildAvailability] = useState({ pending: false, isValid: false });
   const [sectionRegistry, setSectionRegistry] = useState(null);
   const [sectionRegistryLoading, setSectionRegistryLoading] = useState(false);
   const [sectionRegistryError, setSectionRegistryError] = useState('');
@@ -111,7 +111,7 @@ export default function ManageUsers() {
   const [regeneratingUserId, setRegeneratingUserId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
 
-  const filteredUsers = filterUsers(users, searchTerm, roleFilter);
+  const filteredUsers = filterUsers(users, searchTerm);
   const usersPerPage = 8;
   const paginatedUsers = paginateItems(filteredUsers, currentPage, usersPerPage);
   const currentUserId = user?.id !== undefined && user?.id !== null ? String(user.id) : '';
@@ -304,7 +304,13 @@ export default function ManageUsers() {
     setAddErrors(errors);
     setParentChildErrors(childValidation.errors);
     setParentChildFormError(childValidation.formError);
-    if (Object.keys(errors).length > 0 || !childValidation.isValid) {
+    if (isParentRole(selectedRoleValue) && (!parentChildAvailability.isValid || parentChildAvailability.pending)) {
+      setParentChildFormError(parentChildAvailability.pending
+        ? 'Please wait while Student IDs are validated.'
+        : 'Every Student ID must pass the availability check.');
+    }
+    if (Object.keys(errors).length > 0 || !childValidation.isValid
+      || (isParentRole(selectedRoleValue) && (!parentChildAvailability.isValid || parentChildAvailability.pending))) {
       return;
     }
 
@@ -337,6 +343,7 @@ export default function ManageUsers() {
         setParentChildren([createAdminChildDraft()]);
         setParentChildErrors([]);
         setParentChildFormError('');
+        setParentChildAvailability({ pending: false, isValid: false });
         setShowAddForm(false);
         setSelectedRole('Parent');
         loadUsers();
@@ -771,7 +778,7 @@ export default function ManageUsers() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, roleFilter, showArchived]);
+  }, [searchTerm, showArchived]);
 
   useEffect(() => {
     if (currentPage !== paginatedUsers.currentPage) {
@@ -779,7 +786,8 @@ export default function ManageUsers() {
     }
   }, [currentPage, paginatedUsers.currentPage]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await revokeCurrentSession();
     clearStoredSession();
     navigate('/');
   };
@@ -796,7 +804,7 @@ export default function ManageUsers() {
     );
   }
 
-  const reportScope = [showArchived ? 'Archived accounts' : 'Active accounts', roleFilter !== 'All' ? roleFilter : '', searchTerm ? `Search: ${searchTerm}` : '']
+  const reportScope = [showArchived ? 'Archived accounts' : 'Active accounts', searchTerm ? `Search: ${searchTerm}` : '']
     .filter(Boolean)
     .join(' / ');
   const reportColumns = [
@@ -832,23 +840,13 @@ export default function ManageUsers() {
                 <>
                   <div className="controls-wrapper no-print">
                   <input
-                    type="text"
-                    placeholder="Search users..."
+                    type="search"
+                    aria-label="Search Manage Users"
+                    placeholder="Search name, email, role, ID, status, phone, or address"
                     className="sts-search-input"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                   />
-                  <select
-                    className="sts-select"
-                    value={roleFilter}
-                    onChange={(e) => setRoleFilter(e.target.value)}
-                  >
-                    <option value="All">All Roles</option>
-                    <option value="Admin">Admin</option>
-                    <option value="Parent">Parent</option>
-                    <option value="Teacher">Teacher</option>
-                    <option value="Parent/Teacher">Parent/Teacher</option>
-                  </select>
                   <button
                     className="sts-add-btn"
                     onClick={() => {
@@ -1064,21 +1062,27 @@ export default function ManageUsers() {
                         sectionRegistry={sectionRegistry}
                         errors={parentChildErrors}
                         formError={parentChildFormError}
+                        authHeaders={buildAuthHeaders()}
+                        onValidationStateChange={setParentChildAvailability}
                       />
                     </div>
                   )}
 
-                  <button type="submit" disabled={adding} className="sts-submit-btn">
+                  <button
+                    type="submit"
+                    disabled={adding || (isParentRole(selectedRole) && (parentChildAvailability.pending || !parentChildAvailability.isValid))}
+                    className="sts-submit-btn"
+                  >
                     {adding ? `Adding ${selectedRole}...` : `Add ${selectedRole}`}
                   </button>
                 </form>
               </div>
             )}
 
-            {filteredUsers.length > 0 && paginatedUsers.totalPages > 1 && (
+            {(
               <div className="manage-users-pagination no-print">
                 <span className="manage-users-pagination-summary">
-                  Showing {paginatedUsers.startIndex + 1} - {paginatedUsers.endIndex} of {paginatedUsers.totalItems} users
+                  Showing {paginatedUsers.totalItems === 0 ? 0 : paginatedUsers.startIndex + 1} - {paginatedUsers.endIndex} of {paginatedUsers.totalItems} users
                 </span>
                 <div className="manage-users-pagination-controls">
                   <button

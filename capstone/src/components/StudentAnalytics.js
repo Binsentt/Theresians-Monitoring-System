@@ -10,6 +10,9 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { DashboardContainer, MainContent, TopBar, PageContent } from './layout/AppLayout';
+import AnalyticsSidebar from './layout/AnalyticsSidebar';
+import logoImage from '../assets/images/STS_Logo.png';
 import { buildStudentProgressDetailUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
 import { buildAuthHeaders } from './session.utils';
@@ -205,9 +208,23 @@ export default function StudentAnalytics() {
     { header: 'Metric', value: (row) => row.metric },
     { header: 'Value', value: (row) => row.value },
   ];
+  const sidebarRole = ['admin', 'teacher', 'parent', 'parent_teacher'].includes(userRole) ? userRole : 'admin';
+  const sidebarActiveItem = sidebarRole === 'parent' ? 'child-progress' : 'student-progress';
+  const portalLabel = sidebarRole === 'admin' ? 'Admin Portal' : sidebarRole === 'parent' ? 'Parent Portal' : 'Teacher Portal';
 
   return (
     <>
+    <DashboardContainer
+      sidebar={<AnalyticsSidebar role={sidebarRole} activeItem={sidebarActiveItem} logoSrc={logoImage} portalLabel={portalLabel} />}
+      main={(
+        <MainContent>
+          <TopBar>
+            <div className="header-info">
+              <h1>Student Analysis</h1>
+              <p>Authoritative progress metrics and grounded interpretation.</p>
+            </div>
+          </TopBar>
+          <PageContent>
     <div className="student-analytics-page no-print">
       <button className="back-action student-analytics-back" onClick={() => navigate(getBackRoute())}>
         <ChevronLeft size={18} aria-hidden="true" />
@@ -313,6 +330,10 @@ export default function StudentAnalytics() {
         </>
       )}
     </div>
+          </PageContent>
+        </MainContent>
+      )}
+    />
     {!loading && !error && progress && (
       <PrintableTableReport
         title="Student Analytics Report"

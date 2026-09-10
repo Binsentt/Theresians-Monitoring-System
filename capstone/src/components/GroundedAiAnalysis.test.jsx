@@ -1,6 +1,6 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import GroundedAiAnalysis from './GroundedAiAnalysis';
+import GroundedAiAnalysis, { StudentInsightsPanel } from './GroundedAiAnalysis';
 
 describe('GroundedAiAnalysis', () => {
   let container;
@@ -79,5 +79,57 @@ describe('GroundedAiAnalysis', () => {
 
     expect(container.textContent).toContain('No valid gameplay results are available.');
     expect(container.querySelector('button')).toBeNull();
+  });
+
+  test('renders an unavailable error once while preserving deterministic metrics outside the panel', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis
+        aiInsight={{ status: 'unavailable', message: 'Grounded insight service is unavailable.' }}
+        error="Grounded insight service is unavailable."
+        onRefresh={jest.fn()}
+      />
+    ));
+
+    expect(container.textContent.match(/Grounded insight service is unavailable\./g)).toHaveLength(1);
+  });
+
+  test('loads only the explicitly selected authorized student insight in the progress page', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 8, role: 'teacher' }));
+    localStorage.setItem('rememberToken', 'test-token');
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        aiInsight: {
+          status: 'generated', preliminary: true, data_level: 'limited_data', valid_result_count: 3,
+          generated_at: '2026-09-10T10:00:00.000Z', cache_status: 'current',
+          insight: {
+            performance_insight: 'Three recorded Easy results show 67% accuracy.',
+            strengths: ['Two recorded answers were correct.'],
+            weaknesses: ['One recorded answer was incorrect.'],
+            recommendations: ['Review the missed Easy item before continuing.'],
+          },
+        },
+      }),
+    }));
+    await act(async () => root.render(<StudentInsightsPanel
+      students={[
+        { student_id: 11, student_name: 'Ana Reyes', game_student_id: '001234' },
+        { student_id: 12, student_name: 'Ben Cruz', game_student_id: '001235' },
+      ]}
+      role="teacher"
+    />));
+    expect(global.fetch).not.toHaveBeenCalled();
+    const select = container.querySelector('select');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set.call(select, '11');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(String(global.fetch.mock.calls[0][0])).toContain('/api/student-progress/11');
+    expect(container.textContent).toContain('Preliminary insight');
+    expect(container.textContent).toContain('Review the missed Easy item before continuing.');
+    expect(container.textContent).toContain('Evidence: 3 valid results');
+    expect(container.textContent).toContain('Current');
   });
 });

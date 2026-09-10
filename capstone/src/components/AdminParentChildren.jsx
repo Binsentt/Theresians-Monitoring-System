@@ -1,12 +1,88 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { apiUrl } from '../api';
 import { getSectionsForGrade } from '../sectionRegistry';
 import { PARENT_CHILD_GRADE_OPTIONS } from '../utils/validation.utils';
 import { createAdminChildDraft } from './adminParentChildren.utils';
 
 const ErrorText = ({ children }) => children ? <span className="error-text" role="alert">{children}</span> : null;
+const EMPTY_HEADERS = Object.freeze({});
 
-export default function AdminParentChildren({ value = [], onChange, sectionRegistry, errors = [], formError = '' }) {
+const localIdError = (operation, studentId) => {
+  if (!studentId) return '';
+  if (operation === 'link' && !/^(?:\d{6}|\d{8})$/.test(studentId)) {
+    return 'Existing Student IDs must be exactly 6 or 8 digits.';
+  }
+  if (operation !== 'link' && !/^\d{8}$/.test(studentId)) {
+    return 'New Student IDs must be exactly 8 digits.';
+  }
+  return '';
+};
+
+export default function AdminParentChildren({
+  value = [],
+  onChange,
+  sectionRegistry,
+  errors = [],
+  formError = '',
+  authHeaders = EMPTY_HEADERS,
+  onValidationStateChange,
+}) {
   const children = Array.isArray(value) ? value : [];
+  const [eligibility, setEligibility] = useState({});
+  const validationVersion = useRef(0);
+
+  useEffect(() => {
+    const version = ++validationVersion.current;
+    let active = true;
+    const initial = {};
+    const candidates = [];
+    children.forEach((child, index) => {
+      const key = child.clientId || String(index);
+      const operation = child.operation === 'link' ? 'link' : 'create';
+      const studentId = String(child.studentId || '').trim();
+      const error = localIdError(operation, studentId);
+      if (!studentId) initial[key] = { status: 'idle', error: '' };
+      else if (error) initial[key] = { status: 'error', error };
+      else {
+        initial[key] = { status: 'pending', error: '' };
+        candidates.push({ key, operation, studentId });
+      }
+    });
+    setEligibility(initial);
+
+    if (candidates.length === 0) return () => { active = false; };
+    const timer = setTimeout(async () => {
+      const completed = { ...initial };
+      await Promise.all(candidates.map(async ({ key, operation, studentId }) => {
+        try {
+          const params = new URLSearchParams({ student_id: studentId, operation });
+          const response = await fetch(apiUrl(`/api/accounts/student-link-eligibility?${params.toString()}`), {
+            headers: authHeaders,
+          });
+          const payload = await response.json().catch(() => ({}));
+          completed[key] = response.ok && payload.available
+            ? { status: 'valid', error: '' }
+            : { status: 'error', error: payload.error || 'This Student ID is not available.' };
+        } catch (_error) {
+          completed[key] = { status: 'error', error: 'Unable to validate this Student ID. Try again.' };
+        }
+      }));
+      if (active && validationVersion.current === version) setEligibility(completed);
+    }, 250);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [children, authHeaders?.Authorization]);
+
+  useEffect(() => {
+    if (!onValidationStateChange) return;
+    const states = children.map((child, index) => eligibility[child.clientId || String(index)] || { status: 'idle' });
+    onValidationStateChange({
+      pending: states.some(({ status }) => status === 'pending'),
+      isValid: children.length > 0 && states.every(({ status }) => status === 'valid'),
+    });
+  }, [children, eligibility, onValidationStateChange]);
   const updateChild = (index, updates) => {
     onChange?.(children.map((child, childIndex) => (
       childIndex === index ? { ...child, ...updates } : child
@@ -34,6 +110,8 @@ export default function AdminParentChildren({ value = [], onChange, sectionRegis
         const childNumber = index + 1;
         const isLink = child.operation === 'link';
         const sections = getSectionsForGrade(sectionRegistry, child.gradeLevel);
+        const eligibilityState = eligibility[child.clientId || String(index)] || { status: 'idle', error: '' };
+        const eligibilityErrorId = `admin-child-${index}-student-id-error`;
         return (
           <fieldset className="admin-parent-child-card" key={child.clientId || index}>
             <legend>Child {childNumber}</legend>
@@ -110,6 +188,8 @@ export default function AdminParentChildren({ value = [], onChange, sectionRegis
                 placeholder={isLink ? '6 or 8 digits' : '8 digits'}
                 value={child.studentId}
                 onChange={(event) => updateChild(index, { studentId: event.target.value.replace(/\D/g, '').slice(0, 8) })}
+                aria-invalid={eligibilityState.status === 'error' ? 'true' : undefined}
+                aria-describedby={eligibilityState.status === 'error' ? eligibilityErrorId : undefined}
               />
               <span className="field-help">
                 {isLink
@@ -117,6 +197,9 @@ export default function AdminParentChildren({ value = [], onChange, sectionRegis
                   : 'New Student IDs must be exactly 8 digits. Leading zeroes are kept.'}
               </span>
               <ErrorText>{rowErrors.studentId}</ErrorText>
+              {eligibilityState.status === 'pending' && <span className="field-help" role="status">Checking Student ID...</span>}
+              {eligibilityState.status === 'valid' && <span className="field-help" role="status">Student ID is available.</span>}
+              {eligibilityState.status === 'error' && <span id={eligibilityErrorId} className="error-text" role="alert">{eligibilityState.error}</span>}
             </div>
           </fieldset>
         );

@@ -1,4 +1,5 @@
 import { canAccessRole, normalizeRole } from './manageUsers.utils';
+import { apiUrl } from '../api';
 
 export const SESSION_STORAGE_KEY = 'loggedInUser';
 export const TOKEN_STORAGE_KEY = 'token';
@@ -65,4 +66,21 @@ export const clearStoredSession = (storage = window.localStorage) => {
   storage?.removeItem?.(SESSION_STORAGE_KEY);
   storage?.removeItem?.(TOKEN_STORAGE_KEY);
   storage?.removeItem?.(REMEMBER_TOKEN_STORAGE_KEY);
+};
+
+export const revokeCurrentSession = async (
+  fetchImpl = window.fetch.bind(window),
+  storage = window.localStorage
+) => {
+  const headers = buildAuthHeaders(storage);
+  if (!headers.Authorization) return { requested: false, revoked: false };
+  try {
+    const response = await fetchImpl(apiUrl('/api/logout-status'), {
+      method: 'POST',
+      headers,
+    });
+    return { requested: true, revoked: response.ok };
+  } catch (error) {
+    return { requested: true, revoked: false };
+  }
 };

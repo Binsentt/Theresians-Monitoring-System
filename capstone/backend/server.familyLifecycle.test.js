@@ -249,7 +249,46 @@ test('Admin lists and atomically links another eligible existing child', async (
   assert.ok(queries.some(({ sql }) => sql === 'commit'));
 });
 
-test('Admin unlink preserves the Student and explicit permanent deletion requires typed confirmation', async (t) => {
+test('Admin can validate create/link Student IDs without writing and linked ownership stays protected', async (t) => {
+  reset();
+  let activeParent = false;
+  queryHandler = async (sql, params) => {
+    if (sql.includes('from public.accounts s') && sql.includes('where s.game_student_id = $1')) {
+      return resultRows([{ id: 45, name: 'Noah Santos', game_student_id: params[0], is_archived: false }]);
+    }
+    if (sql.includes('active_parent_relationship')) {
+      return activeParent ? resultRows([{ active_parent_relationship: true }]) : emptyResult;
+    }
+    return emptyResult;
+  };
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  const available = await requestJson(baseUrl, '/api/accounts/student-link-eligibility?student_id=001234&operation=link', {
+    headers: { Authorization: 'Bearer admin' },
+  });
+  activeParent = true;
+  const owned = await requestJson(baseUrl, '/api/accounts/student-link-eligibility?student_id=001234&operation=link', {
+    headers: { Authorization: 'Bearer admin' },
+  });
+  const invalid = await requestJson(baseUrl, '/api/accounts/student-link-eligibility?student_id=123&operation=link', {
+    headers: { Authorization: 'Bearer admin' },
+  });
+  const forbidden = await requestJson(baseUrl, '/api/accounts/student-link-eligibility?student_id=001234&operation=link', {
+    headers: { Authorization: 'Bearer parent' },
+  });
+
+  assert.equal(available.status, 200);
+  assert.deepEqual(available.body, { available: true, student_id: '001234', operation: 'link' });
+  assert.equal(owned.status, 409);
+  assert.equal(owned.body.error, 'This Student is already linked to a Parent account.');
+  assert.equal(invalid.status, 400);
+  assert.equal(forbidden.status, 403);
+  assert.equal(queries.some(({ sql }) => /^(insert|update|delete|begin|commit)/.test(sql)), false);
+});
+
+test('Admin unlink requires a reason, preserves the Student, and permanent deletion requires typed confirmation', async (t) => {
   reset();
   queryHandler = async (sql) => {
     if (sql.includes('from public.accounts') && sql.includes('for update')) {
@@ -267,14 +306,32 @@ test('Admin unlink preserves the Student and explicit permanent deletion require
   const rejected = await requestJson(baseUrl, '/api/accounts/19/children/44?permanent=true', {
     method: 'DELETE', headers: { Authorization: 'Bearer admin' }, body: JSON.stringify({}),
   });
-  const unlinked = await requestJson(baseUrl, '/api/accounts/19/children/44', {
+  const missingReason = await requestJson(baseUrl, '/api/accounts/19/children/44', {
     method: 'DELETE', headers: { Authorization: 'Bearer admin' }, body: JSON.stringify({}),
+  });
+  const unlinked = await requestJson(baseUrl, '/api/accounts/19/children/44', {
+    method: 'DELETE', headers: { Authorization: 'Bearer admin' }, body: JSON.stringify({ reason: 'Incorrect Parent relationship' }),
   });
 
   assert.equal(rejected.status, 400);
   assert.match(rejected.body.error, /type delete/i);
+  assert.equal(missingReason.status, 400);
+  assert.match(missingReason.body.error, /reason/i);
   assert.equal(unlinked.status, 200);
   assert.equal(queries.some(({ sql }) => sql.startsWith('delete from public.accounts')), false);
+  const unlinkAudit = queries.find(({ sql, params }) => sql.startsWith('insert into public.admin_audit_logs') && params.includes('Incorrect Parent relationship'));
+  assert.ok(unlinkAudit);
+  assert.equal(unlinkAudit.params[4], 44);
+  assert.deepEqual(JSON.parse(unlinkAudit.params[7]), {
+    relationship_id: 7,
+    parent_account_id: 19,
+    student_account_id: 44,
+    relationship_type: 'Parent',
+  });
+  assert.deepEqual(JSON.parse(unlinkAudit.params[8]), {
+    relationship_removed: true,
+    student_account_preserved: true,
+  });
 });
 
 test('Parent and Parent-Teacher cannot list, add, unlink, or delete managed children', async (t) => {

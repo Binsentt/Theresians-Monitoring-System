@@ -4,10 +4,29 @@ import {
   normalizeDifficultyDisplay,
   normalizeStudentProgressRow,
   normalizeStudentProgressPayload,
+  loadStudentProgressListState,
   resolveDifficultyFromScene,
+  saveStudentProgressListState,
 } from './studentProgress.utils';
 
 describe('student progress helpers', () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+  });
+
+  test('round-trips role-scoped list search, page, lifecycle, and scroll state', () => {
+    saveStudentProgressListState('admin', {
+      searchQuery: '001234 easy', page: 3, lifecycle: 'archived', scrollTop: 412,
+    });
+
+    expect(loadStudentProgressListState('admin')).toEqual({
+      searchQuery: '001234 easy', page: 3, lifecycle: 'archived', scrollTop: 412,
+    });
+    expect(loadStudentProgressListState('teacher')).toEqual({
+      searchQuery: '', page: 1, lifecycle: 'active', scrollTop: 0,
+    });
+  });
+
   test('preserves explicit no-data answer metrics from the backend', () => {
     const normalized = normalizeStudentProgressRow({
       total_questions: null,
@@ -132,6 +151,22 @@ describe('student progress helpers', () => {
 
     expect(filterStudentProgress(students, { searchQuery: '001234' }).map((student) => student.student_id)).toEqual([1]);
     expect(filterStudentProgress(students, { searchQuery: '1234' })).toEqual([]);
+  });
+
+  test('uses one normalized multi-term query across every displayed progress field', () => {
+    const students = [{
+      student_id: 1,
+      student_name: 'Ana Reyes',
+      game_student_id: '001234',
+      grade_level: 'Grade 1',
+      section: 'Amethyst',
+      current_quest: 'Oakleaf Bandits',
+      difficulty_level: 'Easy',
+      current_location: 'Oakleaf Village',
+    }];
+
+    expect(filterStudentProgress(students, { searchQuery: 'Ana Grade 1 Amethyst Easy Oakleaf 001234' })).toEqual(students);
+    expect(filterStudentProgress(students, { searchQuery: 'Ana 1234' })).toEqual([]);
   });
 
   test('does not invent section filters when section data has not been synced', () => {

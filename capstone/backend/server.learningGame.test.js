@@ -130,6 +130,125 @@ const requestJson = async (baseUrl, path, options = {}) => {
   };
 };
 
+test('staged preview question edits are structural, transactional, audited, and invalidate approval', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const statements = [];
+  let active = false;
+  let hasHistoricalResults = false;
+  let updatedQuestion = null;
+  let auditParams = null;
+  const learningFile = {
+    id: 77,
+    title: 'Editable set',
+    file_name: 'editable.docx',
+    file_url: '/uploads/editable.docx',
+    file_type: 'fixed_questions',
+    content_role: 'question_set',
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    math_topic: 'Basic Addition',
+    topic_id: 'basic_addition',
+    published: false,
+    publish_status: 'staged',
+    approval_status: 'approved',
+    requested_question_count: 5,
+  };
+  const questions = Array.from({ length: 5 }, (_, index) => ({
+    id: 770 + index,
+    learning_file_id: 77,
+    question: `Question ${index + 1}`,
+    options: ['1', '2', '3', '4'],
+    correct_answer: '2',
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+    math_topic: 'Basic Addition',
+    topic_id: 'basic_addition',
+  }));
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (['begin', 'commit', 'rollback'].includes(sql)) {
+      statements.push(sql);
+      return emptyResult;
+    }
+    if (sql.startsWith('select * from public.learning_files where id = $1') && sql.includes('for update')) {
+      return resultRows([{ ...learningFile, published: active, publish_status: active ? 'active' : 'staged' }]);
+    }
+    if (sql.startsWith('select 1 from public.game_results where question_set_id = $1')) {
+      return hasHistoricalResults ? resultRows([{ referenced: 1 }]) : emptyResult;
+    }
+    if (sql.startsWith('select * from public.questions where id = $1')) return resultRows([questions[0]]);
+    if (sql.startsWith('update public.questions set question = $1')) {
+      updatedQuestion = {
+        ...questions[0], question: params[0], options: JSON.parse(params[1]), correct_answer: params[2],
+        grade_level: params[3], difficulty: params[4], math_topic: params[5], topic_id: params[6],
+      };
+      return resultRows([updatedQuestion]);
+    }
+    if (sql.startsWith('update public.learning_files set approval_status')) {
+      return resultRows([{ ...learningFile, approval_status: 'review_required', approved_content_fingerprint: null }]);
+    }
+    if (sql.startsWith('select id, learning_file_id, question, options, correct_answer')) {
+      return resultRows([updatedQuestion || questions[0], ...questions.slice(1)]);
+    }
+    if (sql.startsWith('insert into public.admin_audit_logs')) {
+      auditParams = params;
+      return resultRows([{ id: 91 }]);
+    }
+    return emptyResult;
+  });
+
+  const invalid = await requestJson(baseUrl, '/api/learning-files/77/questions/770', {
+    method: 'PUT',
+    body: JSON.stringify({ question: 'Invalid', options: ['1', '1', '3', '4'], correct_answer: '1' }),
+  });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(statements, []);
+
+  const saved = await requestJson(baseUrl, '/api/learning-files/77/questions/770', {
+    method: 'PUT',
+    body: JSON.stringify({
+      question: 'What is two plus three?',
+      options: ['4', '5', '6', '7'],
+      correct_answer: '5',
+      topic_id: 'basic_addition',
+    }),
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.question.correct_answer, '5');
+  assert.equal(saved.body.file.approval_status, 'review_required');
+  assert.deepEqual(statements, ['begin', 'commit']);
+  assert.equal(auditParams[1], 'Edit Question');
+  assert.equal(auditParams[5], 'question_edit');
+  assert.equal(JSON.parse(auditParams[7]).correct_answer, '2');
+  assert.equal(JSON.parse(auditParams[8]).correct_answer, '5');
+
+  statements.length = 0;
+  active = true;
+  const blocked = await requestJson(baseUrl, '/api/learning-files/77/questions/770', {
+    method: 'PUT',
+    body: JSON.stringify({ question: 'Blocked edit', options: ['4', '5', '6', '7'], correct_answer: '5' }),
+  });
+  assert.equal(blocked.status, 409);
+  assert.equal(blocked.body.code, 'ACTIVE_QUESTION_SET_CANNOT_BE_EDITED');
+  assert.deepEqual(statements, ['begin', 'rollback']);
+
+  statements.length = 0;
+  active = false;
+  hasHistoricalResults = true;
+  const historicalBlocked = await requestJson(baseUrl, '/api/learning-files/77/questions/770', {
+    method: 'PUT',
+    body: JSON.stringify({ question: 'Historical edit', options: ['4', '5', '6', '7'], correct_answer: '5' }),
+  });
+  assert.equal(historicalBlocked.status, 409);
+  assert.equal(historicalBlocked.body.code, 'QUESTION_SET_HISTORY_PREVENTS_EDIT');
+  assert.deepEqual(statements, ['begin', 'rollback']);
+});
+
 test('Lesson Manager registry endpoint returns only versioned static curriculum metadata and rejects writes', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -2028,6 +2147,78 @@ test('Lesson and Question Manager storage summary uses backend-managed bytes wit
   assert.match(storageSql, /jsonb_build_object/);
 });
 
+test('learning-content deletion variants reject a missing reason before any business-data mutation', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let businessQueryCount = 0;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+  setQueryHandler(async () => {
+    businessQueryCount += 1;
+    return emptyResult;
+  });
+
+  const responses = await Promise.all([
+    requestJson(baseUrl, '/api/learning-files/44', { method: 'DELETE' }),
+    requestJson(baseUrl, '/api/learning-files/44/permanent', { method: 'DELETE' }),
+    requestJson(baseUrl, '/api/learning-files/trash', { method: 'DELETE', body: JSON.stringify({ file_ids: [44] }) }),
+    requestJson(baseUrl, '/api/learning-files/44/questions/440', { method: 'DELETE' }),
+  ]);
+
+  assert.deepEqual(responses.map((response) => response.status), [400, 400, 400, 400]);
+  responses.forEach((response) => assert.match(response.body.error, /reason.*required/i));
+  assert.equal(businessQueryCount, 0);
+});
+
+test('question-set trash records reason and before/after metadata in the same transaction', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const statements = [];
+  let auditParams = null;
+  const file = {
+    id: 44,
+    title: 'Duplicate Addition Set',
+    file_name: 'duplicate-addition.docx',
+    published: false,
+    publish_status: 'staged',
+    deleted_at: null,
+  };
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+  setQueryHandler(async (sql, params) => {
+    if (['begin', 'commit', 'rollback'].includes(sql)) {
+      statements.push(sql);
+      return emptyResult;
+    }
+    if (sql.startsWith('select * from public.learning_files where id = $1')) return resultRows([file]);
+    if (sql.startsWith('update public.learning_files') && sql.includes('returning *')) {
+      return resultRows([{ ...file, deleted_at: '2026-09-10T00:00:00.000Z' }]);
+    }
+    if (sql.startsWith('insert into public.admin_audit_logs')) {
+      auditParams = params;
+      return emptyResult;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/44', {
+    method: 'DELETE',
+    body: JSON.stringify({ reason: 'Duplicate content confirmed by the teacher.' }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(statements, ['begin', 'commit']);
+  assert.ok(auditParams);
+  assert.ok(auditParams.includes('Duplicate content confirmed by the teacher.'));
+  const metadata = auditParams.filter((value) => typeof value === 'string' && value.startsWith('{')).map((value) => JSON.parse(value));
+  assert.equal(metadata.some((value) => value.id === 44 && value.file_name === 'duplicate-addition.docx'), true);
+  assert.equal(metadata.some((value) => value.id === 44 && value.published === false && Boolean(value.deleted_at)), true);
+});
+
 test('active question sets cannot be moved to trash before a replacement is published', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -2053,7 +2244,7 @@ test('active question sets cannot be moved to trash before a replacement is publ
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/learning-files/44', { method: 'DELETE' });
+  const response = await requestJson(baseUrl, '/api/learning-files/44', { method: 'DELETE', body: JSON.stringify({ reason: 'Retire duplicate set.' }) });
 
   assert.equal(response.status, 409);
   assert.equal(response.body.code, 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED');
@@ -2086,7 +2277,7 @@ test('active question sets cannot be permanently deleted', async (t) => {
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/learning-files/44/permanent', { method: 'DELETE' });
+  const response = await requestJson(baseUrl, '/api/learning-files/44/permanent', { method: 'DELETE', body: JSON.stringify({ reason: 'Retire duplicate set.' }) });
 
   assert.equal(response.status, 409);
   assert.equal(response.body.code, 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED');
@@ -2129,7 +2320,7 @@ test('emptying trash validates every selected set before permanently deleting an
 
   const response = await requestJson(baseUrl, '/api/learning-files/trash', {
     method: 'DELETE',
-    body: JSON.stringify({ file_ids: [44, 45] }),
+    body: JSON.stringify({ file_ids: [44, 45], reason: 'Remove reviewed trash.' }),
   });
 
   assert.equal(response.status, 409);
@@ -2164,7 +2355,7 @@ test('emptying trash blocks every selected target when one is still active', asy
 
   const response = await requestJson(baseUrl, '/api/learning-files/trash', {
     method: 'DELETE',
-    body: JSON.stringify({ file_ids: [44, 45] }),
+    body: JSON.stringify({ file_ids: [44, 45], reason: 'Remove reviewed trash.' }),
   });
 
   assert.equal(response.status, 409);
@@ -2203,7 +2394,7 @@ test('historically referenced question sets cannot be permanently deleted', asyn
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/learning-files/44/permanent', { method: 'DELETE' });
+  const response = await requestJson(baseUrl, '/api/learning-files/44/permanent', { method: 'DELETE', body: JSON.stringify({ reason: 'Retire duplicate set.' }) });
 
   assert.equal(response.status, 409);
   assert.match(response.body.error, /historical.*results/i);

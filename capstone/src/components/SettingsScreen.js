@@ -14,7 +14,7 @@ import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import { DashboardContainer, MainContent, PageContent, TopBar } from './layout/AppLayout';
 import { apiUrl } from '../api';
-import { buildAuthHeaders, clearStoredSession, getStoredUserSession } from './session.utils';
+import { buildAuthHeaders, clearStoredSession, getStoredUserSession, revokeCurrentSession } from './session.utils';
 import PasswordStrengthFeedback from './PasswordStrengthFeedback';
 import { validateNewWebsitePassword, validatePhilippineMobile, validatePhilippineMobileUpdate } from '../utils/validation.utils';
 import '../styles/settings.css';
@@ -149,7 +149,8 @@ export default function SettingsScreen() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await revokeCurrentSession();
     clearStoredSession();
     navigate('/');
   };

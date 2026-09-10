@@ -33,6 +33,13 @@ const setSelectValue = (field, value) => {
   field.dispatchEvent(new Event('change', { bubbles: true }));
 };
 
+const setFieldValue = (field, value) => {
+  const prototype = field.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(prototype, 'value').set.call(field, value);
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+  field.dispatchEvent(new Event('change', { bubbles: true }));
+};
+
 const getUploadModal = () => document.body.querySelector('.drive-upload-modal');
 const getUploadModalSelects = () => document.body.querySelectorAll('.drive-upload-modal select');
 let previewObservers = [];
@@ -136,6 +143,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     localStorage.clear();
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 8, role: 'teacher', name: 'Teacher User' }));
     localStorage.setItem('rememberToken', 'lesson-manager-token');
+    window.prompt = jest.fn(() => 'Required QA deletion reason.');
     fixtures = {
       files: [],
       lessonSources: [],
@@ -238,6 +246,19 @@ describe('LessonQuestionManager upload and trash controls', () => {
         ));
         const approvedFile = fixtures.files.find((file) => file.id === approvedId);
         return okJson({ success: true, learningFile: approvedFile, validation: approvedFile.validation_summary });
+      }
+      const questionEditMatch = value.match(/\/api\/learning-files\/(\d+)\/questions\/(\d+)/);
+      if (questionEditMatch && options.method === 'PUT') {
+        const request = JSON.parse(options.body);
+        const previewFileId = Number(questionEditMatch[1]);
+        const currentFile = fixtures.files.find((file) => file.id === previewFileId);
+        return okJson({
+          success: true,
+          file: { ...currentFile, approval_status: 'review_required' },
+          question: { id: Number(questionEditMatch[2]), ...request, is_valid: true, validation_errors: [] },
+          validation: { is_valid: true, invalid_question_count: 0 },
+          review_fingerprint: `edited-${previewFileId}`,
+        });
       }
       const questionPreviewMatch = value.match(/\/api\/learning-files\/(\d+)\/questions/);
       if (questionPreviewMatch) {
@@ -383,7 +404,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
   });
 
-  test('opens the same structured read-only question preview from a DOCX filename as from the Preview action', async () => {
+  test('opens the same structured editable question preview from a DOCX filename as from the Preview action', async () => {
     fixtures.files = [{
       id: 77,
       title: 'basic-addition.docx',
@@ -410,6 +431,55 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).toContain('What is 2 + 3?');
     expect(document.body.textContent).toContain('Grade 1 · Easy');
     expect(document.body.textContent).not.toContain('Grade Grade 1');
+    expect(document.body.querySelector('button[aria-label="Edit question 1"]')).not.toBeNull();
+  });
+
+  test('edits a staged preview question, preserves correct-choice mapping, and persists through the scoped backend route', async () => {
+    fixtures.files = [buildReviewRequiredFile({ id: 77, title: 'editable.docx', file_name: 'editable.docx' })];
+    await act(async () => root.render(<LessonQuestionManager />));
+    await act(async () => clickByText(container, 'Preview'));
+    await act(async () => document.body.querySelector('button[aria-label="Edit question 1"]').click());
+
+    const questionText = document.body.querySelector('textarea[aria-label="Question 1 text"]');
+    const secondChoice = document.body.querySelector('input[aria-label="Question 1 choice B"]');
+    const correctChoice = document.body.querySelector('select[aria-label="Question 1 correct answer"]');
+    await act(async () => {
+      setFieldValue(questionText, 'What number is two plus three?');
+      setFieldValue(secondChoice, 'Five');
+    });
+    expect(correctChoice.value).toBe('Five');
+
+    await act(async () => document.body.querySelector('button[aria-label="Save question 1"]').click());
+    const update = global.fetch.mock.calls.find(([url, options]) => String(url).includes('/questions/770') && options?.method === 'PUT');
+    expect(update[0]).toBe('/api/learning-files/77/questions/770');
+    expect(JSON.parse(update[1].body)).toEqual(expect.objectContaining({
+      question: 'What number is two plus three?',
+      options: ['4', 'Five', '6', '7'],
+      correct_answer: 'Five',
+    }));
+    expect(document.body.textContent).toContain('Five (Correct)');
+  });
+
+  test('warns before closing a preview with unsaved question edits', async () => {
+    fixtures.files = [buildReviewRequiredFile({ id: 77 })];
+    window.confirm = jest.fn(() => false);
+    await act(async () => root.render(<LessonQuestionManager />));
+    await act(async () => clickByText(container, 'Preview'));
+    await act(async () => document.body.querySelector('button[aria-label="Edit question 1"]').click());
+    await act(async () => setFieldValue(document.body.querySelector('textarea[aria-label="Question 1 text"]'), 'Unsaved revision'));
+    await act(async () => clickByText(document.body, 'Close'));
+    expect(window.confirm).toHaveBeenCalled();
+    expect(document.body.querySelector('.generated-questions-preview-modal')).not.toBeNull();
+  });
+
+  test('requires and sends a reason when deleting an individual staged question', async () => {
+    fixtures.files = [buildReviewRequiredFile({ id: 77 })];
+    window.confirm = jest.fn(() => true);
+    await act(async () => root.render(<LessonQuestionManager />));
+    await act(async () => clickByText(container, 'Preview'));
+    await act(async () => document.body.querySelector('button[aria-label="Delete question 1"]').click());
+    const request = global.fetch.mock.calls.find(([url, options]) => String(url).includes('/questions/770') && options?.method === 'DELETE');
+    expect(JSON.parse(request[1].body).reason).toBe('Required QA deletion reason.');
   });
 
   test('requires a teacher to explicitly confirm server-reported same-scope Active replacement', async () => {
@@ -908,7 +978,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
         Authorization: 'Bearer lesson-manager-token',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ file_ids: [31, 32] }),
+      body: JSON.stringify({ file_ids: [31, 32], reason: 'Required QA deletion reason.' }),
     });
   });
 
@@ -1497,6 +1567,9 @@ describe('LessonQuestionManager upload and trash controls', () => {
       clickByText(container, 'Delete');
     });
 
+    const request = global.fetch.mock.calls.find(([url, options]) => String(url).includes('/api/learning-files/77') && options?.method === 'DELETE');
+    expect(JSON.parse(request[1].body).reason).toBe('Required QA deletion reason.');
+
     expect(container.textContent).not.toContain('addition-quiz');
   });
 
@@ -1674,7 +1747,38 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.querySelectorAll('#print-report-root .printable-table-report tbody tr')).toHaveLength(11);
   });
 
-  test('paginates the Trash Bin without exposing a separate destructive-item print flow', async () => {
+  test('uses one multi-field search and keeps single-page Question Library pagination visible', async () => {
+    fixtures.files = [{
+      id: 211,
+      title: 'place-value-review',
+      file_name: 'place-value-review.docx',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Place Value',
+      file_type: 'fixed_questions',
+      question_count: 5,
+      published: false,
+    }];
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+
+    expect(container.querySelectorAll('.folder-file-filters input[type="text"]')).toHaveLength(1);
+    expect(container.querySelectorAll('.folder-file-filters select')).toHaveLength(0);
+    expect(container.textContent).toContain('Page 1 of 1');
+    expect(container.textContent).toContain('Showing 1–1 of 1 records');
+
+    const search = container.querySelector('.folder-file-filters input[type="text"]');
+    await act(async () => {
+      search.value = 'fixed pending place value';
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('place-value-review');
+  });
+
+  test('paginates the Trash Bin and prints every filtered trash row', async () => {
     fixtures.trashFiles = Array.from({ length: 11 }, (_, index) => ({
       id: index + 300,
       title: `deleted-question-set-${index + 1}`,
@@ -1690,7 +1794,25 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     expect(container.querySelectorAll('.drive-table tbody tr')).toHaveLength(10);
     expect(container.textContent).toContain('Page 1 of 2');
-    expect(container.querySelector('button[aria-label="Print Question Library Trash"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Print Report"]')).not.toBeNull();
+    let opened = false;
+    act(() => { opened = openPreparedReport(); });
+    expect(opened).toBe(true);
+    expect(document.querySelectorAll('#print-report-root .printable-table-report tbody tr')).toHaveLength(11);
+  });
+
+  test('searches Trash with one field and keeps empty pagination visible', async () => {
+    fixtures.trashFiles = [];
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+    });
+    await act(async () => {
+      clickByText(container, 'Trash Bin');
+    });
+
+    expect(container.querySelectorAll('.trash-file-filters input[type="text"]')).toHaveLength(1);
+    expect(container.textContent).toContain('Page 1 of 1');
+    expect(container.textContent).toContain('0 records');
   });
 
   test('shows Approve to each authorized Teacher-scope role from the authoritative review status', async () => {

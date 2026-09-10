@@ -1273,6 +1273,7 @@ test('archiving an account invalidates sessions and OTP skip records', async (t)
   assert.ok(statements.some((entry) => entry.sql.includes('session_version = coalesce(session_version, 0) + 1')));
   assert.ok(statements.some((entry) => entry.sql.includes('otp_code = null') && entry.sql.includes('otp_expires_at = null')));
   assert.ok(statements.some((entry) => entry.sql.startsWith('delete from public.login_otp_device_skips')));
+  assert.ok(statements.some((entry) => entry.sql.startsWith('update public.website_sessions') && entry.sql.includes('revoked_at')));
 });
 
 test('permanent account deletion requires an archived account and typed DELETE confirmation', async (t) => {
@@ -1632,11 +1633,146 @@ test('remember tokens include 30-day session metadata and the account session ve
   assert.ok(signedTokenPayloads[0].sessionIssuedAt);
   assert.ok(signedTokenPayloads[0].otpVerifiedAt);
   assert.ok(signedTokenPayloads[0].sessionExpiresAt);
+  assert.match(signedTokenPayloads[0].websiteSessionCredential, /^[A-Za-z0-9_-]{40,}$/);
   assert.equal(signedTokenOptions[0].expiresIn, '30d');
   assert.equal(
     Math.round((new Date(signedTokenPayloads[0].sessionExpiresAt) - new Date(signedTokenPayloads[0].sessionIssuedAt)) / (24 * 60 * 60 * 1000)),
     30
   );
+});
+
+test('tracked website sessions heartbeat, revoke only the current credential, and reject reuse', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const activeUntil = new Date(Date.now() + 60_000);
+  let revoked = false;
+  const statements = [];
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = {
+    userId: 77,
+    sessionVersion: 0,
+    websiteSessionCredential: 'browser-one-secret',
+  };
+  setQueryHandler(async (sql, params) => {
+    statements.push({ sql, params });
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 77, role: 'teacher', is_archived: false, session_version: 0 }]);
+    }
+    if (sql.startsWith('select id, account_id, created_at, last_seen_at, expires_at, revoked_at')) {
+      return resultRows([{
+        id: 9,
+        account_id: 77,
+        expires_at: activeUntil,
+        revoked_at: revoked ? new Date() : null,
+      }]);
+    }
+    if (sql.startsWith('update public.website_sessions') && sql.includes('set last_seen_at')) {
+      return resultRows([{ id: 9, account_id: 77, last_seen_at: params[2], expires_at: activeUntil }]);
+    }
+    if (sql.startsWith('update public.website_sessions') && sql.includes('revocation_reason')) {
+      revoked = true;
+      return resultRows([{ id: 9, account_id: 77, revoked_at: params[2], revocation_reason: 'logout' }]);
+    }
+    return emptyResult;
+  });
+
+  const heartbeat = await requestJson(baseUrl, '/api/session/heartbeat', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer browser-one-token' },
+  });
+  assert.equal(heartbeat.status, 200);
+  assert.equal(heartbeat.body.success, true);
+  assert.equal(heartbeat.body.heartbeat_interval_seconds, 25);
+  assert.equal(heartbeat.body.freshness_ttl_seconds, 75);
+
+  const logout = await requestJson(baseUrl, '/api/logout-status', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer browser-one-token' },
+  });
+  assert.equal(logout.status, 200);
+  assert.equal(logout.body.current_session_revoked, true);
+
+  const reused = await requestJson(baseUrl, '/api/session/validate', {
+    headers: { Authorization: 'Bearer browser-one-token' },
+  });
+  assert.equal(reused.status, 401);
+  assert.ok(statements.some((entry) => entry.sql.includes('credential_hash = $2')));
+});
+
+test('legacy website tokens remain bounded by their signed expiry but must reauthenticate for presence', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = {
+    userId: 77,
+    sessionVersion: 0,
+    sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+  };
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 77, role: 'teacher', is_archived: false, session_version: 0 }]);
+    }
+    return emptyResult;
+  });
+
+  const validation = await requestJson(baseUrl, '/api/session/validate', {
+    headers: { Authorization: 'Bearer legacy-token' },
+  });
+  assert.equal(validation.status, 200);
+
+  const heartbeat = await requestJson(baseUrl, '/api/session/heartbeat', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer legacy-token' },
+  });
+  assert.equal(heartbeat.status, 401);
+  assert.equal(heartbeat.body.code, 'WEBSITE_SESSION_REAUTHENTICATION_REQUIRED');
+});
+
+test('admin presence endpoint counts distinct fresh accounts and defines parent_teacher overlap', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const future = new Date(Date.now() + 60_000);
+  const fresh = new Date();
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', is_archived: false, session_version: 0 }]);
+    }
+    if (sql.includes('from public.website_sessions sessions')) {
+      return resultRows([
+        { account_id: 2, role: 'teacher', last_seen_at: fresh, expires_at: future, revoked_at: null },
+        { account_id: 2, role: 'teacher', last_seen_at: fresh, expires_at: future, revoked_at: null },
+        { account_id: 3, role: 'parent', last_seen_at: fresh, expires_at: future, revoked_at: null },
+        { account_id: 4, role: 'parent_teacher', last_seen_at: fresh, expires_at: future, revoked_at: null },
+      ]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/admin/presence', {
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.online_now, {
+    total: 3,
+    admins: 0,
+    teachers: 2,
+    parents: 2,
+    parent_teachers: 1,
+  });
 });
 
 test('active Parent/Teacher accounts receive a canonical Parent ID and pass Godot validation', async (t) => {

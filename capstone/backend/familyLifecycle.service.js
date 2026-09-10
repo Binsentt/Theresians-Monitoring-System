@@ -155,7 +155,7 @@ const permanentlyDeleteParentFamily = async (pool, parentId) => withFamilyTransa
   };
 });
 
-const unlinkManagedChild = async (pool, parentId, studentId) => withFamilyTransaction(pool, async (client) => {
+const unlinkManagedChild = async (pool, parentId, studentId, options = {}) => withFamilyTransaction(pool, async (client) => {
   const parent = await lockParentAccount(client, parentId);
   const result = await client.query(
     `DELETE FROM public.teacher_student_relationships
@@ -166,10 +166,15 @@ const unlinkManagedChild = async (pool, parentId, studentId) => withFamilyTransa
     [parent.id, normalizeId(studentId, 'Student account ID')]
   );
   if (!result.rows[0]) throw createFamilyError('Parent-child relationship not found.', 404);
-  return { parent, relationship: result.rows[0] };
+  const relationship = result.rows[0];
+  const student = { id: Number(relationship.student_id) };
+  if (typeof options.afterMutation === 'function') {
+    await options.afterMutation(client, { parent, student, relationship });
+  }
+  return { parent, student, relationship };
 });
 
-const permanentlyDeleteManagedStudent = async (pool, parentId, studentId) => withFamilyTransaction(pool, async (client) => {
+const permanentlyDeleteManagedStudent = async (pool, parentId, studentId, options = {}) => withFamilyTransaction(pool, async (client) => {
   const normalizedParentId = normalizeId(parentId, 'Parent account ID');
   const normalizedStudentId = normalizeId(studentId, 'Student account ID');
   const result = await client.query(
@@ -200,6 +205,9 @@ const permanentlyDeleteManagedStudent = async (pool, parentId, studentId) => wit
     studentIds: [normalizedStudentId],
     parentCode: null,
   });
+  if (typeof options.afterMutation === 'function') {
+    await options.afterMutation(client, { managed, deletedStudent: deletedStudents[0] });
+  }
   return { managed, deletedStudent: deletedStudents[0] };
 });
 

@@ -117,6 +117,13 @@ const assertValidRemainingSecondsSelectSql = (sql) => {
   assert.doesNotMatch(normalized, /::integer as remaining_seconds/);
 };
 
+test('daily allowance is environment-configurable with a validated 60-minute default', () => {
+  const serverSource = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  assert.match(serverSource, /process\.env\.PLAYTIME_DAILY_LIMIT_MINUTES/);
+  assert.match(serverSource, /Number\.isInteger\(configuredPlaytimeDailyLimitMinutes\)/);
+  assert.doesNotMatch(serverSource, /const PLAYTIME_DAILY_LIMIT_MINUTES = 60;/);
+});
+
 test('playtime start creates a Playing session for Godot gameplay', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -537,6 +544,37 @@ test('playtime start ignores caller time and returns a server-authoritative leas
   assert.match(response.body.session_credential, /^[a-f0-9]{64}$/);
 });
 
+test('a 60-minute allowance with 240 counted seconds returns 56 minutes and 4 minutes used', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', session_version: 0, is_archived: false }]);
+    }
+    if (sql.includes('from public.playtime_sessions') && sql.includes('date_played = current_date')) {
+      assert.equal(params[0], 44);
+      return resultRows([{ total_playtime_seconds: 240, total_playtime_minutes: 4 }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime/today/44', {
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.total_playtime_seconds, 240);
+  assert.equal(response.body.total_playtime_today, 4);
+  assert.equal(response.body.remaining_seconds, 3360);
+  assert.equal(response.body.remaining_minutes, 56);
+  assert.equal(response.body.daily_limit_minutes, 60);
+});
+
 test('playtime start preserves six-digit external student IDs through the link lookup and rejects bad contracts', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -921,7 +959,7 @@ test('screen time projects stale open sessions as Offline with a heartbeat cutof
     if (sql.startsWith('select * from public.accounts where id = $1')) {
       return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
     }
-    if (sql.startsWith('select count(*)::integer as total from public.playtime_sessions ps')) {
+    if (sql.startsWith('select count(*)::integer as total') && sql.includes('from public.playtime_sessions ps')) {
       return resultRows([{ total: 1 }]);
     }
     if (sql.startsWith('select ps.id')) {
@@ -950,6 +988,50 @@ test('screen time projects stale open sessions as Offline with a heartbeat cutof
   assert.equal(response.body.data[0].presence_reason, 'heartbeat_stale');
 });
 
+test('screen time summary covers the complete filtered authorized dataset, not the visible page', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let summarySql = '';
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, _params, rawSql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
+    }
+    if (sql.startsWith('select count(*)::integer as total') && sql.includes('from public.playtime_sessions ps')) {
+      summarySql = String(rawSql);
+      return resultRows([{ total: 17, total_playtime_seconds: 19260, playing_count: 4 }]);
+    }
+    if (sql.startsWith('select ps.id')) {
+      return resultRows(Array.from({ length: 10 }, (_, index) => ({
+        id: index + 1,
+        student_id: 100 + index,
+        student_name: `Student ${index + 1}`,
+        total_playtime_minutes: 1,
+        status: 'Completed',
+      })));
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime?search=Grade%204', {
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.data.length, 10);
+  assert.deepEqual(response.body.summary, {
+    total_records: 17,
+    total_playtime_seconds: 19260,
+    playing_count: 4,
+  });
+  assert.match(summarySql, /COALESCE\(NULLIF\(ps\.total_playtime_seconds, 0\), ps\.total_playtime_minutes \* 60, 0\)/i);
+});
+
 test('screen time Offline filtering uses authoritative presence instead of a stale raw Playing status', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -965,7 +1047,7 @@ test('screen time Offline filtering uses authoritative presence instead of a sta
     if (sql.startsWith('select * from public.accounts where id = $1')) {
       return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
     }
-    if (sql.startsWith('select count(*)::integer as total from public.playtime_sessions ps')) {
+    if (sql.startsWith('select count(*)::integer as total') && sql.includes('from public.playtime_sessions ps')) {
       countSql = String(rawSql);
       return resultRows([{ total: 1 }]);
     }
@@ -1014,7 +1096,7 @@ test('all-student playtime rejects parent sessions and allows admin scoped filte
     if (sql.startsWith('select * from public.accounts where id = $1')) {
       return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
     }
-    if (sql.startsWith('select count(*)::integer as total from public.playtime_sessions ps')) {
+    if (sql.startsWith('select count(*)::integer as total') && sql.includes('from public.playtime_sessions ps')) {
       return resultRows([{ total: 1 }]);
     }
     if (sql.startsWith('select ps.id')) {
@@ -1039,21 +1121,18 @@ test('all-student playtime rejects parent sessions and allows admin scoped filte
 
   const adminResponse = await requestJson(
     baseUrl,
-    '/api/playtime?date=2026-06-01&grade_level=Grade%203&section=Section%20A&student_id=44&parent_id=123456&status=Completed&search=ava&sort_by=total_playtime&sort_order=asc',
+    '/api/playtime?search=Grade%203%20Section%20A%20001234%20Completed&sort_by=total_playtime&sort_order=asc',
     { headers: { Authorization: 'Bearer admin-token' } }
   );
 
   assert.equal(adminResponse.status, 200);
   assert.equal(adminResponse.body.data.length, 1);
   assert.match(allSessionsSql, /order by ps\.total_playtime_minutes asc/);
-  assert.deepEqual(allSessionsParams.slice(0, 7), [
-    '2026-06-01',
-    'Grade 3',
-    'Section A',
-    44,
-    '123456',
-    'Completed',
-    '%ava%',
+  assert.match(allSessionsSql, /lower\(coalesce\(ps\.grade_level, ''\)\) like/);
+  assert.match(allSessionsSql, /game_student_id =/);
+  assert.deepEqual(allSessionsParams.slice(0, 12), [
+    '%grade%', 'grade', '%3%', '3', '%section%', 'section', '%a%', 'a',
+    '%001234%', '001234', '%completed%', 'completed',
   ]);
 });
 
@@ -1072,7 +1151,7 @@ test('my child playtime is scoped to the authenticated parent linkage and parent
     if (sql.startsWith('select * from public.accounts where id = $1')) {
       return resultRows([{ id: 10, role: 'parent', parent_id: '123456', session_version: 0 }]);
     }
-    if (sql.startsWith('select count(*)::integer as total from public.playtime_sessions ps')) {
+    if (sql.startsWith('select count(*)::integer as total') && sql.includes('from public.playtime_sessions ps')) {
       return resultRows([{ total: 1 }]);
     }
     if (sql.startsWith('select ps.id')) {
@@ -1120,7 +1199,7 @@ test('playtime list defaults to student name ordering and hides Auto Save status
     if (sql.startsWith('select * from public.accounts where id = $1')) {
       return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
     }
-    if (sql.startsWith('select count(*)::integer as total from public.playtime_sessions ps')) {
+    if (sql.startsWith('select count(*)::integer as total') && sql.includes('from public.playtime_sessions ps')) {
       return resultRows([{ total: 1 }]);
     }
     if (sql.startsWith('select ps.id')) {

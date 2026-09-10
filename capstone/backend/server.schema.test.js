@@ -119,3 +119,24 @@ test('startup schema keeps nullable canonical topic IDs for learning files and q
     'startup schema must not create a duplicate source lineage index with a second name'
   );
 });
+
+test('startup schema includes audit metadata and durable website sessions before readiness', async () => {
+  await waitForSchemaInitialization();
+
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('alter table public.admin_audit_logs add column if not exists before_metadata jsonb')),
+    'startup compatibility should add structured before metadata'
+  );
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('alter table public.admin_audit_logs add column if not exists after_metadata jsonb')),
+    'startup compatibility should add structured after metadata'
+  );
+  assert.ok(
+    schemaStatements.some((sql) => sql.startsWith('create table if not exists public.website_sessions')),
+    'website sessions must be durable PostgreSQL records'
+  );
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('website_sessions_account_presence_index')),
+    'presence lookup must have its tracked partial index'
+  );
+});

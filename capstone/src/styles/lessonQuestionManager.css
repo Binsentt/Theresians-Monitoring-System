@@ -460,6 +460,19 @@ button.drive-folder-card {
   color: #ffffff;
 }
 
+.drive-action-button.danger,
+.btn-danger {
+  border-color: #b91c1c;
+  background: #b91c1c;
+  color: #ffffff;
+}
+
+.drive-action-button.danger:hover:not(:disabled),
+.btn-danger:hover:not(:disabled) {
+  background: #991b1b;
+  border-color: #991b1b;
+}
+
 .manager-status-pill {
   display: inline-flex;
   align-items: center;

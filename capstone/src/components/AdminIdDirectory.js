@@ -7,7 +7,9 @@ import logoImage from '../assets/images/STS_Logo.png';
 import { apiUrl } from '../api';
 import { buildAuthHeaders, clearStoredSession } from './session.utils';
 import { normalizeRole } from './manageUsers.utils';
-import { paginateTableRows } from './tableReporting.utils';
+import { formatReportContext, paginateTableRows } from './tableReporting.utils';
+import { TablePrintButton } from './TablePrintButton';
+import { PrintableTableReport } from './PrintableTableReport';
 import {
   filterDirectoryRows,
   formatDirectoryDate,
@@ -15,20 +17,6 @@ import {
   formatDirectoryStatus,
 } from './idDirectory.utils';
 import '../styles/iddirectory.css';
-
-const emptyFilters = {
-  id: '',
-  name: '',
-  grade: '',
-  section: '',
-  status: '',
-  email: '',
-  role: '',
-};
-
-const updateFilter = (setter, field, value) => {
-  setter((current) => ({ ...current, [field]: value }));
-};
 
 const getParentDisplay = (row) => {
   const name = String(row?.parent_name || '').trim();
@@ -38,15 +26,6 @@ const getParentDisplay = (row) => {
   if (!name) return relationship;
   return `${name} (${relationship})`;
 };
-
-function DirectoryFilter({ label, value, onChange, placeholder }) {
-  return (
-    <label className="id-directory-filter">
-      <span>{label}</span>
-      <input type="search" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder || label} />
-    </label>
-  );
-}
 
 function StudentDirectoryTable({ rows }) {
   return (
@@ -115,7 +94,6 @@ function TeacherDirectoryTable({ rows }) {
 }
 
 function DirectoryPagination({ page, setPage }) {
-  if (page.totalPages <= 1) return null;
   return (
     <div className="id-directory-pagination" aria-label="ID Directory pagination">
       <span>Showing {page.start} - {page.end} of {page.totalItems}</span>
@@ -132,8 +110,8 @@ export default function AdminIdDirectory() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [directory, setDirectory] = useState({ students: [], teachers: [] });
-  const [studentFilters, setStudentFilters] = useState(emptyFilters);
-  const [teacherFilters, setTeacherFilters] = useState(emptyFilters);
+  const [studentSearch, setStudentSearch] = useState('');
+  const [teacherSearch, setTeacherSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [activeTab, setActiveTab] = useState('students');
   const [studentPage, setStudentPage] = useState(1);
@@ -195,12 +173,12 @@ export default function AdminIdDirectory() {
   }, [loadDirectory, user]);
 
   const filteredStudents = useMemo(
-    () => filterDirectoryRows(directory.students, studentFilters, 'student'),
-    [directory.students, studentFilters]
+    () => filterDirectoryRows(directory.students, studentSearch, 'student'),
+    [directory.students, studentSearch]
   );
   const filteredTeachers = useMemo(
-    () => filterDirectoryRows(directory.teachers, teacherFilters, 'teacher'),
-    [directory.teachers, teacherFilters]
+    () => filterDirectoryRows(directory.teachers, teacherSearch, 'teacher'),
+    [directory.teachers, teacherSearch]
   );
   const paginatedStudents = paginateTableRows(filteredStudents, studentPage, 10);
   const paginatedTeachers = paginateTableRows(filteredTeachers, teacherPage, 10);
@@ -279,35 +257,62 @@ export default function AdminIdDirectory() {
               <ContentSection
                 title={`Students (${filteredStudents.length})`}
                 actions={(
-                  <div className="id-directory-filters" aria-label="Student ID filters">
-                    <DirectoryFilter label="ID" value={studentFilters.id} onChange={(value) => { updateFilter(setStudentFilters, 'id', value); setStudentPage(1); }} />
-                    <DirectoryFilter label="Name" value={studentFilters.name} onChange={(value) => { updateFilter(setStudentFilters, 'name', value); setStudentPage(1); }} />
-                    <DirectoryFilter label="Grade" value={studentFilters.grade} onChange={(value) => { updateFilter(setStudentFilters, 'grade', value); setStudentPage(1); }} />
-                    <DirectoryFilter label="Section" value={studentFilters.section} onChange={(value) => { updateFilter(setStudentFilters, 'section', value); setStudentPage(1); }} />
-                    <DirectoryFilter label="Status" value={studentFilters.status} onChange={(value) => { updateFilter(setStudentFilters, 'status', value); setStudentPage(1); }} />
+                  <div className="id-directory-filters" aria-label="Student ID Directory controls">
+                    <label className="id-directory-filter">
+                      <span>Search students</span>
+                      <input aria-label="Search Student ID Directory" type="search" value={studentSearch} onChange={(event) => { setStudentSearch(event.target.value); setStudentPage(1); }} placeholder="Name, Student ID, Grade, Section, Parent, Status, or date" />
+                    </label>
+                    <TablePrintButton reportTitle="Student ID Directory" reportContext={formatReportContext({ scope: studentSearch ? `Search: ${studentSearch}` : 'All active Student accounts', recordCount: filteredStudents.length })} label="Print Student Directory" showPrintHeading={false} />
                   </div>
                 )}
                 contentClassName="id-directory-section-content"
               >
                 <DirectoryPagination page={paginatedStudents} setPage={setStudentPage} />
                 <StudentDirectoryTable rows={paginatedStudents.rows} />
+                <PrintableTableReport
+                  title="Student ID Directory"
+                  context={studentSearch ? `Search: ${studentSearch}` : 'All active Student accounts'}
+                  rows={filteredStudents}
+                  columns={[
+                    { header: 'Student ID', value: (row) => row.student_id || '—' },
+                    { header: 'Student Name', value: (row) => row.student_name || '—' },
+                    { header: 'Grade Level', value: (row) => row.grade_level || '—' },
+                    { header: 'Section', value: (row) => row.section || '—' },
+                    { header: 'Parent', value: getParentDisplay },
+                    { header: 'Status', value: formatDirectoryStatus },
+                    { header: 'Date Added', value: (row) => formatDirectoryDate(row.created_at) },
+                  ]}
+                />
               </ContentSection>
             ) : (
               <ContentSection
                 title={`Teachers (${filteredTeachers.length})`}
                 actions={(
-                  <div className="id-directory-filters" aria-label="Teacher ID filters">
-                    <DirectoryFilter label="ID" value={teacherFilters.id} onChange={(value) => { updateFilter(setTeacherFilters, 'id', value); setTeacherPage(1); }} />
-                    <DirectoryFilter label="Name" value={teacherFilters.name} onChange={(value) => { updateFilter(setTeacherFilters, 'name', value); setTeacherPage(1); }} />
-                    <DirectoryFilter label="Email" value={teacherFilters.email} onChange={(value) => { updateFilter(setTeacherFilters, 'email', value); setTeacherPage(1); }} />
-                    <DirectoryFilter label="Role" value={teacherFilters.role} onChange={(value) => { updateFilter(setTeacherFilters, 'role', value); setTeacherPage(1); }} />
-                    <DirectoryFilter label="Status" value={teacherFilters.status} onChange={(value) => { updateFilter(setTeacherFilters, 'status', value); setTeacherPage(1); }} />
+                  <div className="id-directory-filters" aria-label="Teacher ID Directory controls">
+                    <label className="id-directory-filter">
+                      <span>Search teachers</span>
+                      <input aria-label="Search Teacher ID Directory" type="search" value={teacherSearch} onChange={(event) => { setTeacherSearch(event.target.value); setTeacherPage(1); }} placeholder="Name, Teacher ID, email, role, status, or date" />
+                    </label>
+                    <TablePrintButton reportTitle="Teacher ID Directory" reportContext={formatReportContext({ scope: teacherSearch ? `Search: ${teacherSearch}` : 'All active Teacher accounts', recordCount: filteredTeachers.length })} label="Print Teacher Directory" showPrintHeading={false} />
                   </div>
                 )}
                 contentClassName="id-directory-section-content"
               >
                 <DirectoryPagination page={paginatedTeachers} setPage={setTeacherPage} />
                 <TeacherDirectoryTable rows={paginatedTeachers.rows} />
+                <PrintableTableReport
+                  title="Teacher ID Directory"
+                  context={teacherSearch ? `Search: ${teacherSearch}` : 'All active Teacher accounts'}
+                  rows={filteredTeachers}
+                  columns={[
+                    { header: 'Teacher ID', value: (row) => row.teacher_id || '—' },
+                    { header: 'Teacher Name', value: (row) => row.teacher_name || '—' },
+                    { header: 'Email', value: (row) => row.email || '—' },
+                    { header: 'Role', value: (row) => formatDirectoryRole(row.role) },
+                    { header: 'Status', value: formatDirectoryStatus },
+                    { header: 'Date Added', value: (row) => formatDirectoryDate(row.created_at) },
+                  ]}
+                />
               </ContentSection>
             )}
           </PageContent>

@@ -64,18 +64,44 @@ export default function SessionMonitor() {
     }
   }, [location.pathname, navigate, redirectToLoginIfNeeded]);
 
+  const sendPresenceHeartbeat = useCallback(async () => {
+    if (document.visibilityState === 'hidden') return;
+    const headers = buildAuthHeaders();
+    if (!headers.Authorization) return;
+    try {
+      const response = await fetch(apiUrl('/api/session/heartbeat'), {
+        method: 'POST',
+        headers,
+      });
+      if (response.status === 401 || response.status === 403) {
+        clearStoredSession();
+        redirectToLoginIfNeeded(true);
+      }
+    } catch (error) {
+      // Freshness naturally expires during a network outage; never claim logout.
+    }
+  }, [redirectToLoginIfNeeded]);
+
   useEffect(() => {
     validateSession();
-    const intervalId = window.setInterval(validateSession, 15000);
-    window.addEventListener('focus', validateSession);
-    document.addEventListener('visibilitychange', validateSession);
+    sendPresenceHeartbeat();
+    const validationIntervalId = window.setInterval(validateSession, 60_000);
+    const heartbeatIntervalId = window.setInterval(sendPresenceHeartbeat, 25_000);
+    const refreshVisibleSession = () => {
+      if (document.visibilityState === 'hidden') return;
+      validateSession();
+      sendPresenceHeartbeat();
+    };
+    window.addEventListener('focus', refreshVisibleSession);
+    document.addEventListener('visibilitychange', refreshVisibleSession);
 
     return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener('focus', validateSession);
-      document.removeEventListener('visibilitychange', validateSession);
+      window.clearInterval(validationIntervalId);
+      window.clearInterval(heartbeatIntervalId);
+      window.removeEventListener('focus', refreshVisibleSession);
+      document.removeEventListener('visibilitychange', refreshVisibleSession);
     };
-  }, [validateSession]);
+  }, [sendPresenceHeartbeat, validateSession]);
 
   return null;
 }

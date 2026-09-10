@@ -167,7 +167,7 @@ describe('ManageUsers edit flow', () => {
     expect(tableContainer.textContent).not.toContain('Managed User 01');
   });
 
-  test('search and role filters run before paging and reset the rendered table to page one', async () => {
+  test('one multi-field search runs before paging and resets the rendered table to page one', async () => {
     const managedAccounts = buildManagedAccounts(11);
     global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => managedAccounts }));
     await act(async () => root.render(<ManageUsers />));
@@ -176,7 +176,7 @@ describe('ManageUsers edit flow', () => {
       .find((button) => button.textContent === 'Next');
     await act(async () => next().click());
 
-    const search = container.querySelector('input[placeholder="Search users..."]');
+    const search = container.querySelector('input[aria-label="Search Manage Users"]');
     await act(async () => setFieldValue(search, 'Managed User 01'));
     expect(container.textContent).toContain('Users List (1)');
     expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(1);
@@ -187,15 +187,28 @@ describe('ManageUsers edit flow', () => {
     expect(container.querySelector('.table-container').textContent).toContain('Managed User 01');
     expect(container.querySelector('.table-container').textContent).not.toContain('Managed User 09');
 
+    expect(container.querySelectorAll('.controls-wrapper input[type="search"]')).toHaveLength(1);
+    expect(container.querySelector('.controls-wrapper select')).toBeNull();
+
     await act(async () => next().click());
-    const role = container.querySelector('.controls-wrapper select');
-    await act(async () => setSelectValue(role, 'Parent'));
+    await act(async () => setFieldValue(search, 'Parent'));
     expect(container.textContent).toContain('Users List (2)');
     expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(2);
 
-    await act(async () => setSelectValue(role, 'All'));
+    await act(async () => setFieldValue(search, ''));
     expect(container.textContent).toContain('Page 1 of 2');
     expect(container.querySelector('.table-container').textContent).toContain('Managed User 01');
+  });
+
+  test('keeps page and range controls visible and disabled for a one-page result', async () => {
+    global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => buildManagedAccounts(1) }));
+    await act(async () => root.render(<ManageUsers />));
+
+    const pagination = container.querySelector('.manage-users-pagination');
+    expect(pagination).not.toBeNull();
+    expect(pagination.textContent).toContain('Page 1 of 1');
+    expect(pagination.textContent).toContain('Showing 1 - 1 of 1 users');
+    expect(Array.from(pagination.querySelectorAll('button')).every((button) => button.disabled)).toBe(true);
   });
 
   test('archiving the sole record on the last page clamps the rendered table to the previous page', async () => {
@@ -537,7 +550,7 @@ describe('ManageUsers edit flow', () => {
     expect(document.body.textContent).toContain('Admin User');
     expect(document.body.textContent).not.toContain('Game Student');
 
-    const searchInput = document.body.querySelector('input[placeholder="Search users..."]');
+    const searchInput = document.body.querySelector('input[aria-label="Search Manage Users"]');
     await act(async () => {
       setFieldValue(searchInput, 'student');
     });
@@ -798,6 +811,9 @@ describe('ManageUsers edit flow', () => {
   test('Admin creates a Parent with multiple create/link child rows in one account request', async () => {
     let submittedPayload = null;
     global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).includes('/api/accounts/student-link-eligibility')) {
+        return Promise.resolve({ ok: true, json: async () => ({ available: true }) });
+      }
       if (String(url) === '/api/sections/registry') {
         return Promise.resolve({ ok: true, json: async () => ({ grades: [{ grade_level: 'Grade 1', sections: ['Amethyst', 'Amber'] }] }) });
       }
@@ -833,6 +849,10 @@ describe('ManageUsers edit flow', () => {
       setSelectValue(document.body.querySelector('select[aria-label="Child 2 account action"]'), 'link');
     });
     await act(async () => setFieldValue(document.body.querySelector('input[aria-label="Child 2 Student ID"]'), '654321'));
+    expect(Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Add Parent').disabled).toBe(true);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    expect(global.fetch.mock.calls.filter(([url]) => String(url).includes('/student-link-eligibility'))).toHaveLength(2);
+    expect(Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Add Parent').disabled).toBe(false);
     await act(async () => document.body.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
 
     expect(submittedPayload.children).toEqual([
@@ -846,6 +866,9 @@ describe('ManageUsers edit flow', () => {
 
   test('Add User form does not require birthday or gender for admin-created parent accounts', async () => {
     global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).includes('/api/accounts/student-link-eligibility')) {
+        return Promise.resolve({ ok: true, json: async () => ({ available: true }) });
+      }
       if (String(url).includes('/api/sections/registry')) {
         return Promise.resolve({
           ok: true,
@@ -896,6 +919,7 @@ describe('ManageUsers edit flow', () => {
       setSelectValue(document.body.querySelector('select[aria-label="Child 1 section"]'), 'Amethyst');
       setFieldValue(document.body.querySelector('input[aria-label="Child 1 Student ID"]'), '00123456');
     });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
 
     await act(async () => {
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));

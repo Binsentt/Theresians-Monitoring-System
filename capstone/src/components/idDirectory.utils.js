@@ -1,4 +1,5 @@
 import { normalizeRole } from './manageUsers.utils';
+import { matchesTableSearch } from './tableReporting.utils';
 
 const normalizeText = (value) => String(value ?? '').trim().toLowerCase();
 
@@ -11,6 +12,15 @@ const valueForType = (row, type, field) => {
 
 export const filterDirectoryRows = (rows, filters = {}, type) => {
   const safeRows = Array.isArray(rows) ? rows : [];
+  if (typeof filters === 'string') {
+    const fields = type === 'student'
+      ? ['student_id', 'student_name', 'grade_level', 'section', 'parent_name', 'parent_relationship', 'directory_status', 'created_at']
+      : ['teacher_id', 'teacher_name', 'email', 'role', 'directory_status', 'created_at'];
+    return safeRows.filter((row) => matchesTableSearch({
+      ...row,
+      directory_status: formatDirectoryStatus(row),
+    }, filters, fields));
+  }
   const idFilter = normalizeText(filters.id);
   const nameFilter = normalizeText(filters.name);
   const gradeFilter = normalizeText(filters.grade);

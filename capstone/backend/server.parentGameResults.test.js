@@ -1119,7 +1119,10 @@ test('parent game results routes and access middleware', async (t) => {
       if (sql.includes('from public.student_game_progress')) {
         receivedSql = sql;
         assert.equal(params[0], 16);
-        assert.match(sql, /order by progress_percentage desc, accuracy_rate desc, correct_answers desc, quests_completed desc/);
+        assert.match(
+          sql,
+          /order by progress_percentage desc nulls last, accuracy_rate desc nulls last, correct_answers desc nulls last, quests_completed desc nulls last, student_id asc/
+        );
         assert.match(sql, /tsr\.teacher_id = \$1/);
         return resultRows([
           {

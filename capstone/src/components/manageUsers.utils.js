@@ -35,18 +35,20 @@ export const formatRoleLabel = (role) => {
 };
 
 export const filterUsers = (users, searchTerm, roleFilter) => {
-  const normalizedSearch = String(searchTerm || '').trim().toLowerCase();
   const normalizedRoleFilter = normalizeRole(roleFilter);
 
   return users.filter((user) => {
     if (!isWebsiteManagedRole(user.role)) return false;
 
     const roleLabel = formatRoleLabel(user.role);
-    const matchesSearch =
-      !normalizedSearch ||
-      user.name?.toLowerCase().includes(normalizedSearch) ||
-      user.email?.toLowerCase().includes(normalizedSearch) ||
-      roleLabel.toLowerCase().includes(normalizedSearch);
+    const matchesSearch = matchesTableSearch({
+      ...user,
+      role_label: roleLabel,
+      account_status: user.is_archived ? 'Archived' : (user.status || 'Active'),
+    }, searchTerm, [
+      'name', 'email', 'role_label', 'account_status', 'parent_id', 'employee_id',
+      'mobile_number', 'birthday', 'address',
+    ]);
 
     const matchesRole =
       normalizedRoleFilter === '' ||
@@ -125,3 +127,4 @@ export const buildAccountCreationSuccessModal = (selectedRole, data = {}) => ({
   parentId: data.user?.parent_id || '',
   emailSent: !data.warning,
 });
+import { matchesTableSearch } from './tableReporting.utils';

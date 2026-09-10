@@ -73,6 +73,21 @@ describe('manageUsers role helpers', () => {
     ]);
   });
 
+  test('filterUsers matches normalized multi-term queries across role, ID, status, name, and email', () => {
+    const searchableUser = {
+      id: 7,
+      name: 'Paula Santos',
+      email: 'paula@example.com',
+      role: 'parent_teacher',
+      parent_id: '001234',
+      status: 'Online',
+      is_archived: false,
+    };
+
+    expect(filterUsers([searchableUser], 'paula parent/teacher 001234 online')).toEqual([searchableUser]);
+    expect(filterUsers([searchableUser], 'paula 1234')).toEqual([]);
+  });
+
   test('paginateItems slices a filtered list and reports pagination metadata', () => {
     const result = paginateItems(users, 2, 2);
 

@@ -181,12 +181,15 @@ test('activity log API accepts Godot session aliases and scoped child filters', 
       return emptyResult;
     });
 
-    const response = await requestJson(baseUrl, '/api/activity-logs?search=001234', {
+    const response = await requestJson(baseUrl, '/api/activity-logs?search=Grade%201%20Oakleaf%20001234', {
       headers: { Authorization: 'Bearer parent-token' },
     });
 
     assert.equal(response.status, 200);
-    assert.match(mainQuery, /lower\(coalesce\(account\.game_student_id, ''\)\) like/);
+    assert.match(mainQuery, /lower\(coalesce\(account\.game_student_id, ''\)\) = lower/);
+    assert.match(mainQuery, /lower\(coalesce\(al\.grade_level, ''\)\) like/);
+    assert.match(mainQuery, /lower\(coalesce\(al\.current_quest, ''\)\) like/);
+    assert.equal((mainQuery.match(/ and \(/g) || []).length >= 3, true);
     assert.match(countQuery, /left join public\.accounts account on account\.id = al\.student_id/);
     assert.match(mainQuery, /al\.student_id in \(/);
   });

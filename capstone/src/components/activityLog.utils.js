@@ -6,7 +6,7 @@ const toTimestamp = (value) => {
 const normalizeRole = (role) => String(role || '').trim().toLowerCase();
 
 export function shouldShowActivityLogFilters(role) {
-  return normalizeRole(role) !== 'parent';
+  return ['admin', 'teacher', 'parent', 'parent_teacher'].includes(normalizeRole(role));
 }
 
 export function buildActivityLogQueryParams({
@@ -16,8 +16,6 @@ export function buildActivityLogQueryParams({
   role = 'admin',
   selectedStudentId = '',
   debouncedSearch = '',
-  selectedGrade = '',
-  selectedSection = '',
 }) {
   const params = new URLSearchParams();
   params.append('limit', String(Math.min(limit, itemsPerPage)));
@@ -27,16 +25,8 @@ export function buildActivityLogQueryParams({
     params.append('student_id', String(selectedStudentId));
   }
 
-  if (shouldShowActivityLogFilters(role)) {
-    if (debouncedSearch) {
-      params.append('search', debouncedSearch);
-    }
-    if (selectedGrade) {
-      params.append('grade_level', selectedGrade);
-    }
-    if (selectedSection) {
-      params.append('section', selectedSection);
-    }
+  if (shouldShowActivityLogFilters(role) && debouncedSearch) {
+    params.append('search', debouncedSearch);
   }
 
   return params;

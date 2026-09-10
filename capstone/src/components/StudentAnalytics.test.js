@@ -12,6 +12,15 @@ jest.mock('react-router-dom', () => ({
 }));
 
 jest.mock('../assets/images/STS_Logo.png', () => 'logo.png');
+jest.mock('./layout/AppLayout', () => ({
+  DashboardContainer: ({ sidebar, main }) => <div data-testid="analytics-dashboard">{sidebar}{main}</div>,
+  MainContent: ({ children }) => <main>{children}</main>,
+  TopBar: ({ children }) => <header>{children}</header>,
+  PageContent: ({ children }) => <div>{children}</div>,
+}));
+jest.mock('./layout/AnalyticsSidebar', () => ({ role, activeItem }) => (
+  <nav data-testid="analytics-sidebar" data-role={role} data-active={activeItem}>Sidebar</nav>
+));
 
 const jsonResponse = (body) => Promise.resolve({
   ok: true,
@@ -45,6 +54,30 @@ describe('StudentAnalytics defensive rendering', () => {
     jest.useRealTimers();
     delete global.fetch;
     console.error.mockRestore();
+  });
+
+  test('keeps the role-aware dashboard shell during loading, success, and error states', async () => {
+    let resolveRequest;
+    global.fetch = jest.fn(() => new Promise((resolve) => { resolveRequest = resolve; }));
+
+    await act(async () => root.render(<StudentAnalytics />));
+    expect(container.querySelector('[data-testid="analytics-sidebar"]')).not.toBeNull();
+    expect(container.textContent).toContain('Loading student details...');
+
+    await act(async () => resolveRequest({
+      ok: true,
+      status: 200,
+      json: async () => ({ progress: { student_id: 44, student_name: 'Ava Santos' }, metrics: {}, aiInsight: null }),
+    }));
+    expect(container.querySelector('[data-testid="analytics-sidebar"]')).not.toBeNull();
+    expect(container.textContent).toContain('Ava Santos');
+
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    global.fetch = jest.fn(() => Promise.resolve({ ok: false, status: 500, json: async () => ({}) }));
+    await act(async () => root.render(<StudentAnalytics />));
+    expect(container.querySelector('[data-testid="analytics-sidebar"]')).not.toBeNull();
+    expect(container.textContent).toContain('Analytics currently unavailable');
   });
 
   test.each(['admin', 'teacher', 'parent_teacher'])('shows authoritative current difficulty for %s', async (role) => {

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
@@ -8,10 +8,11 @@ import { buildAuthHeaders } from './session.utils';
 import {
   filterStudentProgress,
   formatPercent,
-  getStudentProgressSectionOptions,
-  normalizeDisplayList,
+  loadStudentProgressListState,
   normalizeStudentProgressPayload,
+  saveStudentProgressListState,
 } from './studentProgress.utils';
+import { StudentInsightsPanel } from './GroundedAiAnalysis';
 import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext } from './tableReporting.utils';
@@ -38,17 +39,17 @@ const studentReportColumns = [
 
 export default function AdminStudentProgress() {
   const navigate = useNavigate();
+  const initialListState = useMemo(() => loadStudentProgressListState('admin'), []);
+  const filterChangeReadyRef = useRef(false);
+  const scrollRestoredRef = useRef(false);
   const [students, setStudents] = useState([]);
   const [overview, setOverview] = useState(null);
-  const [recommendations, setRecommendations] = useState([]);
-  const [selectedGrade, setSelectedGrade] = useState('');
-  const [selectedSection, setSelectedSection] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [page, setPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState(initialListState.searchQuery);
+  const [page, setPage] = useState(initialListState.page);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshToken, setRefreshToken] = useState(0);
-  const [lifecycle, setLifecycle] = useState('active');
+  const [lifecycle, setLifecycle] = useState(initialListState.lifecycle);
   const pageSize = 10;
 
   useEffect(() => {
@@ -59,10 +60,9 @@ export default function AdminStudentProgress() {
         const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
         const role = loggedInUser?.role || 'admin';
         const requestOptions = { headers: buildAuthHeaders() };
-        const [studentsResult, overviewResult, recommendationsResult] = await Promise.allSettled([
+        const [studentsResult, overviewResult] = await Promise.allSettled([
           fetch(buildScopedApiUrl(`/api/students/progress?lifecycle=${lifecycle}`, role), requestOptions),
           fetch(buildScopedApiUrl('/api/analytics/overview', role), requestOptions),
-          fetch(buildScopedApiUrl('/api/analytics/recommendations', role), requestOptions),
         ]);
 
         if (studentsResult.status !== 'fulfilled' || !studentsResult.value.ok) {
@@ -79,12 +79,6 @@ export default function AdminStudentProgress() {
           setOverview(null);
         }
 
-        if (recommendationsResult.status === 'fulfilled' && recommendationsResult.value.ok) {
-          const recommendationsData = await recommendationsResult.value.json();
-          setRecommendations(normalizeDisplayList(recommendationsData?.recommendations));
-        } else {
-          setRecommendations([]);
-        }
       } catch (err) {
         console.error('Load error:', err);
         setError('Analytics currently unavailable. Please try again later.');
@@ -96,33 +90,35 @@ export default function AdminStudentProgress() {
     loadData();
   }, [refreshToken, lifecycle]);
 
-  const grades = useMemo(() => {
-    return Array.from(new Set(students.map((student) => student.grade_level || 'Unknown'))).sort();
-  }, [students]);
-
-  const sectionOptions = useMemo(() => {
-    return getStudentProgressSectionOptions(students, selectedGrade);
-  }, [students, selectedGrade]);
-
   const filteredStudents = useMemo(() => {
-    return filterStudentProgress(students, {
-      searchQuery,
-      selectedGrade,
-      selectedSection,
-    });
-  }, [students, searchQuery, selectedGrade, selectedSection]);
+    return filterStudentProgress(students, { searchQuery });
+  }, [students, searchQuery]);
 
   useEffect(() => {
+    if (!filterChangeReadyRef.current) {
+      filterChangeReadyRef.current = true;
+      return;
+    }
     setPage(1);
-  }, [searchQuery, selectedGrade, selectedSection, lifecycle]);
+  }, [searchQuery, lifecycle]);
+
+  useEffect(() => {
+    if (loading || scrollRestoredRef.current || initialListState.scrollTop <= 0) return;
+    scrollRestoredRef.current = true;
+    window.requestAnimationFrame(() => {
+      const scrollContainer = document.querySelector('.page-content');
+      if (scrollContainer) scrollContainer.scrollTop = initialListState.scrollTop;
+      else window.scrollTo(0, initialListState.scrollTop);
+    });
+  }, [initialListState.scrollTop, loading]);
 
   const paginatedStudents = filteredStudents.slice((page - 1) * pageSize, page * pageSize);
   const pageCount = Math.max(1, Math.ceil(filteredStudents.length / pageSize));
   useEffect(() => {
     if (page > pageCount) setPage(pageCount);
   }, [page, pageCount]);
-  const hasActiveStudentFilters = Boolean(searchQuery || selectedGrade || selectedSection);
-  const reportScope = [lifecycle === 'archived' ? 'Archived Progress' : 'Active Progress', selectedGrade, selectedSection, searchQuery ? `Search: ${searchQuery}` : ''].filter(Boolean).join(' / ') || 'All authorised students';
+  const hasActiveStudentFilters = Boolean(searchQuery);
+  const reportScope = [lifecycle === 'archived' ? 'Archived Progress' : 'Active Progress', searchQuery ? `Search: ${searchQuery}` : ''].filter(Boolean).join(' / ') || 'All authorised students';
 
   return (
     <DashboardContainer
@@ -175,29 +171,12 @@ export default function AdminStudentProgress() {
                       <option value="archived">Archived Progress</option>
                     </select>
                   </div>
-                  <div className="filter-group">
-                    <label>Grade</label>
-                    <select value={selectedGrade} onChange={(e) => setSelectedGrade(e.target.value)}>
-                      <option value="">All grades</option>
-                      {grades.map((grade) => (
-                        <option key={grade} value={grade}>{grade}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="filter-group">
-                    <label>Section</label>
-                    <select value={selectedSection} onChange={(e) => setSelectedSection(e.target.value)} disabled={!sectionOptions.length}>
-                      <option value="">All sections</option>
-                      {sectionOptions.map((section) => (
-                        <option key={section} value={section}>{section}</option>
-                      ))}
-                    </select>
-                  </div>
                   <div className="filter-group filter-search">
-                    <label>Search student</label>
+                    <label>Search student progress</label>
                     <input
                       type="search"
-                      placeholder="Search by name or Student ID"
+                      aria-label="Search Admin Student Progress"
+                      placeholder="Name, Student ID, Grade, Section, Quest, Difficulty, or Location"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />
@@ -206,19 +185,7 @@ export default function AdminStudentProgress() {
               </div>
 
               <div className="analytics-insights-panel">
-                <div className="insights-header">
-                  <h2>Student Insights</h2>
-                  <p>Grounded AI interpretation is requested per student from View Analysis.</p>
-                </div>
-                {recommendations.length > 0 ? (
-                  <ul className="recommendation-list">
-                    {recommendations.map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="fallback-note">Open a student’s View Analysis to see recorded metrics or request a grounded insight when enough results are available.</div>
-                )}
+                <StudentInsightsPanel students={filteredStudents} role="admin" />
               </div>
             </ContentSection>
 
@@ -267,13 +234,7 @@ export default function AdminStudentProgress() {
                     </thead>
                     <tbody>
                       {paginatedStudents.map((student, index) => (
-                        <tr
-                          key={student.student_id}
-                          className={lifecycle === 'active' ? 'clickable-row' : ''}
-                          onClick={() => {
-                            if (lifecycle === 'active') navigate(`/admin/student-progress/${student.student_id}`);
-                          }}
-                        >
+                        <tr key={student.student_id}>
                           <td>{((page - 1) * pageSize) + index + 1}</td>
                           <td>{student.student_name || 'Unknown'}</td>
                           <td>{student.game_student_id || 'Not linked'}</td>
@@ -294,8 +255,14 @@ export default function AdminStudentProgress() {
                                 <button
                                   type="button"
                                   className="table-action-button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
+                                  onClick={() => {
+                                    const scrollContainer = document.querySelector('.page-content');
+                                    saveStudentProgressListState('admin', {
+                                      searchQuery,
+                                      page,
+                                      lifecycle,
+                                      scrollTop: scrollContainer?.scrollTop ?? window.scrollY,
+                                    });
                                     navigate(`/admin/student-progress/${student.student_id}`);
                                   }}
                                 >
@@ -328,7 +295,7 @@ export default function AdminStudentProgress() {
 
               <div className="pagination-row no-print">
                 <button disabled={page <= 1} onClick={() => setPage((prev) => Math.max(prev - 1, 1))}>Previous</button>
-                <span>Page {page} of {pageCount}</span>
+                <span>{filteredStudents.length === 0 ? '0 records' : `Showing ${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, filteredStudents.length)} of ${filteredStudents.length}`} · Page {page} of {pageCount}</span>
                 <button disabled={page >= pageCount} onClick={() => setPage((prev) => Math.min(prev + 1, pageCount))}>Next</button>
               </div>
               <PrintableTableReport

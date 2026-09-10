@@ -95,6 +95,7 @@ const {
   extractFixedQuestionDocument,
   resolveFixedQuestionDocumentMetadata,
   validateFixedQuestionUploadFile,
+  validateFixedQuestion,
   validateFixedQuestions,
   validateQuestionSetForReview,
   validateQuestionSetForPublication,
@@ -134,6 +135,18 @@ const {
   permanentlyDeleteParentFamily,
   unlinkManagedChild,
 } = require('./familyLifecycle.service');
+const {
+  WEBSITE_SESSION_ABSOLUTE_TTL_MS,
+  WEBSITE_SESSION_DASHBOARD_REFRESH_MS,
+  WEBSITE_SESSION_FRESHNESS_MS,
+  WEBSITE_SESSION_HEARTBEAT_INTERVAL_MS,
+  createWebsiteSession,
+  getOnlinePresence,
+  resolveWebsiteSession,
+  revokeAllWebsiteSessions,
+  revokeWebsiteSession,
+  touchWebsiteSession,
+} = require('./websiteSession.service');
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -430,7 +443,26 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS target_account_id INTEGER');
     await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS operation_type VARCHAR(32)');
     await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS admin_account_id INTEGER');
+    await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS before_metadata JSONB');
+    await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS after_metadata JSONB');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created_at ON public.admin_audit_logs(created_at DESC)');
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.website_sessions (
+      id BIGSERIAL PRIMARY KEY,
+      account_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+      credential_hash CHAR(64) NOT NULL UNIQUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      expires_at TIMESTAMPTZ NOT NULL,
+      revoked_at TIMESTAMPTZ,
+      revocation_reason VARCHAR(100),
+      CONSTRAINT website_sessions_expiry_after_creation_check CHECK (expires_at > created_at)
+    );`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS website_sessions_account_presence_index
+      ON public.website_sessions (account_id, last_seen_at DESC)
+      WHERE revoked_at IS NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS website_sessions_expiry_index
+      ON public.website_sessions (expires_at)
+      WHERE revoked_at IS NULL`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS public.folders (
       id SERIAL PRIMARY KEY,
@@ -532,10 +564,11 @@ const ensureSchema = async () => {
     await pool.query('CREATE INDEX IF NOT EXISTS questions_learning_file_topic_id_index ON public.questions(learning_file_id, topic_id) WHERE topic_id IS NOT NULL');
   } catch (err) {
     console.error('Schema initialization failed:', err.message);
+    throw err;
   }
 };
 
-ensureSchema();
+const schemaReady = ensureSchema();
 
 const generateRandomPassword = () => createTemporaryPassword();
 
@@ -553,9 +586,14 @@ const isExpiredIsoDate = (value, now = new Date()) => {
   return !Number.isNaN(expiresAt.getTime()) && expiresAt <= now;
 };
 
-const createRememberToken = (user, options = {}) => {
+const createRememberToken = async (user, options = {}, queryClient = pool) => {
   const issuedAt = options.now instanceof Date ? options.now : new Date();
-  const sessionExpiresAt = new Date(issuedAt.getTime() + THIRTY_DAY_SESSION_MS);
+  const sessionExpiresAt = new Date(issuedAt.getTime() + WEBSITE_SESSION_ABSOLUTE_TTL_MS);
+  const websiteSession = await createWebsiteSession(queryClient, {
+    accountId: Number(user.id),
+    now: issuedAt,
+    expiresAt: sessionExpiresAt,
+  });
   return jwt.sign({
     userId: user.id,
     email: user.email,
@@ -565,6 +603,7 @@ const createRememberToken = (user, options = {}) => {
     sessionExpiresAt: sessionExpiresAt.toISOString(),
     otpVerifiedAt: issuedAt.toISOString(),
     otpTrustExpiresAt: normalizeOptionalIsoDate(options.otpTrustExpiresAt),
+    websiteSessionCredential: websiteSession.credential,
   }, JWT_SECRET, { expiresIn: '30d' });
 };
 
@@ -652,7 +691,19 @@ const resolveAuthenticatedAccountFromToken = async (token) => {
     return { ok: false, reason: 'session_version_mismatch' };
   }
 
-  return { ok: true, account, payload };
+  let websiteSession = null;
+  if (payload.websiteSessionCredential) {
+    const sessionResult = await resolveWebsiteSession(pool, {
+      accountId: Number(account.id),
+      credential: payload.websiteSessionCredential,
+    });
+    if (!sessionResult.ok) {
+      return { ok: false, reason: `website_session_${sessionResult.reason}` };
+    }
+    websiteSession = sessionResult.session;
+  }
+
+  return { ok: true, account, payload, websiteSession };
 };
 
 const attachAuthenticatedAccount = async (req, res, next) => {
@@ -670,6 +721,8 @@ const attachAuthenticatedAccount = async (req, res, next) => {
       return res.status(401).json({ error: 'Session expired. Please log in again.' });
     }
     req.authenticatedUser = authResult.account;
+    req.authenticatedTokenPayload = authResult.payload;
+    req.websiteSession = authResult.websiteSession;
     next();
   } catch (err) {
     console.error('Session token validation failed:', err.message);
@@ -721,7 +774,11 @@ const isWebsiteManagedAccountRole = (role) => (
 const TEACHER_DIRECTORY_ROLES = ['teacher', 'parent_teacher'];
 const accountHasTeacherAccess = (role) => TEACHER_DIRECTORY_ROLES.includes(normalizeAccountRole(role));
 const accountHasParentAccess = (role) => ['parent', 'parent_teacher'].includes(normalizeAccountRole(role));
-const PLAYTIME_DAILY_LIMIT_MINUTES = 60;
+const configuredPlaytimeDailyLimitMinutes = Number.parseInt(process.env.PLAYTIME_DAILY_LIMIT_MINUTES, 10);
+const PLAYTIME_DAILY_LIMIT_MINUTES = Number.isInteger(configuredPlaytimeDailyLimitMinutes)
+  && configuredPlaytimeDailyLimitMinutes > 0
+  ? configuredPlaytimeDailyLimitMinutes
+  : 60;
 const PLAYTIME_DAILY_LIMIT_SECONDS = PLAYTIME_DAILY_LIMIT_MINUTES * 60;
 const PLAYTIME_SESSION_CREDENTIAL_BYTES = 32;
 // A session is only considered present while the game continues to prove it is
@@ -1115,17 +1172,29 @@ const formatAuditTargetUser = (account) => {
   return name || email || (id ? `Account ${id}` : 'Unknown Account');
 };
 
-const writeAdminAuditLog = async (adminAccount, action, targetAccount, options = {}) => {
+const writeAdminAuditLog = async (adminAccount, action, targetAccount, options = {}, queryClient = pool) => {
   const adminName = String(adminAccount?.name || adminAccount?.email || '').trim() || 'Unknown Admin';
   const adminAccountId = Number.isInteger(Number(adminAccount?.id)) ? Number(adminAccount.id) : null;
   const targetUser = formatAuditTargetUser(targetAccount);
   const targetAccountId = Number.isInteger(Number(targetAccount?.id)) ? Number(targetAccount.id) : null;
   const reason = options.reason ? String(options.reason).trim() : null;
   const operationType = options.operationType ? String(options.operationType).trim() : null;
-  await pool.query(
-    `INSERT INTO public.admin_audit_logs (admin_name, action, target_user, reason, target_account_id, operation_type, admin_account_id, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-    [adminName, action, targetUser, reason, targetAccountId, operationType, adminAccountId]
+  await queryClient.query(
+    `INSERT INTO public.admin_audit_logs (
+       admin_name, action, target_user, reason, target_account_id, operation_type, admin_account_id,
+       before_metadata, after_metadata, created_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, NOW())`,
+    [
+      adminName,
+      action,
+      targetUser,
+      reason,
+      targetAccountId,
+      operationType,
+      adminAccountId,
+      options.beforeMetadata ? JSON.stringify(options.beforeMetadata) : null,
+      options.afterMetadata ? JSON.stringify(options.afterMetadata) : null,
+    ]
   );
 };
 
@@ -1135,6 +1204,15 @@ const resolveAccountRemovalReason = (value) => {
   if (!reason) return { error: 'Reason for deletion is required.' };
   if (reason.length > MAX_ACCOUNT_REMOVAL_REASON_LENGTH) {
     return { error: `Reason for deletion must be ${MAX_ACCOUNT_REMOVAL_REASON_LENGTH} characters or fewer.` };
+  }
+  return { reason };
+};
+const MAX_LEARNING_CONTENT_REASON_LENGTH = 1000;
+const resolveLearningContentReason = (value) => {
+  const reason = String(value || '').trim();
+  if (!reason) return { error: 'A deletion reason is required.' };
+  if (reason.length > MAX_LEARNING_CONTENT_REASON_LENGTH) {
+    return { error: `Deletion reason must be ${MAX_LEARNING_CONTENT_REASON_LENGTH} characters or fewer.` };
   }
   return { reason };
 };
@@ -1583,6 +1661,10 @@ const replaceAccountPassword = async ({ account, newPassword, requireTemporaryPa
       throw error;
     }
     await client.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [account.id]);
+    await revokeAllWebsiteSessions(client, {
+      accountId: Number(account.id),
+      reason: 'password_changed',
+    });
     await client.query('COMMIT');
     return updateResult.rows[0];
   } catch (error) {
@@ -3491,6 +3573,14 @@ const markStudentInsightStale = async (queryClient, studentId) => {
   );
 };
 
+app.use('/api', async (req, res, next) => {
+  try {
+    await schemaReady;
+    next();
+  } catch (error) {
+    res.status(503).json({ error: 'Database schema is not ready.' });
+  }
+});
 app.use('/api', attachAuthenticatedAccount);
 
 app.get('/api/test', async (req, res) => {
@@ -3511,6 +3601,34 @@ app.get('/api/session/validate', async (req, res) => {
     valid: true,
     user: serializeUser(req.authenticatedUser),
   });
+});
+
+app.post('/api/session/heartbeat', requireWebsiteManagedAccount, async (req, res) => {
+  const credential = req.authenticatedTokenPayload?.websiteSessionCredential;
+  if (!credential) {
+    return res.status(401).json({
+      error: 'This legacy session must sign in again before presence can be tracked.',
+      code: 'WEBSITE_SESSION_REAUTHENTICATION_REQUIRED',
+    });
+  }
+  try {
+    const now = new Date();
+    const session = await touchWebsiteSession(pool, {
+      accountId: Number(req.authenticatedUser.id),
+      credential,
+      now,
+    });
+    if (!session) return res.status(401).json({ error: 'Session expired. Please log in again.' });
+    return res.json({
+      success: true,
+      server_time: now.toISOString(),
+      freshness_ttl_seconds: Math.floor(WEBSITE_SESSION_FRESHNESS_MS / 1000),
+      heartbeat_interval_seconds: Math.floor(WEBSITE_SESSION_HEARTBEAT_INTERVAL_MS / 1000),
+    });
+  } catch (error) {
+    console.error('Website session heartbeat failed:', error.message);
+    return res.status(503).json({ error: 'Presence heartbeat is unavailable.' });
+  }
 });
 
 app.post('/api/login', async (req, res) => {
@@ -3535,13 +3653,13 @@ app.post('/api/login', async (req, res) => {
     if (normalizedDeviceId) {
       const skipResult = await pool.query(buildLoginDeviceSkipLookup(user.id, normalizedDeviceId));
       if (skipResult.rows.length > 0) {
-        const sessionToken = createRememberToken(user, {
-          otpTrustExpiresAt: skipResult.rows[0]?.otp_skipped_until,
-        });
         await pool.query(
           'UPDATE public.accounts SET otp_code = NULL, otp_expires_at = NULL, status = $1 WHERE id = $2',
           ['Active', user.id]
         );
+        const sessionToken = await createRememberToken(user, {
+          otpTrustExpiresAt: skipResult.rows[0]?.otp_skipped_until,
+        });
         const serializedUser = serializeUser({ ...user, status: 'Active' });
         return res.json({
           success: true,
@@ -3623,8 +3741,8 @@ app.post('/api/login/verify-otp', async (req, res) => {
       otpTrustExpiresAt = new Date(Date.now() + THIRTY_DAY_SESSION_MS);
       await pool.query(buildLoginDeviceSkipUpsert(user.id, normalizedDeviceId, otpTrustExpiresAt));
     }
-    const rememberToken = createRememberToken(user, { otpTrustExpiresAt });
     await pool.query('UPDATE public.accounts SET otp_code = NULL, otp_expires_at = NULL, status = $1 WHERE id = $2', ['Active', user.id]);
+    const rememberToken = await createRememberToken(user, { otpTrustExpiresAt });
 
     const serializedUser = serializeUser({ ...user, status: 'Active' });
     res.json({
@@ -3640,13 +3758,47 @@ app.post('/api/login/verify-otp', async (req, res) => {
   }
 });
 
-app.post('/api/logout-status', async (req, res) => {
-  const { userId } = req.body;
+app.post('/api/logout-status', requireWebsiteManagedAccount, async (req, res) => {
+  const credential = req.authenticatedTokenPayload?.websiteSessionCredential;
   try {
-    await pool.query('UPDATE public.accounts SET status = $1 WHERE id = $2', ['Offline', userId]);
-    res.json({ success: true });
+    if (!credential) {
+      return res.json({
+        success: true,
+        current_session_revoked: false,
+        reauthentication_required: true,
+      });
+    }
+    const revoked = await revokeWebsiteSession(pool, {
+      accountId: Number(req.authenticatedUser.id),
+      credential,
+      reason: 'logout',
+    });
+    if (!revoked) return res.status(401).json({ error: 'Session expired. Please log in again.' });
+    return res.json({ success: true, current_session_revoked: true });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update status' });
+    return res.status(500).json({ error: 'Failed to revoke session' });
+  }
+});
+
+app.get('/api/admin/presence', requireAccountManagementAdmin, async (req, res) => {
+  try {
+    const now = new Date();
+    const snapshot = await getOnlinePresence(pool, { now });
+    return res.json({
+      online_now: {
+        total: snapshot.total,
+        admins: snapshot.admins,
+        teachers: snapshot.teachers,
+        parents: snapshot.parents,
+        parent_teachers: snapshot.parentTeachers,
+      },
+      server_time: now.toISOString(),
+      freshness_ttl_seconds: Math.floor(WEBSITE_SESSION_FRESHNESS_MS / 1000),
+      dashboard_refresh_seconds: Math.floor(WEBSITE_SESSION_DASHBOARD_REFRESH_MS / 1000),
+    });
+  } catch (error) {
+    console.error('Fetch website presence failed:', error.message);
+    return res.status(503).json({ error: 'Online presence is unavailable.' });
   }
 });
 
@@ -3662,7 +3814,7 @@ app.post('/api/account/initial-password', requireWebsiteManagedAccount, async (r
       success: true,
       message: 'Initial password setup completed.',
       user,
-      rememberToken: createRememberToken(updatedAccount),
+      rememberToken: await createRememberToken(updatedAccount),
     });
   } catch (error) {
     return res.status(error.statusCode || 500).json({
@@ -3687,7 +3839,7 @@ app.put('/api/account/password', requireWebsiteManagedAccount, async (req, res) 
       success: true,
       message: 'Password changed successfully.',
       user,
-      rememberToken: createRememberToken(updatedAccount),
+      rememberToken: await createRememberToken(updatedAccount),
     });
   } catch (error) {
     return res.status(error.statusCode || 500).json({
@@ -3827,6 +3979,12 @@ const resolveManagedParentAccount = async (queryClient, parentId, { forUpdate = 
   return parent;
 };
 
+const CANONICAL_TOP_ACHIEVER_ORDER_SQL = `progress_percentage DESC NULLS LAST,
+              accuracy_rate DESC NULLS LAST,
+              correct_answers DESC NULLS LAST,
+              quests_completed DESC NULLS LAST,
+              student_id ASC`;
+
 const getManagedParentChildren = async (queryClient, parentId) => {
   const result = await queryClient.query(
     `SELECT relationship.id AS relationship_id,
@@ -3859,6 +4017,63 @@ const serializeManagedChild = (student, operation = undefined) => ({
   section: student.section,
   is_archived: Boolean(student.is_archived),
   ...(operation ? { operation } : {}),
+});
+
+app.get('/api/accounts/student-link-eligibility', requireAccountManagementAdmin, async (req, res) => {
+  const operation = String(req.query.operation || 'link').trim().toLowerCase();
+  if (!['create', 'link'].includes(operation)) {
+    return res.status(400).json({ error: 'operation must be create or link.' });
+  }
+  const studentId = operation === 'create'
+    ? normalizeNewStudentCode(req.query.student_id)
+    : normalizeExistingStudentCode(req.query.student_id);
+  if (!studentId) {
+    return res.status(400).json({
+      error: operation === 'create'
+        ? 'New Student IDs must be exactly 8 digits.'
+        : 'Student ID must be either 6 or 8 digits.',
+    });
+  }
+
+  try {
+    const studentResult = await pool.query(
+      `SELECT s.id, s.is_archived
+       FROM public.accounts s
+       WHERE s.game_student_id = $1
+         AND LOWER(s.role) = 'student'
+       LIMIT 1`,
+      [studentId]
+    );
+    const student = studentResult.rows[0];
+    if (operation === 'create') {
+      if (student) {
+        return res.status(409).json({ error: 'This Student ID is already in use. Choose Link Existing Student instead.' });
+      }
+      return res.json({ available: true, student_id: studentId, operation });
+    }
+    if (!student || student.is_archived) {
+      return res.status(404).json({ error: 'Active Student account not found.' });
+    }
+
+    const activeParent = await pool.query(
+      `SELECT true AS active_parent_relationship
+       FROM public.teacher_student_relationships relationship
+       JOIN public.accounts parent ON parent.id = relationship.teacher_id
+       WHERE relationship.student_id = $1
+         AND LOWER(relationship.relationship_type) = 'parent'
+         AND LOWER(parent.role) IN ('parent', 'parent_teacher')
+         AND COALESCE(parent.is_archived, false) = false
+       LIMIT 1`,
+      [student.id]
+    );
+    if (activeParent.rows.length > 0) {
+      return res.status(409).json({ error: 'This Student is already linked to a Parent account.' });
+    }
+    return res.json({ available: true, student_id: studentId, operation });
+  } catch (error) {
+    console.error('Student link eligibility check failed:', error.message);
+    return res.status(500).json({ error: 'Unable to validate this Student ID.' });
+  }
 });
 
 app.get('/api/accounts/:parentId/children', requireAccountManagementAdmin, async (req, res) => {
@@ -3913,18 +4128,32 @@ app.delete('/api/accounts/:parentId/children/:studentId', requireAccountManageme
     if (permanent && req.body?.permanent_confirmation !== 'DELETE') {
       return res.status(400).json({ error: 'Type DELETE to confirm permanent Student deletion.' });
     }
+    const reasonResult = resolveAccountRemovalReason(req.body?.reason);
+    if (reasonResult.error) return res.status(400).json({ error: reasonResult.error });
     if (permanent) {
-      const result = await permanentlyDeleteManagedStudent(pool, req.params.parentId, req.params.studentId);
-      await writeAdminAuditLog(req.authenticatedUser, 'Delete Student Account', result.deletedStudent, {
-        reason: normalizeOptionalText(req.body?.reason),
-        operationType: 'permanent_delete_student',
+      const result = await permanentlyDeleteManagedStudent(pool, req.params.parentId, req.params.studentId, {
+        afterMutation: (client, mutation) => writeAdminAuditLog(req.authenticatedUser, 'Delete Student Account', mutation.deletedStudent, {
+          reason: reasonResult.reason,
+          operationType: 'permanent_delete_student',
+        }, client),
       });
       return res.json({ success: true, message: 'Student permanently deleted', deleted_student: result.deletedStudent });
     }
-    const result = await unlinkManagedChild(pool, req.params.parentId, req.params.studentId);
-    await writeAdminAuditLog(req.authenticatedUser, 'Unlink Parent Child', result.relationship, {
-      reason: normalizeOptionalText(req.body?.reason),
-      operationType: 'unlink_child',
+    await unlinkManagedChild(pool, req.params.parentId, req.params.studentId, {
+      afterMutation: (client, mutation) => writeAdminAuditLog(req.authenticatedUser, 'Unlink Parent Child', mutation.student, {
+        reason: reasonResult.reason,
+        operationType: 'unlink_child',
+        beforeMetadata: {
+          relationship_id: mutation.relationship.id,
+          parent_account_id: mutation.relationship.teacher_id,
+          student_account_id: mutation.relationship.student_id,
+          relationship_type: mutation.relationship.relationship_type,
+        },
+        afterMetadata: {
+          relationship_removed: true,
+          student_account_preserved: true,
+        },
+      }, client),
     });
     return res.json({ success: true, message: 'Child unlinked; Student account preserved.' });
   } catch (error) {
@@ -3967,6 +4196,10 @@ app.post('/api/accounts/:id/temporary-password', requireAccountManagementAdmin, 
       [hashedPassword, issuedAt, expiresAt, account.id]
     );
     const updatedAccount = updateResult.rows[0];
+    await revokeAllWebsiteSessions(pool, {
+      accountId: Number(account.id),
+      reason: 'temporary_password_issued',
+    });
     const emailSent = await resolveCredentialEmailDelivery(
       () => generateCredentialsEmail(updatedAccount.email, generatedPassword, updatedAccount.role, updatedAccount.name),
       getCredentialEmailTimeoutMs()
@@ -4159,11 +4392,13 @@ app.put('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) => 
       }
       hashedPassword = await hashPassword(password);
     }
+    const invalidateExistingSessions = passwordProvided || roleChanged || (finalArchived && !old.is_archived);
 
     const updateResult = await pool.query(
       `UPDATE public.accounts
        SET name=$1, email=$2, role=$3, password=$4, mobile_number=$5, address=$6,
-           birthday=$7, gender=$8, status=$9, employee_id=$10, is_archived=$11, parent_id=$12
+           birthday=$7, gender=$8, status=$9, employee_id=$10, is_archived=$11, parent_id=$12,
+           session_version = COALESCE(session_version, 0) + CASE WHEN $14::boolean THEN 1 ELSE 0 END
        WHERE id=$13
        RETURNING *`,
       [
@@ -4180,6 +4415,7 @@ app.put('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) => 
         finalArchived,
         finalParentCode,
         id,
+        invalidateExistingSessions,
       ]
     );
 
@@ -4188,6 +4424,12 @@ app.put('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) => 
     }
 
     const updatedUser = serializeUser(updateResult.rows[0]);
+    if (invalidateExistingSessions) {
+      await revokeAllWebsiteSessions(pool, {
+        accountId: Number(id),
+        reason: finalArchived ? 'account_archived' : (passwordProvided ? 'credential_reset' : 'role_changed'),
+      });
+    }
     await writeAdminAuditLog(req.authenticatedUser, 'Edit Account', updatedUser);
     if (roleChanged) {
       await writeAdminAuditLog(req.authenticatedUser, 'Change Role', updatedUser);
@@ -5525,6 +5767,8 @@ app.put('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (re
 });
 
 app.delete('/api/learning-files/trash', requireLessonQuestionManagerAccess, async (req, res) => {
+  const reasonResult = resolveLearningContentReason(req.body?.reason);
+  if (reasonResult.error) return res.status(400).json({ error: reasonResult.error });
   const rawFileIds = req.body?.file_ids;
   const fileIds = Array.isArray(rawFileIds)
     ? rawFileIds.map((value) => Number(value))
@@ -5590,6 +5834,12 @@ app.delete('/api/learning-files/trash', requireLessonQuestionManagerAccess, asyn
     if (deletedResult.rows.length !== fileIds.length) {
       throw createLifecycleHttpError('One or more selected files could not be permanently deleted.', 409);
     }
+    await writeAdminAuditLog(req.authenticatedUser, 'Empty Question Set Trash', { name: `${files.length} Question Sets` }, {
+      reason: reasonResult.reason,
+      operationType: 'question_set_bulk_permanent_delete',
+      beforeMetadata: { files: files.map((file) => ({ id: file.id, title: file.title, file_name: file.file_name, deleted_at: file.deleted_at })) },
+      afterMetadata: { permanently_deleted_file_ids: deletedResult.rows.map((file) => file.id) },
+    }, client);
     await client.query('COMMIT');
     deletedResult.rows.forEach((file) => removeFileFromDisk(file.file_url));
     return res.json({ success: true, deleted_file_ids: deletedResult.rows.map((file) => file.id) });
@@ -5606,22 +5856,25 @@ app.delete('/api/learning-files/trash', requireLessonQuestionManagerAccess, asyn
 });
 
 app.delete('/api/learning-files/:id', requireLessonQuestionManagerAccess, async (req, res) => {
+  const fileId = parseInt(req.params.id, 10);
+  if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
+  const reasonResult = resolveLearningContentReason(req.body?.reason);
+  if (reasonResult.error) return res.status(400).json({ error: reasonResult.error });
+  const client = await pool.connect();
   try {
-    const fileId = parseInt(req.params.id, 10);
-    if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
-    const currentFileResult = await pool.query(
-      'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL',
+    await client.query('BEGIN');
+    const currentFileResult = await client.query(
+      'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
       [fileId]
     );
     const currentFile = currentFileResult.rows[0];
-    if (!currentFile) return res.status(404).json({ error: 'File not found' });
+    if (!currentFile) throw createLifecycleHttpError('File not found', 404);
     if (currentFile.published || currentFile.publish_status === 'active') {
-      return res.status(409).json({
-        error: 'This question set is Active in Game. Remove from Game before deleting this question set.',
-        code: 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED',
-      });
+      const error = createLifecycleHttpError('This question set is Active in Game. Remove from Game before deleting this question set.', 409);
+      error.code = 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED';
+      throw error;
     }
-    const fileResult = await pool.query(
+    const fileResult = await client.query(
       `UPDATE public.learning_files
        SET deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP),
            published = false
@@ -5629,12 +5882,23 @@ app.delete('/api/learning-files/:id', requireLessonQuestionManagerAccess, async 
        RETURNING *`,
       [fileId]
     );
-    if (fileResult.rows.length === 0) return res.status(404).json({ error: 'File not found' });
-    await pool.query('UPDATE public.questions SET published = false WHERE learning_file_id = $1', [fileId]);
-    res.json({ success: true, learningFile: normalizeLearningFileRow(fileResult.rows[0]) });
+    if (fileResult.rows.length === 0) throw createLifecycleHttpError('File not found', 404);
+    await client.query('UPDATE public.questions SET published = false WHERE learning_file_id = $1', [fileId]);
+    const trashedFile = fileResult.rows[0];
+    await writeAdminAuditLog(req.authenticatedUser, 'Delete Question Set', { id: fileId, name: currentFile.title || currentFile.file_name }, {
+      reason: reasonResult.reason,
+      operationType: 'question_set_trash',
+      beforeMetadata: { ...currentFile },
+      afterMetadata: { id: fileId, deleted_at: trashedFile.deleted_at, published: false },
+    }, client);
+    await client.query('COMMIT');
+    return res.json({ success: true, learningFile: normalizeLearningFileRow(trashedFile) });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Move learning file to trash failed:', err.message);
-    res.status(500).json({ error: 'Failed to move file to trash' });
+    return res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Failed to move file to trash', ...(err.code ? { code: err.code } : {}) });
+  } finally {
+    client.release();
   }
 });
 
@@ -5655,37 +5919,50 @@ app.post('/api/learning-files/:id/restore', requireLessonQuestionManagerAccess, 
 });
 
 app.delete('/api/learning-files/:id/permanent', requireLessonQuestionManagerAccess, async (req, res) => {
+  const fileId = parseInt(req.params.id, 10);
+  if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
+  const reasonResult = resolveLearningContentReason(req.body?.reason);
+  if (reasonResult.error) return res.status(400).json({ error: reasonResult.error });
+  const client = await pool.connect();
+  let fileUrl = null;
   try {
-    const fileId = parseInt(req.params.id, 10);
-    if (Number.isNaN(fileId)) return res.status(400).json({ error: 'Invalid file ID' });
-    const fileResult = await pool.query(
-      'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NOT NULL',
+    await client.query('BEGIN');
+    const fileResult = await client.query(
+      'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NOT NULL FOR UPDATE',
       [fileId]
     );
-    if (fileResult.rows.length === 0) return res.status(404).json({ error: 'Trashed file not found' });
+    if (fileResult.rows.length === 0) throw createLifecycleHttpError('Trashed file not found', 404);
     const file = fileResult.rows[0];
+    fileUrl = file.file_url;
     if (file.published || file.publish_status === 'active') {
-      return res.status(409).json({
-        error: 'This question set is Active in Game. Remove from Game before permanently deleting this question set.',
-        code: 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED',
-      });
+      const error = createLifecycleHttpError('This question set is Active in Game. Remove from Game before permanently deleting this question set.', 409);
+      error.code = 'ACTIVE_QUESTION_SET_CANNOT_BE_DELETED';
+      throw error;
     }
-    const historicalResult = await pool.query(
+    const historicalResult = await client.query(
       'SELECT 1 FROM public.game_results WHERE question_set_id = $1 LIMIT 1',
       [fileId]
     );
     if (historicalResult.rows.length > 0) {
-      return res.status(409).json({
-        error: 'This question set has historical results and cannot be permanently deleted.',
-      });
+      throw createLifecycleHttpError('This question set has historical results and cannot be permanently deleted.', 409);
     }
-    await pool.query('DELETE FROM public.questions WHERE learning_file_id = $1', [fileId]);
-    await pool.query('DELETE FROM public.learning_files WHERE id = $1', [fileId]);
-    removeFileFromDisk(file.file_url);
-    res.json({ success: true });
+    await client.query('DELETE FROM public.questions WHERE learning_file_id = $1', [fileId]);
+    await client.query('DELETE FROM public.learning_files WHERE id = $1', [fileId]);
+    await writeAdminAuditLog(req.authenticatedUser, 'Permanently Delete Question Set', { id: fileId, name: file.title || file.file_name }, {
+      reason: reasonResult.reason,
+      operationType: 'question_set_permanent_delete',
+      beforeMetadata: { ...file },
+      afterMetadata: { id: fileId, permanently_deleted: true },
+    }, client);
+    await client.query('COMMIT');
+    removeFileFromDisk(fileUrl);
+    return res.json({ success: true });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Permanent learning file delete failed:', err.message);
-    res.status(500).json({ error: 'Failed to permanently delete file' });
+    return res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Failed to permanently delete file', ...(err.code ? { code: err.code } : {}) });
+  } finally {
+    client.release();
   }
 });
 
@@ -6791,11 +7068,12 @@ app.post('/api/game/leaderboard', async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT progress_percentage,
+      `SELECT student_id,
+              progress_percentage,
               accuracy_rate,
               correct_answers,
               total_questions,
-              total_quests_completed
+              total_quests_completed AS quests_completed
        FROM (
          SELECT p.student_id,
                 p.progress_percentage,
@@ -6822,10 +7100,7 @@ app.post('/api/game/leaderboard', async (req, res) => {
            )
        ) ranked_progress
        WHERE student_rank = 1
-       ORDER BY progress_percentage DESC NULLS LAST,
-                accuracy_rate DESC NULLS LAST,
-                correct_answers DESC NULLS LAST,
-                total_quests_completed DESC
+       ORDER BY ${CANONICAL_TOP_ACHIEVER_ORDER_SQL}
        LIMIT 10`
     );
 
@@ -6837,7 +7112,7 @@ app.post('/api/game/leaderboard', async (req, res) => {
         accuracy_rate: row.accuracy_rate ?? null,
         correct_answers: row.correct_answers ?? null,
         total_questions: row.total_questions ?? null,
-        quests_completed: row.total_quests_completed ?? 0,
+        quests_completed: row.quests_completed ?? row.total_quests_completed ?? 0,
       })),
     });
   } catch (err) {
@@ -6911,12 +7186,230 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
       RETURNING *`,
       [id]
     );
+    await revokeAllWebsiteSessions(pool, {
+      accountId: Number(id),
+      reason: 'account_archived',
+    });
     await pool.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [id]);
     await writeAdminAuditLog(req.authenticatedUser, 'Archive Account', archiveResult.rows[0] || targetAccount, auditOptions);
     res.json({ success: true, message: 'Account archived' });
   } catch (err) {
     console.error('Delete/archive failed:', err.message);
     res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Delete/archive failed' });
+  }
+});
+
+app.put('/api/learning-files/:id/questions/:questionId', requireLessonQuestionManagerAccess, async (req, res) => {
+  const fileId = Number(req.params.id);
+  const questionId = Number(req.params.questionId);
+  if (!Number.isSafeInteger(fileId) || fileId < 1 || !Number.isSafeInteger(questionId) || questionId < 1) {
+    return res.status(400).json({ error: 'Invalid file or question ID.' });
+  }
+
+  const structural = validateFixedQuestion({
+    question: req.body?.question,
+    options: Array.isArray(req.body?.options) ? req.body.options : [],
+    correct_answer: req.body?.correct_answer,
+  });
+  if (!structural.is_valid) {
+    return res.status(400).json({ error: 'Correct the question before saving.', validation_errors: structural.validation_errors });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const fileResult = await client.query(
+      'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      [fileId]
+    );
+    const learningFile = fileResult.rows[0];
+    if (!learningFile) throw createLifecycleHttpError('Question set not found.', 404);
+    requireQuestionSetRecord(learningFile);
+    if (learningFile.published || learningFile.publish_status === 'active') {
+      const error = createLifecycleHttpError('This question set is Active in Game. Remove from Game before editing a question.', 409);
+      error.code = 'ACTIVE_QUESTION_SET_CANNOT_BE_EDITED';
+      throw error;
+    }
+
+    const historicalResult = await client.query(
+      'SELECT 1 FROM public.game_results WHERE question_set_id = $1 LIMIT 1',
+      [fileId]
+    );
+    if (historicalResult.rows.length > 0) {
+      const error = createLifecycleHttpError('A question set with historical results cannot be edited.', 409);
+      error.code = 'QUESTION_SET_HISTORY_PREVENTS_EDIT';
+      throw error;
+    }
+
+    const questionResult = await client.query(
+      'SELECT * FROM public.questions WHERE id = $1 AND learning_file_id = $2 FOR UPDATE',
+      [questionId, fileId]
+    );
+    const beforeQuestion = questionResult.rows[0];
+    if (!beforeQuestion) throw createLifecycleHttpError('Question not found.', 404);
+
+    const rawTopicId = String(req.body?.topic_id || '').trim();
+    const normalizedTopicId = rawTopicId ? normalizeTopicId(rawTopicId) : null;
+    if (rawTopicId && (!normalizedTopicId || !getTopicById(normalizedTopicId))) {
+      throw createLifecycleHttpError('Topic metadata must use a supported curriculum topic.', 400);
+    }
+    const canonicalScope = resolveCanonicalQuestionScope({
+      grade_level: learningFile.grade_level,
+      difficulty: learningFile.difficulty,
+      topic_id: normalizedTopicId,
+      math_topic: req.body?.math_topic ?? beforeQuestion.math_topic ?? learningFile.math_topic,
+    });
+    if (!canonicalScope) throw createLifecycleHttpError('Question scope is not supported.', 400);
+
+    const updatedQuestionResult = await client.query(
+      `UPDATE public.questions
+       SET question = $1,
+           options = $2::jsonb,
+           correct_answer = $3,
+           grade_level = $4,
+           difficulty = $5,
+           math_topic = $6,
+           topic_id = $7,
+           updated_at = NOW()
+       WHERE id = $8 AND learning_file_id = $9
+       RETURNING *`,
+      [
+        structural.question,
+        JSON.stringify(structural.options),
+        structural.correct_answer,
+        canonicalScope.grade_level,
+        canonicalScope.difficulty,
+        canonicalScope.math_topic,
+        canonicalScope.topic_id,
+        questionId,
+        fileId,
+      ]
+    );
+    const updatedQuestion = updatedQuestionResult.rows[0];
+    if (!updatedQuestion) throw createLifecycleHttpError('Question could not be updated.', 409);
+
+    const updatedFileResult = await client.query(
+      `UPDATE public.learning_files
+       SET approval_status = 'review_required',
+           approved_at = NULL,
+           approved_by = NULL,
+           approved_content_fingerprint = NULL
+       WHERE id = $1
+         AND deleted_at IS NULL
+         AND NOT (COALESCE(published, false) = true OR publish_status = 'active')
+       RETURNING *`,
+      [fileId]
+    );
+    const updatedFile = updatedFileResult.rows[0];
+    if (!updatedFile) throw createLifecycleHttpError('Question set changed before the edit could be saved.', 409);
+
+    const validationState = await getQuestionSetValidationState(client, updatedFile, { lockRows: true });
+    const validation = buildQuestionSetValidationSummary(validationState, updatedFile);
+    await writeAdminAuditLog(req.authenticatedUser, 'Edit Question', { id: questionId, name: `Question ${questionId}` }, {
+      reason: 'Question content edited in review preview.',
+      operationType: 'question_edit',
+      beforeMetadata: {
+        learning_file_id: fileId,
+        question: beforeQuestion.question,
+        options: beforeQuestion.options,
+        correct_answer: beforeQuestion.correct_answer,
+        math_topic: beforeQuestion.math_topic,
+        topic_id: beforeQuestion.topic_id,
+      },
+      afterMetadata: {
+        learning_file_id: fileId,
+        question: updatedQuestion.question,
+        options: updatedQuestion.options,
+        correct_answer: updatedQuestion.correct_answer,
+        math_topic: updatedQuestion.math_topic,
+        topic_id: updatedQuestion.topic_id,
+        approval_status: 'review_required',
+      },
+    }, client);
+    await client.query('COMMIT');
+
+    const validatedQuestion = validationState.structural.questions.find((question) => Number(question.id) === questionId);
+    return res.json({
+      success: true,
+      file: normalizeLearningFileRow({ ...updatedFile, validation_summary: validation }),
+      question: { ...updatedQuestion, ...(validatedQuestion || {}) },
+      validation,
+      review_fingerprint: buildLearningFileApprovalFingerprint(updatedFile, validationState.structural.questions),
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(err.statusCode || 500).json({
+      error: err.statusCode ? err.message : 'Unable to save this question.',
+      ...(err.code ? { code: err.code } : {}),
+    });
+  } finally {
+    client.release();
+  }
+});
+
+app.delete('/api/learning-files/:id/questions/:questionId', requireLessonQuestionManagerAccess, async (req, res) => {
+  const fileId = Number(req.params.id);
+  const questionId = Number(req.params.questionId);
+  if (!Number.isSafeInteger(fileId) || fileId < 1 || !Number.isSafeInteger(questionId) || questionId < 1) {
+    return res.status(400).json({ error: 'Invalid file or question ID.' });
+  }
+  const reasonResult = resolveLearningContentReason(req.body?.reason);
+  if (reasonResult.error) return res.status(400).json({ error: reasonResult.error });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const fileResult = await client.query(
+      'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      [fileId]
+    );
+    const learningFile = fileResult.rows[0];
+    if (!learningFile) throw createLifecycleHttpError('Question set not found.', 404);
+    requireQuestionSetRecord(learningFile);
+    if (learningFile.published || learningFile.publish_status === 'active') {
+      const error = createLifecycleHttpError('This question set is Active in Game. Remove from Game before deleting a question.', 409);
+      error.code = 'ACTIVE_QUESTION_SET_CANNOT_BE_EDITED';
+      throw error;
+    }
+    const historicalResult = await client.query('SELECT 1 FROM public.game_results WHERE question_set_id = $1 LIMIT 1', [fileId]);
+    if (historicalResult.rows.length > 0) {
+      throw createLifecycleHttpError('A question set with historical results cannot have individual questions deleted.', 409);
+    }
+    const questionResult = await client.query(
+      'SELECT * FROM public.questions WHERE id = $1 AND learning_file_id = $2 FOR UPDATE',
+      [questionId, fileId]
+    );
+    const question = questionResult.rows[0];
+    if (!question) throw createLifecycleHttpError('Question not found.', 404);
+    await client.query('DELETE FROM public.questions WHERE id = $1 AND learning_file_id = $2', [questionId, fileId]);
+    const updatedFileResult = await client.query(
+      `UPDATE public.learning_files
+       SET approval_status = 'review_required', approved_at = NULL, approved_by = NULL, approved_content_fingerprint = NULL
+       WHERE id = $1 RETURNING *`,
+      [fileId]
+    );
+    const updatedFile = updatedFileResult.rows[0] || learningFile;
+    const validationState = await getQuestionSetValidationState(client, updatedFile, { lockRows: true });
+    const validation = buildQuestionSetValidationSummary(validationState, updatedFile);
+    await writeAdminAuditLog(req.authenticatedUser, 'Delete Question', { id: questionId, name: `Question ${questionId}` }, {
+      reason: reasonResult.reason,
+      operationType: 'question_delete',
+      beforeMetadata: { learning_file_id: fileId, ...question },
+      afterMetadata: { learning_file_id: fileId, deleted: true, approval_status: 'review_required' },
+    }, client);
+    await client.query('COMMIT');
+    return res.json({
+      success: true,
+      file: normalizeLearningFileRow({ ...updatedFile, validation_summary: validation }),
+      deleted_question_id: questionId,
+      validation,
+      review_fingerprint: buildLearningFileApprovalFingerprint(updatedFile, validationState.structural.questions),
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Unable to delete this question.', ...(err.code ? { code: err.code } : {}) });
+  } finally {
+    client.release();
   }
 });
 
@@ -6972,7 +7465,30 @@ app.post('/api/reset-password/verify', async (req, res) => {
     if (passwordError) return res.status(400).json({ error: passwordError });
 
     const hashedPassword = await hashPassword(newPassword);
-    await pool.query('UPDATE accounts SET password=$1, otp_code=NULL, otp_expires_at=NULL WHERE LOWER(email)=$2', [hashedPassword, email.toLowerCase().trim()]);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `UPDATE public.accounts
+         SET password = $1,
+             otp_code = NULL,
+             otp_expires_at = NULL,
+             session_version = COALESCE(session_version, 0) + 1
+         WHERE LOWER(email) = $2`,
+        [hashedPassword, email.toLowerCase().trim()]
+      );
+      await revokeAllWebsiteSessions(client, {
+        accountId: Number(user.id),
+        reason: 'password_reset',
+      });
+      await client.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [user.id]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
     res.json({ success: true });
   } catch (err) { console.error('Reset password verify failed:', err.message); res.status(500).json({ error: 'Update failed' }); }
 });
@@ -7021,7 +7537,7 @@ app.post('/api/verify-password-change-otp', requireWebsiteManagedAccount, async 
         success: true,
         message: 'Password changed successfully!',
         user: serializeUser(updatedAccount),
-        rememberToken: createRememberToken(updatedAccount),
+        rememberToken: await createRememberToken(updatedAccount),
       });
     }
 
@@ -7175,6 +7691,7 @@ const handleTopAchieversRequest = async (req, res) => {
           LIMIT 1
         ) latest_activity ON true
         WHERE 1=1
+          AND COALESCE(a.is_archived, false) = false
           AND a.progress_archived_at IS NULL
           AND (
             a.current_learning_cycle_started_at IS NULL
@@ -7187,7 +7704,7 @@ const handleTopAchieversRequest = async (req, res) => {
     query += `
       ) ranked_progress
       WHERE student_rank = 1
-      ORDER BY progress_percentage DESC, accuracy_rate DESC, correct_answers DESC, quests_completed DESC
+      ORDER BY ${CANONICAL_TOP_ACHIEVER_ORDER_SQL}
     `;
 
     const result = await pool.query(query, params);
@@ -7230,7 +7747,7 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
     // Validate and sanitize parameters
     const queryLimit = Math.min(parseInt(limit) || 50, 500);
     const queryOffset = Math.max(parseInt(offset) || 0, 0);
-    const searchTerm = search ? `%${search.toLowerCase()}%` : null;
+    const searchTerms = String(search || '').trim().toLowerCase().replace(/\s+/g, ' ').split(' ').filter(Boolean);
     const scope = resolveAnalyticsScope(req);
     const selectedStudentId = resolveScopeId(student_id);
     if (Number.isNaN(selectedStudentId)) return res.status(400).json({ error: 'Invalid student ID' });
@@ -7291,10 +7808,21 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
     }
 
     // Search visible student identity fields without changing the authenticated scope.
-    if (searchTerm) {
-      query += ` AND (LOWER(al.student_name) LIKE $${paramIndex} OR LOWER(COALESCE(account.game_student_id, '')) LIKE $${paramIndex})`;
-      params.push(searchTerm);
-      paramIndex++;
+    for (const term of searchTerms) {
+      const textParam = paramIndex++;
+      const exactIdParam = paramIndex++;
+      query += ` AND (
+        LOWER(COALESCE(al.student_name, '')) LIKE $${textParam}
+        OR LOWER(COALESCE(al.grade_level, '')) LIKE $${textParam}
+        OR LOWER(COALESCE(al.section, '')) LIKE $${textParam}
+        OR LOWER(COALESCE(al.current_quest, '')) LIKE $${textParam}
+        OR LOWER(COALESCE(al.difficulty_level, '')) LIKE $${textParam}
+        OR LOWER(COALESCE(al.status, '')) LIKE $${textParam}
+        OR CAST(al.activity_timestamp AS TEXT) LIKE $${textParam}
+        OR CAST(al.total_play_time AS TEXT) LIKE $${textParam}
+        OR LOWER(COALESCE(account.game_student_id, '')) = LOWER($${exactIdParam})
+      )`;
+      params.push(`%${term}%`, term);
     }
 
     // Sorting
@@ -7348,9 +7876,21 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
       countParamIndex++;
     }
 
-    if (searchTerm) {
-      countQuery += ` AND (LOWER(al.student_name) LIKE $${countParamIndex} OR LOWER(COALESCE(account.game_student_id, '')) LIKE $${countParamIndex})`;
-      countParams.push(searchTerm);
+    for (const term of searchTerms) {
+      const textParam = countParamIndex++;
+      const exactIdParam = countParamIndex++;
+      countQuery += ` AND (
+        LOWER(COALESCE(al.student_name, '')) LIKE $${textParam}
+        OR LOWER(COALESCE(al.grade_level, '')) LIKE $${textParam}
+        OR LOWER(COALESCE(al.section, '')) LIKE $${textParam}
+        OR LOWER(COALESCE(al.current_quest, '')) LIKE $${textParam}
+        OR LOWER(COALESCE(al.difficulty_level, '')) LIKE $${textParam}
+        OR LOWER(COALESCE(al.status, '')) LIKE $${textParam}
+        OR CAST(al.activity_timestamp AS TEXT) LIKE $${textParam}
+        OR CAST(al.total_play_time AS TEXT) LIKE $${textParam}
+        OR LOWER(COALESCE(account.game_student_id, '')) = LOWER($${exactIdParam})
+      )`;
+      countParams.push(`%${term}%`, term);
     }
 
     const countResult = await pool.query(countQuery, countParams);
@@ -7537,7 +8077,7 @@ const getDailyPlaytimeTotals = async (studentId) => {
              - COALESCE(server_started_at, start_time)
            )))::INTEGER
          )
-         ELSE COALESCE(total_playtime_seconds, total_playtime_minutes * 60, 0)
+         ELSE COALESCE(NULLIF(total_playtime_seconds, 0), total_playtime_minutes * 60, 0)
        END
      ), 0)::INTEGER AS total_playtime_seconds,
      FLOOR(COALESCE(SUM(
@@ -7549,7 +8089,7 @@ const getDailyPlaytimeTotals = async (studentId) => {
              - COALESCE(server_started_at, start_time)
            )))::INTEGER
          )
-         ELSE COALESCE(total_playtime_seconds, total_playtime_minutes * 60, 0)
+         ELSE COALESCE(NULLIF(total_playtime_seconds, 0), total_playtime_minutes * 60, 0)
        END
      ), 0) / 60)::INTEGER AS total_playtime_today
      FROM public.playtime_sessions
@@ -7702,16 +8242,25 @@ const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
       : `ps.status = ${statusFilter}`);
   }
 
-  const search = String(req.query.search || '').trim().toLowerCase();
-  if (search) {
-    const searchPlaceholder = addParam(`%${search}%`);
+  const searchTerms = String(req.query.search || '').trim().toLowerCase().replace(/\s+/g, ' ').split(' ').filter(Boolean);
+  for (const term of searchTerms) {
+    const searchPlaceholder = addParam(`%${term}%`);
+    const exactIdPlaceholder = addParam(term);
     filters.push(`(
-      LOWER(ps.student_name) LIKE ${searchPlaceholder}
+      LOWER(COALESCE(ps.student_name, '')) LIKE ${searchPlaceholder}
       OR LOWER(COALESCE(ps.parent_id, '')) LIKE ${searchPlaceholder}
       OR LOWER(COALESCE(ps.grade_level, '')) LIKE ${searchPlaceholder}
       OR LOWER(COALESCE(ps.section, '')) LIKE ${searchPlaceholder}
       OR LOWER(COALESCE(ps.status, '')) LIKE ${searchPlaceholder}
-      OR CAST(ps.student_id AS TEXT) LIKE ${searchPlaceholder}
+      OR CAST(ps.date_played AS TEXT) LIKE ${searchPlaceholder}
+      OR CAST(ps.start_time AS TEXT) LIKE ${searchPlaceholder}
+      OR CAST(ps.end_time AS TEXT) LIKE ${searchPlaceholder}
+      OR CAST(ps.total_playtime_minutes AS TEXT) LIKE ${searchPlaceholder}
+      OR ps.student_id IN (
+        SELECT search_student.id
+        FROM public.accounts search_student
+        WHERE search_student.game_student_id = ${exactIdPlaceholder}
+      )
     )`);
   }
 
@@ -7742,7 +8291,21 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
     }
 
     const countResult = await pool.query(
-      `SELECT COUNT(*)::INTEGER AS total
+      `SELECT COUNT(*)::INTEGER AS total,
+              COALESCE(SUM(
+                CASE
+                  WHEN ps.status = 'Playing' AND ps.end_time IS NULL THEN GREATEST(
+                    0,
+                    FLOOR(EXTRACT(EPOCH FROM (
+                      ${getPlaytimeEffectiveEndSql('ps.')} - COALESCE(ps.server_started_at, ps.start_time)
+                    )))::INTEGER
+                  )
+                  ELSE COALESCE(NULLIF(ps.total_playtime_seconds, 0), ps.total_playtime_minutes * 60, 0)
+                END
+              ), 0)::BIGINT AS total_playtime_seconds,
+              COUNT(*) FILTER (
+                WHERE (${getPlaytimePresenceStatusSql('ps.')}) = 'Playing'
+              )::INTEGER AS playing_count
        FROM public.playtime_sessions ps
        WHERE 1=1${filterResult.whereSql}`,
       params
@@ -7788,7 +8351,8 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
       dataParams
     );
 
-    const total = Number(countResult.rows[0]?.total || 0);
+    const summaryRow = countResult.rows[0] || {};
+    const total = Number(summaryRow.total || 0);
     res.json({
       data: result.rows.map((row) => ({
         ...row,
@@ -7800,6 +8364,11 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
         offset,
         total,
         pages: Math.max(1, Math.ceil(total / limit)),
+      },
+      summary: {
+        total_records: total,
+        total_playtime_seconds: Math.max(0, Number(summaryRow.total_playtime_seconds) || 0),
+        playing_count: Math.max(0, Number(summaryRow.playing_count) || 0),
       },
     });
   } catch (err) {
@@ -8835,9 +9404,16 @@ if (fs.existsSync(clientBuildPath)) {
 }
 
 if (require.main === module) {
-  app.listen(port, () => {
-    console.log(`✅ Server running at http://localhost:${port}`);
-  });
+  schemaReady
+    .then(() => {
+      app.listen(port, () => {
+        console.log(`✅ Server running at http://localhost:${port}`);
+      });
+    })
+    .catch((error) => {
+      console.error('Server startup aborted because schema initialization failed:', error.message);
+      process.exitCode = 1;
+    });
 }
 
-module.exports = { app, verifyParentChildAccess };
+module.exports = { app, schemaReady, verifyParentChildAccess };

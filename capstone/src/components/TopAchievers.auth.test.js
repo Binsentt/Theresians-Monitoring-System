@@ -65,11 +65,9 @@ describe('Top Achievers authenticated analytics requests', () => {
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 16, role: 'teacher' }));
     await act(async () => root.render(<TeacherTopAchievers />));
 
-    expect(global.fetch.mock.calls).toHaveLength(4);
+    expect(global.fetch.mock.calls).toHaveLength(2);
     expect(global.fetch.mock.calls[0][0]).toBe('/api/top-achievers');
-    expect(global.fetch.mock.calls[1][0]).toBe('/api/sections/registry');
-    expect(global.fetch.mock.calls[2][0]).toBe('/api/top-achievers');
-    expect(global.fetch.mock.calls[3][0]).toBe('/api/sections/registry');
+    expect(global.fetch.mock.calls[1][0]).toBe('/api/top-achievers');
     expect(global.fetch.mock.calls.every(([, options]) => (
       options?.headers?.Authorization === 'Bearer top-achievers-token'
     ))).toBe(true);
@@ -102,24 +100,23 @@ describe('Top Achievers authenticated analytics requests', () => {
     expect(container.querySelector('button[aria-label="Print Top Achievers"]')).not.toBeNull();
   });
 
-  test('uses the authoritative Grade and dependent Section registry before filtering the table', async () => {
-    global.fetch = jest.fn((url) => (
-      String(url).includes('/api/sections/registry')
-        ? jsonResponse({ grades: [{ grade_level: 'Grade 6', sections: ['Pine', 'Oak'] }] })
-        : jsonResponse(leaderboardRows)
-    ));
+  test('uses one multi-field search across displayed Grade, Section, name, and exact Student ID values', async () => {
+    global.fetch = jest.fn(() => jsonResponse(leaderboardRows));
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin' }));
     localStorage.setItem('token', 'top-achievers-token');
 
     await act(async () => root.render(<AdminTopAchievers />));
 
-    const selects = container.querySelectorAll('.filter-group select');
-    expect(Array.from(selects[0].options).map((option) => option.textContent)).toContain('Grade 6');
-    expect(selects[1].disabled).toBe(true);
-    Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set.call(selects[0], 'Grade 6');
-    await act(async () => selects[0].dispatchEvent(new Event('change', { bubbles: true })));
-    expect(selects[1].disabled).toBe(false);
-    expect(Array.from(selects[1].options).map((option) => option.textContent)).toEqual(expect.arrayContaining(['Pine', 'Oak']));
+    expect(container.querySelectorAll('.filters-row input[type="search"]')).toHaveLength(1);
+    expect(container.querySelectorAll('.filters-row select')).toHaveLength(0);
+    const search = container.querySelector('.filters-row input[type="search"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(search, 'Grade 1 Section A 001234');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      search.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(container.querySelectorAll('.ta-table tbody tr')).toHaveLength(1);
+    expect(container.textContent).toContain('Student 1');
   });
 
   test('does not render zero-percent metric bars when the backend has no metric data', async () => {

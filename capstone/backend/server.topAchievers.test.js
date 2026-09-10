@@ -10,10 +10,19 @@ test('Top Achievers keeps the approved ranking order without truncating the auth
     serverSource.indexOf('const handleTopAchieversRequest'),
     serverSource.indexOf("app.get('/api/top-achievers'")
   );
-  assert.match(handler, /ORDER BY progress_percentage DESC, accuracy_rate DESC, correct_answers DESC, quests_completed DESC/);
+  assert.match(handler, /ORDER BY \$\{CANONICAL_TOP_ACHIEVER_ORDER_SQL\}/);
   assert.match(handler, /COALESCE\(NULLIF\(TRIM\(a\.grade_level\), ''\), p\.grade_level\) AS grade_level/);
   assert.match(handler, /COALESCE\(NULLIF\(TRIM\(a\.section\), ''\), p\.section\) AS section/);
+  assert.match(handler, /COALESCE\(a\.is_archived, false\) = false/);
   assert.doesNotMatch(handler, /LIMIT 50/);
+});
+
+test('website and lease-authorized game projection reuse one stable canonical ranking order', () => {
+  assert.match(
+    serverSource,
+    /const CANONICAL_TOP_ACHIEVER_ORDER_SQL = `progress_percentage DESC NULLS LAST,[\s\S]*student_id ASC`;/
+  );
+  assert.equal((serverSource.match(/\$\{CANONICAL_TOP_ACHIEVER_ORDER_SQL\}/g) || []).length, 2);
 });
 
 test('authenticated Teachers can read the authoritative Section registry', () => {

@@ -140,6 +140,8 @@ const protectedLearningRoutes = [
   { method: 'GET', path: '/api/learning-files' },
   { method: 'GET', path: '/api/learning-files/storage-summary' },
   { method: 'GET', path: '/api/learning-files/77/questions' },
+  { method: 'PUT', path: '/api/learning-files/77/questions/770' },
+  { method: 'DELETE', path: '/api/learning-files/77/questions/770' },
   { method: 'POST', path: '/api/learning-files/77/approve' },
   { method: 'GET', path: '/api/learning-files/77/preview' },
   { method: 'PUT', path: '/api/learning-files/77/rename' },

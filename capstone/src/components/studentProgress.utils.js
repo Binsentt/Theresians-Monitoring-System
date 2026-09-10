@@ -1,3 +1,5 @@
+import { matchesTableSearch } from './tableReporting.utils';
+
 const sceneDifficultyMap = {
   oak_leaf_village: 'Easy',
   city_of_knowledge: 'Normal',
@@ -180,17 +182,58 @@ export const filterStudentProgress = (
   } = {}
 ) => {
   const safeStudents = Array.isArray(students) ? students : [];
-  const normalizedQuery = String(searchQuery || '').trim().toLowerCase();
-
   return safeStudents.filter((student) => {
     const matchesGrade = selectedGrade ? student.grade_level === selectedGrade : true;
     const matchesSection = selectedSection ? student.section === selectedSection : true;
-    const searchableName = String(student?.student_name || '').toLowerCase();
-    const gameStudentId = String(student?.game_student_id || '').trim().toLowerCase();
-    const matchesSearch = normalizedQuery
-      ? searchableName.includes(normalizedQuery) || gameStudentId === normalizedQuery
-      : true;
+    const matchesSearch = matchesTableSearch(student, searchQuery, [
+      'student_name', 'game_student_id', 'grade_level', 'section', 'current_quest',
+      'difficulty_level', 'difficulty', 'current_location', 'correct_answers',
+      'incorrect_answers', 'performance_percentage',
+    ]);
 
     return matchesGrade && matchesSection && matchesSearch;
   });
+};
+
+const studentProgressListStateKey = (role) => (
+  `theresians.student-progress-list.${String(role || 'admin').trim().toLowerCase()}`
+);
+
+const defaultStudentProgressListState = () => ({
+  searchQuery: '',
+  page: 1,
+  lifecycle: 'active',
+  scrollTop: 0,
+});
+
+export const loadStudentProgressListState = (role) => {
+  const fallback = defaultStudentProgressListState();
+  try {
+    const stored = globalThis.sessionStorage?.getItem(studentProgressListStateKey(role));
+    if (!stored) return fallback;
+    const parsed = JSON.parse(stored);
+    return {
+      searchQuery: String(parsed?.searchQuery || ''),
+      page: Math.max(1, Number.parseInt(parsed?.page, 10) || 1),
+      lifecycle: parsed?.lifecycle === 'archived' ? 'archived' : 'active',
+      scrollTop: Math.max(0, Number(parsed?.scrollTop) || 0),
+    };
+  } catch {
+    return fallback;
+  }
+};
+
+export const saveStudentProgressListState = (role, state = {}) => {
+  const safeState = {
+    searchQuery: String(state.searchQuery || ''),
+    page: Math.max(1, Number.parseInt(state.page, 10) || 1),
+    lifecycle: state.lifecycle === 'archived' ? 'archived' : 'active',
+    scrollTop: Math.max(0, Number(state.scrollTop) || 0),
+  };
+  try {
+    globalThis.sessionStorage?.setItem(studentProgressListStateKey(role), JSON.stringify(safeState));
+  } catch {
+    // List navigation must remain usable when storage is unavailable.
+  }
+  return safeState;
 };

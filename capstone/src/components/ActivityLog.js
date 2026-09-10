@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import ModalPortal from './ModalPortal';
 import '../styles/activitylog.css';
 import {
@@ -17,25 +17,12 @@ import { PrintableTableReport } from './PrintableTableReport';
 import { collectAuthorizedReportRows, formatReportContext } from './tableReporting.utils';
 import { usePreparedReportPrint } from './usePreparedReportPrint';
 
-const GRADE_SECTIONS = {
-  'Grade 1': ['Section A', 'Section B'],
-  'Grade 2': ['Section A', 'Section B', 'Section C'],
-  'Grade 3': ['Section A', 'Section B', 'Section C'],
-  'Grade 4': ['Section A', 'Section B', 'Section C'],
-  'Grade 5': ['Section A', 'Section B', 'Section C'],
-  'Grade 6': ['Section A', 'Section B', 'Section C'],
-};
-
-const GRADES = ['Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6'];
-
 export default function ActivityLog({ limit = 50, role = 'admin', userId = null, allowActivityReset = false }) {
   const [activities, setActivities] = useState([]);
   const [pagination, setPagination] = useState({ total: 0, pages: 1, current_page: 1 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedGrade, setSelectedGrade] = useState('');
-  const [selectedSection, setSelectedSection] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -59,8 +46,6 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
     if (!showFilters) {
       setDebouncedSearch('');
       setSearchTerm('');
-      setSelectedGrade('');
-      setSelectedSection('');
       setCurrentPage(1);
       return undefined;
     }
@@ -138,8 +123,6 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
           userId,
           selectedStudentId: isParentView ? selectedChildId : '',
           debouncedSearch,
-          selectedGrade,
-          selectedSection,
         });
 
         const response = await fetch(buildScopedApiUrl(`/api/activity-logs?${queryParams.toString()}`, role), {
@@ -162,18 +145,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
     };
 
     fetchActivityLogs();
-  }, [activityRevision, childrenLoaded, currentPage, debouncedSearch, isParentView, limit, role, scopedUserReady, selectedChildId, selectedGrade, selectedSection, userId]);
-
-  const handleGradeChange = useCallback((grade) => {
-    setSelectedGrade(grade);
-    setSelectedSection('');
-    setCurrentPage(1);
-  }, []);
-
-  const handleSectionChange = useCallback((section) => {
-    setSelectedSection(section);
-    setCurrentPage(1);
-  }, []);
+  }, [activityRevision, childrenLoaded, currentPage, debouncedSearch, isParentView, limit, role, scopedUserReady, selectedChildId, userId]);
 
   const closeResetDialog = () => {
     if (resettingActivity) return;
@@ -214,18 +186,15 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
     }
   };
 
-  const availableSections = selectedGrade ? GRADE_SECTIONS[selectedGrade] || [] : [];
   const totalPages = Math.max(1, pagination.pages || 1);
   const latestActivity = activities[0] || null;
   const reportRows = hasPreparedReport ? preparedRows : activities;
-  const reportScope = [selectedGrade, selectedSection, debouncedSearch ? `Search: ${debouncedSearch}` : '']
-    .filter(Boolean)
-    .join(' / ') || (isParentView ? 'Selected child' : 'All authorised activity records');
+  const reportScope = debouncedSearch
+    ? `Search: ${debouncedSearch}`
+    : (isParentView ? 'Selected child' : 'All authorised activity records');
   const reportLabel = isParentView || /^(?:\d{6}|\d{8})$/.test(debouncedSearch)
     ? 'Print Student Activity'
-    : selectedSection
-      ? 'Print Section Activity'
-      : 'Print Filtered Activity Log';
+    : 'Print Filtered Activity Log';
   const reportColumns = [
     {
       header: 'Date / Time',
@@ -257,8 +226,6 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
               userId,
               selectedStudentId: isParentView ? selectedChildId : '',
               debouncedSearch,
-              selectedGrade,
-              selectedSection,
             });
             const response = await fetch(buildScopedApiUrl(`/api/activity-logs?${queryParams.toString()}`, role), {
               headers: buildAuthHeaders(),
@@ -324,50 +291,17 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
             <input
               id="search-input"
               type="text"
-              placeholder="Search by student name or Student ID..."
+            placeholder="Search name, ID, grade, section, quest, difficulty, date, or duration..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="filter-input search-input"
             />
           </div>
 
-          <div className="filter-group">
-            <label htmlFor="grade-filter">Grade Level</label>
-            <select
-              id="grade-filter"
-              value={selectedGrade}
-              onChange={(e) => handleGradeChange(e.target.value)}
-              className="filter-input"
-            >
-              <option value="">All Grades</option>
-              {GRADES.map((grade) => (
-                <option key={grade} value={grade}>{grade}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="filter-group">
-            <label htmlFor="section-filter">Section</label>
-            <select
-              id="section-filter"
-              value={selectedSection}
-              onChange={(e) => handleSectionChange(e.target.value)}
-              className="filter-input"
-              disabled={!selectedGrade}
-            >
-              <option value="">All Sections</option>
-              {availableSections.map((section) => (
-                <option key={section} value={section}>{section}</option>
-              ))}
-            </select>
-          </div>
-
           <button
             type="button"
             onClick={() => {
               setSearchTerm('');
-              setSelectedGrade('');
-              setSelectedSection('');
               setCurrentPage(1);
             }}
             className="btn-reset"

@@ -43,6 +43,7 @@ describe('Student Progress summary cards', () => {
     localStorage.clear();
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin' }));
     localStorage.setItem('token', 'analytics-test-token');
+    sessionStorage.clear();
   });
 
   afterEach(() => {
@@ -227,5 +228,32 @@ describe('Student Progress summary cards', () => {
       'Reset Progress',
       'Archive Student Progress',
     ]);
+  });
+
+  test('records list state only when the explicit View Analytics action opens details', async () => {
+    global.fetch = jest.fn((url) => {
+      const value = String(url);
+      if (value.startsWith('/api/students/progress')) return jsonResponse([{ student_id: 44, student_name: 'Ava Santos', game_student_id: '001234', grade_level: 'Grade 3' }]);
+      if (value.startsWith('/api/analytics/overview')) return jsonResponse({ studentCount: 1, averageAccuracy: null, averageProgress: null });
+      return jsonResponse({});
+    });
+
+    await act(async () => root.render(<AdminStudentProgress />));
+    const search = container.querySelector('input[aria-label="Search Admin Student Progress"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(search, 'Ava');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      search.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(mockNavigate).not.toHaveBeenCalled();
+
+    await act(async () => {
+      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'View Analytics').click();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('/admin/student-progress/44');
+    expect(JSON.parse(sessionStorage.getItem('theresians.student-progress-list.admin'))).toEqual(expect.objectContaining({
+      searchQuery: 'Ava', page: 1, lifecycle: 'active',
+    }));
   });
 });

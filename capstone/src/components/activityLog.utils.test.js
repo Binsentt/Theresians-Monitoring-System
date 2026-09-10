@@ -48,13 +48,13 @@ describe('normalizeActivityLogPayload', () => {
     expect(result.pagination.total).toBe(1);
   });
 
-  test('hides filters for the parent role only', () => {
-    expect(shouldShowActivityLogFilters('parent')).toBe(false);
+  test('shows one scoped table search for every authorized role', () => {
+    expect(shouldShowActivityLogFilters('parent')).toBe(true);
     expect(shouldShowActivityLogFilters('teacher')).toBe(true);
     expect(shouldShowActivityLogFilters('admin')).toBe(true);
   });
 
-  test('does not include search or grade filters for parent activity log requests', () => {
+  test('keeps parent activity searches scoped to the selected child and emits no redundant grade/section filters', () => {
     const params = buildActivityLogQueryParams({
       role: 'parent',
       userId: 15,
@@ -65,7 +65,7 @@ describe('normalizeActivityLogPayload', () => {
       currentPage: 2,
     });
 
-    expect(params.get('search')).toBeNull();
+    expect(params.get('search')).toBe('alpha');
     expect(params.get('grade_level')).toBeNull();
     expect(params.get('section')).toBeNull();
     expect(params.get('teacher_id')).toBeNull();
@@ -84,8 +84,8 @@ describe('normalizeActivityLogPayload', () => {
 
     expect(params.get('teacher_id')).toBeNull();
     expect(params.get('search')).toBe('beta');
-    expect(params.get('grade_level')).toBe('Grade 5');
-    expect(params.get('section')).toBe('Section B');
+    expect(params.get('grade_level')).toBeNull();
+    expect(params.get('section')).toBeNull();
   });
 
   test('formats activity log rows for the simplified Godot activity table', () => {
