@@ -116,7 +116,8 @@
 .child-profile-heading h2,
 .child-profile-heading p {
   margin: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .child-profile-heading p {
@@ -246,7 +247,7 @@
 .student-progress-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 720px;
+  min-width: 1040px;
   font-size: 0.95rem;
 }
 
@@ -571,7 +572,8 @@
   font-size: 1.55rem;
   line-height: 1;
   font-weight: 800;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .student-metric-card > span:last-child {
@@ -1053,7 +1055,8 @@
 .child-quiz-item strong,
 .child-topic-item strong {
   color: var(--text-primary, #0f172a);
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .child-quiz-item span,

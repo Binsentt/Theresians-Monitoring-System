@@ -265,7 +265,7 @@
   color: var(--text-primary, #0b2447);
   vertical-align: middle;
   white-space: normal;
-  overflow-wrap: break-word;
+  overflow-wrap: normal;
 }
 
 .al-table td:nth-child(2),

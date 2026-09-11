@@ -1,7 +1,10 @@
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const QUESTION_GENERATION_MODEL = 'gpt-5-mini';
 const MAX_LESSON_TEXT_CHARS = 24000;
-const QUESTION_GENERATION_TIMEOUT_MS = 30000;
+// Five structured questions plus model reasoning can legitimately exceed a
+// short request deadline. Keep one bounded provider-call deadline so the
+// request remains cancellable without making generation wait indefinitely.
+const QUESTION_GENERATION_TIMEOUT_MS = 60000;
 // Reserve a predictable output budget for the structured JSON plus model reasoning.
 // The per-question allowance preserves the existing 1-50 request range without
 // imposing a small fixed cap that could truncate larger requested sets.
@@ -252,6 +255,7 @@ const generateLessonQuestions = async ({
     : QUESTION_GENERATION_TIMEOUT_MS;
   const input = buildGenerationInput({ lessonText, title, gradeLevel, difficulty, questionCount });
   const controller = new AbortController();
+  const requestStartedAt = Date.now();
   const timeoutHandle = setTimeout(() => controller.abort(), boundedTimeoutMs);
 
   let response;
@@ -289,7 +293,12 @@ const generateLessonQuestions = async ({
       throw new QuestionGenerationError(
         'QUESTION_AI_TIMEOUT',
         'Question generation timed out. Please try again.',
-        { category: 'timeout' }
+        {
+          category: 'timeout',
+          timeout_layer: 'provider_request',
+          timeout_ms: boundedTimeoutMs,
+          elapsed_ms: Math.max(0, Date.now() - requestStartedAt),
+        }
       );
     }
     throw new QuestionGenerationError(

@@ -261,7 +261,8 @@
   font-weight: 600;
   line-height: 1.5;
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .profile-info {

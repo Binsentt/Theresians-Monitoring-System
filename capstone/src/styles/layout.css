@@ -130,7 +130,8 @@
 .header-info p,
 .top-bar h1,
 .top-bar p {
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .top-bar h1 {

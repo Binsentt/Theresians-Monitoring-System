@@ -125,15 +125,16 @@ h3,
 h4,
 h5,
 h6 {
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 /* Keep short identifiers and headers readable while allowing long names and
-   quest labels to wrap at word boundaries. Unbroken values can still break
-   when the table has no horizontal room. */
+   quest labels to wrap at word boundaries. Unbroken values stay intact; the
+   surrounding table wrapper provides horizontal scrolling when needed. */
 td,
 th {
-  overflow-wrap: break-word;
+  overflow-wrap: normal;
   word-break: normal;
   white-space: normal;
 }

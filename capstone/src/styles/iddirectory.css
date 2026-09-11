@@ -134,7 +134,7 @@
 .id-directory-table td:nth-child(2),
 .id-directory-table td:nth-child(5) {
   white-space: normal;
-  overflow-wrap: break-word;
+  overflow-wrap: normal;
   min-width: 150px;
 }
 

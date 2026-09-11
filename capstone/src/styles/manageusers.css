@@ -594,13 +594,13 @@
     color: var(--text-muted);
     vertical-align: middle;
     white-space: normal;
-    overflow-wrap: break-word;
+    overflow-wrap: normal;
 }
 
 .sts-data-table td.user-name-cell,
 .sts-data-table td.email-cell {
     min-width: 180px;
-    overflow-wrap: break-word;
+    overflow-wrap: normal;
 }
 
 .sts-data-table td:nth-child(4),
@@ -970,7 +970,9 @@
 .generated-credential-value {
     color: var(--text-primary, #0b2447);
     font-size: 1.08rem;
-    word-break: break-all;
+    word-break: keep-all;
+    overflow-wrap: normal;
+    white-space: nowrap;
 }
 
 .generated-credential-status {

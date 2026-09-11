@@ -362,9 +362,22 @@ test('lesson generation aborts a provider request that exceeds its bounded timeo
         });
       },
     }),
-    (error) => error instanceof QuestionGenerationError && error.code === 'QUESTION_AI_TIMEOUT'
+    (error) => {
+      assert.equal(error.code, 'QUESTION_AI_TIMEOUT');
+      assert.equal(error.providerDiagnostics.category, 'timeout');
+      assert.equal(error.providerDiagnostics.timeout_layer, 'provider_request');
+      assert.equal(error.providerDiagnostics.timeout_ms, 5);
+      assert.ok(error.providerDiagnostics.elapsed_ms >= 0);
+      return true;
+    }
   );
 
   assert.equal(abortObserved, true);
   assert.equal(providerCalls, 1);
+});
+
+test('lesson generation reserves a realistic single deadline for five structured questions', () => {
+  const { QUESTION_GENERATION_TIMEOUT_MS } = require('./lessonQuestionGeneration');
+
+  assert.equal(QUESTION_GENERATION_TIMEOUT_MS, 60000);
 });

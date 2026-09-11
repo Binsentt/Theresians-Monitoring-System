@@ -378,7 +378,7 @@ label {
 
 .data-table {
   width: 100%;
-  min-width: 720px;
+  min-width: 760px;
   border-collapse: collapse;
   font-size: 0.95rem;
 }
@@ -427,7 +427,7 @@ label {
   padding: var(--spacing-md, 16px) var(--spacing-sm, 12px);
   color: var(--text-primary, #0b2447);
   vertical-align: middle;
-  overflow-wrap: break-word;
+  overflow-wrap: normal;
   word-break: normal;
   white-space: normal;
 }
@@ -817,7 +817,7 @@ label {
   color: var(--text-primary, #0b2447);
   font-size: 0.95rem;
   line-height: 1.65;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   white-space: pre-line;
 }
 
@@ -914,7 +914,9 @@ label {
 .generated-credential-value {
   color: var(--text-primary, #0b2447);
   font-size: 1.08rem;
-  word-break: break-all;
+  word-break: keep-all;
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .generated-credential-status {

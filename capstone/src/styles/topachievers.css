@@ -194,7 +194,7 @@
   padding: 14px 16px;
   color: var(--text-primary, #333);
   white-space: normal;
-  overflow-wrap: break-word;
+  overflow-wrap: normal;
 }
 
 .ta-table td:nth-child(1),

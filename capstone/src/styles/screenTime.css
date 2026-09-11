@@ -228,7 +228,7 @@
 .screen-time-table td:nth-child(2) {
   min-width: 180px;
   white-space: normal;
-  overflow-wrap: break-word;
+  overflow-wrap: normal;
 }
 
 .screen-time-table td:nth-child(3),
