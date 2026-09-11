@@ -117,7 +117,76 @@ describe('ResetPassword auth theme integration', () => {
       updateButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(global.alert).toHaveBeenCalledWith('Password must be at least 8 characters.');
+    expect(container.textContent).toContain('Password must be at least 8 characters.');
+    expect(global.alert).not.toHaveBeenCalled();
     expect(global.fetch.mock.calls.filter(([url]) => String(url).includes('/api/reset-password/verify'))).toHaveLength(0);
+  });
+
+  test('shows accessible inline email validation without revealing account existence', async () => {
+    await act(async () => {
+      root.render(<ResetPassword />);
+    });
+
+    const emailInput = container.querySelector('input[type="email"]');
+    const focusSpy = jest.spyOn(emailInput, 'focus');
+    const sendButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'SEND VERIFICATION CODE');
+    await act(async () => {
+      sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Email is required.');
+    expect(emailInput.getAttribute('aria-invalid')).toBe('true');
+    expect(emailInput.getAttribute('aria-describedby')).toBe('recovery-email-error');
+    expect(global.alert).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(focusSpy).toHaveBeenCalled();
+    focusSpy.mockRestore();
+
+    await setInputValue(emailInput, 'not-an-email');
+    expect(container.textContent).toContain('Please enter a valid email address.');
+    await setInputValue(emailInput, 'qa@example.test');
+    expect(container.textContent).not.toContain('Please enter a valid email address.');
+  });
+
+  test('uses a six-digit one-time-code field and inline confirmation validation', async () => {
+    await act(async () => {
+      root.render(<ResetPassword />);
+    });
+    await setInputValue(container.querySelector('input[type="email"]'), 'qa@example.test');
+    await act(async () => {
+      container.querySelector('input[type="email"]').dispatchEvent(new Event('blur', { bubbles: true }));
+      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'SEND VERIFICATION CODE')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const otpInput = container.querySelector('input[autocomplete="one-time-code"]');
+    expect(otpInput).toBeTruthy();
+    expect(otpInput.getAttribute('inputmode')).toBe('numeric');
+    expect(otpInput.maxLength).toBe(6);
+
+    await setInputValue(container.querySelector('input[placeholder="Enter your new password"]'), 'ValidPass1!');
+    await setInputValue(container.querySelector('input[placeholder="Re-enter your new password"]'), 'Different1!');
+    expect(container.textContent).toContain('Passwords do not match.');
+    expect(global.alert).not.toHaveBeenCalled();
+  });
+
+  test('prevents duplicate recovery submissions while the request is in flight', async () => {
+    let resolveRequest;
+    global.fetch = jest.fn(() => new Promise((resolve) => { resolveRequest = resolve; }));
+    await act(async () => {
+      root.render(<ResetPassword />);
+    });
+    const emailInput = container.querySelector('input[type="email"]');
+    await setInputValue(emailInput, 'qa@example.test');
+    const sendButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'SEND VERIFICATION CODE');
+    await act(async () => {
+      sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveRequest({ ok: true, json: async () => ({ success: true, message: 'If an eligible account matches this email, recovery instructions will be sent.' }) });
+    });
   });
 });

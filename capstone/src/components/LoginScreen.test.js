@@ -566,4 +566,54 @@ describe('LoginScreen real-time form validation', () => {
 
     expect(otpInput.value).toBe('123'); // Non-digits are filtered out
   });
+
+  test('uses one-time-code input semantics and sends the server challenge binding', async () => {
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/login/verify-otp')) {
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, user: { id: 18, name: 'Test User', role: 'admin' } }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ success: true, step: 2, userId: 18, challengeId: 'login-challenge-1', otpExpiresAt: '2026-05-21T12:03:00.000Z' }) });
+    });
+
+    await act(async () => { root.render(<LoginScreen />); });
+    const inputs = container.querySelectorAll('input');
+    await act(async () => {
+      setInputValue(inputs[0], 'admin@example.com');
+      setInputValue(inputs[1], 'ValidPassword123!');
+      container.querySelector('button.sts-login-button').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const otpInput = container.querySelector('.otp-input');
+    expect(otpInput.getAttribute('inputmode')).toBe('numeric');
+    expect(otpInput.getAttribute('autocomplete')).toBe('one-time-code');
+    await act(async () => {
+      setInputValue(otpInput, '012345');
+      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'VERIFY CODE')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(JSON.parse(global.fetch.mock.calls[1][1].body)).toMatchObject({ challengeId: 'login-challenge-1', otp: '012345' });
+  });
+
+  test('prevents duplicate login OTP verification requests while one is in flight', async () => {
+    let resolveVerify;
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/login/verify-otp')) return new Promise((resolve) => { resolveVerify = resolve; });
+      return Promise.resolve({ ok: true, json: async () => ({ success: true, step: 2, userId: 18, challengeId: 'login-challenge-2', otpExpiresAt: '2026-05-21T12:03:00.000Z' }) });
+    });
+    await act(async () => { root.render(<LoginScreen />); });
+    const inputs = container.querySelectorAll('input');
+    await act(async () => {
+      setInputValue(inputs[0], 'admin@example.com');
+      setInputValue(inputs[1], 'ValidPassword123!');
+      container.querySelector('button.sts-login-button').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const otpInput = container.querySelector('.otp-input');
+    await act(async () => {
+      setInputValue(otpInput, '012345');
+      const verifyButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'VERIFY CODE');
+      verifyButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      verifyButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(global.fetch.mock.calls.filter(([url]) => String(url).includes('/api/login/verify-otp'))).toHaveLength(1);
+    await act(async () => { resolveVerify({ ok: false, json: async () => ({ error: 'Invalid or expired OTP' }) }); });
+  });
 });

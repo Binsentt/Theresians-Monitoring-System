@@ -52,7 +52,7 @@ const resolveOtpEmailDelivery = async (
   }
 };
 
-const buildLoginOtpResponse = ({ user, expiresAt, emailSent }) => {
+const buildLoginOtpResponse = ({ user, expiresAt, emailSent, challengeId }) => {
   const response = {
     success: true,
     step: 2,
@@ -62,6 +62,8 @@ const buildLoginOtpResponse = ({ user, expiresAt, emailSent }) => {
     emailSent: Boolean(emailSent),
   };
 
+  if (challengeId) response.challengeId = challengeId;
+
   if (!emailSent) {
     response.warning = OTP_EMAIL_FAILURE_WARNING;
   }
@@ -69,12 +71,14 @@ const buildLoginOtpResponse = ({ user, expiresAt, emailSent }) => {
   return response;
 };
 
-const buildResendOtpResponse = ({ expiresAt, emailSent }) => {
+const buildResendOtpResponse = ({ expiresAt, emailSent, challengeId }) => {
   const response = {
     success: true,
     otpExpiresAt: expiresAt,
     emailSent: Boolean(emailSent),
   };
+
+  if (challengeId) response.challengeId = challengeId;
 
   if (!emailSent) {
     response.warning = OTP_EMAIL_FAILURE_WARNING;

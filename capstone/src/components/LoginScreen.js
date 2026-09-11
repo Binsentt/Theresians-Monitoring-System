@@ -15,6 +15,7 @@ export default function LoginScreen() {
   const [step, setStep] = useState(1);
   const [otp, setOtp] = useState('');
   const [pendingUserId, setPendingUserId] = useState(null);
+  const [pendingChallengeId, setPendingChallengeId] = useState(null);
   const [otpExpiresAt, setOtpExpiresAt] = useState(null);
   const [countdown, setCountdown] = useState(0);
   const [rememberToken, setRememberToken] = useState('');
@@ -35,6 +36,7 @@ export default function LoginScreen() {
   const emailInputRef = useRef(null);
   const passwordInputRef = useRef(null);
   const otpInputRef = useRef(null);
+  const authRequestInFlightRef = useRef(false);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -89,6 +91,7 @@ export default function LoginScreen() {
   const handleOtpChange = (e) => {
     const value = e.target.value.replace(/[^0-9]/g, ''); // Only allow digits
     setOtp(value);
+    setErrorMessage('');
     // Validate in real-time after field has been touched or if error exists
     if (otpTouched || otpError) {
       validateOtpField(value);
@@ -155,6 +158,7 @@ export default function LoginScreen() {
   };
 
   const handleLogin = async () => {
+    if (authRequestInFlightRef.current) return;
     // Mark all fields as touched
     setEmailTouched(true);
     setPasswordTouched(true);
@@ -175,6 +179,7 @@ export default function LoginScreen() {
       return;
     }
 
+    authRequestInFlightRef.current = true;
     setErrorMessage('');
     setLoading(true);
     try {
@@ -202,6 +207,7 @@ export default function LoginScreen() {
 
       if (data.step === 2) {
         setPendingUserId(data.userId);
+        setPendingChallengeId(data.challengeId || null);
         setOtpExpiresAt(data.otpExpiresAt);
         setStep(2);
         // Clear field errors when transitioning to OTP step
@@ -216,11 +222,13 @@ export default function LoginScreen() {
     } catch (error) {
       setErrorMessage('Network error. Please check if server is running.');
     } finally {
+      authRequestInFlightRef.current = false;
       setLoading(false);
     }
   };
 
   const handleVerifyOtp = async () => {
+    if (authRequestInFlightRef.current) return;
     // Mark OTP field as touched
     setOtpTouched(true);
 
@@ -237,6 +245,7 @@ export default function LoginScreen() {
       return;
     }
 
+    authRequestInFlightRef.current = true;
     setErrorMessage('');
     setLoading(true);
     try {
@@ -245,6 +254,7 @@ export default function LoginScreen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: pendingUserId,
+          challengeId: pendingChallengeId || undefined,
           otp,
           deviceId,
           skipOtpFor30Days,
@@ -261,33 +271,41 @@ export default function LoginScreen() {
     } catch (err) {
       setErrorMessage('Network error while verifying OTP.');
     } finally {
+      authRequestInFlightRef.current = false;
       setLoading(false);
     }
   };
 
   const handleResendOtp = async () => {
+    if (authRequestInFlightRef.current) return;
     if (!pendingUserId && !email) {
       setErrorMessage('Cannot resend OTP without a login attempt.');
       return;
     }
+    authRequestInFlightRef.current = true;
     setErrorMessage('');
     setLoading(true);
     try {
       const res = await fetch(apiUrl('/api/login/resend-otp'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: pendingUserId, email: email.trim().toLowerCase() }),
+        body: JSON.stringify({ userId: pendingUserId, email: email.trim().toLowerCase(), challengeId: pendingChallengeId || undefined }),
       });
       const data = await res.json();
       if (!res.ok) {
         setErrorMessage(data.error || 'Failed to resend OTP.');
         return;
       }
+      setPendingChallengeId(data.challengeId || null);
+      setOtp('');
+      setOtpTouched(false);
+      setOtpError('');
       setOtpExpiresAt(data.otpExpiresAt);
       setErrorMessage(data.warning || 'A new code was sent to your email.');
     } catch (err) {
       setErrorMessage('Network error while resending OTP.');
     } finally {
+      authRequestInFlightRef.current = false;
       setLoading(false);
     }
   };
@@ -398,6 +416,8 @@ export default function LoginScreen() {
                   onChange={handleOtpChange}
                   onBlur={handleOtpBlur}
                   maxLength={6}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
                   aria-invalid={otpTouched && !!otpError}
                   aria-describedby={otpError ? 'otp-error' : undefined}
                 />
@@ -437,6 +457,7 @@ export default function LoginScreen() {
                 onClick={() => {
                   setStep(1);
                   setPendingUserId(null);
+                  setPendingChallengeId(null);
                   setOtp('');
                   setOtpExpiresAt(null);
                   setSkipOtpFor30Days(false);

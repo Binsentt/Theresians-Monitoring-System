@@ -54,6 +54,18 @@ const {
   resolveOtpEmailDelivery,
 } = require('./loginOtp.utils');
 const {
+  LOGIN_OTP_TTL_MS,
+  RECOVERY_OTP_TTL_MS,
+  createOtpChallenge,
+  getOtpMaxAttempts,
+  getOtpResendCooldownMs,
+  hashOtpCode,
+  isOtpCodeFormatValid,
+  isOtpExpired,
+  isOtpResendCoolingDown,
+  normalizeOtpCode,
+} = require('./authChallenge.utils');
+const {
   buildAccountHealthCheckResponse,
   hasTemporaryPasswordCredentialMetadata,
   requiresInitialPasswordSetup,
@@ -1743,6 +1755,64 @@ const validateWebsitePassword = (value) => {
   return null;
 };
 
+const PUBLIC_RECOVERY_MESSAGE = 'If an eligible account matches this email, recovery instructions will be sent.';
+const OTP_MAX_ATTEMPTS = getOtpMaxAttempts(process.env);
+const OTP_RESEND_COOLDOWN_MS = getOtpResendCooldownMs(process.env);
+
+const clearOtpChallenge = async (queryClient, accountId, { purpose = null, challengeId = null } = {}) => {
+  const conditions = ['id = $1'];
+  const params = [Number(accountId)];
+  if (purpose) {
+    params.push(purpose);
+    conditions.push(`otp_purpose = $${params.length}`);
+  }
+  if (challengeId) {
+    params.push(challengeId);
+    conditions.push(`otp_challenge_id = $${params.length}`);
+  }
+  await queryClient.query(
+    `UPDATE public.accounts
+     SET otp_code = NULL,
+         otp_code_hash = NULL,
+         otp_purpose = NULL,
+         otp_attempts = 0,
+         otp_sent_at = NULL,
+         otp_challenge_id = NULL,
+         otp_expires_at = NULL
+     WHERE ${conditions.join(' AND ')}`,
+    params
+  );
+};
+
+const issueAccountOtpChallenge = async (queryClient, accountId, challenge) => {
+  await queryClient.query(
+    `UPDATE public.accounts
+     SET otp_code = NULL,
+         otp_code_hash = $1,
+         otp_purpose = $2,
+         otp_attempts = 0,
+         otp_sent_at = $3,
+         otp_challenge_id = $4,
+         otp_expires_at = $5
+     WHERE id = $6`,
+    [challenge.codeHash, challenge.purpose, challenge.issuedAt, challenge.challengeId, challenge.expiresAt, Number(accountId)]
+  );
+};
+
+const verifyStoredOtpChallenge = ({ account, otp, challengeId, purpose, now = new Date() }) => {
+  if (!account || account.otp_purpose !== purpose) return { ok: false, reason: 'invalid' };
+  if (challengeId && account.otp_challenge_id !== challengeId) return { ok: false, reason: 'invalid' };
+  if (isOtpExpired(account.otp_expires_at, now)) return { ok: false, reason: 'expired' };
+  if (Number(account.otp_attempts || 0) >= OTP_MAX_ATTEMPTS) return { ok: false, reason: 'attempt_limit' };
+  const expectedHash = hashOtpCode(otp, account.otp_challenge_id);
+  const storedHash = typeof account.otp_code_hash === 'string' ? account.otp_code_hash : '';
+  if (!storedHash || storedHash.length !== expectedHash.length
+    || !crypto.timingSafeEqual(Buffer.from(expectedHash), Buffer.from(storedHash))) {
+    return { ok: false, reason: 'invalid' };
+  }
+  return { ok: true };
+};
+
 const replaceAccountPassword = async ({ account, newPassword, requireTemporaryPassword }) => {
   const passwordError = validateWebsitePassword(newPassword);
   if (passwordError) {
@@ -1777,6 +1847,11 @@ const replaceAccountPassword = async ({ account, newPassword, requireTemporaryPa
            temporary_password_issued_at = NULL,
            temporary_password_expires_at = NULL,
            otp_code = NULL,
+           otp_code_hash = NULL,
+           otp_purpose = NULL,
+           otp_attempts = 0,
+           otp_sent_at = NULL,
+           otp_challenge_id = NULL,
            otp_expires_at = NULL,
            session_version = COALESCE(session_version, 0) + 1
        WHERE id = $2
@@ -3799,15 +3874,16 @@ app.post('/api/login', async (req, res) => {
       }
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 3 * 60 * 1000);
-    await pool.query('UPDATE public.accounts SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, expiresAt, user.id]);
+    const challenge = createOtpChallenge({ purpose: 'login', ttlMs: LOGIN_OTP_TTL_MS });
+    await issueAccountOtpChallenge(pool, user.id, challenge);
     const emailSent = await resolveOtpEmailDelivery(
-      () => sendOtpEmail(user.email, otp, 'Login Verification Code', user.role),
+      () => sendOtpEmail(user.email, challenge.code, 'Login Verification Code', user.role),
       getOtpEmailTimeoutMs()
     );
 
-    return res.json(buildLoginOtpResponse({ user, expiresAt, emailSent }));
+    if (!emailSent) await clearOtpChallenge(pool, user.id, { purpose: 'login', challengeId: challenge.challengeId });
+
+    return res.json(buildLoginOtpResponse({ user, expiresAt: challenge.expiresAt, challengeId: challenge.challengeId, emailSent }));
   } catch (err) {
     console.error('Login failed:', err.message);
     return res.status(500).json({ error: 'Login failed' });
@@ -3815,10 +3891,18 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.post('/api/login/resend-otp', async (req, res) => {
-  const { userId, email } = req.body;
+  const { userId, email, challengeId } = req.body;
   try {
     let query;
-    if (userId) {
+    if (challengeId) {
+      query = await pool.query(
+        `SELECT * FROM public.accounts
+         WHERE otp_challenge_id = $1
+           AND otp_purpose = 'login'
+         LIMIT 1`,
+        [String(challengeId).trim()]
+      );
+    } else if (userId) {
       query = await pool.query('SELECT * FROM public.accounts WHERE id = $1', [userId]);
     } else if (email) {
       query = await pool.query(buildLoginAccountLookup(email));
@@ -3829,16 +3913,20 @@ app.post('/api/login/resend-otp', async (req, res) => {
     if (query.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const user = query.rows[0];
     if (user.is_archived) return res.status(403).json({ error: 'Account archived' });
+    if (isOtpResendCoolingDown(user.otp_sent_at, new Date(), OTP_RESEND_COOLDOWN_MS)) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((new Date(user.otp_sent_at).getTime() + OTP_RESEND_COOLDOWN_MS - Date.now()) / 1000));
+      return res.status(429).json({ error: 'Please wait before requesting another verification code.', retryAfterSeconds });
+    }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 3 * 60 * 1000);
-    await pool.query('UPDATE public.accounts SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, expiresAt, user.id]);
+    const challenge = createOtpChallenge({ purpose: 'login', ttlMs: LOGIN_OTP_TTL_MS });
+    await issueAccountOtpChallenge(pool, user.id, challenge);
     const emailSent = await resolveOtpEmailDelivery(
-      () => sendOtpEmail(user.email, otp, 'Your new verification code', user.role),
+      () => sendOtpEmail(user.email, challenge.code, 'Your new verification code', user.role),
       getOtpEmailTimeoutMs()
     );
+    if (!emailSent) await clearOtpChallenge(pool, user.id, { purpose: 'login', challengeId: challenge.challengeId });
 
-    return res.json(buildResendOtpResponse({ expiresAt, emailSent }));
+    return res.json(buildResendOtpResponse({ expiresAt: challenge.expiresAt, challengeId: challenge.challengeId, emailSent }));
   } catch (err) {
     console.error('Resend OTP failed:', err.message);
     return res.status(500).json({ error: 'Failed to resend OTP' });
@@ -3846,19 +3934,97 @@ app.post('/api/login/resend-otp', async (req, res) => {
 });
 
 app.post('/api/login/verify-otp', async (req, res) => {
-  const { userId, otp, email, deviceId, skipOtpFor30Days } = req.body;
+  const { userId, otp, email, deviceId, skipOtpFor30Days, challengeId } = req.body;
+  const normalizedOtp = normalizeOtpCode(otp);
+  if (!isOtpCodeFormatValid(normalizedOtp)) return res.status(400).json({ error: 'Verification code must be 6 digits.' });
+
   try {
+    if (challengeId) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const challengeResult = await client.query(
+          `SELECT * FROM public.accounts
+           WHERE otp_challenge_id = $1
+             AND otp_purpose = 'login'
+           FOR UPDATE`,
+          [String(challengeId).trim()]
+        );
+        const user = challengeResult.rows[0];
+        if (!user) {
+          await client.query('ROLLBACK');
+          return res.status(401).json({ error: 'Invalid or expired OTP' });
+        }
+
+        const verification = verifyStoredOtpChallenge({ account: user, otp: normalizedOtp, challengeId: String(challengeId).trim(), purpose: 'login' });
+        if (!verification.ok) {
+          if (verification.reason === 'expired') {
+            await clearOtpChallenge(client, user.id, { purpose: 'login', challengeId: String(challengeId).trim() });
+            await client.query('COMMIT');
+            return res.status(401).json({ error: 'OTP expired' });
+          }
+          if (verification.reason === 'attempt_limit') {
+            await clearOtpChallenge(client, user.id, { purpose: 'login', challengeId: String(challengeId).trim() });
+            await client.query('COMMIT');
+            return res.status(429).json({ error: 'OTP attempt limit reached. Request a new code.' });
+          }
+          const nextAttempts = Number(user.otp_attempts || 0) + 1;
+          if (nextAttempts >= OTP_MAX_ATTEMPTS) {
+            await clearOtpChallenge(client, user.id, { purpose: 'login', challengeId: String(challengeId).trim() });
+            await client.query('COMMIT');
+            return res.status(429).json({ error: 'OTP attempt limit reached. Request a new code.' });
+          }
+          await client.query('UPDATE public.accounts SET otp_attempts = $1 WHERE id = $2 AND otp_challenge_id = $3', [nextAttempts, user.id, String(challengeId).trim()]);
+          await client.query('COMMIT');
+          return res.status(401).json({ error: 'Invalid or expired OTP' });
+        }
+
+        const normalizedDeviceId = normalizeLoginDeviceId(deviceId);
+        let otpTrustExpiresAt = null;
+        if (skipOtpFor30Days && normalizedDeviceId) {
+          otpTrustExpiresAt = new Date(Date.now() + THIRTY_DAY_SESSION_MS);
+          await client.query(buildLoginDeviceSkipUpsert(user.id, normalizedDeviceId, otpTrustExpiresAt));
+        }
+        await client.query(
+          `UPDATE public.accounts
+           SET otp_code = NULL, otp_code_hash = NULL, otp_purpose = NULL,
+               otp_attempts = 0, otp_sent_at = NULL, otp_challenge_id = NULL,
+               otp_expires_at = NULL, status = $1
+           WHERE id = $2`,
+          ['Active', user.id]
+        );
+        const rememberToken = await createRememberToken(user, { otpTrustExpiresAt }, client);
+        await client.query('COMMIT');
+        const serializedUser = serializeUser({ ...user, status: 'Active' });
+        return res.json({
+          success: true,
+          user: serializedUser,
+          mustChangePassword: serializedUser.mustChangePassword,
+          requiresInitialPasswordSetup: serializedUser.requiresInitialPasswordSetup,
+          rememberToken,
+        });
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
     let result;
     if (userId) {
-      result = await pool.query('SELECT * FROM public.accounts WHERE id = $1 AND otp_code = $2', [userId, otp]);
+      result = await pool.query(`SELECT * FROM public.accounts WHERE id = $1 AND otp_code = $2
+        AND (otp_purpose IS NULL OR otp_purpose = 'login')`, [userId, normalizedOtp]);
     } else if (email) {
-      result = await pool.query('SELECT * FROM public.accounts WHERE LOWER(TRIM(email)) = $1 AND otp_code = $2', [normalizeLoginEmail(email), otp]);
+      result = await pool.query(`SELECT * FROM public.accounts WHERE LOWER(TRIM(email)) = $1 AND otp_code = $2
+        AND (otp_purpose IS NULL OR otp_purpose = 'login')`, [normalizeLoginEmail(email), normalizedOtp]);
     } else {
       return res.status(400).json({ error: 'Missing info' });
     }
 
     if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid or expired OTP' });
     const user = result.rows[0];
+    if (user.otp_purpose && user.otp_purpose !== 'login') return res.status(401).json({ error: 'Invalid or expired OTP' });
     if (user.otp_expires_at && new Date(user.otp_expires_at) < new Date()) {
       return res.status(401).json({ error: 'OTP expired' });
     }
@@ -3869,7 +4035,14 @@ app.post('/api/login/verify-otp', async (req, res) => {
       otpTrustExpiresAt = new Date(Date.now() + THIRTY_DAY_SESSION_MS);
       await pool.query(buildLoginDeviceSkipUpsert(user.id, normalizedDeviceId, otpTrustExpiresAt));
     }
-    await pool.query('UPDATE public.accounts SET otp_code = NULL, otp_expires_at = NULL, status = $1 WHERE id = $2', ['Active', user.id]);
+    await pool.query(
+      `UPDATE public.accounts
+       SET otp_code = NULL, otp_code_hash = NULL, otp_purpose = NULL,
+           otp_attempts = 0, otp_sent_at = NULL, otp_challenge_id = NULL,
+           otp_expires_at = NULL, status = $1
+       WHERE id = $2`,
+      ['Active', user.id]
+    );
     const rememberToken = await createRememberToken(user, { otpTrustExpiresAt });
 
     const serializedUser = serializeUser({ ...user, status: 'Active' });
@@ -7605,63 +7778,157 @@ app.post('/api/accounts/:id/restore', requireAccountManagementAdmin, async (req,
 });
 
 app.post('/api/reset-password/send-code', async (req, res) => {
-  const email = req.body.email.toLowerCase().trim();
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  const email = normalizeLoginEmail(req.body?.email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
+
+  const challenge = createOtpChallenge({ purpose: 'recovery', ttlMs: RECOVERY_OTP_TTL_MS });
+  const client = await pool.connect();
   try {
-    const result = await pool.query('SELECT * FROM accounts WHERE LOWER(email)=$1', [email]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Email not found' });
-    await pool.query('UPDATE accounts SET otp_code=$1, otp_expires_at=$2 WHERE LOWER(email)=$3', [otp, expiresAt, email]);
+    await client.query('BEGIN');
+    const result = await client.query(
+      `SELECT * FROM public.accounts
+       WHERE LOWER(TRIM(email)) = $1
+         AND COALESCE(is_archived, false) = false
+         AND LOWER(role) IN ('admin', 'teacher', 'parent', 'parent_teacher')
+       FOR UPDATE`,
+      [email]
+    );
+    const account = result.rows[0];
+    if (!account || isOtpResendCoolingDown(account.otp_sent_at, new Date(), OTP_RESEND_COOLDOWN_MS)) {
+      await client.query('COMMIT');
+      return res.json({ success: true, message: PUBLIC_RECOVERY_MESSAGE });
+    }
+    await issueAccountOtpChallenge(client, account.id, challenge);
+    await client.query('COMMIT');
+
     const emailSent = await sendSystemEmail({
-      to: email,
+      to: account.email,
       subject: 'Password Reset Code',
-      html: `<p>Your code is: <b>${otp}</b></p><p>This code expires in 10 minutes.</p>`
-    });
-    if (!emailSent) return res.status(503).json({ error: 'Email service unavailable' });
-    res.json({ success: true, expiresAt });
-  } catch (err) { console.error('Reset password code failed:', err.message); res.status(500).json({ error: 'Reset failed' }); }
+      html: `<p>Your verification code is: <b>${challenge.code}</b></p><p>This code expires in 10 minutes.</p>`,
+    }, { emailType: 'recovery_otp', role: account.role });
+    if (!emailSent) {
+      await clearOtpChallenge(pool, account.id, { purpose: 'recovery', challengeId: challenge.challengeId });
+      return res.status(503).json({ error: 'Recovery service is temporarily unavailable. Please try again later.' });
+    }
+    return res.json({ success: true, message: PUBLIC_RECOVERY_MESSAGE, expiresAt: challenge.expiresAt });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Reset password code failed:', err.message);
+    return res.status(500).json({ error: 'Recovery service is temporarily unavailable. Please try again later.' });
+  } finally {
+    client.release();
+  }
 });
 
 app.post('/api/reset-password/verify', async (req, res) => {
-  const { email, otp, newPassword } = req.body;
-  try {
-    const result = await pool.query('SELECT * FROM accounts WHERE LOWER(email)=$1 AND otp_code=$2', [email.toLowerCase().trim(), otp]);
-    if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid code' });
+  const email = normalizeLoginEmail(req.body?.email);
+  const otp = normalizeOtpCode(req.body?.otp);
+  const { newPassword, confirmPassword } = req.body || {};
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Please enter a valid email address.' });
+  if (!isOtpCodeFormatValid(otp)) return res.status(400).json({ error: 'Verification code must be 6 digits.' });
+  if (confirmPassword !== undefined && newPassword !== confirmPassword) return res.status(400).json({ error: 'Passwords do not match.' });
 
-    const user = result.rows[0];
-    if (user.otp_expires_at && new Date(user.otp_expires_at) < new Date()) {
-      return res.status(401).json({ error: 'OTP expired' });
+  try {
+    const legacyResult = await pool.query(`SELECT * FROM accounts WHERE LOWER(email)=$1 AND otp_code=$2
+      AND (otp_purpose IS NULL OR otp_purpose = 'recovery')`, [email, otp]);
+    if (legacyResult.rows.length > 0 && !legacyResult.rows[0].otp_code_hash) {
+      const user = legacyResult.rows[0];
+      if (user.otp_expires_at && isOtpExpired(user.otp_expires_at)) return res.status(401).json({ error: 'OTP expired' });
+      const passwordError = validateWebsitePassword(newPassword);
+      if (passwordError) return res.status(400).json({ error: passwordError });
+      const hashedPassword = await hashPassword(newPassword);
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `UPDATE public.accounts
+           SET password = $1, otp_code = NULL, otp_code_hash = NULL,
+               otp_purpose = NULL, otp_attempts = 0, otp_sent_at = NULL,
+               otp_challenge_id = NULL, otp_expires_at = NULL,
+               session_version = COALESCE(session_version, 0) + 1
+           WHERE id = $2`,
+          [hashedPassword, user.id]
+        );
+        await revokeAllWebsiteSessions(client, { accountId: Number(user.id), reason: 'password_reset' });
+        await client.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [user.id]);
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
+      return res.json({ success: true });
     }
 
-    const passwordError = validateWebsitePassword(newPassword);
-    if (passwordError) return res.status(400).json({ error: passwordError });
-
-    const hashedPassword = await hashPassword(newPassword);
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const result = await client.query(
+        `SELECT * FROM public.accounts
+         WHERE LOWER(TRIM(email)) = $1
+           AND COALESCE(is_archived, false) = false
+           AND LOWER(role) IN ('admin', 'teacher', 'parent', 'parent_teacher')
+         FOR UPDATE`,
+        [email]
+      );
+      const user = result.rows[0];
+      if (!user || user.otp_purpose !== 'recovery' || !user.otp_code_hash) {
+        await client.query('ROLLBACK');
+        return res.status(401).json({ error: 'Invalid or expired verification code.' });
+      }
+
+      const verification = verifyStoredOtpChallenge({ account: user, otp, purpose: 'recovery' });
+      if (!verification.ok) {
+        if (verification.reason === 'expired') {
+          await clearOtpChallenge(client, user.id, { purpose: 'recovery' });
+          await client.query('COMMIT');
+          return res.status(401).json({ error: 'OTP expired' });
+        }
+        if (verification.reason === 'attempt_limit') {
+          await clearOtpChallenge(client, user.id, { purpose: 'recovery' });
+          await client.query('COMMIT');
+          return res.status(429).json({ error: 'OTP attempt limit reached. Request a new code.' });
+        }
+        const nextAttempts = Number(user.otp_attempts || 0) + 1;
+        if (nextAttempts >= OTP_MAX_ATTEMPTS) {
+          await clearOtpChallenge(client, user.id, { purpose: 'recovery' });
+          await client.query('COMMIT');
+          return res.status(429).json({ error: 'OTP attempt limit reached. Request a new code.' });
+        }
+        await client.query('UPDATE public.accounts SET otp_attempts = $1 WHERE id = $2', [nextAttempts, user.id]);
+        await client.query('COMMIT');
+        return res.status(401).json({ error: 'Invalid or expired verification code.' });
+      }
+
+      const passwordError = validateWebsitePassword(newPassword);
+      if (passwordError) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: passwordError });
+      }
+
+      const hashedPassword = await hashPassword(newPassword);
       await client.query(
         `UPDATE public.accounts
-         SET password = $1,
-             otp_code = NULL,
-             otp_expires_at = NULL,
+         SET password = $1, otp_code = NULL, otp_code_hash = NULL,
+             otp_purpose = NULL, otp_attempts = 0, otp_sent_at = NULL,
+             otp_challenge_id = NULL, otp_expires_at = NULL,
              session_version = COALESCE(session_version, 0) + 1
-         WHERE LOWER(email) = $2`,
-        [hashedPassword, email.toLowerCase().trim()]
+         WHERE id = $2`,
+        [hashedPassword, user.id]
       );
-      await revokeAllWebsiteSessions(client, {
-        accountId: Number(user.id),
-        reason: 'password_reset',
-      });
+      await revokeAllWebsiteSessions(client, { accountId: Number(user.id), reason: 'password_reset' });
       await client.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [user.id]);
       await client.query('COMMIT');
+      return res.json({ success: true });
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
     } finally {
       client.release();
     }
-    res.json({ success: true });
   } catch (err) { console.error('Reset password verify failed:', err.message); res.status(500).json({ error: 'Update failed' }); }
 });
 
@@ -7670,22 +7937,21 @@ app.post('/api/request-password-change-otp', requireWebsiteManagedAccount, async
   try {
     const account = req.authenticatedUser;
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    await pool.query('UPDATE accounts SET otp_code=$1, otp_expires_at=$2 WHERE id=$3', [otp, expiresAt, account.id]);
+    const challenge = createOtpChallenge({ purpose: 'password_change', ttlMs: RECOVERY_OTP_TTL_MS });
+    await issueAccountOtpChallenge(pool, account.id, challenge);
 
     const emailSent = await sendSystemEmail({
       to: account.email,
       subject: 'Password Change Verification Code',
       html: `<div style="font-family: Arial; border: 1px solid #ddd; padding: 20px;">
                 <h2>Password Change Verification</h2>
-                <p>Your verification code is: <h1 style="color: #3498db;">${otp}</h1></p>
+                <p>Your verification code is: <h1 style="color: #3498db;">${challenge.code}</h1></p>
                 <p style="color: #888; font-size: 12px;">This code will expire in 10 minutes.</p>
                </div>`,
     });
     if (!emailSent) return res.status(503).json({ error: 'Email service unavailable' });
 
-    return res.json({ success: true, message: 'OTP sent to email', expiresAt });
+    return res.json({ success: true, message: 'OTP sent to email', expiresAt: challenge.expiresAt });
   } catch (err) {
     console.error('Request password change OTP failed:', err.message);
     return res.status(500).json({ error: 'Request failed' });
