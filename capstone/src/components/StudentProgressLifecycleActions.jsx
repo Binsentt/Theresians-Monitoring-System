@@ -195,6 +195,103 @@ export const StudentProgressPermanentDeleteAction = ({ studentId, onComplete, cl
   );
 };
 
+export const BulkStudentProgressPermanentDeleteAction = ({ searchQuery = '', disabled = false, onComplete, className = 'table-action-button table-permanent-delete-action' }) => {
+  const [open, setOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [reason, setReason] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const normalizedSearch = String(searchQuery || '').trim();
+  const label = normalizedSearch ? 'Delete All Matching Archived Progress' : 'Delete All Archived Progress';
+
+  const close = (force = false) => {
+    if (submitting && !force) return;
+    setOpen(false);
+    setPreview(null);
+    setReason('');
+    setConfirmation('');
+    setError('');
+  };
+
+  const openDialog = async (event) => {
+    event.stopPropagation();
+    setOpen(true);
+    setPreviewLoading(true);
+    setError('');
+    try {
+      const query = normalizedSearch ? `?search=${encodeURIComponent(normalizedSearch)}` : '';
+      const response = await fetch(buildScopedApiUrl(`/api/student-progress/bulk/permanent-delete/preview${query}`, 'admin'), {
+        headers: buildAuthHeaders(),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'Unable to prepare archived progress deletion.');
+      setPreview(payload);
+      if (!Number(payload.affected_count || 0)) setError('There are no eligible archived progress records in this scope.');
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to prepare archived progress deletion.');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!preview?.preview_token) return setError('Review the archived deletion scope before confirming.');
+    if (!reason.trim()) return setError('Provide a deletion reason.');
+    if (confirmation !== 'DELETE') return setError('Type DELETE to confirm.');
+    setSubmitting(true);
+    setError('');
+    try {
+      const payload = await requestJson('/api/student-progress/bulk/permanent-delete', 'admin', {
+        preview_token: preview.preview_token,
+        reason: reason.trim(),
+        confirmation: 'DELETE',
+      });
+      close(true);
+      onComplete?.(payload);
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to permanently delete archived Student progress.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <button type="button" className={className} disabled={disabled || previewLoading} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={openDialog}>
+        {label}
+      </button>
+      {open && (
+        <LifecycleDialog onClose={close} className="learning-cycle-permanent-delete-dialog learning-cycle-bulk-permanent-delete-dialog">
+          <form onSubmit={submit} onPointerDown={stopModalEvent} onClick={stopModalEvent}>
+            <h2>{label}</h2>
+            <p>This permanently deletes gameplay/progress-derived records for the archived Students in this reviewed scope. Student accounts, Parent/Teacher relationships, Screen Time, Activity Log, and active learning-cycle data remain preserved.</p>
+            <p><strong>{previewLoading ? 'Preparing deletion scope…' : `${Number(preview?.affected_count || 0)} archived Student progress records will be permanently deleted.`}</strong></p>
+            {normalizedSearch && <p>Filter scope: <strong>{normalizedSearch}</strong></p>}
+            {preview?.targets?.length > 0 && (
+              <ul className="learning-cycle-bulk-preview-targets">
+                {preview.targets.slice(0, 10).map((target) => <li key={target.student_id}>{target.name || 'Student'}{target.game_student_id ? ` (${target.game_student_id})` : ''}</li>)}
+                {preview.targets.length > 10 && <li>…and {preview.targets.length - 10} more.</li>}
+              </ul>
+            )}
+            <label htmlFor="bulk-permanent-delete-reason">Required reason</label>
+            <textarea id="bulk-permanent-delete-reason" value={reason} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setReason(event.target.value); setError(''); }} maxLength={1000} disabled={submitting || previewLoading} />
+            <label htmlFor="bulk-permanent-delete-confirmation">Type DELETE to confirm</label>
+            <input id="bulk-permanent-delete-confirmation" value={confirmation} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setConfirmation(event.target.value); setError(''); }} disabled={submitting || previewLoading} autoComplete="off" />
+            {error && <p className="learning-cycle-reset-error" role="alert">{error}</p>}
+            <div className="learning-cycle-reset-actions">
+              <button type="button" className="secondary-button" onClick={close} disabled={submitting}>Cancel</button>
+              <button type="submit" className="table-action-button table-permanent-delete-action" disabled={submitting || previewLoading || !preview?.preview_token}>{submitting ? 'Deleting…' : label}</button>
+            </div>
+          </form>
+        </LifecycleDialog>
+      )}
+    </>
+  );
+};
+
 export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete, label: labelOverride, warning: warningOverride }) => {
   const [open, setOpen] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);

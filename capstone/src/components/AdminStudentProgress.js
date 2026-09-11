@@ -19,6 +19,7 @@ import { formatReportContext } from './tableReporting.utils';
 import { LearningCycleResetAction } from './LearningCycleResetAction';
 import {
   BulkStudentProgressLifecycleAction,
+  BulkStudentProgressPermanentDeleteAction,
   StudentProgressArchiveAction,
   StudentProgressPermanentDeleteAction,
 } from './StudentProgressLifecycleActions';
@@ -205,6 +206,15 @@ export default function AdminStudentProgress() {
                   <div className="student-lifecycle-bulk-actions no-print">
                     <BulkStudentProgressLifecycleAction operation="reset" role="admin" onComplete={() => setRefreshToken((value) => value + 1)} />
                     <BulkStudentProgressLifecycleAction operation="archive" role="admin" onComplete={() => setRefreshToken((value) => value + 1)} />
+                  </div>
+                )}
+                {lifecycle === 'archived' && (
+                  <div className="student-lifecycle-bulk-actions no-print">
+                    <BulkStudentProgressPermanentDeleteAction
+                      searchQuery={searchQuery}
+                      disabled={filteredStudents.length === 0}
+                      onComplete={() => setRefreshToken((value) => value + 1)}
+                    />
                   </div>
                 )}
               </div>

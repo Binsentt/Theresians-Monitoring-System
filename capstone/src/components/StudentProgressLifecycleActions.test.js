@@ -2,6 +2,7 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   BulkStudentProgressLifecycleAction,
+  BulkStudentProgressPermanentDeleteAction,
   StudentProgressArchiveAction,
   StudentProgressPermanentDeleteAction,
 } from './StudentProgressLifecycleActions';
@@ -162,5 +163,60 @@ describe('StudentProgressLifecycleActions', () => {
         body: JSON.stringify({ reason: 'End of School Year', custom_reason: '', expected_count: 2, confirmation: 'ARCHIVE' }),
       })
     );
+  });
+
+  test('previews and confirms archived bulk gameplay deletion with a signed target token', async () => {
+    const onComplete = jest.fn();
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/bulk/permanent-delete/preview')) {
+        return jsonResponse({
+          affected_count: 2,
+          scope: { lifecycle: 'archived', search: 'Ava' },
+          preview_token: 'signed-preview-token',
+          expires_at: '2026-09-11T01:00:00.000Z',
+          targets: [{ student_id: 44, name: 'Ava Santos' }, { student_id: 45, name: 'Ava Cruz' }],
+        });
+      }
+      return jsonResponse({ success: true, affected_count: 2 });
+    });
+    await act(async () => root.render(<BulkStudentProgressPermanentDeleteAction searchQuery="Ava" onComplete={onComplete} />));
+    const open = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Delete All Matching Archived Progress');
+    expect(open).not.toBeNull();
+    await act(async () => open.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const overlay = document.body.querySelector('.learning-cycle-reset-overlay');
+    expect(overlay.textContent).toContain('2 archived Student progress records');
+    expect(overlay.textContent).toContain('Ava');
+    expect(overlay.textContent).toContain('Type DELETE to confirm');
+    const reason = overlay.querySelector('textarea');
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+      valueSetter.call(reason, 'Approved local cleanup');
+      reason.dispatchEvent(new Event('input', { bubbles: true }));
+      reason.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const confirmation = overlay.querySelector('input');
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      valueSetter.call(confirmation, 'DELETE');
+      confirmation.dispatchEvent(new Event('input', { bubbles: true }));
+      confirmation.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const submit = Array.from(overlay.querySelectorAll('button')).find((item) => item.textContent === 'Delete All Matching Archived Progress' && item.type === 'submit');
+    await act(async () => submit.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(global.fetch).toHaveBeenLastCalledWith(
+      '/api/student-progress/bulk/permanent-delete',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ preview_token: 'signed-preview-token', reason: 'Approved local cleanup', confirmation: 'DELETE' }),
+      })
+    );
+    expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  test('uses the unfiltered archived bulk label and disables it when no eligible rows exist', async () => {
+    await act(async () => root.render(<BulkStudentProgressPermanentDeleteAction searchQuery="" disabled />));
+    const button = container.querySelector('button');
+    expect(button?.textContent).toBe('Delete All Archived Progress');
+    expect(button?.disabled).toBe(true);
   });
 });

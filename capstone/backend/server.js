@@ -1032,6 +1032,129 @@ const getScopedLifecycleStudents = async (client, scope, { lifecycle = 'active',
   return client.query(query, params);
 };
 
+// Archived-progress permanent deletion is deliberately a two-step, target-bound
+// operation. The preview is signed and retained server-side for a short period;
+// the final transaction re-resolves and locks exactly that target set so a
+// client cannot widen, substitute, or replay a deletion request.
+const ARCHIVED_PROGRESS_BULK_PREVIEW_TTL_SECONDS = 300;
+const MAX_ARCHIVED_PROGRESS_SEARCH_LENGTH = 200;
+const archivedProgressBulkPreviewStore = new Map();
+
+const normalizeArchivedProgressSearch = (value) => {
+  const search = String(value ?? '').trim();
+  if (search.length > MAX_ARCHIVED_PROGRESS_SEARCH_LENGTH) {
+    return { error: `Search must be ${MAX_ARCHIVED_PROGRESS_SEARCH_LENGTH} characters or fewer.` };
+  }
+  return { search };
+};
+
+const normalizeArchivedProgressTarget = (row) => ({
+  id: Number(row.student_id ?? row.id),
+  name: row.name || row.student_name || null,
+  game_student_id: row.game_student_id || null,
+  grade_level: row.grade_level || null,
+  section: row.section || null,
+  progress_archived_at: row.progress_archived_at ? new Date(row.progress_archived_at).toISOString() : null,
+  current_learning_cycle_version: Number(row.current_learning_cycle_version || 0),
+  current_learning_cycle_started_at: row.current_learning_cycle_started_at
+    ? new Date(row.current_learning_cycle_started_at).toISOString()
+    : null,
+});
+
+const getArchivedProgressTargetFingerprint = (targets = []) => crypto
+  .createHash('sha256')
+  .update(JSON.stringify(targets.map(normalizeArchivedProgressTarget).map((target) => ({
+    id: target.id,
+    progress_archived_at: target.progress_archived_at,
+    current_learning_cycle_version: target.current_learning_cycle_version,
+    current_learning_cycle_started_at: target.current_learning_cycle_started_at,
+  }))))
+  .digest('hex');
+
+const getArchivedProgressTargetStates = (targets = []) => targets.map(normalizeArchivedProgressTarget).map((target) => ({
+  id: target.id,
+  progress_archived_at: target.progress_archived_at,
+  current_learning_cycle_version: target.current_learning_cycle_version,
+  current_learning_cycle_started_at: target.current_learning_cycle_started_at,
+}));
+
+const getArchivedProgressBulkTargets = async (client, { search = '', forUpdate = false } = {}) => {
+  const params = [];
+  let query = buildCanonicalStudentProgressQuery('archived');
+  if (search) {
+    params.push(`%${search.replace(/[\\%_]/g, '\\$&')}%`);
+    const searchParam = `$${params.length}`;
+    query += ` AND (
+      COALESCE(a.name, '') ILIKE ${searchParam} ESCAPE '\\'
+      OR COALESCE(a.game_student_id, '') ILIKE ${searchParam} ESCAPE '\\'
+      OR COALESCE(a.grade_level, '') ILIKE ${searchParam} ESCAPE '\\'
+      OR COALESCE(a.section, '') ILIKE ${searchParam} ESCAPE '\\'
+      OR COALESCE(p.current_quest, '') ILIKE ${searchParam} ESCAPE '\\'
+      OR COALESCE(p.difficulty_level, '') ILIKE ${searchParam} ESCAPE '\\'
+      OR COALESCE(p.current_scene, '') ILIKE ${searchParam} ESCAPE '\\'
+      OR COALESCE(p.current_map, '') ILIKE ${searchParam} ESCAPE '\\'
+      OR CAST(COALESCE(p.correct_answers, 0) AS TEXT) ILIKE ${searchParam} ESCAPE '\\'
+      OR CAST(GREATEST(COALESCE(p.total_questions, 0) - COALESCE(p.correct_answers, 0), 0) AS TEXT) ILIKE ${searchParam} ESCAPE '\\'
+      OR CAST(COALESCE(p.accuracy_rate, 0) AS TEXT) ILIKE ${searchParam} ESCAPE '\\'
+    )`;
+  }
+  query += ' ORDER BY a.id ASC';
+  if (forUpdate) query += ' FOR UPDATE OF a';
+  return client.query(query, params);
+};
+
+const purgeExpiredArchivedProgressBulkPreviews = () => {
+  const now = Date.now();
+  for (const [jti, preview] of archivedProgressBulkPreviewStore.entries()) {
+    if (preview.expiresAt <= now || preview.used) archivedProgressBulkPreviewStore.delete(jti);
+  }
+};
+
+const issueArchivedProgressBulkPreview = ({ actorId, search, targets }) => {
+  purgeExpiredArchivedProgressBulkPreviews();
+  const jti = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  const expiresAt = now + ARCHIVED_PROGRESS_BULK_PREVIEW_TTL_SECONDS;
+  const normalizedTargets = targets.map(normalizeArchivedProgressTarget);
+  const payload = {
+    purpose: 'student_progress_bulk_delete_preview',
+    operation: 'permanent-delete',
+    actor_id: Number(actorId),
+    search,
+    target_ids: normalizedTargets.map((target) => target.id),
+    target_states: normalizedTargets.map((target) => ({
+      id: target.id,
+      progress_archived_at: target.progress_archived_at,
+      current_learning_cycle_version: target.current_learning_cycle_version,
+      current_learning_cycle_started_at: target.current_learning_cycle_started_at,
+    })),
+    target_fingerprint: getArchivedProgressTargetFingerprint(normalizedTargets),
+    jti,
+    iat: now,
+    exp: expiresAt,
+  };
+  const token = jwt.sign(payload, JWT_SECRET);
+  archivedProgressBulkPreviewStore.set(jti, {
+    actorId: Number(actorId),
+    search,
+    targetIds: payload.target_ids,
+    targetStates: payload.target_states,
+    targetFingerprint: payload.target_fingerprint,
+    expiresAt: expiresAt * 1000,
+    used: false,
+  });
+  return { token, expiresAt: new Date(expiresAt * 1000).toISOString(), payload };
+};
+
+const resolveArchivedProgressBulkReason = (body = {}) => {
+  const reason = String(body.reason || '').trim();
+  if (!reason) return { error: 'A deletion reason is required.' };
+  if (reason.length > MAX_LEARNING_CYCLE_RESET_REASON_LENGTH) {
+    return { error: `Deletion reason must be ${MAX_LEARNING_CYCLE_RESET_REASON_LENGTH} characters or fewer.` };
+  }
+  return { reason };
+};
+
 const writeStudentLifecycleAudit = async (client, {
   student,
   actor,
@@ -9322,6 +9445,148 @@ app.get('/api/student-progress/lifecycle-summary', requireAnalyticsAccess, async
   } catch (err) {
     console.error('Lifecycle summary failed:', err.message);
     return res.status(500).json({ error: 'Failed to prepare the lifecycle summary.' });
+  }
+});
+
+app.get('/api/student-progress/bulk/permanent-delete/preview', requireAccountManagementAdmin, async (req, res) => {
+  const searchResult = normalizeArchivedProgressSearch(req.query?.search);
+  if (searchResult.error) return res.status(400).json({ error: searchResult.error });
+  try {
+    const targetResult = await getArchivedProgressBulkTargets(pool, { search: searchResult.search });
+    const targets = targetResult.rows.map(normalizeArchivedProgressTarget);
+    if (targets.length === 0) {
+      return res.json({
+        operation: 'permanent-delete',
+        affected_count: 0,
+        targets: [],
+        scope: { lifecycle: 'archived', search: searchResult.search },
+        preview_token: null,
+        expires_at: null,
+        preserves: ['accounts', 'teacher_student_relationships', 'playtime_sessions', 'activity_logs', 'admin_audit_logs'],
+        deletes: ['student_game_progress', 'game_results', 'student_ai_insights'],
+      });
+    }
+    const preview = issueArchivedProgressBulkPreview({
+      actorId: req.authenticatedUser.id,
+      search: searchResult.search,
+      targets,
+    });
+    return res.json({
+      operation: 'permanent-delete',
+      affected_count: targets.length,
+      targets: targets.map((target) => ({
+        student_id: target.id,
+        name: target.name,
+        game_student_id: target.game_student_id,
+        grade_level: target.grade_level,
+        section: target.section,
+      })),
+      scope: { lifecycle: 'archived', search: searchResult.search },
+      preview_token: preview.token,
+      expires_at: preview.expiresAt,
+      preserves: ['accounts', 'teacher_student_relationships', 'playtime_sessions', 'activity_logs', 'admin_audit_logs'],
+      deletes: ['student_game_progress', 'game_results', 'student_ai_insights'],
+    });
+  } catch (err) {
+    console.error('Archived progress bulk preview failed:', err.message);
+    return res.status(500).json({ error: 'Unable to prepare archived progress deletion.' });
+  }
+});
+
+app.post('/api/student-progress/bulk/permanent-delete', requireAccountManagementAdmin, async (req, res) => {
+  const reasonResult = resolveArchivedProgressBulkReason(req.body);
+  const confirmation = String(req.body?.confirmation || req.body?.confirmation_phrase || '').trim();
+  const token = String(req.body?.preview_token || '').trim();
+  if (reasonResult.error || confirmation !== 'DELETE' || !token) {
+    return res.status(400).json({ error: reasonResult.error || 'A preview token and typed DELETE confirmation are required.' });
+  }
+
+  let previewPayload;
+  try {
+    previewPayload = jwt.verify(token, JWT_SECRET);
+  } catch (err) {
+    return res.status(409).json({ error: 'The deletion preview has expired or is invalid. Review the archived records again.' });
+  }
+  if (previewPayload?.purpose !== 'student_progress_bulk_delete_preview'
+    || previewPayload.operation !== 'permanent-delete'
+    || Number(previewPayload.actor_id) !== Number(req.authenticatedUser.id)
+    || !previewPayload.jti) {
+    return res.status(409).json({ error: 'The deletion preview is not valid for this Admin or operation.' });
+  }
+  purgeExpiredArchivedProgressBulkPreviews();
+  const storedPreview = archivedProgressBulkPreviewStore.get(previewPayload.jti);
+  if (!storedPreview || storedPreview.used || storedPreview.expiresAt <= Date.now()) {
+    return res.status(409).json({ error: 'The deletion preview has expired or was already used. Review the archived records again.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const targetResult = await getArchivedProgressBulkTargets(client, {
+      search: String(previewPayload.search || ''),
+      forUpdate: true,
+    });
+    const targets = targetResult.rows.map(normalizeArchivedProgressTarget);
+    const targetIds = targets.map((target) => target.id);
+    const targetStates = getArchivedProgressTargetStates(targets);
+    const previewIds = Array.isArray(previewPayload.target_ids) ? previewPayload.target_ids.map(Number) : [];
+    const storedIds = Array.isArray(storedPreview.targetIds) ? storedPreview.targetIds.map(Number) : [];
+    const previewStates = Array.isArray(previewPayload.target_states) ? previewPayload.target_states : [];
+    const storedStates = Array.isArray(storedPreview.targetStates) ? storedPreview.targetStates : [];
+    const sameIds = targetIds.length === previewIds.length
+      && targetIds.every((id, index) => id === previewIds[index])
+      && targetIds.length === storedIds.length
+      && targetIds.every((id, index) => id === storedIds[index]);
+    const sameStates = JSON.stringify(targetStates) === JSON.stringify(previewStates)
+      && JSON.stringify(targetStates) === JSON.stringify(storedStates);
+    const currentFingerprint = getArchivedProgressTargetFingerprint(targets);
+    if (!sameIds || !sameStates || currentFingerprint !== previewPayload.target_fingerprint || currentFingerprint !== storedPreview.targetFingerprint) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'The archived records changed after preview. Review the deletion scope and confirm again.' });
+    }
+
+    for (const student of targets) {
+      const descriptor = await startFreshLearningCycle(client, student.id);
+      await client.query('DELETE FROM public.game_results WHERE resolved_student_id = $1', [student.id]);
+      await client.query('DELETE FROM public.student_ai_insights WHERE student_id = $1', [student.id]);
+      await writeStudentLifecycleAudit(client, {
+        student,
+        actor: req.authenticatedUser,
+        role: 'admin',
+        action: 'Permanent Gameplay Progress Delete (bulk)',
+        reason: reasonResult.reason,
+        description: `Deleted student_game_progress, game_results, and derived insight state; learning cycle ${descriptor.version} started. Screen Time, Activity Log, accounts, and relationships remain preserved.`,
+      });
+    }
+    await writeAdminAuditLog(req.authenticatedUser, 'Bulk Delete Archived Student Progress', targets[0] || { id: null, name: 'Archived Student Progress' }, {
+      reason: reasonResult.reason,
+      operationType: 'bulk_progress_delete',
+      beforeMetadata: {
+        target_ids: targetIds,
+        target_fingerprint: currentFingerprint,
+        scope: { lifecycle: 'archived', search: String(previewPayload.search || '') },
+        affected_tables: ['student_game_progress', 'game_results', 'student_ai_insights'],
+      },
+      afterMetadata: {
+        preserved_tables: ['accounts', 'teacher_student_relationships', 'playtime_sessions', 'activity_logs', 'admin_audit_logs'],
+      },
+    }, client);
+    await client.query('COMMIT');
+    storedPreview.used = true;
+    archivedProgressBulkPreviewStore.set(previewPayload.jti, storedPreview);
+    return res.json({
+      success: true,
+      operation: 'permanent-delete',
+      affected_count: targets.length,
+      student_ids: targetIds,
+      preserved: ['accounts', 'teacher_student_relationships', 'playtime_sessions', 'activity_logs', 'admin_audit_logs'],
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Archived progress bulk permanent delete failed:', err.message);
+    return res.status(500).json({ error: 'Unable to permanently delete archived Student progress.' });
+  } finally {
+    client.release();
   }
 });
 

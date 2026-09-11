@@ -207,6 +207,7 @@ describe('Student Progress summary cards', () => {
     expect(global.fetch.mock.calls.some(([url]) => String(url).startsWith('/api/students/progress?lifecycle=archived'))).toBe(true);
     expect(container.textContent).toContain('Archived Student Progress');
     expect(container.textContent).toContain('Permanent Delete');
+    expect(container.textContent).toContain('Delete All Archived Progress');
     expect(container.textContent).not.toContain('Archive All');
   });
 

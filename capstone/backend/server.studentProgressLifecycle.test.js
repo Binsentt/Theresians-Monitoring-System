@@ -81,3 +81,51 @@ test('active monitoring excludes only soft-archived students while archive histo
   assert.match(source, /Archive: Progress Archived/);
   assert.match(source, /Reset: New Learning Cycle Started/);
 });
+
+test('archived bulk permanent delete exposes an admin-only preview-token contract bound to exact targets', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const previewIndex = source.indexOf("app.get('/api/student-progress/bulk/permanent-delete/preview'");
+  const deleteIndex = source.indexOf("app.post('/api/student-progress/bulk/permanent-delete'");
+  const singleIndex = source.indexOf("app.post('/api/student-progress/:studentId/permanent-delete'");
+  assert.ok(previewIndex >= 0, 'archived bulk preview route is registered');
+  assert.ok(deleteIndex >= 0, 'archived bulk delete route is registered');
+  assert.ok(previewIndex < singleIndex, 'bulk preview precedes the single-student route');
+  assert.ok(deleteIndex < singleIndex, 'bulk delete precedes the single-student route');
+  const previewRoute = source.slice(previewIndex, deleteIndex);
+  const deleteRoute = source.slice(deleteIndex, singleIndex);
+  const targetResolver = source.slice(source.indexOf('const getArchivedProgressBulkTargets'), previewIndex);
+  assert.match(previewRoute, /requireAccountManagementAdmin/);
+  assert.match(targetResolver, /buildCanonicalStudentProgressQuery\('archived'\)/);
+  assert.match(targetResolver, /progress_archived_at IS NOT NULL/);
+  assert.match(previewRoute, /preview_token/);
+  assert.match(previewRoute, /targets/);
+  assert.match(previewRoute, /student_game_progress|game_results|student_ai_insights/);
+  assert.match(deleteRoute, /requireAccountManagementAdmin/);
+  assert.match(deleteRoute, /jwt\.verify|verifyRememberToken/);
+  assert.match(deleteRoute, /target_ids|targetIds/);
+  assert.match(deleteRoute, /forUpdate:\s*true/);
+  assert.match(deleteRoute, /ROLLBACK/);
+  assert.match(deleteRoute, /confirmation.*DELETE|DELETE.*confirmation/);
+  assert.match(deleteRoute, /DELETE FROM public\.student_game_progress|startFreshLearningCycle/);
+  assert.match(deleteRoute, /DELETE FROM public\.game_results/);
+  assert.match(deleteRoute, /DELETE FROM public\.student_ai_insights/);
+  assert.doesNotMatch(deleteRoute, /DELETE FROM public\.accounts/i);
+  assert.doesNotMatch(deleteRoute, /DELETE FROM public\.teacher_student_relationships/i);
+  assert.doesNotMatch(deleteRoute, /DELETE FROM public\.playtime_sessions/i);
+  assert.match(deleteRoute, /writeAdminAuditLog|writeStudentLifecycleAudit/);
+});
+
+test('archived bulk permanent delete binds actor, target fingerprint, expiry, and replay protection', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const helperStart = source.indexOf('const getArchivedProgressBulkTargets');
+  const routeStart = source.indexOf("app.post('/api/student-progress/bulk/permanent-delete'");
+  const relevant = source.slice(helperStart, routeStart);
+  assert.ok(helperStart >= 0, 'archived target resolver exists');
+  assert.match(relevant, /createHash\(['"]sha256/);
+  assert.match(relevant, /actor_id|actorId/);
+  assert.match(relevant, /expires|expires_at|expiresIn/);
+  assert.match(relevant, /preview_token/);
+  assert.match(relevant, /target_fingerprint|fingerprint/);
+  assert.match(relevant, /used|replay|operation/);
+  assert.match(relevant, /search/);
+});
