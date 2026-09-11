@@ -145,3 +145,18 @@ test('dynamic provider schema allows only catalog ids and no free-text propertie
   assert.equal(schema.properties.strength_claim_ids.items.enum.includes('difficulty_easy_strength'), true);
   assert.equal(schema.properties.weakness_claim_ids.items.enum.includes('difficulty_difficult_weakness'), false);
 });
+
+test('dynamic provider schema uses only strict-compatible JSON Schema keywords', () => {
+  const catalog = buildGroundedClaimCatalog(input);
+  const schema = buildClaimSelectionSchema(catalog);
+  const visit = (node) => {
+    if (!node || typeof node !== 'object') return;
+    assert.equal(Object.prototype.hasOwnProperty.call(node, 'uniqueItems'), false);
+    if (node.type === 'object') {
+      assert.equal(node.additionalProperties, false);
+      assert.deepEqual(Object.keys(node.properties || {}).sort(), [...(node.required || [])].sort());
+    }
+    Object.values(node).forEach(visit);
+  };
+  visit(schema);
+});

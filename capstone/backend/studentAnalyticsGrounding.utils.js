@@ -214,7 +214,6 @@ const arraySchemaFor = (ids, minItems = 0) => (ids.length === 0
     type: 'array',
     minItems,
     maxItems: Math.min(MAX_SELECTION_ITEMS, ids.length),
-    uniqueItems: true,
     items: { type: 'string', enum: ids },
   });
 
