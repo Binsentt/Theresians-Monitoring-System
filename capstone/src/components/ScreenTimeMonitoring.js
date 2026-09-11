@@ -12,6 +12,7 @@ import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { collectAuthorizedReportRows, formatReportContext } from './tableReporting.utils';
 import { usePreparedReportPrint } from './usePreparedReportPrint';
+import ModalPortal from './ModalPortal';
 import '../styles/screenTime.css';
 
 const SORT_OPTIONS = [
@@ -133,6 +134,13 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   const [reportError, setReportError] = useState('');
   const [reportTitle, setReportTitle] = useState('Screen Time Report');
   const [reportScope, setReportScope] = useState('All authorised records');
+  const [pendingDeletion, setPendingDeletion] = useState(null);
+  const [deletionReason, setDeletionReason] = useState('');
+  const [deletionConfirmation, setDeletionConfirmation] = useState('');
+  const [deletionTarget, setDeletionTarget] = useState(null);
+  const [deletionError, setDeletionError] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [refreshToken, setRefreshToken] = useState(0);
   const { preparedRows, hasPreparedReport, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
   const isChildView = mode === 'children';
   const pageSize = 10;
@@ -214,7 +222,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     return () => {
       cancelled = true;
     };
-  }, [authReady, filters, isChildView, mode, page, pageSize, user]);
+  }, [authReady, filters, isChildView, mode, page, pageSize, refreshToken, user]);
 
   const title = isChildView ? 'My Child Screen Time' : 'Screen Time Monitoring';
   const portalLabel = isChildView ? 'Parent Portal' : normalizeRole(user?.role) === 'admin' ? 'Admin Portal' : 'Teacher Portal';
@@ -255,6 +263,72 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   const clearFilters = () => {
     setFilters(initialFilters);
     setPage(1);
+  };
+
+  const isAdminAllView = !isChildView && normalizeRole(user?.role) === 'admin';
+  const closeDeletionDialog = () => {
+    if (deleting) return;
+    setPendingDeletion(null);
+    setDeletionReason('');
+    setDeletionConfirmation('');
+    setDeletionTarget(null);
+    setDeletionError('');
+  };
+
+  const openSingleDeletion = (record) => {
+    setPendingDeletion({ kind: 'single', record });
+    setDeletionReason('');
+    setDeletionConfirmation('');
+    setDeletionError('');
+  };
+
+  const openBulkDeletion = async () => {
+    setDeletionError('');
+    setDeleting(true);
+    try {
+      const response = await fetch(apiUrl(`/api/playtime/deletion-summary?${buildQueryString(filters, mode, 1, 200)}&completed_only=true`), { headers: buildAuthHeaders() });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Unable to prepare completed Screen Time history removal.');
+      setDeletionTarget(payload);
+      setPendingDeletion({ kind: 'bulk' });
+      setDeletionReason('');
+      setDeletionConfirmation('');
+    } catch (requestError) {
+      setDeletionError(requestError.message || 'Unable to prepare completed Screen Time history removal.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const confirmDeletion = async (event) => {
+    event.preventDefault();
+    if (!deletionReason.trim()) return setDeletionError('Provide a reason for history removal.');
+    if (deletionConfirmation !== 'DELETE') return setDeletionError('Type DELETE to confirm.');
+    setDeleting(true);
+    setDeletionError('');
+    try {
+      const isBulk = pendingDeletion?.kind === 'bulk';
+      const response = await fetch(apiUrl(isBulk ? '/api/playtime/completed/bulk' : `/api/playtime/${pendingDeletion.record.id}`), {
+        method: isBulk ? 'POST' : 'DELETE',
+        headers: { ...buildAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(isBulk ? {
+          reason: deletionReason.trim(),
+          confirmation: deletionConfirmation,
+          expected_count: Number(deletionTarget?.affected_count || 0),
+          target_ids: Array.isArray(deletionTarget?.target_ids) ? deletionTarget.target_ids : [],
+          target_fingerprint: deletionTarget?.target_fingerprint || '',
+        } : { reason: deletionReason.trim(), confirmation: deletionConfirmation }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Unable to remove Screen Time history.');
+      closeDeletionDialog();
+      setPage(1);
+      setRefreshToken((value) => value + 1);
+    } catch (requestError) {
+      setDeletionError(requestError.message || 'Unable to remove Screen Time history.');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const prepareScreenTimeReport = async (loadRows, nextTitle, nextScope) => {
@@ -408,9 +482,37 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                       preparing={reportPreparing}
                       onPrint={prepareFilteredScreenTimeReport}
                     />
+                    {isAdminAllView && (
+                      <button type="button" className="screen-time-danger-button" data-action="delete-all-completed-playtime" onClick={openBulkDeletion} disabled={deleting || loading}>
+                        Delete All Completed Records
+                      </button>
+                    )}
                   </div>
                 </div>
                 {reportError && <p className="screen-time-error no-print">{reportError}</p>}
+
+                {deletionError && !pendingDeletion && <p className="screen-time-error no-print" role="alert">{deletionError}</p>}
+
+                {pendingDeletion && (
+                  <ModalPortal onClose={closeDeletionDialog}>
+                    <div className="screen-time-deletion-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDeletionDialog(); }}>
+                      <form className="screen-time-deletion-dialog" role="dialog" aria-modal="true" aria-labelledby="screen-time-deletion-title" onSubmit={confirmDeletion} onMouseDown={(event) => event.stopPropagation()}>
+                        <h2 id="screen-time-deletion-title">{pendingDeletion.kind === 'bulk' ? 'Delete All Completed Records' : 'Delete Screen Time Record'}</h2>
+                        <p>This action removes the record from Screen Time history. Daily playtime usage accounting remains preserved.</p>
+                        {pendingDeletion.kind === 'bulk' ? <p><strong>{deletionTarget?.affected_count || 0} completed records match the current filters.</strong></p> : <p><strong>{pendingDeletion.record.student_name || pendingDeletion.record.game_student_id || 'Selected student'} · {formatDate(pendingDeletion.record.date_played)}</strong></p>}
+                        <label htmlFor="screen-time-deletion-reason">Reason for removal</label>
+                        <textarea id="screen-time-deletion-reason" value={deletionReason} onChange={(event) => setDeletionReason(event.target.value.slice(0, 1000))} maxLength={1000} rows={4} disabled={deleting} />
+                        <label htmlFor="screen-time-deletion-confirmation">Type DELETE to confirm</label>
+                        <input id="screen-time-deletion-confirmation" value={deletionConfirmation} onChange={(event) => setDeletionConfirmation(event.target.value)} autoComplete="off" disabled={deleting} />
+                        {deletionError && <p className="screen-time-error" role="alert">{deletionError}</p>}
+                        <div className="screen-time-deletion-actions">
+                          <button type="button" className="screen-time-clear" onClick={closeDeletionDialog} disabled={deleting}>Cancel</button>
+                          <button type="submit" className="screen-time-danger-button" disabled={deleting}>{deleting ? 'Deleting…' : 'Confirm Delete'}</button>
+                        </div>
+                      </form>
+                    </div>
+                  </ModalPortal>
+                )}
 
                 <div className="screen-time-table-wrap">
                   <table className="screen-time-table">
@@ -461,6 +563,11 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                                 `Student: ${record.student_name || record.child_name || record.game_student_id || 'Selected student'}`
                               )}
                             />
+                            {isAdminAllView && String(record.status || '').toLowerCase() !== 'playing' && (
+                              <button type="button" className="screen-time-danger-link" data-action="delete-playtime-record" onClick={() => openSingleDeletion(record)}>
+                                Delete
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}

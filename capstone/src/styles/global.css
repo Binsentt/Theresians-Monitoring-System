@@ -118,18 +118,24 @@ table {
 }
 
 p,
-span,
-strong,
 label,
 h1,
 h2,
 h3,
 h4,
 h5,
-h6,
+h6 {
+  overflow-wrap: anywhere;
+}
+
+/* Keep short identifiers and headers readable while allowing long names and
+   quest labels to wrap at word boundaries. Unbroken values can still break
+   when the table has no horizontal room. */
 td,
 th {
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
+  white-space: normal;
 }
 
 /* Main containers should not be draggable; allow scrolling inside main panels */

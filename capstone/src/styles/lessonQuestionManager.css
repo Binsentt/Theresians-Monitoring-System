@@ -837,6 +837,51 @@ button.drive-folder-card {
   border-color: #b8dfc1;
 }
 
+.question-preview-editor {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+}
+
+.question-editor-field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text-primary, #0f172a);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.question-editor-field input,
+.question-editor-field select,
+.question-editor-textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border-color, #dbe3ef);
+  border-radius: 9px;
+  padding: 10px 12px;
+  background: var(--panel-bg, #fff);
+  color: var(--text-primary, #0f172a);
+  font: inherit;
+  font-weight: 400;
+}
+
+.question-editor-textarea {
+  min-height: 118px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.question-editor-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.question-editor-correct-field {
+  max-width: 420px;
+}
+
 .generated-question-card strong {
   display: block;
   color: var(--text-primary, #0f172a);
@@ -997,6 +1042,10 @@ button.drive-folder-card {
   .storage-file-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .question-editor-choice-grid {
+    grid-template-columns: 1fr;
   }
 }
 

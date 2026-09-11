@@ -163,9 +163,11 @@ export default function AdminManagedChildrenPanel({ parentId, sectionRegistry, a
                   <td>{child.game_student_id || 'Not linked'}</td>
                   <td>{child.grade_level || 'Not assigned'}</td>
                   <td>{child.section || 'Not assigned'}</td>
-                  <td>
-                    <button type="button" className="delete-action-btn" data-action="unlink-child" onClick={() => { setPending({ ...child, operation: 'unlink' }); setConfirmation(''); setRemovalReason(''); }}>Remove Child</button>
-                    <button type="button" className="delete-action-btn" data-action="delete-student-permanently" onClick={() => { setPending({ ...child, operation: 'permanent' }); setConfirmation(''); setRemovalReason(''); }}>Delete Student Permanently</button>
+                  <td className="managed-child-action-cell">
+                    <div className="managed-child-action-group">
+                      <button type="button" className="delete-action-btn" data-action="unlink-child" onClick={() => { setPending({ ...child, operation: 'unlink' }); setConfirmation(''); setRemovalReason(''); }}>Remove Child</button>
+                      <button type="button" className="delete-action-btn" data-action="delete-student-permanently" onClick={() => { setPending({ ...child, operation: 'permanent' }); setConfirmation(''); setRemovalReason(''); }}>Delete Student Permanently</button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -184,7 +186,8 @@ export default function AdminManagedChildrenPanel({ parentId, sectionRegistry, a
       {pending?.operation === 'unlink' && (
         <div className="managed-child-confirmation" role="dialog" aria-modal="true" aria-label="Confirm Remove Child">
           <h4>Remove Child</h4>
-          <p>Remove the Parent relationship for <strong>{pending.student_name}</strong> (Student ID {pending.game_student_id})? The Student account and gameplay data will be preserved.</p>
+          <p>Remove the Parent relationship for <strong>{pending.student_name}</strong> (Student ID {pending.game_student_id})?</p>
+          <p className="managed-child-confirmation-detail">Parent account: {parentId}. Affected data: this relationship only. The Student account and gameplay data will be preserved, including Screen Time and activity history.</p>
           <label htmlFor="managed-child-unlink-reason">Reason *</label>
           <textarea id="managed-child-unlink-reason" aria-label="Reason for removing this child relationship" value={removalReason} onChange={(event) => setRemovalReason(event.target.value)} maxLength={500} />
           <button type="button" onClick={() => { setPending(null); setRemovalReason(''); }}>Cancel</button>
@@ -194,8 +197,9 @@ export default function AdminManagedChildrenPanel({ parentId, sectionRegistry, a
       {pending?.operation === 'permanent' && (
         <div className="managed-child-confirmation" role="dialog" aria-modal="true" aria-label="Confirm permanent Student deletion">
           <h4>Delete Student Permanently</h4>
-          <p>This action is irreversible and deletes the Student account and dependent gameplay records. Type DELETE to continue.</p>
+          <p>This action is irreversible and deletes the Student account and its dependent gameplay records. Type DELETE to continue.</p>
           <p><strong>{pending.student_name}</strong> — Student ID {pending.game_student_id}</p>
+          <p className="managed-child-confirmation-detail">Parent account: {parentId}. Affected data: Student account, gameplay/progress records, and derived insights. Sibling Students and the Parent account are not affected.</p>
           <label htmlFor="managed-child-delete-reason">Reason *</label>
           <textarea id="managed-child-delete-reason" aria-label="Reason for permanently deleting this Student account" value={removalReason} onChange={(event) => setRemovalReason(event.target.value)} maxLength={500} />
           <input aria-label="Type DELETE to confirm Student deletion" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />

@@ -326,4 +326,22 @@ describe('ScreenTimeMonitoring', () => {
     expect(container.textContent).not.toContain('Auto Save');
     expect(container.textContent).toContain('Completed');
   });
+
+  test('admin can open a reason dialog for one completed record or the filtered completed set', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
+    localStorage.setItem('rememberToken', 'remember-token');
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/deletion-summary')) return jsonResponse({ affected_count: 1, target_ids: [5], target_fingerprint: 'fingerprint' });
+      return jsonResponse(playtimePayload);
+    });
+
+    act(() => root.render(<ScreenTimeMonitoring mode="all" />));
+    await waitForContent(container, 'Ava Santos');
+
+    expect(container.querySelector('button[data-action="delete-playtime-record"]')).not.toBeNull();
+    expect(container.querySelector('button[data-action="delete-all-completed-playtime"]')).not.toBeNull();
+    await act(async () => container.querySelector('button[data-action="delete-playtime-record"]').click());
+    expect(document.body.textContent).toContain('Delete Screen Time Record');
+    expect(document.body.textContent).toContain('This action removes the record from Screen Time history');
+  });
 });

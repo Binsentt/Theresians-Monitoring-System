@@ -112,6 +112,74 @@
   margin: 0;
 }
 
+.screen-time-danger-button,
+.screen-time-danger-link {
+  border: 1px solid #b42318;
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: #b42318;
+  color: #fff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.screen-time-danger-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.screen-time-danger-link {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  font-size: 0.78rem;
+}
+
+.screen-time-deletion-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.screen-time-deletion-dialog {
+  display: grid;
+  gap: 12px;
+  width: min(540px, 100%);
+  padding: 24px;
+  border: 1px solid var(--border-color, #dbe3ef);
+  border-radius: 16px;
+  background: var(--panel-bg, #fff);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+}
+
+.screen-time-deletion-dialog h2,
+.screen-time-deletion-dialog p {
+  margin: 0;
+}
+
+.screen-time-deletion-dialog textarea,
+.screen-time-deletion-dialog input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border-color, #dbe3ef);
+  border-radius: 9px;
+  padding: 10px 12px;
+  background: var(--panel-bg, #fff);
+  color: var(--text-primary, #0b2447);
+}
+
+.screen-time-deletion-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .screen-time-error {
   margin-bottom: 14px;
   padding: 12px 14px;

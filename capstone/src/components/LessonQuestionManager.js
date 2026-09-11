@@ -1826,10 +1826,6 @@ export default function LessonQuestionManager() {
                       <p className="question-review-metadata">File Name: {previewFile.title || previewFile.file_name}</p>
                       <p className="question-review-metadata">File Type: {previewFile.file_type === 'lesson' ? 'Lesson PDF or PPTX File' : 'Fixed Question File'}</p>
                       <p className="question-review-metadata">Grade: {previewFile.grade_level} · Difficulty: {previewFile.difficulty}</p>
-                      <p className="question-review-metadata">Source topic metadata (optional): {previewFile.math_topic || 'Not provided'}</p>
-                      {previewFile.file_type === 'fixed_questions' && (
-                        <p className="question-review-metadata">Source document topic (informational): {previewFile.document_topic || 'Not provided'}</p>
-                      )}
                       <p className="question-review-metadata">Game Publication: {previewPublicationEligibility.label}</p>
                       {previewApprovalRequired && (
                         <p className="question-review-metadata">Review required before Push to Game.</p>
@@ -1864,27 +1860,25 @@ export default function LessonQuestionManager() {
                                 className={`generated-question-card ${questionIsValid ? 'valid' : 'invalid'}`}
                               >
                                 {editingPreviewQuestionId === question.id ? (
-                                  <div className="question-preview-editor">
-                                    <label>
+                                  <div className="question-preview-editor" aria-label={`Edit question ${index + 1} form`}>
+                                    <label className="question-editor-field question-editor-question-field">
                                       Question text
-                                      <textarea aria-label={`Question ${index + 1} text`} value={previewQuestionDraft.question} onChange={(event) => updatePreviewQuestionDraft('question', event.target.value)} />
+                                      <textarea className="question-editor-textarea" aria-label={`Question ${index + 1} text`} value={previewQuestionDraft.question} onChange={(event) => updatePreviewQuestionDraft('question', event.target.value)} />
                                     </label>
-                                    {previewQuestionDraft.options.map((option, optionIndex) => (
-                                      <label key={optionIndex}>
-                                        Choice {String.fromCharCode(65 + optionIndex)}
-                                        <input aria-label={`Question ${index + 1} choice ${String.fromCharCode(65 + optionIndex)}`} value={option} onChange={(event) => updatePreviewQuestionOption(optionIndex, event.target.value)} />
-                                      </label>
-                                    ))}
-                                    <label>
+                                    <div className="question-editor-choice-grid" aria-label="Answer choices">
+                                      {previewQuestionDraft.options.map((option, optionIndex) => (
+                                        <label key={optionIndex} className="question-editor-field">
+                                          <span>Choice {String.fromCharCode(65 + optionIndex)}</span>
+                                          <input aria-label={`Question ${index + 1} choice ${String.fromCharCode(65 + optionIndex)}`} value={option} onChange={(event) => updatePreviewQuestionOption(optionIndex, event.target.value)} />
+                                        </label>
+                                      ))}
+                                    </div>
+                                    <label className="question-editor-field question-editor-correct-field">
                                       Correct answer
                                       <select aria-label={`Question ${index + 1} correct answer`} value={previewQuestionDraft.correct_answer} onChange={(event) => updatePreviewQuestionDraft('correct_answer', event.target.value)}>
                                         <option value="">Select the correct answer</option>
                                         {previewQuestionDraft.options.map((option, optionIndex) => <option key={optionIndex} value={option}>{option || `Choice ${String.fromCharCode(65 + optionIndex)}`}</option>)}
                                       </select>
-                                    </label>
-                                    <label>
-                                      Topic metadata
-                                      <input aria-label={`Question ${index + 1} topic metadata`} value={previewQuestionDraft.math_topic} onChange={(event) => updatePreviewQuestionDraft('math_topic', event.target.value)} />
                                     </label>
                                     {previewQuestionErrors.map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
                                     <div className="edit-actions">
@@ -1902,7 +1896,7 @@ export default function LessonQuestionManager() {
                                         </li>
                                       ))}
                                     </ol>
-                                    <p className="question-review-metadata">{formatQuestionGradeLabel(question.grade_level || previewFile.grade_level)} · {question.difficulty || previewFile.difficulty}{question.math_topic ? ` · ${question.math_topic}` : ''}</p>
+                                    <p className="question-review-metadata">{formatQuestionGradeLabel(question.grade_level || previewFile.grade_level)} · {question.difficulty || previewFile.difficulty}</p>
                                     {questionIsValid ? <p className="question-validation-valid">Valid</p> : questionErrors.map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
                                     {!(previewFile.published || previewFile.publish_status === 'active') && (
                                       <div className="edit-actions">

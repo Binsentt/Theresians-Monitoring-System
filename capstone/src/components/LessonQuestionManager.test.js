@@ -473,6 +473,18 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).toContain('Five (Correct)');
   });
 
+  test('uses a full-width editor, responsive choice grid, and hides topic/source metadata rows', async () => {
+    fixtures.files = [buildReviewRequiredFile({ id: 77, title: 'responsive-editor.docx', file_name: 'responsive-editor.docx' })];
+    await act(async () => root.render(<LessonQuestionManager />));
+    await act(async () => clickByText(container, 'Preview'));
+    await act(async () => document.body.querySelector('button[aria-label="Edit question 1"]').click());
+    expect(document.body.querySelector('.question-preview-editor')).not.toBeNull();
+    expect(document.body.querySelector('.question-preview-editor textarea').classList).toContain('question-editor-textarea');
+    expect(document.body.querySelector('.question-editor-choice-grid')).not.toBeNull();
+    expect(document.body.querySelector('input[aria-label="Question 1 topic metadata"]')).toBeNull();
+    expect(document.body.textContent).not.toContain('Source topic metadata (optional): Basic Addition');
+  });
+
   test('warns before closing a preview with unsaved question edits', async () => {
     fixtures.files = [buildReviewRequiredFile({ id: 77 })];
     window.confirm = jest.fn(() => false);
@@ -1253,8 +1265,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
       clickByText(container, 'Preview');
     });
 
-    expect(document.body.textContent).toContain('Source topic metadata (optional): Shapes');
-    expect(document.body.textContent).toContain('Source document topic (informational): Basic Addition, Subtraction, Shapes, and Place Value');
+    expect(document.body.textContent).not.toContain('Source topic metadata (optional): Shapes');
+    expect(document.body.textContent).not.toContain('Source document topic (informational): Basic Addition, Subtraction, Shapes, and Place Value');
     expect(document.body.textContent).toContain('Game Publication: Eligible — Ready for Game');
     expect(document.body.textContent).not.toContain('Needs Correction');
     expect(document.body.textContent).toContain('ready for manual Push to Game');
@@ -2084,7 +2096,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve').click();
     });
 
-    expect(document.body.textContent).toContain('Source document topic (informational): Basic Addition, Subtraction');
+    expect(document.body.textContent).not.toContain('Source document topic (informational): Basic Addition, Subtraction');
     expect(document.body.textContent).toContain('Game Publication: Eligible — Ready for Game');
     expect(document.body.querySelector('.generated-questions-preview-footer').textContent).not.toContain('Approve');
     const pushButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Push to Game'));

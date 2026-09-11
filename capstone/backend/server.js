@@ -8182,7 +8182,7 @@ const getDailyPlaytimeTotal = async (studentId) => {
 };
 
 const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
-  const filters = [];
+  const filters = ['ps.deleted_at IS NULL'];
   const addParam = (value) => {
     params.push(value);
     return `$${params.length}`;
@@ -8425,6 +8425,138 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
     res.status(500).json({ error: 'Failed to fetch playtime sessions' });
   }
 };
+
+const resolvePlaytimeDeletionTargets = async (queryClient, req, { forUpdate = false } = {}) => {
+  const params = [];
+  const filterResult = applyPlaytimeFilters({ req, params, scope: 'all' });
+  if (filterResult.error) return { error: filterResult.error };
+  const query = `SELECT ps.id, ps.student_id, ps.student_name, ps.parent_id, ps.status,
+                       ps.date_played, ps.total_playtime_minutes
+                FROM public.playtime_sessions ps
+                WHERE 1=1${filterResult.whereSql}
+                  AND (${getPlaytimePresenceStatusSql('ps.')}) <> 'Playing'
+                ORDER BY ps.id ASC${forUpdate ? ' FOR UPDATE' : ''}`;
+  const result = await queryClient.query(query, params);
+  return { rows: result.rows };
+};
+
+app.get('/api/playtime/deletion-summary', requireAccountManagementAdmin, async (req, res) => {
+  try {
+    const result = await resolvePlaytimeDeletionTargets(pool, req);
+    if (result.error) return res.status(400).json({ error: result.error });
+    const targetIds = result.rows.map((row) => Number(row.id));
+    return res.json({
+      affected_count: targetIds.length,
+      target_ids: targetIds,
+      target_fingerprint: crypto.createHash('sha256').update(JSON.stringify(targetIds)).digest('hex'),
+    });
+  } catch (error) {
+    console.error('Playtime deletion summary failed:', error.message);
+    return res.status(500).json({ error: 'Unable to prepare Screen Time history removal.' });
+  }
+});
+
+app.delete('/api/playtime/:id', requireAccountManagementAdmin, async (req, res) => {
+  const sessionId = resolvePositiveInteger(req.params.id);
+  const reasonResult = resolveAccountRemovalReason(req.body?.reason);
+  const confirmation = String(req.body?.confirmation || '').trim();
+  if (!sessionId || reasonResult.error || confirmation !== 'DELETE') {
+    return res.status(400).json({ error: reasonResult.error || 'Type DELETE to confirm Screen Time history removal.' });
+  }
+  const client = await pool.connect();
+  const operationId = crypto.randomUUID();
+  try {
+    await client.query('BEGIN');
+    const targetResult = await client.query(
+      `SELECT id, student_id, student_name, parent_id, status, end_time, date_played, total_playtime_minutes
+       FROM public.playtime_sessions
+       WHERE id = $1 AND deleted_at IS NULL
+       FOR UPDATE`,
+      [sessionId]
+    );
+    const target = targetResult.rows[0];
+    if (!target) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Screen Time record not found.' });
+    }
+    if (String(target.status || '').toLowerCase() === 'playing' && !target.end_time) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Active Screen Time sessions cannot be removed.' });
+    }
+    await client.query(
+      `UPDATE public.playtime_sessions
+       SET deleted_at = NOW(), deleted_by = $2, deletion_reason = $3, deletion_operation_id = $4, updated_at = NOW()
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [sessionId, req.authenticatedUser.id, reasonResult.reason, operationId]
+    );
+    await writeAdminAuditLog(req.authenticatedUser, 'Delete Screen Time Record', target, {
+      reason: reasonResult.reason,
+      operationType: 'playtime_history_remove',
+      beforeMetadata: target,
+      afterMetadata: { deleted_at: true, deletion_operation_id: operationId, usage_accounting_preserved: true },
+    }, client);
+    await client.query('COMMIT');
+    return res.json({ success: true, deleted_record_id: sessionId, deletion_operation_id: operationId });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Delete Screen Time record failed:', error.message);
+    return res.status(500).json({ error: 'Unable to remove this Screen Time record.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/playtime/completed/bulk', requireAccountManagementAdmin, async (req, res) => {
+  const reasonResult = resolveAccountRemovalReason(req.body?.reason);
+  const confirmation = String(req.body?.confirmation || '').trim();
+  const expectedCount = Number(req.body?.expected_count);
+  const expectedIds = Array.isArray(req.body?.target_ids)
+    ? req.body.target_ids.map((id) => Number(id)).filter((id) => Number.isInteger(id)).sort((a, b) => a - b)
+    : [];
+  const expectedFingerprint = String(req.body?.target_fingerprint || '').trim();
+  if (reasonResult.error || confirmation !== 'DELETE' || !Number.isInteger(expectedCount) || expectedCount < 0) {
+    return res.status(400).json({ error: reasonResult.error || 'A valid completed-record target set and typed DELETE confirmation are required.' });
+  }
+  const client = await pool.connect();
+  const operationId = crypto.randomUUID();
+  try {
+    await client.query('BEGIN');
+    const result = await resolvePlaytimeDeletionTargets(client, req, { forUpdate: true });
+    if (result.error) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: result.error });
+    }
+    const actualIds = result.rows.map((row) => Number(row.id)).sort((a, b) => a - b);
+    const actualFingerprint = crypto.createHash('sha256').update(JSON.stringify(actualIds)).digest('hex');
+    if (actualIds.length !== expectedCount || expectedFingerprint !== actualFingerprint
+      || expectedIds.length !== actualIds.length || expectedIds.some((id, index) => id !== actualIds[index])) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'The completed Screen Time target set changed. Review and confirm again.' });
+    }
+    if (actualIds.length > 0) {
+      await client.query(
+        `UPDATE public.playtime_sessions
+         SET deleted_at = NOW(), deleted_by = $1, deletion_reason = $2, deletion_operation_id = $3, updated_at = NOW()
+         WHERE id = ANY($4::INTEGER[]) AND deleted_at IS NULL`,
+        [req.authenticatedUser.id, reasonResult.reason, operationId, actualIds]
+      );
+    }
+    await writeAdminAuditLog(req.authenticatedUser, 'Delete Completed Screen Time Records', { id: null, name: `${actualIds.length} completed Screen Time records` }, {
+      reason: reasonResult.reason,
+      operationType: 'playtime_history_bulk_remove',
+      beforeMetadata: { target_ids: actualIds, target_fingerprint: actualFingerprint },
+      afterMetadata: { deleted_at: true, deletion_operation_id: operationId, usage_accounting_preserved: true },
+    }, client);
+    await client.query('COMMIT');
+    return res.json({ success: true, deleted_count: actualIds.length, deletion_operation_id: operationId });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Bulk Screen Time removal failed:', error.message);
+    return res.status(500).json({ error: 'Unable to remove completed Screen Time records.' });
+  } finally {
+    client.release();
+  }
+});
 
 app.post('/api/playtime/start', async (req, res) => {
   try {

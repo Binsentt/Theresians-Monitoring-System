@@ -124,6 +124,20 @@ test('daily allowance is environment-configurable with a validated 60-minute def
   assert.doesNotMatch(serverSource, /const PLAYTIME_DAILY_LIMIT_MINUTES = 60;/);
 });
 
+test('playtime history removal is additive, soft-marked, and does not remove usage accounting', () => {
+  const serverSource = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const migrationPath = path.join(__dirname, 'migrations', '019_playtime_history_removal.sql');
+  assert.ok(fs.existsSync(migrationPath), 'history-removal migration is present');
+  const migration = fs.readFileSync(migrationPath, 'utf8');
+  assert.match(migration, /deleted_at TIMESTAMPTZ/i);
+  assert.match(migration, /deletion_reason VARCHAR\(1000\)/i);
+  assert.match(serverSource, /app\.delete\('\/api\/playtime\/:id'/);
+  assert.match(serverSource, /app\.post\('\/api\/playtime\/completed\/bulk'/);
+  assert.match(serverSource, /deleted_at IS NULL/i);
+  const dailyTotals = serverSource.slice(serverSource.indexOf('const getDailyPlaytimeTotals'), serverSource.indexOf('const finalizeStalePlaytimeSession'));
+  assert.doesNotMatch(dailyTotals, /deleted_at IS NULL/i);
+});
+
 test('playtime start creates a Playing session for Godot gameplay', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
