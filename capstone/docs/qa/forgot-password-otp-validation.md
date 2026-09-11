@@ -19,6 +19,17 @@ Frontend tests cover inline email/OTP/password feedback, accessibility attribute
 
 Real external email delivery, production recovery, and production password changes were not performed.
 
+## Self-contained QA rules
+
+- Run from a clean checkout with `DATABASE_URL` and `AUTH_RECOVERY_TEST_DATABASE_URL` set to a disposable local database before importing the backend.
+- Never fall back to a tracked `.env`, a production `DATABASE_URL`, or a real browser profile.
+- Capture test mail only in-process; external recovery email count must remain zero.
+- Keep browser auth state, OTPs, passwords, tokens, and screenshots outside Git and redact them from reports.
+
+## Browser handoff
+
+The local Chrome binary is installed, but the headless smoke in this session did not produce an inspectable DOM and authenticated interactive automation is not available in the configured Codex session. Owner QA must use a disposable local account and mail capture to verify the recovery form, generic unknown-email response, wrong/expired/reused OTP, resend invalidation and cooldown, password policy/mismatch, duplicate-submit behavior, successful login, and rejection of the old password/session.
+
 ## Runtime notes
 
 The canonical local machine currently runs Node.js v24.13.0 while `capstone/package.json` declares Node.js 20.x. The Railway service remains read-only inspected; no deployment or configuration change was made.

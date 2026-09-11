@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const {
@@ -9,22 +11,32 @@ const {
   sourceHash,
 } = require('./questionSourceImport.utils');
 
-const restoredQuestionsRoot = path.resolve(
-  __dirname,
-  '../../../capstone-theresians-quest/Questions',
-);
+const makeSourceWorkspace = () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'theresian-source-utils-'));
+  const easyDirectory = path.join(directory, 'Grade 1', 'Easy');
+  const difficultDirectory = path.join(directory, 'Grade 2', 'Hard');
+  fs.mkdirSync(easyDirectory, { recursive: true });
+  fs.mkdirSync(difficultDirectory, { recursive: true });
+  fs.writeFileSync(path.join(easyDirectory, 'questions.json'), '{}');
+  fs.writeFileSync(path.join(difficultDirectory, 'lesson.docx'), 'synthetic docx placeholder');
+  return { directory, sourceRoot: directory };
+};
 
-test('discovers currently available legacy source artifacts without requiring the retired archive', () => {
-  const sources = discoverQuestionSources(restoredQuestionsRoot);
+test('discovers synthetic legacy source artifacts with relative paths and path metadata', (t) => {
+  const workspace = makeSourceWorkspace();
+  t.after(() => fs.rmSync(workspace.directory, { recursive: true, force: true }));
+  const sources = discoverQuestionSources(workspace.sourceRoot);
 
-  assert.ok(Array.isArray(sources));
+  assert.deepEqual(sources.map((source) => source.relativePath), [
+    'Grade 1/Easy/questions.json',
+    'Grade 2/Hard/lesson.docx',
+  ]);
+  assert.deepEqual(sources.map((source) => source.metadata), [
+    { grade_level: 'Grade 1', difficulty: 'Easy' },
+    { grade_level: 'Grade 2', difficulty: 'Difficult' },
+  ]);
   assert.ok(sources.every((source) => ['.docx', '.json'].includes(source.extension)));
   assert.ok(sources.every((source) => source.relativePath && !path.isAbsolute(source.relativePath)));
-  assert.equal(
-    sources.some((source) => source.relativePath === 'grade 1/Easy/easy.docx'),
-    false,
-    'the retired Grade 1 archive is not a required runtime fixture',
-  );
 });
 
 test('normalizes the legacy wrapped JSON format used by the restored source', () => {
@@ -90,4 +102,8 @@ test('uses a stable source hash for idempotent imports', () => {
   const metadata = { grade_level: 'Grade 1', difficulty: 'Easy' };
   assert.equal(sourceHash(Buffer.from('source'), metadata), sourceHash(Buffer.from('source'), metadata));
   assert.notEqual(sourceHash(Buffer.from('source'), metadata), sourceHash(Buffer.from('changed'), metadata));
+  assert.notEqual(
+    sourceHash(Buffer.from('source'), metadata, 'Grade 1/Easy/a.json'),
+    sourceHash(Buffer.from('source'), metadata, 'Grade 1/Easy/b.json'),
+  );
 });

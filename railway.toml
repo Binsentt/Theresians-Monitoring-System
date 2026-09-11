@@ -6,4 +6,5 @@ buildCommand = "if [ -d capstone ]; then cd capstone; fi && npm run build && npm
 nodeVersion = "20"
 
 [deploy]
+preDeployCommand = ["if [ -d capstone ]; then cd capstone; fi && RELEASE_MIGRATIONS_APPROVED=true npm --prefix backend run migrate:release"]
 startCommand = "if [ -d capstone ]; then cd capstone; fi && npm --prefix backend start"
