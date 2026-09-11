@@ -17,6 +17,9 @@ const {
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const ANALYTICS_INSIGHT_MODEL = 'gpt-5-mini';
+// Grounded insights contain only a compact claim-selection object; this budget
+// leaves room for model reasoning while bounding provider output cost.
+const ANALYTICS_INSIGHT_MAX_OUTPUT_TOKENS = 1200;
 const asText = (value) => String(value || '').trim();
 
 function buildGroundedInsightInput({ gradeLevel, metrics = {} } = {}) {
@@ -108,6 +111,7 @@ async function generateGroundedStudentInsight({
       signal: controller.signal,
       body: JSON.stringify({
         model: ANALYTICS_INSIGHT_MODEL,
+        max_output_tokens: ANALYTICS_INSIGHT_MAX_OUTPUT_TOKENS,
         input: [
           {
             role: 'system',
@@ -180,6 +184,7 @@ async function generateGroundedStudentInsight({
 
 module.exports = {
   ANALYTICS_INSIGHT_MODEL,
+  ANALYTICS_INSIGHT_MAX_OUTPUT_TOKENS,
   buildGroundedInsightInput,
   buildInsightFingerprint,
   generateGroundedStudentInsight,

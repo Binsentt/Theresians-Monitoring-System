@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   MAX_LESSON_TEXT_CHARS,
   QUESTION_GENERATION_MODEL,
+  getQuestionGenerationMaxOutputTokens,
   QuestionGenerationError,
   generateLessonQuestions: generateLessonQuestionsWithPolicy,
   toQuestionGenerationHttpFailure,
@@ -104,6 +105,9 @@ test('lesson generation sends only lesson context to the server-side Responses A
   assert.equal(request.options.headers.Authorization, 'Bearer test-key');
   const requestBody = JSON.parse(request.options.body);
   assert.equal(requestBody.model, QUESTION_GENERATION_MODEL);
+  assert.ok(Number.isInteger(requestBody.max_output_tokens));
+  assert.equal(requestBody.max_output_tokens, getQuestionGenerationMaxOutputTokens(2));
+  assert.ok(requestBody.max_output_tokens >= 2000);
   assert.equal(requestBody.text.format.type, 'json_schema');
   assert.equal(requestBody.text.format.schema.properties.questions.minItems, 2);
   assert.equal(requestBody.text.format.schema.properties.questions.maxItems, 2);

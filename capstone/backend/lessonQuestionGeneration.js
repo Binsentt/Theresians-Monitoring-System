@@ -2,6 +2,16 @@ const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const QUESTION_GENERATION_MODEL = 'gpt-5-mini';
 const MAX_LESSON_TEXT_CHARS = 24000;
 const QUESTION_GENERATION_TIMEOUT_MS = 30000;
+// Reserve a predictable output budget for the structured JSON plus model reasoning.
+// The per-question allowance preserves the existing 1-50 request range without
+// imposing a small fixed cap that could truncate larger requested sets.
+const QUESTION_GENERATION_OUTPUT_BASE_TOKENS = 1000;
+const QUESTION_GENERATION_OUTPUT_TOKENS_PER_QUESTION = 500;
+const getQuestionGenerationMaxOutputTokens = (questionCount) => (
+  QUESTION_GENERATION_OUTPUT_BASE_TOKENS
+  + (Number.isInteger(questionCount) && questionCount > 0 ? questionCount : 1)
+    * QUESTION_GENERATION_OUTPUT_TOKENS_PER_QUESTION
+);
 const {
   AI_PAUSED_CODE,
   AI_PAUSED_MESSAGE,
@@ -256,6 +266,7 @@ const generateLessonQuestions = async ({
       signal: controller.signal,
       body: JSON.stringify({
         model: QUESTION_GENERATION_MODEL,
+        max_output_tokens: getQuestionGenerationMaxOutputTokens(questionCount),
         input,
         text: {
           format: {
@@ -321,6 +332,9 @@ module.exports = {
   OPENAI_RESPONSES_URL,
   QUESTION_GENERATION_MODEL,
   QUESTION_GENERATION_TIMEOUT_MS,
+  QUESTION_GENERATION_OUTPUT_BASE_TOKENS,
+  QUESTION_GENERATION_OUTPUT_TOKENS_PER_QUESTION,
+  getQuestionGenerationMaxOutputTokens,
   QuestionGenerationError,
   buildProviderDiagnostics,
   buildGenerationInput,

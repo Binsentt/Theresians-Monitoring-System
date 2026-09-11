@@ -7,6 +7,7 @@ const {
 const {
   buildGroundedInsightInput,
   buildInsightFingerprint,
+  ANALYTICS_INSIGHT_MAX_OUTPUT_TOKENS,
   generateGroundedStudentInsight: generateGroundedStudentInsightWithPolicy,
 } = require('./studentAnalyticsInsight.utils');
 
@@ -115,11 +116,30 @@ test('uses a mocked claim selection and returns only backend-rendered text', asy
   });
 
   assert.equal(providerRequest.url, 'https://api.openai.com/v1/responses');
+  assert.ok(Number.isInteger(providerRequest.body.max_output_tokens));
+  assert.equal(providerRequest.body.max_output_tokens, ANALYTICS_INSIGHT_MAX_OUTPUT_TOKENS);
+  assert.ok(providerRequest.body.max_output_tokens >= 900);
   assert.equal(providerRequest.body.text.format.schema.additionalProperties, false);
   assert.match(insight.performance_insight, /Recorded overall accuracy is 60%/);
   assert.match(insight.performance_insight, /Current quest: Fraction Forest/);
   assert.deepEqual(insight.strengths, ['Recorded Easy accuracy is 100%, meeting the current positive-evidence boundary.']);
   assert.equal(JSON.stringify(insight).includes('85%'), false);
+});
+
+test('rejects an incomplete grounded claim selection instead of rendering partial insight output', async () => {
+  const incompleteSelection = {
+    grounding_policy_version: GROUNDING_POLICY_VERSION,
+    performance_claim_ids: ['overall_accuracy'],
+  };
+
+  await assert.rejects(
+    generateGroundedStudentInsight({
+      input: inputFor(),
+      apiKey: 'test-key',
+      fetchImpl: async () => jsonResponse({ output_text: JSON.stringify(incompleteSelection) }),
+    }),
+    (error) => error.code === 'ANALYTICS_AI_INVALID_RESPONSE'
+  );
 });
 
 test('paused grounded insight returns AI_PAUSED before any provider request', async () => {
