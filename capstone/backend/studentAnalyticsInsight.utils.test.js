@@ -282,3 +282,23 @@ test('records a successful structured response without retaining model text', as
   assert.equal(JSON.stringify(diagnostics).includes('Recorded overall accuracy'), false);
   assert.match(result.performance_insight, /Recorded overall accuracy/);
 });
+
+test('records safe Responses envelope metadata without retaining response content', async () => {
+  const { diagnostics, result } = await diagnosticsFor({
+    status: 'incomplete',
+    incomplete_details: { reason: 'max_output_tokens', code: 'output_limit' },
+    output: [
+      { type: 'message', content: [{ type: 'output_text', text: JSON.stringify(validSelection) }] },
+      { type: 'reasoning', content: [{ type: 'refusal', refusal: 'private provider content' }] },
+    ],
+  }, { expectSuccess: true });
+
+  assert.equal(diagnostics.responseStatus, 'incomplete');
+  assert.equal(diagnostics.incompleteReason, 'max_output_tokens');
+  assert.equal(diagnostics.incompleteCode, 'output_limit');
+  assert.deepEqual(diagnostics.outputItemTypes, ['message', 'reasoning']);
+  assert.deepEqual(diagnostics.contentItemTypes, ['output_text', 'refusal']);
+  assert.equal(diagnostics.refusalContentPresent, true);
+  assert.equal(JSON.stringify(diagnostics).includes('private provider content'), false);
+  assert.match(result.performance_insight, /Recorded overall accuracy/);
+});

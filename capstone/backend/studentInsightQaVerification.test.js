@@ -299,6 +299,38 @@ test('QA artifact durably records safe insight validation metadata without raw o
   });
 });
 
+test('QA artifact durably records safe Responses envelope metadata only', async () => {
+  await withQaArtifact(async (filePath) => {
+    const writer = createInsightQaResultWriter({
+      filePath,
+      testRunId: 'run-envelope',
+      candidateSha: '1'.repeat(40),
+    });
+    await writer.recordInsightDiagnostics({
+      providerHttpStatus: 200,
+      responseStatus: 'incomplete',
+      incompleteReason: 'max_output_tokens',
+      incompleteCode: 'output_limit',
+      outputItemTypes: ['message', 'reasoning'],
+      contentItemTypes: ['output_text', 'refusal'],
+      refusalContentPresent: true,
+      outputTextPresent: true,
+      nestedOutputContentTextPresent: true,
+      jsonParseSucceeded: true,
+      validationStage: 'VALIDATION_PASSED',
+      rawResponse: 'must never be persisted',
+    });
+    const artifact = await writer.read();
+    assert.equal(artifact.responseStatus, 'incomplete');
+    assert.equal(artifact.incompleteReason, 'max_output_tokens');
+    assert.equal(artifact.incompleteCode, 'output_limit');
+    assert.deepEqual(artifact.outputItemTypes, ['message', 'reasoning']);
+    assert.deepEqual(artifact.contentItemTypes, ['output_text', 'refusal']);
+    assert.equal(artifact.refusalContentPresent, true);
+    assert.equal(JSON.stringify(artifact).includes('must never be persisted'), false);
+  });
+});
+
 test('QA cache runner forwards diagnostics from the real insight service into the durable artifact', async () => {
   await withQaArtifact(async (filePath) => {
     const harness = createHarness();

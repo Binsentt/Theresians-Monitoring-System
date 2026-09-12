@@ -73,6 +73,32 @@ const safeTopLevelKeys = (value) => {
     .slice(0, 30);
 };
 
+const safeEnvelopeCode = (value) => {
+  const normalized = asText(value);
+  return /^[A-Za-z0-9_.-]{1,120}$/.test(normalized) ? normalized : null;
+};
+
+const safeTypeList = (values) => values
+  .map((value) => safeEnvelopeCode(value))
+  .filter(Boolean)
+  .slice(0, 40);
+
+const buildResponseEnvelopeDiagnostics = (responseBody) => {
+  const outputItems = Array.isArray(responseBody?.output) ? responseBody.output : [];
+  const contentItems = outputItems.flatMap((item) => (Array.isArray(item?.content) ? item.content : []));
+  const incompleteDetails = responseBody?.incomplete_details && typeof responseBody.incomplete_details === 'object'
+    ? responseBody.incomplete_details
+    : {};
+  return {
+    responseStatus: safeEnvelopeCode(responseBody?.status),
+    incompleteReason: safeEnvelopeCode(incompleteDetails.reason),
+    incompleteCode: safeEnvelopeCode(incompleteDetails.code),
+    outputItemTypes: safeTypeList(outputItems.map((item) => item?.type)),
+    contentItemTypes: safeTypeList(contentItems.map((content) => content?.type)),
+    refusalContentPresent: contentItems.some((content) => content?.type === 'refusal'),
+  };
+};
+
 const claimCountsFor = (selection) => ({
   performance: Array.isArray(selection?.performance_claim_ids) ? selection.performance_claim_ids.length : 0,
   strengths: Array.isArray(selection?.strength_claim_ids) ? selection.strength_claim_ids.length : 0,
@@ -115,6 +141,7 @@ const createInsightDiagnostics = (response, responseBody, extraction = {}) => ({
   nestedOutputContentTextPresent: extraction.nestedOutputContentTextPresent === true,
   outputItemCount: Number.isInteger(extraction.outputItemCount) ? extraction.outputItemCount : 0,
   textContentItemCount: Number.isInteger(extraction.textContentItemCount) ? extraction.textContentItemCount : 0,
+  ...buildResponseEnvelopeDiagnostics(responseBody),
   jsonParseSucceeded: null,
   validationStage: null,
   topLevelKeys: [],

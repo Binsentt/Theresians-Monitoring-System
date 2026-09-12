@@ -20,6 +20,12 @@ const ARTIFACT_FIELDS = new Set([
   'cacheHit',
   'providerHttpStatus',
   'responseExtractionStage',
+  'responseStatus',
+  'incompleteReason',
+  'incompleteCode',
+  'outputItemTypes',
+  'contentItemTypes',
+  'refusalContentPresent',
   'outputTextPresent',
   'nestedOutputContentTextPresent',
   'outputItemCount',
@@ -92,6 +98,12 @@ const insightDiagnosticsPatch = (value = {}) => {
   };
   if (diagnostics.providerHttpStatus !== undefined) patch.providerHttpStatus = safeHttpStatus(diagnostics.providerHttpStatus);
   copySafeCode('responseExtractionStage');
+  copySafeCode('responseStatus');
+  copySafeCode('incompleteReason');
+  copySafeCode('incompleteCode');
+  if (diagnostics.outputItemTypes !== undefined) patch.outputItemTypes = safeKeyList(diagnostics.outputItemTypes);
+  if (diagnostics.contentItemTypes !== undefined) patch.contentItemTypes = safeKeyList(diagnostics.contentItemTypes);
+  copyBoolean('refusalContentPresent');
   copyBoolean('outputTextPresent');
   copyBoolean('nestedOutputContentTextPresent');
   copyCount('outputItemCount');
@@ -134,7 +146,7 @@ const sanitizePatch = (patch = {}) => {
       sanitized[key] = safeHttpStatus(value);
     } else if (key === 'providerHttpStatus') {
       sanitized[key] = safeHttpStatus(value);
-    } else if (key === 'responseExtractionStage' || key === 'validationStage') {
+    } else if (['responseExtractionStage', 'responseStatus', 'incompleteReason', 'incompleteCode', 'validationStage'].includes(key)) {
       sanitized[key] = safeCode(value);
     } else if (['outputItemCount', 'textContentItemCount', 'unknownClaimCount', 'duplicateClaimCount', 'unsupportedClaimCount'].includes(key)) {
       sanitized[key] = safeCount(value);
@@ -146,6 +158,8 @@ const sanitizePatch = (patch = {}) => {
       sanitized[key] = safeElapsedMs(value);
     } else if (key === 'providerCallCount') {
       sanitized[key] = safeCount(value);
+    } else if (key === 'outputItemTypes' || key === 'contentItemTypes') {
+      sanitized[key] = safeKeyList(value);
     } else if (key === 'topLevelKeys') {
       sanitized[key] = safeKeyList(value);
     } else if (key === 'claimCounts') {
@@ -193,6 +207,12 @@ const createInsightQaResultWriter = ({
     cacheHit: false,
     providerHttpStatus: null,
     responseExtractionStage: null,
+    responseStatus: null,
+    incompleteReason: null,
+    incompleteCode: null,
+    outputItemTypes: [],
+    contentItemTypes: [],
+    refusalContentPresent: false,
     outputTextPresent: null,
     nestedOutputContentTextPresent: null,
     outputItemCount: null,
