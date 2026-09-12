@@ -96,6 +96,7 @@ const {
 const {
   QuestionGenerationError,
   generateLessonQuestions,
+  generateLessonQuestionsInBatches,
   toQuestionGenerationHttpFailure,
 } = require('./lessonQuestionGeneration');
 const {
@@ -288,6 +289,7 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS progress_archived_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS progress_archived_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS progress_archive_reason VARCHAR(1000)');
+    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS screen_time_reset_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS session_version INTEGER DEFAULT 0');
     await pool.query('UPDATE public.accounts SET is_archived = false WHERE is_archived IS NULL');
     await pool.query('UPDATE public.accounts SET session_version = 0 WHERE session_version IS NULL');
@@ -339,7 +341,8 @@ const ensureSchema = async () => {
       grade_level CHARACTER VARYING(20),
       difficulty CHARACTER VARYING(20),
       math_topic CHARACTER VARYING(255),
-      score INTEGER NOT NULL,
+      current_map TEXT,
+       score INTEGER NOT NULL,
       total_items INTEGER NOT NULL,
       percentage DECIMAL(5, 2) NOT NULL,
       played_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -348,6 +351,7 @@ const ensureSchema = async () => {
     );`);
     await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS question_set_id INTEGER');
     await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS playtime_session_id INTEGER');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS current_map TEXT');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_parent_id ON public.game_results(parent_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_resolved_student_id ON public.game_results(resolved_student_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_question_set_id ON public.game_results(question_set_id)');
@@ -519,6 +523,8 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_failed_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_error_code VARCHAR(100)');
+    await pool.query("ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_stage VARCHAR(32) NOT NULL DEFAULT 'queued'");
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_completed_count INTEGER NOT NULL DEFAULT 0');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS published_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS last_fetched_at TIMESTAMPTZ');
@@ -2545,15 +2551,100 @@ const extractLessonTextForGeneration = async ({ filePath, fileName, mimeType }) 
   }
 };
 
-const generateQuestionTextFromLesson = async ({ filePath, fileName, mimeType, lessonText = null }, title, grade_level, difficulty, questionCount) => {
+const generateQuestionTextFromLesson = async ({ filePath, fileName, mimeType, lessonText = null }, title, grade_level, difficulty, questionCount, onBatchComplete = null) => {
   const cleanLessonText = lessonText || await extractLessonTextForGeneration({ filePath, fileName, mimeType });
-  return generateLessonQuestions({
+  return generateLessonQuestionsInBatches({
     lessonText: cleanLessonText,
     title,
     gradeLevel: grade_level,
     difficulty,
     questionCount,
+    batchSize: 5,
+    generateBatch: generateLessonQuestions,
+    onBatchComplete,
   });
+};
+
+const activeLessonGenerationJobs = new Set();
+
+const processLessonGenerationJob = async ({ learningFile, sourceFilePath, sourceFileName, sourceMimeType, title, gradeLevel, difficulty, questionCount, lessonText = null }) => {
+  const jobId = Number(learningFile?.id);
+  if (activeLessonGenerationJobs.has(jobId)) return { learningFile, questions: [] };
+  activeLessonGenerationJobs.add(jobId);
+  try {
+    if (!String(process.env.OPENAI_API_KEY || '').trim()) {
+      throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
+    }
+    await pool.query(
+      `UPDATE public.learning_files
+       SET generation_stage = 'generating', generation_completed_count = 0
+       WHERE id = $1`,
+      [learningFile.id]
+    );
+    const questions = await generateQuestionTextFromLesson({
+      filePath: sourceFilePath,
+      fileName: sourceFileName,
+      mimeType: sourceMimeType,
+      lessonText,
+    }, title, gradeLevel, difficulty, questionCount, async ({ completed }) => {
+      await pool.query(
+        `UPDATE public.learning_files
+         SET generation_stage = 'generating', generation_completed_count = $2
+         WHERE id = $1`,
+        [learningFile.id, completed]
+      );
+    });
+    await pool.query(
+      `UPDATE public.learning_files
+       SET generation_stage = 'saving', generation_completed_count = $2
+       WHERE id = $1`,
+      [learningFile.id, questions.length]
+    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await saveQuestionsForFile(learningFile.id, questions.map((question) => ({
+        ...question,
+        grade_level: gradeLevel,
+        difficulty,
+        math_topic: learningFile.math_topic || null,
+        topic_id: learningFile.topic_id || null,
+        source: 'ai',
+      })), client);
+      const completed = await client.query(
+        `UPDATE public.learning_files
+         SET generation_status = 'ready_for_review',
+             generation_stage = 'completed',
+             generation_completed_count = $2,
+             generated_at = CURRENT_TIMESTAMP,
+             generation_failed_at = NULL,
+             generation_error_code = NULL
+         WHERE id = $1
+         RETURNING *`,
+        [learningFile.id, questions.length]
+      );
+      await client.query('COMMIT');
+      return { learningFile: completed.rows[0] || learningFile, questions };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    await pool.query(
+      `UPDATE public.learning_files
+       SET generation_status = 'failed',
+           generation_stage = 'failed',
+           generation_failed_at = CURRENT_TIMESTAMP,
+           generation_error_code = $2
+       WHERE id = $1`,
+      [learningFile.id, error instanceof QuestionGenerationError ? error.code : 'QUESTION_GENERATION_FAILED']
+    ).catch((persistError) => console.error('Failed to persist lesson generation status:', persistError.message));
+    throw error;
+  } finally {
+    activeLessonGenerationJobs.delete(jobId);
+  }
 };
 
 const saveUploadedLearningFile = async ({ title, grade_level, math_topic, file_type, folder_id, uploaded_by, file }) => {
@@ -3708,14 +3799,23 @@ const generateStudentAnalysis = (record, quizSessions = [], activityLogs = []) =
 };
 
 const buildStudentAnalyticsReadiness = ({ progress, quizSessions = [], activityLogs = [] }) => {
-  const normalizedQuizzes = quizSessions.map((quiz) => ({
-    topic: quiz.math_topic || 'Unspecified topic',
-    difficulty: quiz.difficulty || 'Unknown',
-    percentage: Number(quiz.percentage || 0),
-    score: Number(quiz.score || 0),
-    totalItems: Number(quiz.total_items || 0),
-    playedAt: quiz.played_at || null,
-  }));
+  const canonicalMetrics = buildStudentAnalyticsMetrics({ progress, quizSessions });
+  const normalizedQuizzes = quizSessions.map((quiz) => {
+    const score = toNullableNumber(quiz.score);
+    const totalItems = toNullableNumber(quiz.total_items ?? quiz.totalItems);
+    const percentage = Number.isFinite(score) && Number.isFinite(totalItems)
+      && totalItems > 0 && score >= 0 && score <= totalItems
+      ? Number(((score / totalItems) * 100).toFixed(2))
+      : null;
+    return {
+      topic: quiz.math_topic || 'Unspecified topic',
+      difficulty: quiz.difficulty || 'Unknown',
+      percentage,
+      score,
+      totalItems,
+      playedAt: quiz.played_at || null,
+    };
+  }).filter((quiz) => quiz.percentage !== null);
 
   const topicGroups = normalizedQuizzes.reduce((groups, quiz) => {
     const current = groups[quiz.topic] || { topic: quiz.topic, attempts: 0, bestPercentage: 0, averagePercentage: 0, totalPercentage: 0 };
@@ -3758,10 +3858,10 @@ const buildStudentAnalyticsReadiness = ({ progress, quizSessions = [], activityL
     },
     performanceSignals: {
       currentScore: toNullableNumber(progress.score),
-      accuracyRate: toNullableNumber(progress.accuracy_rate ?? progress.performance_percentage),
+      accuracyRate: canonicalMetrics.accuracy,
       progressPercentage: toNullableNumber(progress.progress_percentage),
-      totalQuestions: toNullableNumber(progress.total_questions),
-      correctAnswers: toNullableNumber(progress.correct_answers),
+      totalQuestions: canonicalMetrics.totalQuestions,
+      correctAnswers: canonicalMetrics.correctAnswers,
     },
     topicMastery,
     weakTopicCandidates,
@@ -5334,7 +5434,8 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
         code: 'LESSON_SOURCE_FILE_MISSING',
       });
     }
-    const lessonText = await extractLessonTextForGeneration({
+    const queuedGeneration = scope.questionCount > 5;
+    const lessonText = queuedGeneration ? null : await extractLessonTextForGeneration({
       filePath: sourceFilePath,
       fileName: lessonSource.file_name,
       mimeType: lessonSource.source_file_mime_type || 'application/pdf',
@@ -5370,74 +5471,83 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
       ]
     );
     childLearningFile = insertResult.rows[0];
-
-    if (!String(process.env.OPENAI_API_KEY || '').trim()) {
-      throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
+    const jobInput = {
+      learningFile: childLearningFile,
+      sourceFilePath,
+      sourceFileName: lessonSource.file_name,
+      sourceMimeType: lessonSource.source_file_mime_type || 'application/pdf',
+      title: lessonSource.title,
+      gradeLevel: scope.gradeLevel,
+      difficulty: scope.difficulty,
+      questionCount: scope.questionCount,
+      lessonText,
+    };
+    if (queuedGeneration) {
+      setImmediate(() => processLessonGenerationJob(jobInput).catch((error) => {
+        if (!(error instanceof QuestionGenerationError)) console.error('Queued lesson generation failed:', error.message);
+      }));
+      return res.status(202).json({
+        ...buildLessonGenerationResponse(childLearningFile),
+        code: 'AI_GENERATION_QUEUED',
+        message: 'Question generation is queued. You can leave this page and return to review its status.',
+      });
     }
-    const questions = await generateQuestionTextFromLesson(
-      {
-        filePath: sourceFilePath,
-        fileName: lessonSource.file_name,
-        mimeType: lessonSource.source_file_mime_type || 'application/pdf',
-        lessonText,
-      },
-      lessonSource.title,
-      scope.gradeLevel,
-      scope.difficulty,
-      scope.questionCount
-    );
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await saveQuestionsForFile(childLearningFile.id, questions.map((question) => ({
-        ...question,
-        grade_level: scope.gradeLevel,
-        difficulty: scope.difficulty,
-        math_topic: null,
-        topic_id: null,
-        source: 'ai',
-      })), client);
-      const completed = await client.query(
-        `UPDATE public.learning_files
-         SET generation_status = 'ready_for_review',
-             generated_at = CURRENT_TIMESTAMP,
-             generation_failed_at = NULL,
-             generation_error_code = NULL
-         WHERE id = $1
-         RETURNING *`,
-        [childLearningFile.id]
-      );
-      childLearningFile = completed.rows[0] || childLearningFile;
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
-
+    const completed = await processLessonGenerationJob(jobInput);
     return res.status(201).json({
       success: true,
-      learningFile: normalizeLearningFileRow({ ...childLearningFile, question_count: questions.length }),
+      learningFile: normalizeLearningFileRow({ ...completed.learningFile, question_count: completed.questions.length }),
     });
   } catch (error) {
-    if (childLearningFile?.id) {
-      await pool.query(
-        `UPDATE public.learning_files
-         SET generation_status = 'failed',
-             generation_failed_at = CURRENT_TIMESTAMP,
-             generation_error_code = $2
-         WHERE id = $1`,
-        [childLearningFile.id, error instanceof QuestionGenerationError ? error.code : 'QUESTION_GENERATION_FAILED']
-      ).catch((persistError) => console.error('Failed to persist lesson source generation status:', persistError.message));
-    }
+    // Synchronous jobs are marked failed by processLessonGenerationJob; queued jobs
+    // have already returned their durable 202 response.
     if (error instanceof QuestionGenerationError) {
       const failure = toQuestionGenerationHttpFailure(error);
       return res.status(failure.status).json({ error: failure.error, code: failure.code });
     }
     console.error('Lesson source generation failed:', error.message);
     return res.status(500).json({ error: 'Question generation could not be completed.' });
+  }
+});
+
+app.get('/api/learning-files/:id/generation-status', requireLessonQuestionManagerAccess, async (req, res) => {
+  const fileId = Number.parseInt(req.params.id, 10);
+  if (!Number.isSafeInteger(fileId) || fileId < 1) return res.status(400).json({ error: 'Invalid learning file ID.' });
+  try {
+    const result = await pool.query(
+      `SELECT lf.*, COUNT(q.id)::INTEGER AS question_count
+       FROM public.learning_files lf
+       LEFT JOIN public.questions q ON q.learning_file_id = lf.id
+       WHERE lf.id = $1 AND lf.uploaded_by = $2 AND lf.source = 'lesson' AND lf.deleted_at IS NULL
+       GROUP BY lf.id`,
+      [fileId, req.authenticatedUser.id]
+    );
+    const row = result.rows[0];
+    if (!row) return res.status(404).json({ error: 'Learning file not found.' });
+    if (row.generation_status === 'generating' && !activeLessonGenerationJobs.has(Number(row.id))) {
+      const sourceResult = row.source_learning_file_id
+        ? await pool.query('SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL', [row.source_learning_file_id])
+        : { rows: [row] };
+      const source = sourceResult.rows[0];
+      const sourceFilePath = getLessonSourceFilePath(source || row);
+      if (sourceFilePath && fs.existsSync(sourceFilePath)) {
+        setImmediate(() => processLessonGenerationJob({
+          learningFile: row,
+          sourceFilePath,
+          sourceFileName: source?.file_name || row.file_name,
+          sourceMimeType: source?.source_file_mime_type || row.source_file_mime_type || 'application/pdf',
+          title: source?.title || row.title,
+          gradeLevel: row.grade_level,
+          difficulty: row.difficulty,
+          questionCount: Number(row.requested_question_count),
+        }).catch((error) => {
+          if (!(error instanceof QuestionGenerationError)) console.error('Recovered lesson generation failed:', error.message);
+        }));
+      }
+    }
+    return res.json({ success: true, learningFile: normalizeLearningFileRow(row) });
+  } catch (error) {
+    console.error('Generation status lookup failed:', error.message);
+    return res.status(500).json({ error: 'Unable to read question generation status.' });
   }
 });
 
@@ -5631,7 +5741,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     fs.renameSync(req.file.path, destinationPath);
     storedFilePath = destinationPath;
     const fileUrl = buildFileUrl(fileName);
-    const preflightLessonText = normalizedType === 'lesson'
+    const preflightLessonText = normalizedType === 'lesson' && requestedQuestionCount <= 5
       ? await extractLessonTextForGeneration({
         filePath: storedFilePath,
         fileName: req.file.originalname,
@@ -5699,68 +5809,34 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         }
         throw error;
       }
-      try {
-        if (!String(process.env.OPENAI_API_KEY || '').trim()) {
-          throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
-        }
-        const questions = await generateQuestionTextFromLesson(
-          {
-            filePath: storedFilePath,
-            fileName: req.file.originalname,
-            mimeType: req.file.mimetype,
-            lessonText: preflightLessonText,
-          },
-          String(title).trim(),
-          normalizedGrade,
-          normalizedDifficulty,
-          requestedQuestionCount
-        );
-
-        const client = await pool.connect();
-        try {
-          await client.query('BEGIN');
-          await saveQuestionsForFile(learningFile.id, questions.map((question) => ({
-            ...question,
-            grade_level: learningFile.grade_level,
-            difficulty: learningFile.difficulty,
-            math_topic: learningFile.math_topic,
-            topic_id: learningFile.topic_id,
-            source: 'ai',
-          })), client);
-          const completedResult = await client.query(
-            `UPDATE public.learning_files
-             SET generation_status = 'ready_for_review',
-                 generated_at = CURRENT_TIMESTAMP,
-                 generation_failed_at = NULL,
-                 generation_error_code = NULL
-             WHERE id = $1
-             RETURNING *`,
-            [learningFile.id]
-          );
-          learningFile = completedResult.rows[0] || learningFile;
-          await client.query('COMMIT');
-        } catch (error) {
-          await client.query('ROLLBACK').catch(() => {});
-          throw error;
-        } finally {
-          client.release();
-        }
-
-        return res.status(201).json({
-          success: true,
-          learningFile: normalizeLearningFileRow({ ...learningFile, question_count: questions.length }),
+      const jobInput = {
+        learningFile,
+        sourceFilePath: storedFilePath,
+        sourceFileName: req.file.originalname,
+        sourceMimeType: req.file.mimetype,
+        title: String(title).trim(),
+        gradeLevel: normalizedGrade,
+        difficulty: normalizedDifficulty,
+        questionCount: requestedQuestionCount,
+        lessonText: preflightLessonText,
+      };
+      if (requestedQuestionCount > 5) {
+        setImmediate(() => processLessonGenerationJob(jobInput).catch((error) => {
+          if (!(error instanceof QuestionGenerationError)) console.error('Queued upload generation failed:', error.message);
+        }));
+        storedFilePath = null;
+        return res.status(202).json({
+          ...buildLessonGenerationResponse(learningFile),
+          code: 'AI_GENERATION_QUEUED',
+          message: 'Lesson uploaded. Question generation is queued and will remain available after refresh.',
         });
-      } catch (error) {
-        await pool.query(
-          `UPDATE public.learning_files
-           SET generation_status = 'failed',
-               generation_failed_at = CURRENT_TIMESTAMP,
-               generation_error_code = $2
-           WHERE id = $1`,
-          [learningFile.id, error instanceof QuestionGenerationError ? error.code : 'QUESTION_GENERATION_FAILED']
-        ).catch((persistError) => console.error('Failed to persist question generation status:', persistError.message));
-        throw error;
       }
+      const completed = await processLessonGenerationJob(jobInput);
+      learningFile = completed.learningFile;
+      return res.status(201).json({
+        success: true,
+        learningFile: normalizeLearningFileRow({ ...learningFile, question_count: completed.questions.length }),
+      });
     }
 
     const client = await pool.connect();
@@ -7275,9 +7351,9 @@ app.post('/api/game/result', async (req, res) => {
     await pool.query(
       `INSERT INTO public.game_results (
          parent_id, student_name, resolved_student_id, grade_level, difficulty,
-          math_topic, score, total_items, percentage, played_at, question_set_id, playtime_session_id, is_unlinked
+         math_topic, score, total_items, percentage, played_at, question_set_id, playtime_session_id, is_unlinked, current_map
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), $11, $12, $13
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), $11, $12, $13, $14
         )`,
       [
         parentCode,
@@ -7293,6 +7369,7 @@ app.post('/api/game/result', async (req, res) => {
         questionSetResolution.questionSetId,
         playtimeSessionId,
         !resolvedStudentId,
+        req.body?.current_map || req.body?.currentMap || req.body?.map || req.body?.map_name || null,
       ]
     );
     if (resolvedStudentId) {
@@ -8548,32 +8625,34 @@ app.post('/api/activity-logs', async (req, res) => {
 const getDailyPlaytimeTotals = async (studentId) => {
   const result = await pool.query(
     `SELECT COALESCE(SUM(
-       CASE
-         WHEN status = 'Playing' AND end_time IS NULL THEN GREATEST(
+         CASE
+          WHEN ps.status = 'Playing' AND ps.end_time IS NULL THEN GREATEST(
            0,
            FLOOR(EXTRACT(EPOCH FROM (
-              ${getPlaytimeEffectiveEndSql()}
-             - COALESCE(server_started_at, start_time)
+              ${getPlaytimeEffectiveEndSql('ps.')}
+             - COALESCE(ps.server_started_at, ps.start_time)
            )))::INTEGER
          )
-         ELSE COALESCE(NULLIF(total_playtime_seconds, 0), total_playtime_minutes * 60, 0)
+          ELSE COALESCE(NULLIF(ps.total_playtime_seconds, 0), ps.total_playtime_minutes * 60, 0)
        END
      ), 0)::INTEGER AS total_playtime_seconds,
      FLOOR(COALESCE(SUM(
-       CASE
-         WHEN status = 'Playing' AND end_time IS NULL THEN GREATEST(
+        CASE
+          WHEN ps.status = 'Playing' AND ps.end_time IS NULL THEN GREATEST(
            0,
            FLOOR(EXTRACT(EPOCH FROM (
-              ${getPlaytimeEffectiveEndSql()}
-             - COALESCE(server_started_at, start_time)
+              ${getPlaytimeEffectiveEndSql('ps.')}
+             - COALESCE(ps.server_started_at, ps.start_time)
            )))::INTEGER
          )
-         ELSE COALESCE(NULLIF(total_playtime_seconds, 0), total_playtime_minutes * 60, 0)
+          ELSE COALESCE(NULLIF(ps.total_playtime_seconds, 0), ps.total_playtime_minutes * 60, 0)
        END
      ), 0) / 60)::INTEGER AS total_playtime_today
-     FROM public.playtime_sessions
-     WHERE student_id = $1
-       AND date_played = CURRENT_DATE`,
+      FROM public.playtime_sessions ps
+      LEFT JOIN public.accounts student ON student.id = ps.student_id
+      WHERE ps.student_id = $1
+        AND ps.date_played = CURRENT_DATE
+        AND COALESCE(ps.server_started_at, ps.start_time) >= COALESCE(student.screen_time_reset_at, '-infinity'::timestamptz)`,
     [studentId]
   );
   const row = result.rows[0] || {};
@@ -8771,9 +8850,10 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
 
     const countResult = await pool.query(
       `SELECT COUNT(*)::INTEGER AS total,
-              COALESCE(SUM(
-                CASE
-                  WHEN ps.status = 'Playing' AND ps.end_time IS NULL THEN GREATEST(
+               COALESCE(SUM(
+                 CASE
+                   WHEN COALESCE(ps.server_started_at, ps.start_time) < COALESCE(student_account.screen_time_reset_at, '-infinity'::timestamptz) THEN 0
+                   WHEN ps.status = 'Playing' AND ps.end_time IS NULL THEN GREATEST(
                     0,
                     FLOOR(EXTRACT(EPOCH FROM (
                       ${getPlaytimeEffectiveEndSql('ps.')} - COALESCE(ps.server_started_at, ps.start_time)
@@ -8782,10 +8862,12 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
                   ELSE COALESCE(NULLIF(ps.total_playtime_seconds, 0), ps.total_playtime_minutes * 60, 0)
                 END
               ), 0)::BIGINT AS total_playtime_seconds,
-              COUNT(*) FILTER (
-                WHERE (${getPlaytimePresenceStatusSql('ps.')}) = 'Playing'
-              )::INTEGER AS playing_count
-       FROM public.playtime_sessions ps
+               COUNT(*) FILTER (
+                 WHERE (${getPlaytimePresenceStatusSql('ps.')}) = 'Playing'
+                   AND COALESCE(ps.server_started_at, ps.start_time) >= COALESCE(student_account.screen_time_reset_at, '-infinity'::timestamptz)
+               )::INTEGER AS playing_count
+        FROM public.playtime_sessions ps
+        LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
        WHERE 1=1${filterResult.whereSql}`,
       params
     );
@@ -8821,7 +8903,16 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
                  ELSE NULL
                END AS presence_reason,
                ps.created_at,
-               ps.updated_at
+                ps.updated_at,
+                student_account.status AS student_status,
+                student_account.is_archived AS student_is_archived,
+                student_account.progress_archived_at AS student_progress_archived_at,
+                CASE
+                  WHEN student_account.id IS NULL
+                    OR COALESCE(student_account.is_archived, false) = true
+                    OR LOWER(COALESCE(student_account.status, '')) IN ('deleted', 'inactive', 'graduated', 'former')
+                  THEN true ELSE false
+                END AS screen_time_delete_eligible
        FROM public.playtime_sessions ps
        LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
        WHERE 1=1${filterResult.whereSql}
@@ -8861,10 +8952,14 @@ const resolvePlaytimeDeletionTargets = async (queryClient, req, { forUpdate = fa
   const filterResult = applyPlaytimeFilters({ req, params, scope: 'all' });
   if (filterResult.error) return { error: filterResult.error };
   const query = `SELECT ps.id, ps.student_id, ps.student_name, ps.parent_id, ps.status,
-                       ps.date_played, ps.total_playtime_minutes
-                FROM public.playtime_sessions ps
-                WHERE 1=1${filterResult.whereSql}
-                  AND (${getPlaytimePresenceStatusSql('ps.')}) <> 'Playing'
+                        ps.date_played, ps.total_playtime_minutes
+                 FROM public.playtime_sessions ps
+                 LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
+                 WHERE 1=1${filterResult.whereSql}
+                   AND (${getPlaytimePresenceStatusSql('ps.')}) <> 'Playing'
+                   AND (student_account.id IS NULL
+                     OR COALESCE(student_account.is_archived, false) = true
+                     OR LOWER(COALESCE(student_account.status, '')) IN ('deleted', 'inactive', 'graduated', 'former'))
                 ORDER BY ps.id ASC${forUpdate ? ' FOR UPDATE' : ''}`;
   const result = await queryClient.query(query, params);
   return { rows: result.rows };
@@ -8898,9 +8993,15 @@ app.delete('/api/playtime/:id', requireAccountManagementAdmin, async (req, res) 
   try {
     await client.query('BEGIN');
     const targetResult = await client.query(
-      `SELECT id, student_id, student_name, parent_id, status, end_time, date_played, total_playtime_minutes
-       FROM public.playtime_sessions
-       WHERE id = $1 AND deleted_at IS NULL
+       `SELECT ps.id, ps.student_id, ps.student_name, ps.parent_id, ps.status, ps.end_time, ps.date_played, ps.total_playtime_minutes,
+               student_account.id AS student_account_id,
+               CASE WHEN student_account.id IS NULL
+                      OR COALESCE(student_account.is_archived, false) = true
+                      OR LOWER(COALESCE(student_account.status, '')) IN ('deleted', 'inactive', 'graduated', 'former')
+                    THEN true ELSE false END AS screen_time_delete_eligible
+        FROM public.playtime_sessions ps
+        LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
+        WHERE ps.id = $1 AND ps.deleted_at IS NULL
        FOR UPDATE`,
       [sessionId]
     );
@@ -8912,6 +9013,10 @@ app.delete('/api/playtime/:id', requireAccountManagementAdmin, async (req, res) 
     if (String(target.status || '').toLowerCase() === 'playing' && !target.end_time) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Active Screen Time sessions cannot be removed.' });
+    }
+    if (!target.screen_time_delete_eligible) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Active or enrolled students must use Reset Screen Time. History deletion is limited to former or deleted students.' });
     }
     await client.query(
       `UPDATE public.playtime_sessions
@@ -8934,6 +9039,50 @@ app.delete('/api/playtime/:id', requireAccountManagementAdmin, async (req, res) 
   } finally {
     client.release();
   }
+});
+
+app.post('/api/playtime/:id/reset', requireAccountManagementAdmin, async (req, res) => {
+  const sessionId = resolvePositiveInteger(req.params.id);
+  const reasonResult = resolveAccountRemovalReason(req.body?.reason);
+  const confirmation = String(req.body?.confirmation || '').trim();
+  if (!sessionId || reasonResult.error || confirmation !== 'RESET') {
+    return res.status(400).json({ error: reasonResult.error || 'Type RESET to confirm Screen Time reset.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const targetResult = await client.query(
+       `SELECT ps.id, ps.student_id, ps.student_name, ps.status, ps.end_time,
+              student_account.id AS student_account_id,
+              student_account.is_archived AS student_is_archived,
+              student_account.status AS student_status
+       FROM public.playtime_sessions ps
+       LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
+       WHERE ps.id = $1 AND ps.deleted_at IS NULL
+       FOR UPDATE`,
+      [sessionId]
+    );
+    const target = targetResult.rows[0];
+    if (!target) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Screen Time record not found.' }); }
+    if (!target.student_account_id || target.student_is_archived
+      || ['deleted', 'inactive', 'graduated', 'former'].includes(String(target.student_status || '').toLowerCase())) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Only active enrolled students can reset Screen Time.' });
+    }
+    await client.query('UPDATE public.accounts SET screen_time_reset_at = NOW() WHERE id = $1', [target.student_id]);
+    await writeAdminAuditLog(req.authenticatedUser, 'Reset Screen Time', target, {
+      reason: reasonResult.reason,
+      operationType: 'playtime_reset_boundary',
+      beforeMetadata: target,
+      afterMetadata: { reset_at: true, history_preserved: true, active_session_preserved: true },
+    }, client);
+    await client.query('COMMIT');
+    return res.json({ success: true, student_id: target.student_id, reset_at: new Date().toISOString(), history_preserved: true });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Reset Screen Time failed:', error.message);
+    return res.status(500).json({ error: 'Unable to reset Screen Time.' });
+  } finally { client.release(); }
 });
 
 app.post('/api/playtime/completed/bulk', requireAccountManagementAdmin, async (req, res) => {

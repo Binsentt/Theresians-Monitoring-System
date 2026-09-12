@@ -44,6 +44,8 @@ const initialFilterState = {
 const MAX_LESSON_QUESTION_COUNT = 50;
 const LESSON_GENERATION_IDEMPOTENCY_STORAGE_PREFIX = 'theresians.lesson-generation.';
 const AI_PAUSED_MESSAGE = 'AI generation is temporarily paused. Recorded data and available questions remain accessible.';
+const GENERATION_POLL_INTERVAL_MS = 1500;
+const GENERATION_POLL_LIMIT = 120;
 
 const fetchLessonManagerApi = (url, options = {}) => fetch(url, {
   ...options,
@@ -52,6 +54,21 @@ const fetchLessonManagerApi = (url, options = {}) => fetch(url, {
     ...(options.headers || {}),
   },
 });
+
+const waitForLessonGeneration = async (learningFileId, { signal, onProgress } = {}) => {
+  for (let attempt = 0; attempt < GENERATION_POLL_LIMIT; attempt += 1) {
+    if (signal?.aborted) throw new Error('Question generation status polling was cancelled.');
+    const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${learningFileId}/generation-status`), { signal });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Unable to read question generation status.');
+    const learningFile = data.learningFile || {};
+    if (typeof onProgress === 'function') onProgress(learningFile);
+    if (learningFile.generation_status === 'ready_for_review') return learningFile;
+    if (learningFile.generation_status === 'failed') throw new Error('Question generation failed. Review the generation status and try again.');
+    await new Promise((resolve) => setTimeout(resolve, GENERATION_POLL_INTERVAL_MS));
+  }
+  throw new Error('Question generation is still running. Return to this page to continue monitoring it.');
+};
 
 const withLessonManagerScope = (url, role) => {
   if (normalizeRole(role) !== 'parent_teacher') return url;
@@ -569,6 +586,17 @@ export default function LessonQuestionManager() {
         if (data.code !== 'AI_GENERATION_IN_PROGRESS') clearLessonGenerationIdempotencyKey(storageKey);
         throw new Error(data.error || 'Question generation failed.');
       }
+      if (data.code === 'AI_GENERATION_QUEUED' || data.code === 'AI_GENERATION_IN_PROGRESS') {
+        showNotification('Question generation is in progress. This page will update when it is ready.', 'info');
+        await waitForLessonGeneration(data.learningFile?.id, {
+          onProgress: (learningFile) => {
+            const completed = Number(learningFile.generation_completed_count || 0);
+            const total = Number(learningFile.requested_question_count || requestedCount);
+            const stage = learningFile.generation_stage === 'saving' ? 'Saving draft questions' : 'Generating questions';
+            showNotification(`${stage} ${Math.min(completed, total)} / ${total}`, 'info');
+          },
+        });
+      }
       await loadFilesAndFolders();
       if (data.code === 'AI_GENERATION_IN_PROGRESS') {
         showNotification('Question generation is already in progress for this Lesson source.', 'info');
@@ -686,6 +714,14 @@ export default function LessonQuestionManager() {
       if (data.code === 'AI_GENERATION_IN_PROGRESS') {
         await loadFilesAndFolders();
         showNotification('Question generation is already in progress for this lesson.', 'info');
+        return;
+      }
+      if (data.code === 'AI_GENERATION_QUEUED') {
+        await loadFilesAndFolders();
+        showNotification('Lesson uploaded. Question generation is in progress and can be monitored after refresh.', 'info');
+        clearLessonGenerationIdempotencyKey(lessonGenerationStorageKey);
+        resetForm();
+        setShowUploadForm(false);
         return;
       }
       const uploadedFile = normalizeManagedLearningFile({

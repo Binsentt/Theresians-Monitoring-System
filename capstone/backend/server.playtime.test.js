@@ -138,6 +138,66 @@ test('playtime history removal is additive, soft-marked, and does not remove usa
   assert.doesNotMatch(dailyTotals, /deleted_at IS NULL/i);
 });
 
+test('Screen Time reset is admin-only, atomic, and limited to active enrolled students', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let targetStatus = 'Active';
+  let accountResetUpdates = 0;
+  let auditWrites = 0;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
+    }
+    if (sql.startsWith('select ps.id, ps.student_id, ps.student_name, ps.status, ps.end_time')) {
+      return resultRows([{
+        id: 77,
+        student_id: 44,
+        student_name: 'QA Student',
+        status: 'Playing',
+        end_time: null,
+        student_account_id: 44,
+        student_is_archived: false,
+        student_status: targetStatus,
+      }]);
+    }
+    if (sql.startsWith('update public.accounts set screen_time_reset_at')) {
+      accountResetUpdates += 1;
+      return resultRows([]);
+    }
+    if (sql.startsWith('insert into public.admin_audit_logs')) {
+      auditWrites += 1;
+      return resultRows([]);
+    }
+    return emptyResult;
+  });
+
+  const success = await requestJson(baseUrl, '/api/playtime/77/reset', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({ reason: 'QA baseline reset', confirmation: 'RESET' }),
+  });
+  assert.equal(success.status, 200);
+  assert.equal(success.body.history_preserved, true);
+  assert.equal(accountResetUpdates, 1);
+  assert.equal(auditWrites, 1);
+
+  targetStatus = 'former';
+  const former = await requestJson(baseUrl, '/api/playtime/77/reset', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({ reason: 'QA baseline reset', confirmation: 'RESET' }),
+  });
+  assert.equal(former.status, 409);
+  assert.match(former.body.error, /active enrolled students/i);
+  assert.equal(accountResetUpdates, 1);
+});
+
 test('playtime start creates a Playing session for Godot gameplay', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;

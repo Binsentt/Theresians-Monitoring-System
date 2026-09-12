@@ -27,7 +27,7 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
   const studentIds = [...new Set(rows.map((row) => Number(row.student_id)))];
   const [results, playtime] = await Promise.all([
     queryClient.query(
-      `SELECT gr.resolved_student_id, gr.id, gr.math_topic, gr.difficulty,
+      `SELECT gr.resolved_student_id, gr.id, gr.math_topic, gr.difficulty, gr.current_map,
               gr.percentage, gr.score, gr.total_items, gr.played_at, gr.question_set_id
        FROM public.game_results gr
        JOIN public.accounts student ON student.id = gr.resolved_student_id

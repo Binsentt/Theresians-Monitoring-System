@@ -184,6 +184,8 @@ test('authorized detail reads automatically share a preliminary grounded insight
   const parent = await get('/api/student-progress/44?scope=parent', 'parent');
 
   assert.equal(admin.metrics.accuracy, 75);
+  assert.equal(admin.analyticsReadiness.performanceSignals.totalQuestions, 4);
+  assert.equal(admin.analyticsReadiness.performanceSignals.correctAnswers, 3);
   assert.equal(admin.aiInsight.status, 'generated');
   assert.equal(admin.aiInsight.data_level, 'limited_data');
   assert.equal(admin.aiInsight.preliminary, true);

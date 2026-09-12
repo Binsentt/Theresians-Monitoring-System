@@ -125,4 +125,24 @@ describe('LearningCycleResetAction', () => {
     expect(rowClick).not.toHaveBeenCalled();
     expect(reasonSelect.value).toBe('New Lesson');
   });
+
+  test('shows Resetting and prevents duplicate reset submissions while the mutation is pending', async () => {
+    let resolveRequest;
+    global.fetch = jest.fn(() => new Promise((resolve) => { resolveRequest = resolve; }));
+    await act(async () => {
+      root.render(<LearningCycleResetAction studentId={44} role="teacher" onReset={jest.fn()} />);
+    });
+    const openButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Reset Progress');
+    await act(async () => openButton.click());
+    const reasonSelect = document.body.querySelector('select[name="learning-cycle-reason"]');
+    await act(async () => {
+      reasonSelect.value = 'New Lesson';
+      reasonSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const submitButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Start New Learning Cycle');
+    await act(async () => submitButton.click());
+    expect(document.body.textContent).toContain('Resetting');
+    expect(submitButton.disabled).toBe(true);
+    await act(async () => resolveRequest(jsonResponse({ success: true })));
+  });
 });

@@ -266,6 +266,8 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   };
 
   const isAdminAllView = !isChildView && normalizeRole(user?.role) === 'admin';
+  const isHistoryDeletionEligible = (record) => record.screen_time_delete_eligible === true
+    || typeof record.screen_time_delete_eligible === 'undefined';
   const closeDeletionDialog = () => {
     if (deleting) return;
     setPendingDeletion(null);
@@ -276,7 +278,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   };
 
   const openSingleDeletion = (record) => {
-    setPendingDeletion({ kind: 'single', record });
+    setPendingDeletion({ kind: isHistoryDeletionEligible(record) ? 'single' : 'reset', record });
     setDeletionReason('');
     setDeletionConfirmation('');
     setDeletionError('');
@@ -303,21 +305,23 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   const confirmDeletion = async (event) => {
     event.preventDefault();
     if (!deletionReason.trim()) return setDeletionError('Provide a reason for history removal.');
-    if (deletionConfirmation !== 'DELETE') return setDeletionError('Type DELETE to confirm.');
+    const isReset = pendingDeletion?.kind === 'reset';
+    if (deletionConfirmation !== (isReset ? 'RESET' : 'DELETE')) return setDeletionError(`Type ${isReset ? 'RESET' : 'DELETE'} to confirm.`);
     setDeleting(true);
     setDeletionError('');
     try {
-      const isBulk = pendingDeletion?.kind === 'bulk';
-      const response = await fetch(apiUrl(isBulk ? '/api/playtime/completed/bulk' : `/api/playtime/${pendingDeletion.record.id}`), {
-        method: isBulk ? 'POST' : 'DELETE',
+       const isBulk = pendingDeletion?.kind === 'bulk';
+       const endpoint = isBulk ? '/api/playtime/completed/bulk' : `/api/playtime/${pendingDeletion.record.id}${isReset ? '/reset' : ''}`;
+       const response = await fetch(apiUrl(endpoint), {
+         method: isBulk ? 'POST' : isReset ? 'POST' : 'DELETE',
         headers: { ...buildAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify(isBulk ? {
+         body: JSON.stringify(isBulk ? {
           reason: deletionReason.trim(),
           confirmation: deletionConfirmation,
           expected_count: Number(deletionTarget?.affected_count || 0),
           target_ids: Array.isArray(deletionTarget?.target_ids) ? deletionTarget.target_ids : [],
           target_fingerprint: deletionTarget?.target_fingerprint || '',
-        } : { reason: deletionReason.trim(), confirmation: deletionConfirmation }),
+         } : { reason: deletionReason.trim(), confirmation: deletionConfirmation }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || 'Unable to remove Screen Time history.');
@@ -497,17 +501,18 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                   <ModalPortal onClose={closeDeletionDialog}>
                     <div className="screen-time-deletion-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDeletionDialog(); }}>
                       <form className="screen-time-deletion-dialog" role="dialog" aria-modal="true" aria-labelledby="screen-time-deletion-title" onSubmit={confirmDeletion} onMouseDown={(event) => event.stopPropagation()}>
-                        <h2 id="screen-time-deletion-title">{pendingDeletion.kind === 'bulk' ? 'Delete All Completed Records' : 'Delete Screen Time Record'}</h2>
+                        <h2 id="screen-time-deletion-title">{pendingDeletion.kind === 'bulk' ? 'Delete All Completed Records' : pendingDeletion.kind === 'reset' ? 'Reset Screen Time' : 'Delete Screen Time Record'}</h2>
                         <p>This action removes the record from Screen Time history. Daily playtime usage accounting remains preserved.</p>
                         {pendingDeletion.kind === 'bulk' ? <p><strong>{deletionTarget?.affected_count || 0} completed records match the current filters.</strong></p> : <p><strong>{pendingDeletion.record.student_name || pendingDeletion.record.game_student_id || 'Selected student'} · {formatDate(pendingDeletion.record.date_played)}</strong></p>}
-                        <label htmlFor="screen-time-deletion-reason">Reason for removal</label>
+                        {pendingDeletion.kind === 'reset' && <p>This resets the Screen Time baseline for the active student. Existing history and the active session are preserved.</p>}
+                        <label htmlFor="screen-time-deletion-reason">Reason for {pendingDeletion.kind === 'reset' ? 'reset' : 'removal'}</label>
                         <textarea id="screen-time-deletion-reason" value={deletionReason} onChange={(event) => setDeletionReason(event.target.value.slice(0, 1000))} maxLength={1000} rows={4} disabled={deleting} />
-                        <label htmlFor="screen-time-deletion-confirmation">Type DELETE to confirm</label>
+                        <label htmlFor="screen-time-deletion-confirmation">Type {pendingDeletion.kind === 'reset' ? 'RESET' : 'DELETE'} to confirm</label>
                         <input id="screen-time-deletion-confirmation" value={deletionConfirmation} onChange={(event) => setDeletionConfirmation(event.target.value)} autoComplete="off" disabled={deleting} />
                         {deletionError && <p className="screen-time-error" role="alert">{deletionError}</p>}
                         <div className="screen-time-deletion-actions">
                           <button type="button" className="screen-time-clear" onClick={closeDeletionDialog} disabled={deleting}>Cancel</button>
-                          <button type="submit" className="screen-time-danger-button" disabled={deleting}>{deleting ? 'Deleting…' : 'Confirm Delete'}</button>
+                          <button type="submit" className="screen-time-danger-button" disabled={deleting}>{deleting ? (pendingDeletion.kind === 'reset' ? 'Resetting…' : 'Deleting…') : pendingDeletion.kind === 'reset' ? 'Confirm Reset' : 'Confirm Delete'}</button>
                         </div>
                       </form>
                     </div>
@@ -563,7 +568,12 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                                 `Student: ${record.student_name || record.child_name || record.game_student_id || 'Selected student'}`
                               )}
                             />
-                            {isAdminAllView && String(record.status || '').toLowerCase() !== 'playing' && (
+                            {isAdminAllView && !isHistoryDeletionEligible(record) && (
+                              <button type="button" className="screen-time-clear" data-action="reset-screen-time" onClick={() => openSingleDeletion(record)}>
+                                Reset Screen Time
+                              </button>
+                            )}
+                            {isAdminAllView && String(record.status || '').toLowerCase() !== 'playing' && isHistoryDeletionEligible(record) && (
                               <button type="button" className="screen-time-danger-link" data-action="delete-playtime-record" onClick={() => openSingleDeletion(record)}>
                                 Delete
                               </button>

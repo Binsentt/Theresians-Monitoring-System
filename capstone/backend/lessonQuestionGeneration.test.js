@@ -381,3 +381,35 @@ test('lesson generation reserves a realistic single deadline for five structured
 
   assert.equal(QUESTION_GENERATION_TIMEOUT_MS, 60000);
 });
+
+test('lesson generation batches larger requests and only returns a complete validated set', async () => {
+  const { generateLessonQuestionsInBatches } = require('./lessonQuestionGeneration');
+  const calls = [];
+  const progress = [];
+  const questions = await generateLessonQuestionsInBatches({
+    lessonText: 'A lesson about addition.',
+    title: 'Addition lesson',
+    gradeLevel: 'Grade 1',
+    difficulty: 'Easy',
+    questionCount: 12,
+    batchSize: 5,
+    onBatchComplete: (state) => progress.push(state),
+    apiKey: 'test-key',
+    generateBatch: async (input) => {
+      calls.push(input.questionCount);
+      return Array.from({ length: input.questionCount }, (_, index) => ({
+        question: `Question ${calls.length}-${index}`,
+        options: ['1', '2', '3', '4'],
+        correct_answer: '1',
+      }));
+    },
+  });
+
+  assert.deepEqual(calls, [5, 5, 2]);
+  assert.deepEqual(progress, [
+    { completed: 5, total: 12 },
+    { completed: 10, total: 12 },
+    { completed: 12, total: 12 },
+  ]);
+  assert.equal(questions.length, 12);
+});

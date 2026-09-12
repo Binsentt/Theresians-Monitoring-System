@@ -336,6 +336,41 @@ const generateLessonQuestions = async ({
   }
 };
 
+const generateLessonQuestionsInBatches = async ({
+  questionCount,
+  batchSize = 5,
+  generateBatch = generateLessonQuestions,
+  onBatchComplete = null,
+  ...input
+}) => {
+  if (!Number.isInteger(questionCount) || questionCount < 1) {
+    throw new QuestionGenerationError('QUESTION_AI_INVALID_REQUEST', 'Question Count must be a positive whole number.');
+  }
+  const boundedBatchSize = Number.isInteger(batchSize) && batchSize > 0 ? Math.min(batchSize, 5) : 5;
+  const questions = [];
+  const seen = new Set();
+  for (let offset = 0; offset < questionCount; offset += boundedBatchSize) {
+    const count = Math.min(boundedBatchSize, questionCount - offset);
+    const batch = await generateBatch({ ...input, questionCount: count });
+    if (!Array.isArray(batch) || batch.length !== count) {
+      throw new QuestionGenerationError('QUESTION_AI_INVALID_RESPONSE', 'Question generation returned an incomplete batch.');
+    }
+    for (const question of batch) {
+      const normalized = normalizeGeneratedQuestion(question);
+      const fingerprint = normalized?.question.toLocaleLowerCase();
+      if (!normalized || seen.has(fingerprint)) {
+        throw new QuestionGenerationError('QUESTION_AI_INVALID_RESPONSE', 'Question generation returned duplicate or invalid questions.');
+      }
+      seen.add(fingerprint);
+      questions.push(normalized);
+    }
+    if (typeof onBatchComplete === 'function') {
+      await onBatchComplete({ completed: questions.length, total: questionCount });
+    }
+  }
+  return questions;
+};
+
 module.exports = {
   MAX_LESSON_TEXT_CHARS,
   OPENAI_RESPONSES_URL,
@@ -348,5 +383,6 @@ module.exports = {
   buildProviderDiagnostics,
   buildGenerationInput,
   generateLessonQuestions,
+  generateLessonQuestionsInBatches,
   toQuestionGenerationHttpFailure,
 };

@@ -344,4 +344,17 @@ describe('ScreenTimeMonitoring', () => {
     expect(document.body.textContent).toContain('Delete Screen Time Record');
     expect(document.body.textContent).toContain('This action removes the record from Screen Time history');
   });
+
+  test('active enrolled students expose Reset Screen Time instead of Delete', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
+    localStorage.setItem('rememberToken', 'remember-token');
+    global.fetch = jest.fn(() => jsonResponse({
+      ...playtimePayload,
+      data: [{ ...playtimePayload.data[0], id: 9, status: 'Completed', student_is_archived: false, student_progress_archived_at: null, screen_time_delete_eligible: false }],
+    }));
+    act(() => root.render(<ScreenTimeMonitoring mode="all" />));
+    await waitForContent(container, 'Ava Santos');
+    expect(container.querySelector('[data-action="reset-screen-time"]')).not.toBeNull();
+    expect(container.querySelector('[data-action="delete-playtime-record"]')).toBeNull();
+  });
 });

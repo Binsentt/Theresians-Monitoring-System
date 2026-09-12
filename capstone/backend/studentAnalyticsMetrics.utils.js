@@ -39,6 +39,7 @@ const normalizeResult = (row = {}) => {
     totalQuestions,
     difficulty: normalizeDifficulty(row.difficulty),
     topic: normalizeTopic(row.math_topic ?? row.mathTopic),
+    currentMap: normalizeTopic(row.current_map ?? row.currentMap ?? row.map ?? row.map_name),
     isPerQuestion: totalQuestions === 1 && (correctAnswers === 0 || correctAnswers === 1),
   };
 };
@@ -56,6 +57,7 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
   const validResultCount = validResults.filter((result) => result.isPerQuestion).length;
   const difficultyBreakdown = emptyDifficultyBreakdown();
   const topicTotals = new Map();
+  const mapTotals = new Map();
 
   validResults.forEach((result) => {
     if (result.difficulty) {
@@ -69,6 +71,12 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
       current.totalQuestions += result.totalQuestions;
       topicTotals.set(result.topic, current);
     }
+    if (result.currentMap) {
+      const current = mapTotals.get(result.currentMap) || { correctAnswers: 0, totalQuestions: 0 };
+      current.correctAnswers += result.correctAnswers;
+      current.totalQuestions += result.totalQuestions;
+      mapTotals.set(result.currentMap, current);
+    }
   });
 
   Object.values(difficultyBreakdown).forEach((entry) => {
@@ -77,17 +85,11 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
 
   const resultCorrectAnswers = validResults.reduce((total, result) => total + result.correctAnswers, 0);
   const resultTotalQuestions = validResults.reduce((total, result) => total + result.totalQuestions, 0);
-  const snapshotCorrectAnswers = toNonNegativeInteger(progress.correct_answers);
-  const snapshotTotalQuestions = toNonNegativeInteger(progress.total_questions);
   const hasResultHistory = resultTotalQuestions > 0;
-  const correctAnswers = hasResultHistory ? resultCorrectAnswers : snapshotCorrectAnswers;
-  const totalQuestions = hasResultHistory ? resultTotalQuestions : snapshotTotalQuestions;
-  const incorrectAnswers = totalQuestions === null || correctAnswers === null
-    ? null
-    : Math.max(0, totalQuestions - correctAnswers);
-  const accuracy = hasResultHistory
-    ? toPercentage(correctAnswers, totalQuestions)
-    : toPercentage(correctAnswers, totalQuestions);
+  const correctAnswers = hasResultHistory ? resultCorrectAnswers : null;
+  const totalQuestions = hasResultHistory ? resultTotalQuestions : null;
+  const incorrectAnswers = hasResultHistory ? Math.max(0, totalQuestions - correctAnswers) : null;
+  const accuracy = toPercentage(correctAnswers, totalQuestions);
 
   const totalProgressValue = toFiniteNumber(progress.progress_percentage);
   const completedQuests = toNonNegativeInteger(progress.total_quests_completed);
@@ -111,8 +113,16 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
     }))
     .sort((left, right) => left.topic.localeCompare(right.topic));
 
+  const mapBreakdown = Object.fromEntries(Array.from(mapTotals.entries())
+    .map(([map, totals]) => [map, {
+      correctAnswers: totals.correctAnswers,
+      totalQuestions: totals.totalQuestions,
+      accuracy: toPercentage(totals.correctAnswers, totals.totalQuestions),
+    }])
+    .sort(([left], [right]) => left.localeCompare(right)));
+
   return {
-    answerSource: hasResultHistory ? 'game_results' : 'progress_snapshot',
+    answerSource: hasResultHistory ? 'game_results' : 'no_graded_answers',
     validResultCount,
     correctAnswers,
     incorrectAnswers,
@@ -133,6 +143,7 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
     currentDifficulty: currentDifficulty === 'Unknown' ? null : currentDifficulty,
     difficultyBreakdown,
     topicPerformance,
+    mapBreakdown,
     playtimeMinutes,
   };
 }

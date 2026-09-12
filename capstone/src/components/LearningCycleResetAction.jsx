@@ -143,8 +143,8 @@ export const LearningCycleResetAction = ({ studentId, role, onReset, className =
             {error && <p className="learning-cycle-reset-error" role="alert">{error}</p>}
             <div className="learning-cycle-reset-actions">
               <button type="button" className="secondary-button" onClick={close} disabled={submitting}>Cancel</button>
-              <button type="submit" className="table-action-button" disabled={submitting}>
-                {submitting ? 'Starting…' : 'Start New Learning Cycle'}
+              <button type="submit" className="table-action-button" disabled={submitting} aria-busy={submitting}>
+                {submitting ? 'Resetting…' : 'Start New Learning Cycle'}
               </button>
             </div>
           </form>

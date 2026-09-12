@@ -47,7 +47,7 @@ test('calculates factual accuracy, difficulty, topic, and playtime from valid re
   assert.equal(metrics.questCompletionPercentage, null);
 });
 
-test('uses the saved progress snapshot only when there is no valid result history', () => {
+test('does not treat ungraded progress snapshots as graded accuracy evidence', () => {
   const metrics = buildStudentAnalyticsMetrics({
     progress: { correct_answers: 4, total_questions: 5, accuracy_rate: 80, score: 0 },
     quizSessions: [{ score: 2, total_items: 1, difficulty: 'Easy' }],
@@ -55,15 +55,30 @@ test('uses the saved progress snapshot only when there is no valid result histor
   });
 
   assert.equal(metrics.validResultCount, 0);
-  assert.equal(metrics.answerSource, 'progress_snapshot');
-  assert.equal(metrics.correctAnswers, 4);
-  assert.equal(metrics.incorrectAnswers, 1);
-  assert.equal(metrics.accuracy, 80);
+  assert.equal(metrics.answerSource, 'no_graded_answers');
+  assert.equal(metrics.correctAnswers, null);
+  assert.equal(metrics.incorrectAnswers, null);
+  assert.equal(metrics.accuracy, null);
   assert.equal(metrics.difficultyBreakdown.easy.accuracy, null);
   assert.equal(metrics.difficultyBreakdown.medium.accuracy, null);
   assert.equal(metrics.difficultyBreakdown.hard.accuracy, null);
   assert.deepEqual(metrics.topicPerformance, []);
   assert.equal(metrics.playtimeMinutes, null);
+});
+
+test('aggregates graded answers by map without allowing legacy percentage snapshots to override them', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    progress: { correct_answers: 99, total_questions: 99, accuracy_rate: 100 },
+    quizSessions: [
+      { score: 3, total_items: 4, current_map: 'Oakleaf' },
+      { score: 1, total_items: 2, current_map: 'Pinehill' },
+    ],
+  });
+  assert.equal(metrics.accuracy, 66.67);
+  assert.deepEqual(metrics.mapBreakdown, {
+    Oakleaf: { correctAnswers: 3, totalQuestions: 4, accuracy: 75 },
+    Pinehill: { correctAnswers: 1, totalQuestions: 2, accuracy: 50 },
+  });
 });
 
 test('does not fabricate quest completion or missing total progress', () => {
@@ -105,11 +120,11 @@ test('current gameplay difficulty stays separate from historical answer performa
   assert.equal(metrics.totalProgressSource, 'legacy_client_snapshot');
 });
 
-test('three correct answers out of four cannot establish total game progress', () => {
+test('legacy progress percentage is not presented as graded accuracy', () => {
   const metrics = buildStudentAnalyticsMetrics({
     progress: { progress_percentage: 75, correct_answers: 3, total_questions: 4 },
   });
-  assert.equal(metrics.accuracy, 75);
+  assert.equal(metrics.accuracy, null);
   assert.equal(metrics.totalProgress, null);
   assert.equal(metrics.reportedTotalProgress, 75);
   assert.equal(metrics.totalProgressUnavailableReason, 'full_game_milestones_unverified');
