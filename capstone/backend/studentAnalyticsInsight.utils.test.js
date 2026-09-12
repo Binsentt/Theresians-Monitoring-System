@@ -47,7 +47,6 @@ const validSelection = {
   performance_claim_ids: ['overall_accuracy', 'current_quest'],
   strength_claim_ids: ['difficulty_easy_strength'],
   weakness_claim_ids: ['difficulty_normal_weakness'],
-  recommendation_claim_ids: ['practice_difficulty_normal'],
 };
 
 const inputFor = () => buildGroundedInsightInput({ gradeLevel: 'Grade 3', metrics });
@@ -253,7 +252,7 @@ test('records distinct safe diagnostics for response text, parse, shape, policy,
     ['unknown claim', { output_text: JSON.stringify({ ...valid, performance_claim_ids: ['unknown_claim'] }) }, 'CLAIM_ID_UNKNOWN'],
     ['duplicate claim', { output_text: JSON.stringify({ ...valid, performance_claim_ids: ['overall_accuracy', 'overall_accuracy'] }) }, 'CLAIM_ID_DUPLICATE'],
     ['unsupported claim category', { output_text: JSON.stringify({ ...valid, performance_claim_ids: ['difficulty_easy_strength'] }) }, 'CLAIM_ID_UNKNOWN'],
-    ['unsupported recommendation support', { output_text: JSON.stringify({ ...valid, weakness_claim_ids: [] }) }, 'CLAIM_SUPPORT_INVALID'],
+    ['provider recommendation selection removed', { output_text: JSON.stringify({ ...valid, recommendation_claim_ids: ['practice_difficulty_normal'] }) }, 'RESPONSE_SHAPE_INVALID'],
   ];
 
   for (const [label, body, stage] of cases) {
@@ -274,10 +273,10 @@ test('records a successful structured response without retaining model text', as
   assert.deepEqual([...diagnostics.topLevelKeys].sort(), [
     'grounding_policy_version',
     'performance_claim_ids',
-    'recommendation_claim_ids',
     'strength_claim_ids',
     'weakness_claim_ids',
   ]);
+  assert.equal(diagnostics.claimCounts.recommendations, 1);
   assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'rawResponse'), false);
   assert.equal(JSON.stringify(diagnostics).includes('Recorded overall accuracy'), false);
   assert.match(result.performance_insight, /Recorded overall accuracy/);

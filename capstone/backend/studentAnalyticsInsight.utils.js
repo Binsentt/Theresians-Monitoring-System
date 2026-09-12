@@ -103,7 +103,7 @@ const claimCountsFor = (selection) => ({
   performance: Array.isArray(selection?.performance_claim_ids) ? selection.performance_claim_ids.length : 0,
   strengths: Array.isArray(selection?.strength_claim_ids) ? selection.strength_claim_ids.length : 0,
   weaknesses: Array.isArray(selection?.weakness_claim_ids) ? selection.weakness_claim_ids.length : 0,
-  recommendations: Array.isArray(selection?.recommendation_claim_ids) ? selection.recommendation_claim_ids.length : 0,
+  recommendations: 0,
   trends: 0,
 });
 
@@ -201,7 +201,11 @@ async function generateGroundedStudentInsight({
   const providerInput = {
     grounding_policy_version: catalog.policyVersion,
     evidence: catalog.providerEvidence,
-    permitted_claim_ids: catalog.permittedClaimIds,
+    permitted_claim_ids: {
+      performance: catalog.permittedClaimIds.performance,
+      strength: catalog.permittedClaimIds.strength,
+      weakness: catalog.permittedClaimIds.weakness,
+    },
   };
 
   const controller = new AbortController();
@@ -297,6 +301,7 @@ async function generateGroundedStudentInsight({
     const insight = renderValidatedClaimSelection(selection, catalog);
     analyticsDiagnostics.validationStage = INSIGHT_VALIDATION_STAGES.VALIDATION_PASSED;
     analyticsDiagnostics.renderedOutputValidation = true;
+    analyticsDiagnostics.claimCounts.recommendations = insight.recommendations.length;
     await emitDiagnostics(onDiagnostics, analyticsDiagnostics);
     return insight;
   } catch (error) {

@@ -31,7 +31,6 @@ const validSelection = {
   performance_claim_ids: ['overall_accuracy', 'answer_counts', 'current_quest'],
   strength_claim_ids: [],
   weakness_claim_ids: [],
-  recommendation_claim_ids: [],
 };
 
 const selection = (overrides = {}) => ({
@@ -63,7 +62,6 @@ test('catalog permits recorded difficulty, observed topic, and evidence-linked c
     performance_claim_ids: ['difficulty_easy_accuracy', 'difficulty_normal_accuracy', 'topic_fractions_accuracy'],
     strength_claim_ids: ['difficulty_easy_strength'],
     weakness_claim_ids: ['difficulty_normal_weakness'],
-    recommendation_claim_ids: ['practice_difficulty_normal'],
   }), catalog);
 
   assert.match(insight.performance_insight, /Easy accuracy is 100%/);
@@ -78,7 +76,6 @@ test('catalog permits a no-data recommendation without turning no data into a we
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(selection({
     performance_claim_ids: ['difficulty_difficult_no_data'],
-    recommendation_claim_ids: ['collect_difficulty_difficult_data'],
   }), catalog);
 
   assert.deepEqual(insight.weaknesses, []);
@@ -116,15 +113,106 @@ test('catalog rejects no-data weakness, unsupported strength, wrong category, du
   });
 });
 
-test('catalog rejects a recommendation that is not linked to selected supporting evidence', () => {
+test('real failure pattern validates with deterministic recommendations removed from provider output', () => {
+  const catalog = buildGroundedClaimCatalog({
+    ...input,
+    correct_answers: 4,
+    incorrect_answers: 1,
+    accuracy: 80,
+    difficulty_accuracy: { easy: 80, medium: null, hard: null },
+    topic_performance: [{ topic: 'Fractions', accuracy: 80, correct_answers: 4, total_questions: 5 }],
+  });
+  const insight = renderValidatedClaimSelection({
+    grounding_policy_version: GROUNDING_POLICY_VERSION,
+    performance_claim_ids: [
+      'results_recorded',
+      'answer_counts',
+      'overall_accuracy',
+      'current_quest',
+      'difficulty_normal_no_data',
+    ],
+    strength_claim_ids: [
+      'overall_accuracy_strength',
+      'completed_quests_strength',
+      'difficulty_easy_strength',
+      'topic_fractions_strength',
+    ],
+    weakness_claim_ids: [],
+  }, catalog);
+
+  assert.equal(insight.performance_insight.length > 0, true);
+  assert.equal(insight.strengths.length, 4);
+  assert.deepEqual(insight.weaknesses, []);
+  assert.deepEqual(insight.recommendations, ['Record more Normal gameplay to establish performance evidence.']);
+});
+
+test('selected weakness deterministically enables its matching recommendation', () => {
+  const catalog = buildGroundedClaimCatalog(input);
+  const insight = renderValidatedClaimSelection(selection({
+    performance_claim_ids: ['overall_accuracy'],
+    weakness_claim_ids: ['overall_accuracy_weakness'],
+  }), catalog);
+
+  assert.deepEqual(insight.recommendations, [
+    'Provide additional overall practice based on the recorded 60% accuracy.',
+  ]);
+});
+
+test('unselected weakness does not derive its recommendation', () => {
+  const catalog = buildGroundedClaimCatalog(input);
+  const insight = renderValidatedClaimSelection(selection({
+    performance_claim_ids: ['overall_accuracy'],
+    weakness_claim_ids: [],
+  }), catalog);
+
+  assert.deepEqual(insight.recommendations, []);
+});
+
+test('selected performance claim deterministically enables a matching recommendation', () => {
+  const catalog = buildGroundedClaimCatalog(input);
+  const insight = renderValidatedClaimSelection(selection({
+    performance_claim_ids: ['difficulty_difficult_no_data'],
+  }), catalog);
+
+  assert.deepEqual(insight.recommendations, ['Record more Difficult gameplay to establish performance evidence.']);
+});
+
+test('unselected supporting performance claim does not derive a recommendation', () => {
+  const catalog = buildGroundedClaimCatalog(input);
+  const insight = renderValidatedClaimSelection(selection({
+    performance_claim_ids: ['overall_accuracy'],
+  }), catalog);
+
+  assert.deepEqual(insight.recommendations, []);
+});
+
+test('multiple supported recommendations are unique and deterministic', () => {
+  const catalog = buildGroundedClaimCatalog(input);
+  const insight = renderValidatedClaimSelection(selection({
+    performance_claim_ids: ['difficulty_normal_accuracy', 'difficulty_difficult_no_data'],
+    weakness_claim_ids: ['difficulty_normal_weakness'],
+  }), catalog);
+
+  assert.deepEqual(insight.recommendations, [
+    'Provide additional Normal practice based on the recorded 50% accuracy.',
+    'Record more Difficult gameplay to establish performance evidence.',
+  ]);
+});
+
+test('no supported recommendation still produces a valid grounded insight', () => {
+  const catalog = buildGroundedClaimCatalog(input);
+  const insight = renderValidatedClaimSelection(selection({
+    performance_claim_ids: ['results_recorded'],
+  }), catalog);
+
+  assert.deepEqual(insight.recommendations, []);
+});
+
+test('provider recommendation claim IDs are rejected as an unsupported output property', () => {
   const catalog = buildGroundedClaimCatalog(input);
   assert.throws(() => validateClaimSelection(selection({
     recommendation_claim_ids: ['practice_difficulty_normal'],
-  }), catalog), /support/i);
-  assert.throws(() => validateClaimSelection(selection({
-    performance_claim_ids: ['overall_accuracy'],
-    recommendation_claim_ids: ['collect_difficulty_difficult_data'],
-  }), catalog), /support/i);
+  }), catalog), /claim|grounding|property/i);
 });
 
 test('dynamic provider schema allows only catalog ids and no free-text properties', () => {
@@ -137,13 +225,13 @@ test('dynamic provider schema allows only catalog ids and no free-text propertie
     'performance_claim_ids',
     'strength_claim_ids',
     'weakness_claim_ids',
-    'recommendation_claim_ids',
   ]);
   assert.deepEqual(schema.properties.grounding_policy_version.enum, [GROUNDING_POLICY_VERSION]);
   assert.equal(schema.properties.performance_claim_ids.items.enum.includes('overall_accuracy'), true);
   assert.equal(schema.properties.performance_claim_ids.items.enum.includes('improving_accuracy'), false);
   assert.equal(schema.properties.strength_claim_ids.items.enum.includes('difficulty_easy_strength'), true);
   assert.equal(schema.properties.weakness_claim_ids.items.enum.includes('difficulty_difficult_weakness'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(schema.properties, 'recommendation_claim_ids'), false);
 });
 
 test('dynamic provider schema uses only strict-compatible JSON Schema keywords', () => {
@@ -175,7 +263,6 @@ test('marks a rendered-output failure with a safe diagnostic stage', () => {
       performance_claim_ids: ['performance'],
       strength_claim_ids: [],
       weakness_claim_ids: [],
-      recommendation_claim_ids: [],
     }, catalog),
     (error) => error.code === 'ANALYTICS_AI_GROUNDING_FAILED'
       && error.stage === 'RENDERED_OUTPUT_INVALID'

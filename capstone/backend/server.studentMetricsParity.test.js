@@ -158,7 +158,6 @@ test('automatic analytics detail reads return AI_PAUSED with zero outbound provi
       performance_claim_ids: ['overall_accuracy'],
       strength_claim_ids: [],
       weakness_claim_ids: [],
-      recommendation_claim_ids: [],
     },
   });
 
@@ -177,7 +176,6 @@ test('authorized detail reads automatically share a preliminary grounded insight
       performance_claim_ids: ['results_recorded', 'answer_counts', 'overall_accuracy', 'current_difficulty'],
       strength_claim_ids: ['overall_accuracy_strength', 'difficulty_easy_strength'],
       weakness_claim_ids: [],
-      recommendation_claim_ids: [],
     },
   });
 

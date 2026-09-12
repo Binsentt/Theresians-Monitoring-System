@@ -241,14 +241,12 @@ function buildClaimSelectionSchema(catalog) {
       'performance_claim_ids',
       'strength_claim_ids',
       'weakness_claim_ids',
-      'recommendation_claim_ids',
     ],
     properties: {
       grounding_policy_version: { type: 'string', enum: [catalog.policyVersion] },
       performance_claim_ids: arraySchemaFor(catalog.permittedClaimIds.performance, 1),
       strength_claim_ids: arraySchemaFor(catalog.permittedClaimIds.strength),
       weakness_claim_ids: arraySchemaFor(catalog.permittedClaimIds.weakness),
-      recommendation_claim_ids: arraySchemaFor(catalog.permittedClaimIds.recommendation),
     },
   };
 }
@@ -258,14 +256,12 @@ const selectionKeys = [
   'performance_claim_ids',
   'strength_claim_ids',
   'weakness_claim_ids',
-  'recommendation_claim_ids',
 ];
 
 const categoryForSelectionKey = {
   performance_claim_ids: 'performance',
   strength_claim_ids: 'strength',
   weakness_claim_ids: 'weakness',
-  recommendation_claim_ids: 'recommendation',
 };
 
 const findClaim = (catalog, category, id) => catalog[category].find((entry) => entry.id === id) || null;
@@ -350,24 +346,26 @@ function validateClaimSelection(selection, catalog) {
     });
   });
 
-  const selectedPerformance = new Set(groups.performance_claim_ids);
-  const selectedWeakness = new Set(groups.weakness_claim_ids);
-  groups.recommendation_claim_ids.forEach((id) => {
-    const claim = findClaim(catalog, 'recommendation', id);
-    const supported = claim.supportCategory === 'weakness'
-      ? selectedWeakness.has(claim.supportId)
-      : selectedPerformance.has(claim.supportId);
-    if (!supported) {
-      throw new GroundingValidationError(
-        `Grounding recommendation ${id} is missing its supporting evidence.`,
-        INSIGHT_VALIDATION_STAGES.CLAIM_SUPPORT_INVALID
-      );
-    }
-  });
   return Object.freeze({
     grounding_policy_version: catalog.policyVersion,
     ...groups,
   });
+}
+
+function deriveSupportedRecommendationIds(selection, catalog) {
+  const selectedByCategory = {
+    performance: new Set(selection.performance_claim_ids),
+    weakness: new Set(selection.weakness_claim_ids),
+  };
+  const seen = new Set();
+  return catalog.recommendation
+    .filter((claim) => {
+      const selectedClaims = selectedByCategory[claim.supportCategory];
+      if (!selectedClaims || !selectedClaims.has(claim.supportId) || seen.has(claim.id)) return false;
+      seen.add(claim.id);
+      return true;
+    })
+    .map((claim) => claim.id);
 }
 
 function renderGroup(ids, catalog, category, separator = '\n') {
@@ -388,7 +386,11 @@ function renderValidatedClaimSelection(selection, catalog) {
     performance_insight: performanceInsight,
     strengths: renderGroup(groups.strength_claim_ids, catalog, 'strength'),
     weaknesses: renderGroup(groups.weakness_claim_ids, catalog, 'weakness'),
-    recommendations: renderGroup(groups.recommendation_claim_ids, catalog, 'recommendation'),
+    recommendations: renderGroup(
+      deriveSupportedRecommendationIds(groups, catalog),
+      catalog,
+      'recommendation'
+    ),
   };
 }
 
@@ -400,5 +402,6 @@ module.exports = {
   buildGroundedClaimCatalog,
   buildClaimSelectionSchema,
   validateClaimSelection,
+  deriveSupportedRecommendationIds,
   renderValidatedClaimSelection,
 };

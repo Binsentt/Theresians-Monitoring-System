@@ -419,7 +419,6 @@ test('grounded insight treats four valid results as preliminary and generates on
         performance_claim_ids: ['results_recorded', 'overall_accuracy'],
         strength_claim_ids: [],
         weakness_claim_ids: ['overall_accuracy_weakness'],
-        recommendation_claim_ids: ['practice_overall_accuracy'],
       }) }),
     };
   };
@@ -498,7 +497,6 @@ test('invalid grounded provider output is not cached and deterministic progress 
         performance_claim_ids: ['invented_85_percent'],
         strength_claim_ids: [],
         weakness_claim_ids: [],
-        recommendation_claim_ids: [],
       }) }),
     };
   };
@@ -588,7 +586,6 @@ test('valid grounded output caches by fingerprint and regenerates a stale entry'
         performance_claim_ids: ['overall_accuracy'],
         strength_claim_ids: ['difficulty_easy_strength'],
         weakness_claim_ids: ['difficulty_normal_weakness'],
-        recommendation_claim_ids: ['practice_difficulty_normal'],
       }) }),
     };
   };
