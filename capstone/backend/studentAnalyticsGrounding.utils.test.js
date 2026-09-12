@@ -160,3 +160,24 @@ test('dynamic provider schema uses only strict-compatible JSON Schema keywords',
   };
   visit(schema);
 });
+
+test('marks a rendered-output failure with a safe diagnostic stage', () => {
+  const catalog = {
+    policyVersion: GROUNDING_POLICY_VERSION,
+    performance: [{ id: 'performance', text: 'x'.repeat(901) }],
+    strength: [],
+    weakness: [],
+    recommendation: [],
+  };
+  assert.throws(
+    () => renderValidatedClaimSelection({
+      grounding_policy_version: GROUNDING_POLICY_VERSION,
+      performance_claim_ids: ['performance'],
+      strength_claim_ids: [],
+      weakness_claim_ids: [],
+      recommendation_claim_ids: [],
+    }, catalog),
+    (error) => error.code === 'ANALYTICS_AI_GROUNDING_FAILED'
+      && error.stage === 'RENDERED_OUTPUT_INVALID'
+  );
+});

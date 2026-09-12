@@ -10,6 +10,7 @@ const {
 } = require('./aiRuntimePolicy');
 const {
   GROUNDING_POLICY_VERSION,
+  INSIGHT_VALIDATION_STAGES,
   buildGroundedClaimCatalog,
   buildClaimSelectionSchema,
   renderValidatedClaimSelection,
@@ -20,6 +21,12 @@ const ANALYTICS_INSIGHT_MODEL = 'gpt-5-mini';
 // Grounded insights contain only a compact claim-selection object; this budget
 // leaves room for model reasoning while bounding provider output cost.
 const ANALYTICS_INSIGHT_MAX_OUTPUT_TOKENS = 1200;
+const INSIGHT_RESPONSE_EXTRACTION_STAGES = Object.freeze({
+  TOP_LEVEL_OUTPUT_TEXT: 'TOP_LEVEL_OUTPUT_TEXT',
+  NESTED_OUTPUT_CONTENT_TEXT: 'NESTED_OUTPUT_CONTENT_TEXT',
+  RESPONSE_TEXT_MISSING: 'RESPONSE_TEXT_MISSING',
+  RESPONSE_JSON_PARSE_FAILED: 'RESPONSE_JSON_PARSE_FAILED',
+});
 const asText = (value) => String(value || '').trim();
 
 function buildGroundedInsightInput({ gradeLevel, metrics = {} } = {}) {
@@ -59,12 +66,83 @@ function buildInsightFingerprint(input) {
   return crypto.createHash('sha256').update(JSON.stringify(input)).digest('hex');
 }
 
-const extractOutputText = (responseBody) => {
-  if (typeof responseBody?.output_text === 'string') return responseBody.output_text;
-  return (responseBody?.output || [])
-    .flatMap((item) => (item?.content || []).map((content) => content?.text).filter((text) => typeof text === 'string'))
-    .join('\n');
+const safeTopLevelKeys = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  return Object.keys(value)
+    .filter((key) => /^[A-Za-z0-9_.-]{1,80}$/.test(key))
+    .slice(0, 30);
 };
+
+const claimCountsFor = (selection) => ({
+  performance: Array.isArray(selection?.performance_claim_ids) ? selection.performance_claim_ids.length : 0,
+  strengths: Array.isArray(selection?.strength_claim_ids) ? selection.strength_claim_ids.length : 0,
+  weaknesses: Array.isArray(selection?.weakness_claim_ids) ? selection.weakness_claim_ids.length : 0,
+  recommendations: Array.isArray(selection?.recommendation_claim_ids) ? selection.recommendation_claim_ids.length : 0,
+  trends: 0,
+});
+
+const extractOutputTextWithDiagnostics = (responseBody) => {
+  const outputItems = Array.isArray(responseBody?.output) ? responseBody.output : [];
+  const nestedTextItems = outputItems
+    .flatMap((item) => (Array.isArray(item?.content) ? item.content : []))
+    .filter((content) => typeof content?.text === 'string');
+  const outputTextPresent = typeof responseBody?.output_text === 'string';
+  const nestedOutputContentTextPresent = nestedTextItems.length > 0;
+  const outputText = outputTextPresent
+    ? responseBody.output_text
+    : nestedTextItems.map((content) => content.text).join('\n');
+  const responseExtractionStage = outputTextPresent
+    ? INSIGHT_RESPONSE_EXTRACTION_STAGES.TOP_LEVEL_OUTPUT_TEXT
+    : nestedOutputContentTextPresent
+      ? INSIGHT_RESPONSE_EXTRACTION_STAGES.NESTED_OUTPUT_CONTENT_TEXT
+      : INSIGHT_RESPONSE_EXTRACTION_STAGES.RESPONSE_TEXT_MISSING;
+  return {
+    outputText,
+    responseExtractionStage,
+    outputTextPresent,
+    nestedOutputContentTextPresent,
+    outputItemCount: outputItems.length,
+    textContentItemCount: nestedTextItems.length,
+  };
+};
+
+const extractOutputText = (responseBody) => extractOutputTextWithDiagnostics(responseBody).outputText;
+
+const createInsightDiagnostics = (response, responseBody, extraction = {}) => ({
+  providerHttpStatus: Number.isInteger(Number(response?.status)) ? Number(response.status) : null,
+  responseExtractionStage: extraction.responseExtractionStage || INSIGHT_RESPONSE_EXTRACTION_STAGES.RESPONSE_TEXT_MISSING,
+  outputTextPresent: extraction.outputTextPresent === true,
+  nestedOutputContentTextPresent: extraction.nestedOutputContentTextPresent === true,
+  outputItemCount: Number.isInteger(extraction.outputItemCount) ? extraction.outputItemCount : 0,
+  textContentItemCount: Number.isInteger(extraction.textContentItemCount) ? extraction.textContentItemCount : 0,
+  jsonParseSucceeded: null,
+  validationStage: null,
+  topLevelKeys: [],
+  claimCounts: { performance: 0, strengths: 0, weaknesses: 0, recommendations: 0, trends: 0 },
+  unknownClaimCount: 0,
+  duplicateClaimCount: 0,
+  unsupportedClaimCount: 0,
+  renderedOutputValidation: null,
+  persistenceSucceeded: null,
+});
+
+const emitDiagnostics = async (onDiagnostics, diagnostics) => {
+  if (typeof onDiagnostics !== 'function') return;
+  try {
+    await onDiagnostics(Object.freeze({
+      ...diagnostics,
+      topLevelKeys: Object.freeze((diagnostics.topLevelKeys || []).slice()),
+      claimCounts: Object.freeze({ ...diagnostics.claimCounts }),
+    }));
+  } catch {
+    // Diagnostics must never change normal user-facing generation behavior.
+  }
+};
+
+const withInsightDiagnostics = (response, responseBody, analyticsDiagnostics) => ({
+  ...buildProviderDiagnostics(response, responseBody, 'invalid_provider_response'),
+  analytics: analyticsDiagnostics,
+});
 
 async function generateGroundedStudentInsight({
   input,
@@ -72,6 +150,7 @@ async function generateGroundedStudentInsight({
   apiKey = process.env.OPENAI_API_KEY,
   fetchImpl = global.fetch,
   timeoutMs = 25000,
+  onDiagnostics = null,
 } = {}) {
   if (!aiGenerationEnabled) {
     throw new QuestionGenerationError(AI_PAUSED_CODE, AI_PAUSED_MESSAGE);
@@ -159,25 +238,57 @@ async function generateGroundedStudentInsight({
     );
   }
 
-  const outputText = extractOutputText(responseBody);
+  const extraction = extractOutputTextWithDiagnostics(responseBody);
+  const analyticsDiagnostics = createInsightDiagnostics(response, responseBody, extraction);
+  const outputText = extraction.outputText;
   if (!outputText) {
+    analyticsDiagnostics.validationStage = INSIGHT_RESPONSE_EXTRACTION_STAGES.RESPONSE_TEXT_MISSING;
+    await emitDiagnostics(onDiagnostics, analyticsDiagnostics);
     throw new QuestionGenerationError(
       'ANALYTICS_AI_INVALID_RESPONSE',
       'Grounded AI Insights returned no structured output.',
-      buildProviderDiagnostics(response, responseBody, 'invalid_provider_response')
+      withInsightDiagnostics(response, responseBody, analyticsDiagnostics)
+    );
+  }
+  let selection;
+  try {
+    selection = JSON.parse(outputText);
+    analyticsDiagnostics.jsonParseSucceeded = true;
+    analyticsDiagnostics.topLevelKeys = safeTopLevelKeys(selection);
+    analyticsDiagnostics.claimCounts = claimCountsFor(selection);
+  } catch {
+    analyticsDiagnostics.jsonParseSucceeded = false;
+    analyticsDiagnostics.validationStage = INSIGHT_RESPONSE_EXTRACTION_STAGES.RESPONSE_JSON_PARSE_FAILED;
+    await emitDiagnostics(onDiagnostics, analyticsDiagnostics);
+    throw new QuestionGenerationError(
+      'ANALYTICS_AI_INVALID_RESPONSE',
+      'Grounded AI Insights returned invalid structured data.',
+      withInsightDiagnostics(response, responseBody, analyticsDiagnostics)
     );
   }
   try {
-    return renderValidatedClaimSelection(JSON.parse(outputText), catalog);
+    const insight = renderValidatedClaimSelection(selection, catalog);
+    analyticsDiagnostics.validationStage = INSIGHT_VALIDATION_STAGES.VALIDATION_PASSED;
+    analyticsDiagnostics.renderedOutputValidation = true;
+    await emitDiagnostics(onDiagnostics, analyticsDiagnostics);
+    return insight;
   } catch (error) {
+    analyticsDiagnostics.validationStage = error?.stage || INSIGHT_VALIDATION_STAGES.RESPONSE_SHAPE_INVALID;
+    analyticsDiagnostics.unknownClaimCount = Number(error?.details?.unknownClaimCount) || 0;
+    analyticsDiagnostics.duplicateClaimCount = Number(error?.details?.duplicateClaimCount) || 0;
+    analyticsDiagnostics.unsupportedClaimCount = Number(error?.details?.unsupportedClaimCount) || 0;
+    analyticsDiagnostics.renderedOutputValidation = analyticsDiagnostics.validationStage === INSIGHT_VALIDATION_STAGES.RENDERED_OUTPUT_INVALID
+      ? false
+      : null;
+    await emitDiagnostics(onDiagnostics, analyticsDiagnostics);
     if (error instanceof QuestionGenerationError) {
-      if (!error.providerDiagnostics) error.providerDiagnostics = buildProviderDiagnostics(response, responseBody, 'invalid_provider_response');
+      if (!error.providerDiagnostics) error.providerDiagnostics = withInsightDiagnostics(response, responseBody, analyticsDiagnostics);
       throw error;
     }
     throw new QuestionGenerationError(
       'ANALYTICS_AI_INVALID_RESPONSE',
       'Grounded AI Insights returned an invalid grounded claim selection.',
-      buildProviderDiagnostics(response, responseBody, 'invalid_provider_response')
+      withInsightDiagnostics(response, responseBody, analyticsDiagnostics)
     );
   }
 }
@@ -185,7 +296,10 @@ async function generateGroundedStudentInsight({
 module.exports = {
   ANALYTICS_INSIGHT_MODEL,
   ANALYTICS_INSIGHT_MAX_OUTPUT_TOKENS,
+  INSIGHT_RESPONSE_EXTRACTION_STAGES,
   buildGroundedInsightInput,
   buildInsightFingerprint,
+  createInsightDiagnostics,
+  extractOutputTextWithDiagnostics,
   generateGroundedStudentInsight,
 };

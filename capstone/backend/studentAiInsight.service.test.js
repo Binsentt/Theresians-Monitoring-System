@@ -11,7 +11,7 @@ const resolveStudentAiInsight = (input) => resolveStudentAiInsightWithPolicy({
 const empty = { rows: [] };
 const compact = (sql) => String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
 
-const createHarness = () => {
+const createHarness = ({ insertError = null } = {}) => {
   let saved = null;
   let generatedAt = 0;
   const calls = [];
@@ -20,6 +20,7 @@ const createHarness = () => {
     calls.push({ sql, params });
     if (sql.includes('from public.student_ai_insights')) return { rows: saved ? [structuredClone(saved)] : [] };
     if (sql.includes('insert into public.student_ai_insights')) {
+      if (insertError) throw insertError;
       generatedAt += 1;
       saved = {
         input_fingerprint: params[1],
@@ -274,4 +275,31 @@ test('provider failure keeps and marks the prior cached insight while canonical 
   assert.deepEqual(state.insight, before.insight);
   assert.deepEqual(harness.getSaved(), before);
   assert.ok(harness.calls.some(({ sql }) => sql === 'rollback'));
+});
+
+test('persistence failure reports a safe persistence diagnostic without changing the unavailable UX', async () => {
+  const harness = createHarness({ insertError: new Error('simulated persistence failure') });
+  const diagnostics = [];
+  const run = resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics: metricsFor([1, 1, 1, 1, 0]),
+    onInsightDiagnostics: (value) => diagnostics.push(value),
+    generateInsight: async ({ onDiagnostics }) => {
+      await onDiagnostics?.({
+        providerHttpStatus: 200,
+        responseExtractionStage: 'TOP_LEVEL_OUTPUT_TEXT',
+        jsonParseSucceeded: true,
+        validationStage: 'VALIDATION_PASSED',
+        renderedOutputValidation: true,
+        persistenceSucceeded: null,
+      });
+      return generatedInsight('Recorded overall accuracy is 80%.');
+    },
+    pool: harness.pool,
+  });
+
+  await assert.rejects(run, /simulated persistence failure/);
+  assert.equal(diagnostics.at(-1).validationStage, 'PERSISTENCE_FAILED');
+  assert.equal(diagnostics.at(-1).persistenceSucceeded, false);
 });

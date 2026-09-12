@@ -4,6 +4,16 @@ const MAX_SELECTION_ITEMS = 5;
 const MAX_TOPIC_LABEL_LENGTH = 80;
 const MAX_RENDERED_PERFORMANCE_LENGTH = 900;
 
+const INSIGHT_VALIDATION_STAGES = Object.freeze({
+  RESPONSE_SHAPE_INVALID: 'RESPONSE_SHAPE_INVALID',
+  POLICY_VERSION_INVALID: 'POLICY_VERSION_INVALID',
+  CLAIM_ID_UNKNOWN: 'CLAIM_ID_UNKNOWN',
+  CLAIM_ID_DUPLICATE: 'CLAIM_ID_DUPLICATE',
+  CLAIM_SUPPORT_INVALID: 'CLAIM_SUPPORT_INVALID',
+  RENDERED_OUTPUT_INVALID: 'RENDERED_OUTPUT_INVALID',
+  VALIDATION_PASSED: 'VALIDATION_PASSED',
+});
+
 const DIFFICULTY_CONFIG = [
   { key: 'easy', id: 'easy', label: 'Easy' },
   { key: 'medium', id: 'normal', label: 'Normal' },
@@ -11,10 +21,12 @@ const DIFFICULTY_CONFIG = [
 ];
 
 class GroundingValidationError extends Error {
-  constructor(message) {
+  constructor(message, stage = INSIGHT_VALIDATION_STAGES.RESPONSE_SHAPE_INVALID, details = {}) {
     super(message);
     this.name = 'GroundingValidationError';
     this.code = 'ANALYTICS_AI_GROUNDING_FAILED';
+    this.stage = stage;
+    this.details = Object.freeze({ ...details });
   }
 }
 
@@ -199,7 +211,10 @@ function freezeCatalog(catalog) {
 
 function buildGroundedClaimCatalog(input = {}) {
   if (input.grounding_policy_version !== GROUNDING_POLICY_VERSION) {
-    throw new GroundingValidationError('Grounding input policy version is invalid.');
+    throw new GroundingValidationError(
+      'Grounding input policy version is invalid.',
+      INSIGHT_VALIDATION_STAGES.POLICY_VERSION_INVALID
+    );
   }
   const catalog = createCatalog(input);
   addRecordedPerformanceClaims(catalog, input);
@@ -257,41 +272,80 @@ const findClaim = (catalog, category, id) => catalog[category].find((entry) => e
 
 function normalizeSelectionGroups(selection) {
   if (!selection || typeof selection !== 'object' || Array.isArray(selection)) {
-    throw new GroundingValidationError('Grounding claim selection must be an object.');
+    throw new GroundingValidationError(
+      'Grounding claim selection must be an object.',
+      INSIGHT_VALIDATION_STAGES.RESPONSE_SHAPE_INVALID
+    );
   }
   const unexpectedKeys = Object.keys(selection).filter((key) => !selectionKeys.includes(key));
   if (unexpectedKeys.length > 0) {
-    throw new GroundingValidationError('Grounding claim selection contains unsupported properties.');
+    throw new GroundingValidationError(
+      'Grounding claim selection contains unsupported properties.',
+      INSIGHT_VALIDATION_STAGES.RESPONSE_SHAPE_INVALID
+    );
   }
   const groups = {};
   Object.keys(categoryForSelectionKey).forEach((key) => {
     const value = selection[key];
     if (!Array.isArray(value) || value.length > MAX_SELECTION_ITEMS || value.some((id) => typeof id !== 'string' || !id)) {
-      throw new GroundingValidationError(`Grounding ${key} is invalid.`);
+      throw new GroundingValidationError(
+        `Grounding ${key} is invalid.`,
+        INSIGHT_VALIDATION_STAGES.RESPONSE_SHAPE_INVALID
+      );
     }
     groups[key] = value.slice();
   });
   if (groups.performance_claim_ids.length === 0) {
-    throw new GroundingValidationError('Grounding performance claims are required.');
+    throw new GroundingValidationError(
+      'Grounding performance claims are required.',
+      INSIGHT_VALIDATION_STAGES.RESPONSE_SHAPE_INVALID
+    );
   }
   return groups;
 }
 
 function validateClaimSelection(selection, catalog) {
+  if (!selection || typeof selection !== 'object' || Array.isArray(selection)) {
+    throw new GroundingValidationError(
+      'Grounding claim selection must be an object.',
+      INSIGHT_VALIDATION_STAGES.RESPONSE_SHAPE_INVALID
+    );
+  }
   if (!catalog || catalog.policyVersion !== GROUNDING_POLICY_VERSION) {
-    throw new GroundingValidationError('Grounding catalog policy is invalid.');
+    throw new GroundingValidationError(
+      'Grounding catalog policy is invalid.',
+      INSIGHT_VALIDATION_STAGES.POLICY_VERSION_INVALID
+    );
   }
   if (selection?.grounding_policy_version !== catalog.policyVersion) {
-    throw new GroundingValidationError('Grounding policy version does not match the evidence catalog.');
+    throw new GroundingValidationError(
+      'Grounding policy version does not match the evidence catalog.',
+      INSIGHT_VALIDATION_STAGES.POLICY_VERSION_INVALID
+    );
   }
   const groups = normalizeSelectionGroups(selection);
   const selectedIds = new Set();
   Object.entries(categoryForSelectionKey).forEach(([key, category]) => {
     groups[key].forEach((id) => {
-      if (selectedIds.has(id)) throw new GroundingValidationError('Grounding claim selection contains duplicate claim IDs.');
+      if (selectedIds.has(id)) {
+        throw new GroundingValidationError(
+          'Grounding claim selection contains duplicate claim IDs.',
+          INSIGHT_VALIDATION_STAGES.CLAIM_ID_DUPLICATE,
+          { duplicateClaimCount: 1 }
+        );
+      }
       selectedIds.add(id);
       if (!findClaim(catalog, category, id)) {
-        throw new GroundingValidationError(`Grounding ${category} claim is unsupported: ${id}.`);
+        const knownInAnotherCategory = ['performance', 'strength', 'weakness', 'recommendation']
+          .some((candidateCategory) => candidateCategory !== category && findClaim(catalog, candidateCategory, id));
+        throw new GroundingValidationError(
+          `Grounding ${category} claim is unsupported: ${id}.`,
+          INSIGHT_VALIDATION_STAGES.CLAIM_ID_UNKNOWN,
+          {
+            unknownClaimCount: knownInAnotherCategory ? 0 : 1,
+            unsupportedClaimCount: 1,
+          }
+        );
       }
     });
   });
@@ -304,7 +358,10 @@ function validateClaimSelection(selection, catalog) {
       ? selectedWeakness.has(claim.supportId)
       : selectedPerformance.has(claim.supportId);
     if (!supported) {
-      throw new GroundingValidationError(`Grounding recommendation ${id} is missing its supporting evidence.`);
+      throw new GroundingValidationError(
+        `Grounding recommendation ${id} is missing its supporting evidence.`,
+        INSIGHT_VALIDATION_STAGES.CLAIM_SUPPORT_INVALID
+      );
     }
   });
   return Object.freeze({
@@ -322,7 +379,10 @@ function renderValidatedClaimSelection(selection, catalog) {
   const groups = validateClaimSelection(selection, catalog);
   const performanceInsight = renderGroup(groups.performance_claim_ids, catalog, 'performance', ' ');
   if (!performanceInsight || performanceInsight.length > MAX_RENDERED_PERFORMANCE_LENGTH) {
-    throw new GroundingValidationError('Grounding rendered performance insight is invalid.');
+    throw new GroundingValidationError(
+      'Grounding rendered performance insight is invalid.',
+      INSIGHT_VALIDATION_STAGES.RENDERED_OUTPUT_INVALID
+    );
   }
   return {
     performance_insight: performanceInsight,
@@ -335,6 +395,7 @@ function renderValidatedClaimSelection(selection, catalog) {
 module.exports = {
   GROUNDING_POLICY_VERSION,
   WEAK_PERFORMANCE_THRESHOLD,
+  INSIGHT_VALIDATION_STAGES,
   GroundingValidationError,
   buildGroundedClaimCatalog,
   buildClaimSelectionSchema,

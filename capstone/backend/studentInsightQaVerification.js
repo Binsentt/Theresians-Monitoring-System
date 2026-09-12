@@ -18,6 +18,21 @@ const ARTIFACT_FIELDS = new Set([
   'persistenceSuccess',
   'cacheCheckPerformed',
   'cacheHit',
+  'providerHttpStatus',
+  'responseExtractionStage',
+  'outputTextPresent',
+  'nestedOutputContentTextPresent',
+  'outputItemCount',
+  'textContentItemCount',
+  'jsonParseSucceeded',
+  'validationStage',
+  'topLevelKeys',
+  'claimCounts',
+  'unknownClaimCount',
+  'duplicateClaimCount',
+  'unsupportedClaimCount',
+  'renderedOutputValidation',
+  'persistenceSucceeded',
   'finishedAt',
 ]);
 
@@ -48,6 +63,51 @@ const safeCount = (value) => {
   return Number.isInteger(number) && number >= 0 ? number : 0;
 };
 
+const safeKeyList = (value) => (Array.isArray(value)
+  ? value.filter((item) => /^[A-Za-z0-9_.-]{1,80}$/.test(String(item))).slice(0, 30)
+  : []);
+
+const safeClaimCounts = (value) => {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    performance: safeCount(source.performance),
+    strengths: safeCount(source.strengths),
+    weaknesses: safeCount(source.weaknesses),
+    recommendations: safeCount(source.recommendations),
+    trends: safeCount(source.trends),
+  };
+};
+
+const insightDiagnosticsPatch = (value = {}) => {
+  const diagnostics = value?.analytics || value?.insightDiagnostics || value || {};
+  const patch = {};
+  const copySafeCode = (key) => {
+    if (diagnostics[key] !== undefined) patch[key] = safeCode(diagnostics[key]);
+  };
+  const copyBoolean = (key) => {
+    if (typeof diagnostics[key] === 'boolean') patch[key] = diagnostics[key];
+  };
+  const copyCount = (key) => {
+    if (diagnostics[key] !== undefined) patch[key] = safeCount(diagnostics[key]);
+  };
+  if (diagnostics.providerHttpStatus !== undefined) patch.providerHttpStatus = safeHttpStatus(diagnostics.providerHttpStatus);
+  copySafeCode('responseExtractionStage');
+  copyBoolean('outputTextPresent');
+  copyBoolean('nestedOutputContentTextPresent');
+  copyCount('outputItemCount');
+  copyCount('textContentItemCount');
+  copyBoolean('jsonParseSucceeded');
+  copySafeCode('validationStage');
+  if (diagnostics.topLevelKeys !== undefined) patch.topLevelKeys = safeKeyList(diagnostics.topLevelKeys);
+  if (diagnostics.claimCounts !== undefined) patch.claimCounts = safeClaimCounts(diagnostics.claimCounts);
+  copyCount('unknownClaimCount');
+  copyCount('duplicateClaimCount');
+  copyCount('unsupportedClaimCount');
+  copyBoolean('renderedOutputValidation');
+  copyBoolean('persistenceSucceeded');
+  return patch;
+};
+
 const diagnosticPatch = (value = {}) => {
   const diagnostics = value?.providerDiagnostics || value?.diagnostics || value || {};
   const patch = {};
@@ -60,6 +120,7 @@ const diagnosticPatch = (value = {}) => {
   if (errorType !== undefined) patch.errorType = safeCode(errorType);
   if (errorCode !== undefined) patch.errorCode = safeCode(errorCode);
   if (diagnostics.elapsedMs !== undefined) patch.elapsedMs = safeElapsedMs(diagnostics.elapsedMs);
+  Object.assign(patch, insightDiagnosticsPatch(diagnostics));
   return patch;
 };
 
@@ -71,6 +132,12 @@ const sanitizePatch = (patch = {}) => {
       sanitized[key] = toIsoTimestamp(value);
     } else if (key === 'httpStatus') {
       sanitized[key] = safeHttpStatus(value);
+    } else if (key === 'providerHttpStatus') {
+      sanitized[key] = safeHttpStatus(value);
+    } else if (key === 'responseExtractionStage' || key === 'validationStage') {
+      sanitized[key] = safeCode(value);
+    } else if (['outputItemCount', 'textContentItemCount', 'unknownClaimCount', 'duplicateClaimCount', 'unsupportedClaimCount'].includes(key)) {
+      sanitized[key] = safeCount(value);
     } else if (key === 'requestId') {
       sanitized[key] = safeCode(value, REQUEST_ID_PATTERN);
     } else if (key === 'errorType' || key === 'errorCode') {
@@ -79,6 +146,10 @@ const sanitizePatch = (patch = {}) => {
       sanitized[key] = safeElapsedMs(value);
     } else if (key === 'providerCallCount') {
       sanitized[key] = safeCount(value);
+    } else if (key === 'topLevelKeys') {
+      sanitized[key] = safeKeyList(value);
+    } else if (key === 'claimCounts') {
+      sanitized[key] = safeClaimCounts(value);
     } else if (typeof value === 'boolean') {
       sanitized[key] = value;
     }
@@ -120,6 +191,21 @@ const createInsightQaResultWriter = ({
     persistenceSuccess: null,
     cacheCheckPerformed: false,
     cacheHit: false,
+    providerHttpStatus: null,
+    responseExtractionStage: null,
+    outputTextPresent: null,
+    nestedOutputContentTextPresent: null,
+    outputItemCount: null,
+    textContentItemCount: null,
+    jsonParseSucceeded: null,
+    validationStage: null,
+    topLevelKeys: [],
+    claimCounts: { performance: 0, strengths: 0, weaknesses: 0, recommendations: 0, trends: 0 },
+    unknownClaimCount: 0,
+    duplicateClaimCount: 0,
+    unsupportedClaimCount: 0,
+    renderedOutputValidation: null,
+    persistenceSucceeded: null,
     finishedAt: null,
   };
 
@@ -193,6 +279,9 @@ const createInsightQaResultWriter = ({
     async markCache({ performed = true, hit = false } = {}) {
       return update({ cacheCheckPerformed: Boolean(performed), cacheHit: Boolean(hit) });
     },
+    async recordInsightDiagnostics(diagnostics = {}) {
+      return update(insightDiagnosticsPatch(diagnostics));
+    },
     async finish(patch = {}) {
       return update({ ...patch, finishedAt: patch.finishedAt || now() });
     },
@@ -244,16 +333,22 @@ async function runInsightCacheVerification({
   resultWriter,
   onProviderCallStart,
   onProviderCallFinish,
+  onInsightDiagnostics,
 } = {}) {
   if (typeof resolveInsight !== 'function') throw new TypeError('resolveInsight must be a function.');
+  const insightDiagnosticsHandler = typeof onInsightDiagnostics === 'function'
+    ? onInsightDiagnostics
+    : resultWriter && typeof resultWriter.recordInsightDiagnostics === 'function'
+      ? (diagnostics) => resultWriter.recordInsightDiagnostics(diagnostics)
+      : null;
 
   const resolveInitial = resultWriter && typeof resultWriter.recordProviderCall === 'function'
     ? () => resultWriter.recordProviderCall({
-      execute: () => resolveInsight(request),
+      execute: () => resolveInsight(request, { onInsightDiagnostics: insightDiagnosticsHandler }),
       onProviderCallStart,
       onProviderCallFinish,
     })
-    : () => resolveInsight(request);
+    : () => resolveInsight(request, { onInsightDiagnostics: insightDiagnosticsHandler });
 
   let first;
   try {
@@ -295,7 +390,7 @@ async function runInsightCacheVerification({
 
   let second;
   try {
-    second = await resolveInsight(request);
+    second = await resolveInsight(request, { onInsightDiagnostics: insightDiagnosticsHandler });
   } catch (error) {
     if (resultWriter) {
       await resultWriter.markCache({ performed: true, hit: false });

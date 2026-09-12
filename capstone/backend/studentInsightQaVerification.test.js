@@ -257,3 +257,86 @@ test('QA cache verification never invokes the provider a second time for unchang
     assert.equal(artifact.cacheHit, true);
   });
 });
+
+test('QA artifact durably records safe insight validation metadata without raw output', async () => {
+  await withQaArtifact(async (filePath) => {
+    const writer = createInsightQaResultWriter({
+      filePath,
+      testRunId: 'run-diagnostics',
+      candidateSha: 'e'.repeat(40),
+    });
+    await writer.recordInsightDiagnostics({
+      providerHttpStatus: 200,
+      responseExtractionStage: 'TOP_LEVEL_OUTPUT_TEXT',
+      outputTextPresent: true,
+      nestedOutputContentTextPresent: false,
+      outputItemCount: 1,
+      textContentItemCount: 1,
+      jsonParseSucceeded: true,
+      validationStage: 'CLAIM_ID_UNKNOWN',
+      topLevelKeys: ['grounding_policy_version', 'performance_claim_ids'],
+      claimCounts: { performance: 1, strengths: 0, weaknesses: 0, recommendations: 0, trends: 0 },
+      unknownClaimCount: 1,
+      duplicateClaimCount: 0,
+      unsupportedClaimCount: 1,
+      renderedOutputValidation: false,
+      persistenceSucceeded: false,
+      rawResponse: 'must never be persisted',
+      evidence: 'must never be persisted',
+    });
+    const artifact = await writer.read();
+    assert.equal(artifact.providerHttpStatus, 200);
+    assert.equal(artifact.responseExtractionStage, 'TOP_LEVEL_OUTPUT_TEXT');
+    assert.equal(artifact.validationStage, 'CLAIM_ID_UNKNOWN');
+    assert.deepEqual(artifact.topLevelKeys, ['grounding_policy_version', 'performance_claim_ids']);
+    assert.deepEqual(artifact.claimCounts, { performance: 1, strengths: 0, weaknesses: 0, recommendations: 0, trends: 0 });
+    assert.equal(artifact.unknownClaimCount, 1);
+    assert.equal(artifact.unsupportedClaimCount, 1);
+    const text = await fs.readFile(filePath, 'utf8');
+    assert.equal(text.includes('must never be persisted'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(artifact, 'rawResponse'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(artifact, 'evidence'), false);
+  });
+});
+
+test('QA cache runner forwards diagnostics from the real insight service into the durable artifact', async () => {
+  await withQaArtifact(async (filePath) => {
+    const harness = createHarness();
+    const writer = createInsightQaResultWriter({
+      filePath,
+      testRunId: 'run-diagnostics-service',
+      candidateSha: 'f'.repeat(40),
+    });
+    const result = await runInsightCacheVerification({
+      request: { studentId: 44, gradeLevel: 'Grade 1', metrics: { ...metrics } },
+      resultWriter: writer,
+      resolveInsight: (request, { onInsightDiagnostics }) => resolveStudentAiInsight({
+        ...request,
+        aiGenerationEnabled: true,
+        pool: harness.pool,
+        onInsightDiagnostics,
+        generateInsight: async ({ onDiagnostics }) => {
+          await onDiagnostics?.({
+            providerHttpStatus: 200,
+            responseExtractionStage: 'TOP_LEVEL_OUTPUT_TEXT',
+            outputTextPresent: true,
+            jsonParseSucceeded: true,
+            validationStage: 'CLAIM_SUPPORT_INVALID',
+            claimCounts: { performance: 1, strengths: 0, weaknesses: 0, recommendations: 1, trends: 0 },
+            renderedOutputValidation: null,
+            persistenceSucceeded: null,
+          });
+          throw new Error('synthetic validation failure');
+        },
+      }),
+    });
+
+    const artifact = await writer.read();
+    assert.equal(result.cacheVerification, 'skipped');
+    assert.equal(result.first.status, 'unavailable');
+    assert.equal(artifact.validationStage, 'CLAIM_SUPPORT_INVALID');
+    assert.equal(artifact.providerHttpStatus, 200);
+    assert.deepEqual(artifact.claimCounts, { performance: 1, strengths: 0, weaknesses: 0, recommendations: 1, trends: 0 });
+    assert.equal(artifact.persistenceSucceeded, null);
+  });
+});

@@ -82,6 +82,7 @@ async function resolveStudentAiInsight({
   aiGenerationEnabled = isAiGenerationEnabled(),
   pool,
   generateInsight = generateGroundedStudentInsight,
+  onInsightDiagnostics = null,
   logger = console,
 } = {}) {
   if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function') {
@@ -114,6 +115,15 @@ async function resolveStudentAiInsight({
 
   const client = await pool.connect();
   let transactionStarted = false;
+  let persistenceAttempted = false;
+  const emitInsightDiagnostics = async (diagnostics) => {
+    if (typeof onInsightDiagnostics !== 'function') return;
+    try {
+      await onInsightDiagnostics(diagnostics);
+    } catch {
+      // Diagnostics must never change normal user-facing generation behavior.
+    }
+  };
   try {
     await client.query('BEGIN');
     transactionStarted = true;
@@ -128,16 +138,24 @@ async function resolveStudentAiInsight({
 
     let insight;
     try {
-      insight = await generateInsight({ input, aiGenerationEnabled });
+      insight = await generateInsight({
+        input,
+        aiGenerationEnabled,
+        onDiagnostics: emitInsightDiagnostics,
+      });
     } catch (error) {
       await client.query('ROLLBACK');
       transactionStarted = false;
+      if (error?.providerDiagnostics?.analytics) {
+        await emitInsightDiagnostics(error.providerDiagnostics.analytics);
+      }
       if (logger && typeof logger.error === 'function') {
         logger.error('Automatic grounded student insight unavailable:', error?.code || error?.message || 'unknown error');
       }
       return buildUnavailableState({ baseState, cachedInsight: lockedCache || initialCache });
     }
 
+    persistenceAttempted = true;
     const savedResult = await client.query(
       `INSERT INTO public.student_ai_insights (
          student_id, input_fingerprint, insight, generated_by, generated_at, stale_at, updated_at
@@ -154,6 +172,11 @@ async function resolveStudentAiInsight({
     );
     await client.query('COMMIT');
     transactionStarted = false;
+    await emitInsightDiagnostics({
+      validationStage: 'VALIDATION_PASSED',
+      renderedOutputValidation: true,
+      persistenceSucceeded: true,
+    });
     return {
       ...baseState,
       status: lockedCache || initialCache ? 'regenerated' : 'generated',
@@ -163,6 +186,12 @@ async function resolveStudentAiInsight({
     };
   } catch (error) {
     if (transactionStarted) await client.query('ROLLBACK').catch(() => {});
+    if (persistenceAttempted) {
+      await emitInsightDiagnostics({
+        validationStage: 'PERSISTENCE_FAILED',
+        persistenceSucceeded: false,
+      });
+    }
     throw error;
   } finally {
     client.release();

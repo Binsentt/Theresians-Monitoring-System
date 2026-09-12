@@ -220,3 +220,65 @@ test('never uses a live provider without an injected mock in tests', async () =>
     (error) => error.code === 'ANALYTICS_AI_NOT_CONFIGURED'
   );
 });
+
+const diagnosticsFor = async (body, { expectSuccess = false } = {}) => {
+  let diagnostics = null;
+  const result = await (async () => {
+    try {
+      const value = await generateGroundedStudentInsight({
+        input: inputFor(),
+        apiKey: 'test-key',
+        onDiagnostics: (valueToCapture) => { diagnostics = valueToCapture; },
+        fetchImpl: async () => jsonResponse(body),
+      });
+      if (!expectSuccess) assert.fail('expected the structured response to be rejected');
+      return value;
+    } catch (error) {
+      if (expectSuccess) throw error;
+      assert.equal(error.code, 'ANALYTICS_AI_INVALID_RESPONSE');
+      return null;
+    }
+  })();
+  assert.ok(diagnostics);
+  return { diagnostics, result };
+};
+
+test('records distinct safe diagnostics for response text, parse, shape, policy, claim, and render stages', async () => {
+  const valid = { ...validSelection };
+  const cases = [
+    ['missing text', {}, 'RESPONSE_TEXT_MISSING'],
+    ['malformed JSON', { output_text: '{not-json' }, 'RESPONSE_JSON_PARSE_FAILED'],
+    ['wrong top-level shape', { output_text: JSON.stringify([]) }, 'RESPONSE_SHAPE_INVALID'],
+    ['bad policy', { output_text: JSON.stringify({ ...valid, grounding_policy_version: 'grounded-claims-v0' }) }, 'POLICY_VERSION_INVALID'],
+    ['unknown claim', { output_text: JSON.stringify({ ...valid, performance_claim_ids: ['unknown_claim'] }) }, 'CLAIM_ID_UNKNOWN'],
+    ['duplicate claim', { output_text: JSON.stringify({ ...valid, performance_claim_ids: ['overall_accuracy', 'overall_accuracy'] }) }, 'CLAIM_ID_DUPLICATE'],
+    ['unsupported claim category', { output_text: JSON.stringify({ ...valid, performance_claim_ids: ['difficulty_easy_strength'] }) }, 'CLAIM_ID_UNKNOWN'],
+    ['unsupported recommendation support', { output_text: JSON.stringify({ ...valid, weakness_claim_ids: [] }) }, 'CLAIM_SUPPORT_INVALID'],
+  ];
+
+  for (const [label, body, stage] of cases) {
+    const { diagnostics } = await diagnosticsFor(body);
+    assert.equal(diagnostics.validationStage, stage, label);
+    assert.equal(typeof diagnostics.outputTextPresent, 'boolean');
+    assert.ok(diagnostics.jsonParseSucceeded === null || typeof diagnostics.jsonParseSucceeded === 'boolean');
+    assert.ok(diagnostics.persistenceSucceeded === null || typeof diagnostics.persistenceSucceeded === 'boolean');
+  }
+});
+
+test('records a successful structured response without retaining model text', async () => {
+  const { diagnostics, result } = await diagnosticsFor({ output_text: JSON.stringify(validSelection) }, { expectSuccess: true });
+  assert.equal(diagnostics.validationStage, 'VALIDATION_PASSED');
+  assert.equal(diagnostics.jsonParseSucceeded, true);
+  assert.equal(diagnostics.renderedOutputValidation, true);
+  assert.equal(diagnostics.persistenceSucceeded, null);
+  assert.deepEqual([...diagnostics.topLevelKeys].sort(), [
+    'grounding_policy_version',
+    'performance_claim_ids',
+    'recommendation_claim_ids',
+    'strength_claim_ids',
+    'weakness_claim_ids',
+  ]);
+  assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'rawResponse'), false);
+  assert.equal(JSON.stringify(diagnostics).includes('Recorded overall accuracy'), false);
+  assert.match(result.performance_insight, /Recorded overall accuracy/);
+});
