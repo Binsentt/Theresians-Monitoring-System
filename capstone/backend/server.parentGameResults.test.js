@@ -1238,7 +1238,7 @@ test('game profile check accepts a linked canonical child with a null Section', 
     if (sql.includes('where parent_id = $1') && sql.includes('lower(role) in')) {
       return resultRows([{ id: 19, parent_id: '123456', name: 'Parent User' }]);
     }
-    if (sql.includes('r.teacher_id = $1') && sql.includes('s.game_student_id = $2')) {
+    if (sql.includes('r.teacher_id = $1') && sql.includes("replace(s.game_student_id, '-', '') = $2")) {
       return resultRows([{ id: 44, name: 'Linked Child', grade_level: 'Grade 1', section: null }]);
     }
     if (sql.includes('from public.student_game_progress')) return emptyResult;
@@ -1257,7 +1257,7 @@ const verifyGameProfileMultipleChildren = async (baseUrl) => {
       if (params[0] === '999999') return { handled: true, rows: [] };
       return { handled: true, rows: [{ id: 19, parent_id: params[0], name: 'Parent User', role: 'parent', is_archived: false }] };
     }
-    if (sql.includes('from public.accounts s') && sql.includes('r.teacher_id = $1') && sql.includes('s.game_student_id = $2')) {
+    if (sql.includes('from public.accounts s') && sql.includes('r.teacher_id = $1') && sql.includes("replace(s.game_student_id, '-', '') = $2")) {
       const studentCode = params[1];
       if (studentCode === '000001' || studentCode === '000002') {
         return {
@@ -1273,7 +1273,7 @@ const verifyGameProfileMultipleChildren = async (baseUrl) => {
       }
       return { handled: true, rows: [] };
     }
-    if (sql.includes('from public.accounts') && sql.includes("lower(role) = 'student'") && sql.includes('game_student_id = $1')) {
+    if (sql.includes('from public.accounts') && sql.includes("lower(role) = 'student'") && sql.includes("replace(game_student_id, '-', '') = $1")) {
       if (params[0] === '000003') return { handled: true, rows: [{ id: 46, is_archived: false }] };
       if (params[0] === '000005') return { handled: true, rows: [{ id: 47, is_archived: true }] };
       return { handled: true, rows: [] };

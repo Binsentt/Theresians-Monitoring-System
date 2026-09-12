@@ -38,14 +38,27 @@ export const validatePhilippineMobileUpdate = (value, originalValue) => {
 };
 
 export const validateGameStudentId = (value) => {
-  const normalized = String(value ?? '');
+  const raw = String(value ?? '').trim();
+  const normalized = /^[0-9]{2}-[0-9]{6}$/.test(raw) ? raw.replace('-', '') : raw;
   if (!normalized) {
     return { isValid: false, value: null, error: 'Student ID is required.' };
   }
   if (!/^[0-9]{6}$/.test(normalized) && !/^[0-9]{8}$/.test(normalized)) {
-    return { isValid: false, value: null, error: 'Student ID must be either 6 or 8 digits.' };
+    return { isValid: false, value: null, error: 'Student ID must be 8 digits (or a legacy 6-digit ID).' };
   }
   return { isValid: true, value: normalized, error: null };
+};
+
+export const validateSchoolStudentId = (value) => {
+  const result = validateGameStudentId(value);
+  if (!result.isValid || result.value?.length !== 8) {
+    return {
+      isValid: false,
+      value: null,
+      error: 'Student ID must be 8 digits (for example, 17000087 or 17-000087).',
+    };
+  }
+  return result;
 };
 
 export const getPasswordStrength = (value) => {
@@ -106,6 +119,8 @@ export const validateChildProfile = ({
   section,
   studentId,
   sectionOptions = [],
+  requireStudentId = true,
+  schoolStudentId = false,
 } = {}) => {
   const errors = {};
   const firstNameError = validateChildName(firstName, 'First name', { required: true });
@@ -123,8 +138,12 @@ export const validateChildProfile = ({
     errors.section = 'Select a Section available for the chosen Grade.';
   }
 
-  const studentIdResult = validateGameStudentId(studentId);
-  if (!studentIdResult.isValid) errors.studentId = studentIdResult.error;
+  if (requireStudentId) {
+    const studentIdResult = schoolStudentId
+      ? validateSchoolStudentId(studentId)
+      : validateGameStudentId(studentId);
+    if (!studentIdResult.isValid) errors.studentId = studentIdResult.error;
+  }
   return errors;
 };
 

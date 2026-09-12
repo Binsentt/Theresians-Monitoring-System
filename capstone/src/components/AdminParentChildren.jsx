@@ -1,7 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { apiUrl } from '../api';
 import { getSectionsForGrade } from '../sectionRegistry';
-import { PARENT_CHILD_GRADE_OPTIONS } from '../utils/validation.utils';
+import {
+  PARENT_CHILD_GRADE_OPTIONS,
+  validateGameStudentId,
+  validateSchoolStudentId,
+} from '../utils/validation.utils';
 import { createAdminChildDraft } from './adminParentChildren.utils';
 
 const ErrorText = ({ children }) => children ? <span className="error-text" role="alert">{children}</span> : null;
@@ -9,13 +13,10 @@ const EMPTY_HEADERS = Object.freeze({});
 
 const localIdError = (operation, studentId) => {
   if (!studentId) return '';
-  if (operation === 'link' && !/^(?:\d{6}|\d{8})$/.test(studentId)) {
-    return 'Existing Student IDs must be exactly 6 or 8 digits.';
-  }
-  if (operation !== 'link' && !/^\d{8}$/.test(studentId)) {
-    return 'New Student IDs must be exactly 8 digits.';
-  }
-  return '';
+  const result = operation === 'existing'
+    ? validateSchoolStudentId(studentId)
+    : validateGameStudentId(studentId);
+  return result.error || '';
 };
 
 export default function AdminParentChildren({
@@ -38,10 +39,13 @@ export default function AdminParentChildren({
     const candidates = [];
     children.forEach((child, index) => {
       const key = child.clientId || String(index);
-      const operation = child.operation === 'link' ? 'link' : 'create';
+      const operation = ['existing', 'link'].includes(child.operation) ? child.operation : 'create';
       const studentId = String(child.studentId || '').trim();
       const error = localIdError(operation, studentId);
-      if (!studentId) initial[key] = { status: 'idle', error: '' };
+      if (operation === 'create') initial[key] = { status: 'idle', error: '' };
+      else if (!studentId) initial[key] = { status: 'error', error: operation === 'existing'
+        ? 'Student ID must be 8 digits (for example, 17000087 or 17-000087).'
+        : 'Student ID is required.' };
       else if (error) initial[key] = { status: 'error', error };
       else {
         initial[key] = { status: 'pending', error: '' };
@@ -80,7 +84,7 @@ export default function AdminParentChildren({
     const states = children.map((child, index) => eligibility[child.clientId || String(index)] || { status: 'idle' });
     onValidationStateChange({
       pending: states.some(({ status }) => status === 'pending'),
-      isValid: children.length > 0 && states.every(({ status }) => status === 'valid'),
+      isValid: children.length > 0 && states.every(({ status }) => status === 'valid' || status === 'idle'),
     });
   }, [children, eligibility, onValidationStateChange]);
   const updateChild = (index, updates) => {
@@ -109,6 +113,7 @@ export default function AdminParentChildren({
         const rowErrors = errors[index] || {};
         const childNumber = index + 1;
         const isLink = child.operation === 'link';
+        const isExisting = child.operation === 'existing';
         const sections = getSectionsForGrade(sectionRegistry, child.gradeLevel);
         const eligibilityState = eligibility[child.clientId || String(index)] || { status: 'idle', error: '' };
         const eligibilityErrorId = `admin-child-${index}-student-id-error`;
@@ -133,9 +138,13 @@ export default function AdminParentChildren({
                 className="sts-input"
                 aria-label={`Child ${childNumber} account action`}
                 value={child.operation}
-                onChange={(event) => updateChild(index, { operation: event.target.value })}
+                onChange={(event) => {
+                  const operation = event.target.value;
+                  updateChild(index, { operation, ...(operation === 'create' ? { studentId: '' } : {}) });
+                }}
               >
                 <option value="create">Create New Student</option>
+                <option value="existing">Existing Student</option>
                 <option value="link">Link Existing Student</option>
               </select>
               <ErrorText>{rowErrors.operation}</ErrorText>
@@ -177,30 +186,35 @@ export default function AdminParentChildren({
               </>
             )}
 
-            <div className="form-group admin-parent-child-id">
-              <label htmlFor={`admin-child-${index}-student-id`}>Student ID *</label>
-              <input
-                id={`admin-child-${index}-student-id`}
-                className="sts-input"
-                aria-label={`Child ${childNumber} Student ID`}
-                inputMode="numeric"
-                maxLength={8}
-                placeholder={isLink ? '6 or 8 digits' : '8 digits'}
-                value={child.studentId}
-                onChange={(event) => updateChild(index, { studentId: event.target.value.replace(/\D/g, '').slice(0, 8) })}
-                aria-invalid={eligibilityState.status === 'error' ? 'true' : undefined}
-                aria-describedby={eligibilityState.status === 'error' ? eligibilityErrorId : undefined}
-              />
-              <span className="field-help">
-                {isLink
-                  ? 'Only Students without an active Parent relationship can be linked.'
-                  : 'New Student IDs must be exactly 8 digits. Leading zeroes are kept.'}
-              </span>
-              <ErrorText>{rowErrors.studentId}</ErrorText>
-              {eligibilityState.status === 'pending' && <span className="field-help" role="status">Checking Student ID...</span>}
-              {eligibilityState.status === 'valid' && <span className="field-help" role="status">Student ID is available.</span>}
-              {eligibilityState.status === 'error' && <span id={eligibilityErrorId} className="error-text" role="alert">{eligibilityState.error}</span>}
-            </div>
+            {child.operation === 'create' && (
+              <p className="field-help">Student ID will be generated automatically from the school&rsquo;s existing sequence.</p>
+            )}
+            {child.operation !== 'create' && (
+              <div className="form-group admin-parent-child-id">
+                <label htmlFor={`admin-child-${index}-student-id`}>Student ID *</label>
+                <input
+                  id={`admin-child-${index}-student-id`}
+                  className="sts-input"
+                  aria-label={`Child ${childNumber} Student ID`}
+                  inputMode="text"
+                  maxLength={9}
+                  placeholder={isExisting ? '17000087 or 17-000087' : '8 digits or legacy 6 digits'}
+                  value={child.studentId}
+                  onChange={(event) => updateChild(index, { studentId: event.target.value.replace(/[^0-9-]/g, '').slice(0, 9) })}
+                  aria-invalid={eligibilityState.status === 'error' ? 'true' : undefined}
+                  aria-describedby={eligibilityState.status === 'error' ? eligibilityErrorId : undefined}
+                />
+                <span className="field-help">
+                  {isExisting
+                    ? 'Enter the 8-digit school Student ID; the dash is optional.'
+                    : 'Only Students without an active Parent relationship can be linked.'}
+                </span>
+                <ErrorText>{rowErrors.studentId}</ErrorText>
+                {eligibilityState.status === 'pending' && <span className="field-help" role="status">Checking Student ID...</span>}
+                {eligibilityState.status === 'valid' && <span className="field-help" role="status">Student ID is available.</span>}
+                {eligibilityState.status === 'error' && <span id={eligibilityErrorId} className="error-text" role="alert">{eligibilityState.error}</span>}
+              </div>
+            )}
           </fieldset>
         );
       })}

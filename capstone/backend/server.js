@@ -17,6 +17,7 @@ const {
   normalizeParentCode,
   normalizeNewStudentCode,
   normalizeExistingStudentCode,
+  getNextCanonicalStudentId,
   normalizeGameStudentName,
   buildGameStudentEmail,
   toNullableNumber,
@@ -1402,7 +1403,7 @@ const normalizeChildNamePart = (value, label, { required = false, initial = fals
   return { value: initialValue };
 };
 
-const resolveParentChildProfile = (payload = {}) => {
+const resolveParentChildProfile = (payload = {}, { requireStudentId = true } = {}) => {
   const firstName = normalizeChildNamePart(payload.first_name ?? payload.firstName, 'First name', { required: true });
   if (firstName.error) return firstName;
   const lastName = normalizeChildNamePart(payload.last_name ?? payload.lastName, 'Last name', { required: true });
@@ -1419,11 +1420,15 @@ const resolveParentChildProfile = (payload = {}) => {
   const canonicalSection = resolveCanonicalSection(gradeLevel, sectionResult.section);
   if (!canonicalSection) return { error: `Section is not available for ${gradeLevel}.` };
 
-  const studentId = normalizeExistingStudentCode(payload.student_id ?? payload.studentId ?? payload.game_student_id);
-  if (!studentId) {
-    return { error: String(payload.student_id ?? payload.studentId ?? payload.game_student_id ?? '').trim()
-      ? 'Student ID must be either 6 or 8 digits.'
+  const suppliedStudentId = payload.student_id ?? payload.studentId ?? payload.game_student_id;
+  const studentId = normalizeNewStudentCode(suppliedStudentId);
+  if (requireStudentId && !studentId) {
+    return { error: String(suppliedStudentId ?? '').trim()
+      ? 'Student ID must be 8 digits (for example, 17000087 or 17-000087).'
       : 'Student ID is required.' };
+  }
+  if (!requireStudentId && String(suppliedStudentId ?? '').trim()) {
+    return { error: 'New Student IDs are generated automatically; do not enter one.' };
   }
 
   const fullName = [firstName.value, middleInitial.value, lastName.value].filter(Boolean).join(' ');
@@ -1435,7 +1440,7 @@ const resolveParentChildProfile = (payload = {}) => {
     middleInitial: middleInitial.value,
     gradeLevel,
     section: canonicalSection,
-    studentId,
+    ...(studentId ? { studentId } : {}),
     fullName,
   };
 };
@@ -1454,35 +1459,66 @@ const normalizeAdminParentChildren = (children, role) => {
   const normalizedChildren = [];
   for (const child of children) {
     const operation = String(child?.operation || 'create').trim().toLowerCase();
-    if (!['create', 'link'].includes(operation)) {
-      return { error: 'Child operation must be create or link.' };
+    if (!['create', 'existing', 'link'].includes(operation)) {
+      return { error: 'Child operation must be create, existing, or link.' };
     }
-    const studentId = normalizeExistingStudentCode(child?.student_id ?? child?.studentId ?? child?.game_student_id);
-    if (!studentId) {
-      return { error: 'Student ID must be either 6 or 8 digits.' };
-    }
-    if (seenStudentIds.has(studentId)) {
-      return { error: `Duplicate Student ID: ${studentId}.` };
-    }
-    seenStudentIds.add(studentId);
 
+    const rawStudentId = child?.student_id ?? child?.studentId ?? child?.game_student_id;
     if (operation === 'link') {
+      const studentId = normalizeExistingStudentCode(rawStudentId);
+      if (!studentId) return { error: 'Student ID must be 8 digits (or a legacy 6-digit ID).' };
+      if (seenStudentIds.has(studentId)) return { error: `Duplicate Student ID: ${studentId}.` };
+      seenStudentIds.add(studentId);
       normalizedChildren.push({ operation, studentId });
       continue;
     }
-    if (!normalizeNewStudentCode(studentId)) {
-      return { error: 'New Student IDs must be exactly 8 digits.' };
+
+    if (operation === 'existing') {
+      const studentId = normalizeNewStudentCode(rawStudentId);
+      if (!studentId) return { error: 'Student ID must be 8 digits (for example, 17000087 or 17-000087).' };
+      if (seenStudentIds.has(studentId)) return { error: `Duplicate Student ID: ${studentId}.` };
+      seenStudentIds.add(studentId);
+      const profile = resolveParentChildProfile(child, { requireStudentId: true });
+      if (profile.error) return profile;
+      normalizedChildren.push({ operation, studentId, profile });
+      continue;
     }
-    const profile = resolveParentChildProfile(child);
+
+    const profile = resolveParentChildProfile(child, { requireStudentId: false });
     if (profile.error) return profile;
-    normalizedChildren.push({ operation, studentId, profile });
+    normalizedChildren.push({ operation, profile });
   }
   return { children: normalizedChildren };
 };
 
-const createAdminChildAccount = async (client, parentId, child) => {
+const reserveNextStudentCode = async (client, reservedStudentIds = new Set()) => {
+  await client.query("SELECT pg_advisory_xact_lock(hashtext('theresians.student-id-sequence'))");
+  const result = await client.query(
+    `/* valid eight-digit school student ids */
+     SELECT game_student_id
+     FROM public.accounts
+     WHERE LOWER(role) = 'student'
+       AND (game_student_id ~ '^[0-9]{8}$' OR game_student_id ~ '^[0-9]{2}-[0-9]{6}$')
+     FOR UPDATE`
+  );
+  let nextStudentId = getNextCanonicalStudentId(result.rows);
+  while (nextStudentId && reservedStudentIds.has(nextStudentId)) {
+    const nextNumericId = Number(nextStudentId) + 1;
+    nextStudentId = nextNumericId <= 99999999 ? String(nextNumericId).padStart(8, '0') : null;
+  }
+  if (!nextStudentId) {
+    const error = new Error('No authoritative Student ID baseline is available. Add an existing school Student ID before creating a new Student.');
+    error.statusCode = 409;
+    throw error;
+  }
+  reservedStudentIds.add(nextStudentId);
+  return nextStudentId;
+};
+
+const createAdminChildAccount = async (client, parentId, child, studentIdOverride = null) => {
   const studentPassword = await hashPassword(generateRandomPassword());
-  const studentEmail = buildGameStudentEmail(parentId, `${child.profile.fullName}-${child.studentId}`);
+  const studentId = studentIdOverride || child.studentId;
+  const studentEmail = buildGameStudentEmail(parentId, `${child.profile.fullName}-${studentId}`);
   const result = await client.query(
     `INSERT INTO public.accounts (
        name, first_name, last_name, middle_initial, grade_level, section,
@@ -1499,7 +1535,7 @@ const createAdminChildAccount = async (client, parentId, child) => {
       child.profile.section,
       studentEmail,
       studentPassword,
-      child.studentId,
+      studentId,
     ]
   );
   if (!result.rows[0]?.id) throw new Error('Unable to create the child game profile.');
@@ -1511,7 +1547,7 @@ const resolveAdminLinkedStudent = async (client, studentId) => {
     `SELECT s.id, s.name, s.first_name, s.last_name, s.middle_initial,
             s.grade_level, s.section, s.game_student_id, s.is_archived
      FROM public.accounts s
-     WHERE s.game_student_id = $1
+     WHERE REPLACE(s.game_student_id, '-', '') = $1
        AND LOWER(s.role) = 'student'
      FOR UPDATE`,
     [studentId]
@@ -1543,15 +1579,20 @@ const resolveAdminLinkedStudent = async (client, studentId) => {
 
 const prepareAdminParentChildren = async (client, children) => {
   const prepared = [];
+  const reservedStudentIds = new Set();
   for (const child of children) {
     if (child.operation === 'link') {
       prepared.push({ ...child, student: await resolveAdminLinkedStudent(client, child.studentId) });
       continue;
     }
+    if (child.operation === 'create') {
+      prepared.push({ ...child, studentId: await reserveNextStudentCode(client, reservedStudentIds) });
+      continue;
+    }
     const existing = await client.query(
       `SELECT id
        FROM public.accounts
-       WHERE game_student_id = $1
+       WHERE REPLACE(game_student_id, '-', '') = $1
        FOR UPDATE`,
       [child.studentId]
     );
@@ -4197,7 +4238,7 @@ app.post('/api/accounts', requireAccountManagementAdmin, async (req, res) => {
       if (!createdRow?.id) throw new Error('Unable to create account.');
 
       for (const child of preparedChildren) {
-        const student = child.operation === 'create'
+        const student = child.operation !== 'link'
           ? await createAdminChildAccount(client, createdRow.id, child)
           : child.student;
         await ensureParentStudentRelationship(client, {
@@ -4322,17 +4363,17 @@ const serializeManagedChild = (student, operation = undefined) => ({
 
 app.get('/api/accounts/student-link-eligibility', requireAccountManagementAdmin, async (req, res) => {
   const operation = String(req.query.operation || 'link').trim().toLowerCase();
-  if (!['create', 'link'].includes(operation)) {
-    return res.status(400).json({ error: 'operation must be create or link.' });
+  if (!['existing', 'link'].includes(operation)) {
+    return res.status(400).json({ error: 'operation must be existing or link.' });
   }
-  const studentId = operation === 'create'
+  const studentId = operation === 'existing'
     ? normalizeNewStudentCode(req.query.student_id)
     : normalizeExistingStudentCode(req.query.student_id);
   if (!studentId) {
     return res.status(400).json({
-      error: operation === 'create'
-        ? 'New Student IDs must be exactly 8 digits.'
-        : 'Student ID must be either 6 or 8 digits.',
+      error: operation === 'existing'
+        ? 'Student ID must be 8 digits (for example, 17000087 or 17-000087).'
+        : 'Student ID must be 8 digits (or a legacy 6-digit ID).',
     });
   }
 
@@ -4340,15 +4381,15 @@ app.get('/api/accounts/student-link-eligibility', requireAccountManagementAdmin,
     const studentResult = await pool.query(
       `SELECT s.id, s.is_archived
        FROM public.accounts s
-       WHERE s.game_student_id = $1
+       WHERE REPLACE(s.game_student_id, '-', '') = $1
          AND LOWER(s.role) = 'student'
        LIMIT 1`,
       [studentId]
     );
     const student = studentResult.rows[0];
-    if (operation === 'create') {
+    if (operation === 'existing') {
       if (student) {
-        return res.status(409).json({ error: 'This Student ID is already in use. Choose Link Existing Student instead.' });
+        return res.status(409).json({ error: 'This Student ID is already in use. Choose Link Existing System Student instead.' });
       }
       return res.json({ available: true, student_id: studentId, operation });
     }
@@ -4399,7 +4440,7 @@ app.post('/api/accounts/:parentId/children', requireAccountManagementAdmin, asyn
     parent = await resolveManagedParentAccount(client, req.params.parentId, { forUpdate: true, requireActive: true });
     const preparedChildren = await prepareAdminParentChildren(client, childResult.children);
     for (const child of preparedChildren) {
-      const student = child.operation === 'create'
+      const student = child.operation !== 'link'
         ? await createAdminChildAccount(client, parent.id, child)
         : child.student;
       const relationship = await ensureParentStudentRelationship(client, {
@@ -6662,7 +6703,7 @@ app.get('/api/game/profile/check/:student_id', async (req, res) => {
        FROM public.accounts s
        JOIN public.teacher_student_relationships r ON r.student_id = s.id
        WHERE r.teacher_id = $1
-         AND s.game_student_id = $2
+         AND REPLACE(s.game_student_id, '-', '') = $2
          AND LOWER(r.relationship_type) = 'parent'
          AND COALESCE(s.is_archived, false) = false
        LIMIT 1`,
@@ -6673,7 +6714,7 @@ app.get('/api/game/profile/check/:student_id', async (req, res) => {
       const existingStudent = await pool.query(
         `SELECT id, is_archived
          FROM public.accounts
-         WHERE game_student_id = $1
+         WHERE REPLACE(game_student_id, '-', '') = $1
            AND LOWER(role) = 'student'
          LIMIT 1`,
         [studentCode]

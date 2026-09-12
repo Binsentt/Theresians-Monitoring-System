@@ -846,6 +846,7 @@ describe('ManageUsers edit flow', () => {
     });
     await act(async () => {
       setSelectValue(document.body.querySelector('select[aria-label="Child 1 section"]'), 'Amethyst');
+      setSelectValue(document.body.querySelector('select[aria-label="Child 1 account action"]'), 'existing');
       setFieldValue(document.body.querySelector('input[aria-label="Child 1 Student ID"]'), '00123456');
       setSelectValue(document.body.querySelector('select[aria-label="Child 2 account action"]'), 'link');
     });
@@ -858,7 +859,7 @@ describe('ManageUsers edit flow', () => {
 
     expect(submittedPayload.children).toEqual([
       {
-        operation: 'create', student_id: '00123456', first_name: 'Ava', middle_initial: '',
+        operation: 'existing', student_id: '00123456', first_name: 'Ava', middle_initial: '',
         last_name: 'Santos', grade_level: 'Grade 1', section: 'Amethyst',
       },
       { operation: 'link', student_id: '654321' },
@@ -918,6 +919,7 @@ describe('ManageUsers edit flow', () => {
     });
     await act(async () => {
       setSelectValue(document.body.querySelector('select[aria-label="Child 1 section"]'), 'Amethyst');
+      setSelectValue(document.body.querySelector('select[aria-label="Child 1 account action"]'), 'existing');
       setFieldValue(document.body.querySelector('input[aria-label="Child 1 Student ID"]'), '00123456');
     });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });

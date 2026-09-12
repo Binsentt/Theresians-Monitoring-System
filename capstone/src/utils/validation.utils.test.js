@@ -4,6 +4,7 @@ import {
   validateChildProfile,
   validateEmail,
   validateGameStudentId,
+  validateSchoolStudentId,
   validatePhilippineMobile,
   validatePhilippineMobileUpdate,
   validateNewWebsitePassword,
@@ -189,11 +190,26 @@ describe('validation.utils', () => {
       });
     });
 
-    test.each(['', '12345', '1234567', '123456789', 'ABC123', '123.456', ' 001234 '])('rejects invalid Student ID %s', (value) => {
+    test.each(['', '12345', '1234567', '123456789', 'ABC123', '123.456'])('rejects invalid Student ID %s', (value) => {
       expect(validateGameStudentId(value)).toEqual({
         isValid: false,
         value: null,
-        error: value === '' ? 'Student ID is required.' : 'Student ID must be either 6 or 8 digits.',
+        error: value === '' ? 'Student ID is required.' : 'Student ID must be 8 digits (or a legacy 6-digit ID).',
+      });
+    });
+
+    test('normalizes the optional school-ID dash without changing identity', () => {
+      expect(validateGameStudentId('17000087')).toEqual({ isValid: true, value: '17000087', error: null });
+      expect(validateGameStudentId('17-000087')).toEqual({ isValid: true, value: '17000087', error: null });
+    });
+
+    test('validates an existing school Student ID as canonical eight digits', () => {
+      expect(validateSchoolStudentId('17-000087')).toEqual({ isValid: true, value: '17000087', error: null });
+      expect(validateSchoolStudentId('17000087')).toEqual({ isValid: true, value: '17000087', error: null });
+      expect(validateSchoolStudentId('001234')).toEqual({
+        isValid: false,
+        value: null,
+        error: 'Student ID must be 8 digits (for example, 17000087 or 17-000087).',
       });
     });
   });
@@ -277,7 +293,7 @@ describe('validation.utils', () => {
       })).toEqual({
         middleInitial: 'Middle initial must be one letter.',
         section: 'Section may only contain letters, numbers, spaces, periods, apostrophes, or hyphens.',
-        studentId: 'Student ID must be either 6 or 8 digits.',
+        studentId: 'Student ID must be 8 digits (or a legacy 6-digit ID).',
       });
     });
 

@@ -2,6 +2,11 @@ import { normalizeRole } from './manageUsers.utils';
 import { matchesTableSearch } from './tableReporting.utils';
 
 const normalizeText = (value) => String(value ?? '').trim().toLowerCase();
+export const normalizeDirectoryStudentId = (value) => {
+  const raw = String(value ?? '').trim();
+  if (/^\d{2}-\d{6}$/.test(raw)) return raw.replace('-', '');
+  return /^\d{6}$/.test(raw) || /^\d{8}$/.test(raw) ? raw : null;
+};
 
 const valueForType = (row, type, field) => {
   if (type === 'student') {
@@ -21,7 +26,9 @@ export const filterDirectoryRows = (rows, filters = {}, type) => {
       directory_status: formatDirectoryStatus(row),
     }, filters, fields));
   }
-  const idFilter = normalizeText(filters.id);
+  const idFilter = type === 'student'
+    ? normalizeText(normalizeDirectoryStudentId(filters.id) || filters.id)
+    : normalizeText(filters.id);
   const nameFilter = normalizeText(filters.name);
   const gradeFilter = normalizeText(filters.grade);
   const sectionFilter = normalizeText(filters.section);
@@ -30,7 +37,10 @@ export const filterDirectoryRows = (rows, filters = {}, type) => {
   const roleFilter = normalizeText(filters.role);
 
   return safeRows.filter((row) => {
-    const id = normalizeText(valueForType(row, type, type === 'student' ? 'student_id' : 'teacher_id'));
+    const rawId = valueForType(row, type, type === 'student' ? 'student_id' : 'teacher_id');
+    const id = type === 'student'
+      ? normalizeText(normalizeDirectoryStudentId(rawId) || rawId)
+      : normalizeText(rawId);
     const name = normalizeText(valueForType(row, type, type === 'student' ? 'student_name' : 'teacher_name'));
     const grade = normalizeText(row?.grade_level ?? row?.gradeLevel);
     const section = normalizeText(row?.section);

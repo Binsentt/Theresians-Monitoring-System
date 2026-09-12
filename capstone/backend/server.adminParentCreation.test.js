@@ -39,6 +39,10 @@ const validCreateChild = (studentId, firstName = 'Ava') => ({
   operation: 'create', first_name: firstName, last_name: 'Santos', middle_initial: 'M',
   grade_level: 'Grade 1', section: 'Amethyst', student_id: studentId,
 });
+const validExistingChild = (studentId, firstName = 'Ava') => ({
+  operation: 'existing', first_name: firstName, last_name: 'Santos', middle_initial: 'M',
+  grade_level: 'Grade 1', section: 'Amethyst', student_id: studentId,
+});
 const parentPayload = (children) => ({ name: 'Paula Parent', email: 'paula@example.com', role: 'parent', children });
 const listen = () => new Promise((resolve) => { const server = app.listen(0, () => resolve(server)); });
 const requestJson = async (base, body) => {
@@ -54,29 +58,101 @@ test('Admin creates a Parent and one or multiple new children in one transaction
   const server = await listen();
   const base = `http://127.0.0.1:${server.address().port}`;
   t.after(() => new Promise((resolve) => server.close(resolve)));
-  for (const ids of [['00123456'], ['00123456', '00123457']]) {
+  for (const ids of [['17000088'], ['17000088', '17000089']]) {
     const events = [];
     let nextStudentId = 40;
+    let reserved = 0;
     queryHandler = async (sql, params) => {
       if (['begin', 'commit', 'rollback'].includes(sql)) { events.push(sql); return empty; }
       if (sql.includes('select 1 from public.accounts where parent_id')) return empty;
       if (sql.startsWith('insert into public.accounts') && !sql.includes('first_name')) {
         return { rows: [{ id: 19, name: params[0], email: params[1], role: params[3], parent_id: params[11], must_change_password: true }] };
       }
-      if (sql.includes('game_student_id') && sql.includes('for update')) return empty;
+      if (sql.includes('valid eight-digit school student ids')) return { rows: [{ game_student_id: String(17000087 + reserved) }] };
       if (sql.startsWith('insert into public.accounts') && sql.includes('first_name')) {
         nextStudentId += 1;
+        reserved += 1;
         return { rows: [{ id: nextStudentId, name: params[0], first_name: params[1], last_name: params[2], middle_initial: params[3], grade_level: params[4], section: params[5], game_student_id: params.at(-1), role: 'student' }] };
       }
       if (sql.startsWith('select id from public.teacher_student_relationships')) return empty;
       if (sql.startsWith('insert into public.teacher_student_relationships')) return { rows: [{ id: 90 }] };
       return empty;
     };
-    const response = await requestJson(base, parentPayload(ids.map((id, index) => validCreateChild(id, index ? 'Noah' : 'Ava'))));
+    const response = await requestJson(base, parentPayload(ids.map((id, index) => validCreateChild(undefined, index ? 'Noah' : 'Ava'))));
     assert.equal(response.status, 201);
     assert.deepEqual(response.body.children.map((child) => child.game_student_id), ids);
     assert.deepEqual(events, ['begin', 'commit']);
   }
+});
+
+test('Admin creates a genuinely new Student with the next canonical school ID under a transaction lock', async (t) => {
+  authenticatedAccount = { id: 1, role: 'admin', session_version: 0, is_archived: false };
+  const server = await listen();
+  const base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const events = [];
+  let createdStudentId = null;
+  queryHandler = async (sql, params) => {
+    if (['begin', 'commit', 'rollback'].includes(sql)) { events.push(sql); return empty; }
+    if (sql.includes('select 1 from public.accounts where parent_id')) return empty;
+    if (sql.includes('pg_advisory_xact_lock')) return empty;
+    if (sql.includes('valid eight-digit school student ids')) return { rows: [{ game_student_id: '17-000087' }, { game_student_id: 'not-an-id' }] };
+    if (sql.startsWith('insert into public.accounts') && !sql.includes('first_name')) {
+      return { rows: [{ id: 19, name: params[0], email: params[1], role: params[3], parent_id: params[11], must_change_password: true }] };
+    }
+    if (sql.startsWith('insert into public.accounts') && sql.includes('first_name')) {
+      createdStudentId = params.at(-1);
+      return { rows: [{ id: 44, name: params[0], first_name: params[1], last_name: params[2], middle_initial: params[3], grade_level: params[4], section: params[5], game_student_id: createdStudentId, role: 'student' }] };
+    }
+    if (sql.startsWith('select id from public.teacher_student_relationships')) return empty;
+    if (sql.startsWith('insert into public.teacher_student_relationships')) return { rows: [{ id: 90 }] };
+    return empty;
+  };
+  const response = await requestJson(base, parentPayload([{
+    operation: 'create', first_name: 'Ava', last_name: 'Santos', middle_initial: 'M',
+    grade_level: 'Grade 1', section: 'Amethyst',
+  }]));
+  assert.equal(response.status, 201);
+  assert.equal(createdStudentId, '17000088');
+  assert.equal(response.body.children[0].game_student_id, '17000088');
+  assert.deepEqual(events, ['begin', 'commit']);
+});
+
+test('Admin cannot manually assign a Student ID in the generated New Student workflow', async (t) => {
+  authenticatedAccount = { id: 1, role: 'admin', session_version: 0, is_archived: false };
+  const server = await listen();
+  const base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const response = await requestJson(base, parentPayload([validCreateChild('17000088')]));
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, 'New Student IDs are generated automatically; do not enter one.');
+});
+
+test('Admin Existing Student accepts dashed school IDs and stores the same canonical identity', async (t) => {
+  authenticatedAccount = { id: 1, role: 'admin', session_version: 0, is_archived: false };
+  const server = await listen();
+  const base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  let createdStudentId = null;
+  queryHandler = async (sql, params) => {
+    if (sql.includes('select 1 from public.accounts where parent_id')) return empty;
+    if (sql.includes('valid eight-digit school student ids')) return { rows: [{ game_student_id: '17000087' }] };
+    if (sql.startsWith('insert into public.accounts') && !sql.includes('first_name')) return { rows: [{ id: 19, name: params[0], email: params[1], role: params[3], parent_id: params[11] }] };
+    if (sql.startsWith('insert into public.accounts') && sql.includes('first_name')) {
+      createdStudentId = params.at(-1);
+      return { rows: [{ id: 45, name: params[0], first_name: params[1], last_name: params[2], middle_initial: params[3], grade_level: params[4], section: params[5], game_student_id: createdStudentId, role: 'student' }] };
+    }
+    if (sql.startsWith('select id from public.teacher_student_relationships')) return empty;
+    if (sql.startsWith('insert into public.teacher_student_relationships')) return { rows: [{ id: 91 }] };
+    return empty;
+  };
+  const response = await requestJson(base, parentPayload([{
+    operation: 'existing', student_id: '17-000087', first_name: 'Ava', last_name: 'Santos',
+    middle_initial: 'M', grade_level: 'Grade 1', section: 'Amethyst',
+  }]));
+  assert.equal(response.status, 201);
+  assert.equal(createdStudentId, '17000087');
+  assert.equal(response.body.children[0].game_student_id, '17000087');
 });
 
 test('Admin Parent creation rejects duplicate child IDs before database writes', async (t) => {
@@ -86,7 +162,7 @@ test('Admin Parent creation rejects duplicate child IDs before database writes',
   t.after(() => new Promise((resolve) => server.close(resolve)));
   let writes = 0;
   queryHandler = async (sql) => { if (/^(insert|update|delete|begin)/.test(sql)) writes += 1; return empty; };
-  const response = await requestJson(base, parentPayload([validCreateChild('00123456'), validCreateChild('00123456', 'Noah')]));
+  const response = await requestJson(base, parentPayload([validExistingChild('17-000087'), validExistingChild('17000087', 'Noah')]));
   assert.equal(response.status, 400);
   assert.match(response.body.error, /duplicate student id/i);
   assert.equal(writes, 0);
@@ -137,7 +213,7 @@ test('Admin Parent creation rolls back when a later child operation fails', asyn
     if (['begin', 'commit', 'rollback'].includes(sql)) { events.push(sql); return empty; }
     if (sql.includes('select 1 from public.accounts where parent_id')) return empty;
     if (sql.startsWith('insert into public.accounts') && !sql.includes('first_name')) return { rows: [{ id: 19, name: params[0], email: params[1], role: 'parent' }] };
-    if (sql.includes('game_student_id') && sql.includes('for update')) return empty;
+    if (sql.includes('valid eight-digit school student ids')) return { rows: [{ game_student_id: '17000087' }] };
     if (sql.startsWith('insert into public.accounts') && sql.includes('first_name')) {
       childInsert += 1;
       if (childInsert === 2) throw new Error('simulated child write failure');
@@ -147,7 +223,7 @@ test('Admin Parent creation rolls back when a later child operation fails', asyn
     if (sql.startsWith('insert into public.teacher_student_relationships')) return { rows: [{ id: 92 }] };
     return empty;
   };
-  const response = await requestJson(base, parentPayload([validCreateChild('00123456'), validCreateChild('00123457', 'Noah')]));
+  const response = await requestJson(base, parentPayload([validCreateChild(), validCreateChild(undefined, 'Noah')]));
   assert.equal(response.status, 500);
   assert.deepEqual(events, ['begin', 'rollback']);
 });

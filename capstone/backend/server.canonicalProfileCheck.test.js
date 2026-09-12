@@ -119,6 +119,24 @@ test('profile check returns only the canonical linked child profile', async (t) 
     assert.deepEqual(learningCycleParams, [activeParent.id, '00123456']);
   });
 
+  await t.test('normalizes the optional dash before profile lookup', async () => {
+    let profileParams = [];
+    queryHandler = async (sql, params) => {
+      if (sql.includes('from public.accounts where parent_id = $1') && sql.includes('lower(role) in')) return { rows: [activeParent] };
+      if (sql.includes('from public.accounts s') && sql.includes('join public.teacher_student_relationships r')) {
+        profileParams = params;
+        return { rows: [{ ...canonicalChild, game_student_id: '17000087' }] };
+      }
+      if (sql.includes('from public.student_game_progress')) return emptyResult;
+      return emptyResult;
+    };
+
+    const response = await requestJson(baseUrl, '/api/game/profile/check/17-000087?parent_id=654321');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(profileParams, [activeParent.id, '17000087']);
+  });
+
   await t.test('ignores caller-supplied identity metadata and returns only the linked canonical profile', async () => {
     queryHandler = async (sql) => {
       if (sql.includes('from public.accounts where parent_id = $1') && sql.includes('lower(role) in')) return { rows: [activeParent] };
@@ -141,7 +159,7 @@ test('profile check returns only the canonical linked child profile', async (t) 
     queryHandler = async (sql) => {
       if (sql.includes('from public.accounts where parent_id = $1') && sql.includes('lower(role) in')) return { rows: [activeParent] };
       if (sql.includes('from public.accounts s') && sql.includes('join public.teacher_student_relationships r')) return emptyResult;
-      if (sql.includes('select id, is_archived from public.accounts where game_student_id = $1')) return { rows: [{ id: 77, is_archived: false }] };
+      if (sql.includes('select id, is_archived from public.accounts where replace(game_student_id, \'-\', \'\') = $1')) return { rows: [{ id: 77, is_archived: false }] };
       return emptyResult;
     };
 
@@ -190,7 +208,7 @@ test('profile check returns only the canonical linked child profile', async (t) 
     queryHandler = async (sql) => {
       if (sql.includes('from public.accounts where parent_id = $1') && sql.includes('lower(role) in')) return { rows: [activeParent] };
       if (sql.includes('from public.accounts s') && sql.includes('join public.teacher_student_relationships r')) return emptyResult;
-      if (sql.includes('select id, is_archived from public.accounts where game_student_id = $1')) return { rows: [{ id: canonicalChild.id, is_archived: true }] };
+      if (sql.includes('select id, is_archived from public.accounts where replace(game_student_id, \'-\', \'\') = $1')) return { rows: [{ id: canonicalChild.id, is_archived: true }] };
       return emptyResult;
     };
     const inactiveStudent = await requestJson(baseUrl, '/api/game/profile/check/001234?parent_id=654321');

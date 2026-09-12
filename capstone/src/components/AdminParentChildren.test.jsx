@@ -69,6 +69,29 @@ describe('AdminParentChildren', () => {
     expect(container.textContent).toContain('Only Students without an active Parent relationship can be linked.');
   });
 
+  test('offers distinct New, Existing, and Link workflows without asking for a generated ID', async () => {
+    let value = [createAdminChildDraft('row-1')];
+    const onChange = (next) => { value = next; };
+    await act(async () => root.render(
+      <AdminParentChildren value={value} onChange={onChange} sectionRegistry={registry} errors={[]} />
+    ));
+
+    const operation = container.querySelector('select[aria-label="Child 1 account action"]');
+    expect(Array.from(operation.options).map((option) => option.value)).toEqual(['create', 'existing', 'link']);
+    expect(container.textContent).toContain('Student ID will be generated automatically');
+    expect(container.querySelector('input[aria-label="Child 1 Student ID"]')).toBeNull();
+
+    await act(async () => {
+      operation.value = 'existing';
+      operation.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await act(async () => root.render(
+      <AdminParentChildren value={value} onChange={onChange} sectionRegistry={registry} errors={[]} />
+    ));
+    expect(container.querySelector('input[aria-label="Child 1 Student ID"]')).not.toBeNull();
+    expect(container.textContent).toContain('8-digit school Student ID');
+  });
+
   test('validates a locally valid Student ID against authoritative ownership and exposes the result inline', async () => {
     let value = [{ ...createAdminChildDraft('row-1'), operation: 'link', studentId: '00123456' }];
     const validationStates = [];
@@ -139,6 +162,6 @@ describe('AdminParentChildren', () => {
     ));
     await act(async () => { jest.advanceTimersByTime(300); });
     expect(global.fetch).not.toHaveBeenCalled();
-    expect(container.textContent).toContain('Existing Student IDs must be exactly 6 or 8 digits.');
+    expect(container.textContent).toContain('Student ID must be 8 digits (or a legacy 6-digit ID).');
   });
 });

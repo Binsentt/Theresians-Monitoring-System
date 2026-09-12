@@ -33,6 +33,16 @@ describe('ID Directory helpers', () => {
     }, 'student')).toEqual([students[1]]);
   });
 
+  test('treats dashed and plain eight-digit Student IDs as the same directory identity', () => {
+    const dashed = { ...students[0], student_id: '17-000087' };
+    expect(filterDirectoryRows([dashed], {
+      id: '17000087', name: '', grade: '', section: '', status: '',
+    }, 'student')).toEqual([dashed]);
+    expect(filterDirectoryRows([dashed], {
+      id: '17-000087', name: '', grade: '', section: '', status: '',
+    }, 'student')).toEqual([dashed]);
+  });
+
   test('formats archived status truthfully and preserves date display', () => {
     expect(formatDirectoryStatus({ status: 'Active', is_archived: true })).toBe('Archived');
     expect(formatDirectoryStatus({ status: 'Offline', is_archived: false })).toBe('Offline');

@@ -159,7 +159,7 @@ const requestJson = async (baseUrl, path, options = {}) => {
 };
 
 const validParentChild = (studentId = '00123456') => ({
-  operation: 'create',
+  operation: 'existing',
   first_name: 'Ava',
   last_name: 'Santos',
   middle_initial: 'M',

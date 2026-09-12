@@ -3,8 +3,11 @@ const assert = require('node:assert/strict');
 
 const {
   normalizeParentCode,
+  normalizeStudentId,
+  formatStudentId,
   normalizeNewStudentCode,
   normalizeExistingStudentCode,
+  getNextCanonicalStudentId,
   normalizeGameStudentName,
   buildGameStudentEmail,
   toNullableNumber,
@@ -22,15 +25,34 @@ test('normalizes only exact six digit parent IDs', () => {
 
 test('separates new Student creation from legacy-compatible Student lookup', () => {
   assert.equal(normalizeNewStudentCode('00123456'), '00123456');
-  for (const invalidNewCode of ['001234', '1234567', '123456789', ' 00123456 ', '12A45678', '1234-5678']) {
+  assert.equal(normalizeNewStudentCode('17-000087'), '17000087');
+  for (const invalidNewCode of ['001234', '1234567', '123456789', '12A45678', '1234-5678']) {
     assert.equal(normalizeNewStudentCode(invalidNewCode), null, invalidNewCode);
   }
 
   assert.equal(normalizeExistingStudentCode('001234'), '001234');
   assert.equal(normalizeExistingStudentCode('00123456'), '00123456');
-  for (const invalidLookupCode of ['12345', '1234567', '123456789', ' 001234 ', '12A456']) {
+  assert.equal(normalizeExistingStudentCode('17-000087'), '17000087');
+  for (const invalidLookupCode of ['12345', '1234567', '123456789', '12A456']) {
     assert.equal(normalizeExistingStudentCode(invalidLookupCode), null, invalidLookupCode);
   }
+});
+
+test('treats dashed and plain eight-digit school IDs as one canonical identity', () => {
+  assert.equal(normalizeStudentId('17000087'), '17000087');
+  assert.equal(normalizeStudentId('17-000087'), '17000087');
+  assert.equal(formatStudentId('17000087'), '17-000087');
+  assert.equal(formatStudentId('17-000087'), '17-000087');
+});
+
+test('generates the next canonical ID from the highest valid school sequence', () => {
+  assert.equal(getNextCanonicalStudentId([
+    { game_student_id: '17-000087' },
+    { game_student_id: '17000012' },
+    { game_student_id: '00000001' },
+    { game_student_id: 'malformed' },
+  ]), '17000088');
+  assert.equal(getNextCanonicalStudentId([{ game_student_id: '001234' }, { game_student_id: 'bad' }]), null);
 });
 
 test('normalizes game student names for duplicate matching', () => {

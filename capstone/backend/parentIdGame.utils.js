@@ -3,14 +3,35 @@ const normalizeParentCode = (value) => {
   return /^\d{6}$/.test(code) ? code : null;
 };
 
-const normalizeNewStudentCode = (value) => {
-  const code = String(value ?? '');
-  return /^[0-9]{8}$/.test(code) ? code : null;
+const normalizeStudentId = (value) => {
+  const code = String(value ?? '').trim();
+  if (/^\d{2}-\d{6}$/.test(code)) return code.replace('-', '');
+  if (/^\d{8}$/.test(code) || /^\d{6}$/.test(code)) return code;
+  return null;
 };
 
-const normalizeExistingStudentCode = (value) => {
-  const code = String(value ?? '');
-  return /^[0-9]{6}$/.test(code) || /^[0-9]{8}$/.test(code) ? code : null;
+const normalizeNewStudentCode = (value) => {
+  const code = normalizeStudentId(value);
+  return code && /^\d{8}$/.test(code) ? code : null;
+};
+
+const normalizeExistingStudentCode = (value) => normalizeStudentId(value);
+
+const formatStudentId = (value) => {
+  const code = normalizeStudentId(value);
+  return code && code.length === 8 ? `${code.slice(0, 2)}-${code.slice(2)}` : code;
+};
+
+const getNextCanonicalStudentId = (rows = []) => {
+  const validCodes = (Array.isArray(rows) ? rows : [])
+    .map((row) => normalizeNewStudentCode(row?.game_student_id ?? row))
+    .filter(Boolean);
+  if (validCodes.length === 0) return null;
+  const highest = Math.max(...validCodes.map((code) => Number(code)));
+  if (!Number.isSafeInteger(highest) || highest >= 99999999) {
+    throw new Error('The Student ID sequence has reached its maximum value.');
+  }
+  return String(highest + 1).padStart(8, '0');
 };
 
 const normalizeGameStudentName = (value) =>
@@ -67,6 +88,9 @@ const resolveAccuracyRate = (payload = {}) => {
 
 module.exports = {
   normalizeParentCode,
+  normalizeStudentId,
+  formatStudentId,
+  getNextCanonicalStudentId,
   normalizeNewStudentCode,
   normalizeExistingStudentCode,
   normalizeGameStudentName,

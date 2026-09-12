@@ -214,7 +214,7 @@ test('Admin lists and atomically links another eligible existing child', async (
         && (sql.includes('for update') || sql.startsWith('select id, name, email, role, parent_id, is_archived'))) {
       return resultRows([{ id: 19, role: 'parent', parent_id: '112832', is_archived: false }]);
     }
-    if (sql.includes('from public.accounts s') && sql.includes('where s.game_student_id = $1')) {
+    if (sql.includes('from public.accounts s') && sql.includes("where replace(s.game_student_id, '-', '') = $1")) {
       return resultRows([{ id: 45, name: 'Noah Santos', game_student_id: params[0], grade_level: 'Grade 1', section: 'Amber', is_archived: false }]);
     }
     if (sql.includes('active_parent_relationship')) return emptyResult;
@@ -253,7 +253,7 @@ test('Admin can validate create/link Student IDs without writing and linked owne
   reset();
   let activeParent = false;
   queryHandler = async (sql, params) => {
-    if (sql.includes('from public.accounts s') && sql.includes('where s.game_student_id = $1')) {
+    if (sql.includes('from public.accounts s') && sql.includes("where replace(s.game_student_id, '-', '') = $1")) {
       return resultRows([{ id: 45, name: 'Noah Santos', game_student_id: params[0], is_archived: false }]);
     }
     if (sql.includes('active_parent_relationship')) {
