@@ -1,8 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 
 const { resolveStudentAiInsight } = require('./studentAiInsight.service');
-const { runInsightCacheVerification } = require('./studentInsightQaVerification');
+const {
+  createInsightQaResultWriter,
+  runInsightCacheVerification,
+} = require('./studentInsightQaVerification');
 
 const empty = { rows: [] };
 const compact = (sql) => String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
@@ -98,4 +104,156 @@ test('successful insight generation persists once and unchanged evidence verifie
   assert.equal(result.cacheVerification, 'hit');
   assert.equal(providerCalls, 1);
   assert.deepEqual(harness.getSaved().insight, generatedInsight);
+});
+
+const withQaArtifact = async (callback) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'student-insight-qa-'));
+  const filePath = path.join(directory, 'result.json');
+  try {
+    return await callback(filePath);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+};
+
+test('QA success flow durably records generation, persistence, cache, and one provider call', async () => {
+  await withQaArtifact(async (filePath) => {
+    const harness = createHarness();
+    const writer = createInsightQaResultWriter({
+      filePath,
+      testRunId: 'run-success',
+      candidateSha: 'a'.repeat(40),
+    });
+    let providerCalls = 0;
+    const result = await runInsightCacheVerification({
+      request: { studentId: 44, gradeLevel: 'Grade 1', metrics: { ...metrics } },
+      resultWriter: writer,
+      resolveInsight: (request) => resolveStudentAiInsight({
+        ...request,
+        aiGenerationEnabled: true,
+        pool: harness.pool,
+        generateInsight: async () => {
+          providerCalls += 1;
+          return generatedInsight;
+        },
+      }),
+    });
+
+    const artifact = JSON.parse(await fs.readFile(filePath, 'utf8'));
+    assert.equal(result.first.status, 'generated');
+    assert.equal(result.second.status, 'cached');
+    assert.equal(result.cacheVerification, 'hit');
+    assert.equal(providerCalls, 1);
+    assert.equal(artifact.providerCallCount, 1);
+    assert.equal(artifact.httpStatus, null);
+    assert.equal(typeof artifact.elapsedMs, 'number');
+    assert.equal(artifact.generationSuccess, true);
+    assert.equal(artifact.persistenceSuccess, true);
+    assert.equal(artifact.cacheCheckPerformed, true);
+    assert.equal(artifact.cacheHit, true);
+    assert.ok(artifact.providerCallStartedAt);
+    assert.ok(artifact.providerCallFinishedAt);
+    assert.ok(artifact.finishedAt);
+    assert.equal(Object.prototype.hasOwnProperty.call(artifact, 'apiKey'), false);
+  });
+});
+
+test('QA provider failure records sanitized failure details, skips cache, and keeps one provider call', async () => {
+  await withQaArtifact(async (filePath) => {
+    const writer = createInsightQaResultWriter({
+      filePath,
+      testRunId: 'run-failure',
+      candidateSha: 'b'.repeat(40),
+    });
+    let providerCalls = 0;
+    const result = await runInsightCacheVerification({
+      request: { studentId: 44, gradeLevel: 'Grade 1', metrics: { ...metrics } },
+      resultWriter: writer,
+      resolveInsight: async () => {
+        providerCalls += 1;
+        return {
+          status: 'unavailable',
+          providerDiagnostics: {
+            http_status: 503,
+            request_id: 'req_sanitized',
+            error_type: 'server_error',
+            error_code: 'temporarily_unavailable',
+          },
+          message: 'do not persist this raw message',
+        };
+      },
+    });
+
+    const artifact = JSON.parse(await fs.readFile(filePath, 'utf8'));
+    const artifactText = await fs.readFile(filePath, 'utf8');
+    assert.equal(result.first.status, 'unavailable');
+    assert.equal(result.second, null);
+    assert.equal(result.cacheVerification, 'skipped');
+    assert.equal(providerCalls, 1);
+    assert.equal(artifact.providerCallCount, 1);
+    assert.equal(typeof artifact.elapsedMs, 'number');
+    assert.equal(artifact.httpStatus, 503);
+    assert.equal(artifact.requestId, 'req_sanitized');
+    assert.equal(artifact.errorType, 'server_error');
+    assert.equal(artifact.errorCode, 'temporarily_unavailable');
+    assert.equal(artifact.generationSuccess, false);
+    assert.equal(artifact.persistenceSuccess, false);
+    assert.equal(artifact.cacheCheckPerformed, false);
+    assert.equal(artifact.cacheHit, false);
+    assert.equal(artifactText.includes('do not persist this raw message'), false);
+  });
+});
+
+test('QA interruption after provider start leaves a readable partial artifact and cleanup remains recoverable', async () => {
+  await withQaArtifact(async (filePath) => {
+    const writer = createInsightQaResultWriter({
+      filePath,
+      testRunId: 'run-interrupted',
+      candidateSha: 'c'.repeat(40),
+    });
+    await writer.markProviderCallStarted();
+    const artifact = await writer.read();
+    const entries = await fs.readdir(path.dirname(filePath));
+    assert.equal(artifact.providerCallCount, 1);
+    assert.ok(artifact.providerCallStartedAt);
+    assert.equal(artifact.providerCallFinishedAt, null);
+    assert.equal(artifact.finishedAt, null);
+    assert.deepEqual(entries, ['result.json']);
+  });
+});
+
+test('QA cache verification never invokes the provider a second time for unchanged evidence', async () => {
+  await withQaArtifact(async (filePath) => {
+    const harness = createHarness();
+    const writer = createInsightQaResultWriter({
+      filePath,
+      testRunId: 'run-cache',
+      candidateSha: 'd'.repeat(40),
+    });
+    let resolveCalls = 0;
+    let providerCalls = 0;
+    const result = await runInsightCacheVerification({
+      request: { studentId: 44, gradeLevel: 'Grade 1', metrics: { ...metrics } },
+      resultWriter: writer,
+      resolveInsight: (request) => {
+        resolveCalls += 1;
+        return resolveStudentAiInsight({
+          ...request,
+          aiGenerationEnabled: true,
+          pool: harness.pool,
+          generateInsight: async () => {
+            providerCalls += 1;
+            return generatedInsight;
+          },
+        });
+      },
+    });
+
+    const artifact = await writer.read();
+    assert.equal(result.cacheVerification, 'hit');
+    assert.equal(resolveCalls, 2);
+    assert.equal(providerCalls, 1);
+    assert.equal(artifact.providerCallCount, 1);
+    assert.equal(artifact.cacheHit, true);
+  });
 });
