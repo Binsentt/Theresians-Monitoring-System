@@ -9,6 +9,9 @@ const {
   createInsightQaResultWriter,
   runInsightCacheVerification,
 } = require('./studentInsightQaVerification');
+const {
+  runInsightQaInProcess,
+} = require('./studentInsightQaRunner');
 
 const empty = { rows: [] };
 const compact = (sql) => String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
@@ -211,6 +214,7 @@ test('QA interruption after provider start leaves a readable partial artifact an
       testRunId: 'run-interrupted',
       candidateSha: 'c'.repeat(40),
     });
+    await writer.prepareProviderCallGate();
     await writer.markProviderCallStarted();
     const artifact = await writer.read();
     const entries = await fs.readdir(path.dirname(filePath));
@@ -371,4 +375,146 @@ test('QA cache runner forwards diagnostics from the real insight service into th
     assert.deepEqual(artifact.claimCounts, { performance: 1, strengths: 0, weaknesses: 0, recommendations: 1, trends: 0 });
     assert.equal(artifact.persistenceSucceeded, null);
   });
+});
+
+test('provider gate creates and reads the artifact before the first provider milestone', async () => {
+  await withQaArtifact(async (filePath) => {
+    const writer = createInsightQaResultWriter({
+      filePath,
+      testRunId: 'run-gate-ready',
+      candidateSha: '1'.repeat(40),
+    });
+
+    const gate = await writer.prepareProviderCallGate();
+    const artifact = await writer.read();
+    assert.equal(gate.ready, true);
+    assert.equal(artifact.artifactReady, true);
+    assert.equal(artifact.realProviderGate, 'READY');
+    assert.equal(artifact.runnerState, 'READY');
+    assert.equal(artifact.lastKnownStage, 'ARTIFACT_READY');
+    assert.equal(artifact.providerCallCount, 0);
+  });
+});
+
+test('provider call is blocked when the artifact gate has not been prepared', async () => {
+  await withQaArtifact(async (filePath) => {
+    const writer = createInsightQaResultWriter({
+      filePath,
+      testRunId: 'run-gate-blocked',
+      candidateSha: '2'.repeat(40),
+    });
+    let providerCalls = 0;
+
+    await assert.rejects(
+      writer.recordProviderCall({ execute: async () => { providerCalls += 1; } }),
+      (error) => error.code === 'QA_ARTIFACT_NOT_READY'
+    );
+    assert.equal(providerCalls, 0);
+    assert.equal(await writer.read(), null);
+  });
+});
+
+test('same-process runner reads the artifact before cleanup and returns the safe report', async () => {
+  await withQaArtifact(async (filePath) => {
+    let consumed = false;
+    const run = await runInsightQaInProcess({
+      filePath,
+      testRunId: 'run-owned-report',
+      candidateSha: '3'.repeat(40),
+      execute: async ({ resultWriter }) => {
+        await resultWriter.markProviderCallStarted();
+        await resultWriter.recordInsightDiagnostics({
+          providerHttpStatus: 200,
+          validationStage: 'VALIDATION_PASSED',
+          renderedOutputValidation: true,
+        });
+        await resultWriter.markProviderCallFinished({ status: 'generated' });
+        await resultWriter.markGeneration(true);
+        await resultWriter.markPersistence(true);
+        await resultWriter.markCache({ performed: true, hit: true });
+        await resultWriter.finish();
+        return { status: 'generated' };
+      },
+      consumeArtifact: async ({ artifact, artifactPath }) => {
+        consumed = artifact.runnerState === 'FINISHED'
+          && artifact.validationStage === 'VALIDATION_PASSED'
+          && artifactPath === filePath;
+        assert.equal(await fs.stat(filePath).then(() => true), true);
+      },
+    });
+
+    assert.equal(consumed, true);
+    assert.equal(run.artifact.runnerState, 'FINISHED');
+    await assert.rejects(fs.stat(filePath), { code: 'ENOENT' });
+  });
+});
+
+test('same-process runner blocks the provider when the result consumer is not ready', async () => {
+  await withQaArtifact(async (filePath) => {
+    let providerCalls = 0;
+    let consumed = null;
+    const run = await runInsightQaInProcess({
+      filePath,
+      testRunId: 'run-consumer-not-ready',
+      candidateSha: '6'.repeat(40),
+      resultConsumerReady: false,
+      execute: async () => { providerCalls += 1; },
+      consumeArtifact: async ({ artifact }) => { consumed = artifact; },
+    });
+
+    assert.equal(run.ok, false);
+    assert.equal(run.error.code, 'REAL_PROVIDER_GATE_BLOCKED');
+    assert.equal(providerCalls, 0);
+    assert.equal(consumed.runnerState, 'BLOCKED');
+    assert.equal(consumed.providerCallCount, 0);
+    await assert.rejects(fs.stat(filePath), { code: 'ENOENT' });
+  });
+});
+
+test('same-process runner retains an interrupted partial artifact before cleanup', async () => {
+  await withQaArtifact(async (filePath) => {
+    let consumed = null;
+    const run = await runInsightQaInProcess({
+      filePath,
+      testRunId: 'run-owned-interrupted',
+      candidateSha: '4'.repeat(40),
+      execute: async ({ resultWriter }) => {
+        await resultWriter.markProviderCallStarted();
+        throw Object.assign(new Error('synthetic child failure'), { code: 'SYNTHETIC_CHILD_FAILURE' });
+      },
+      consumeArtifact: async ({ artifact }) => {
+        consumed = artifact;
+        assert.equal(artifact.runnerState, 'INTERRUPTED');
+        assert.equal(artifact.providerCallCount, 1);
+        assert.equal(artifact.providerCallStarted, true);
+      },
+    });
+
+    assert.equal(run.ok, false);
+    assert.equal(run.error.code, 'SYNTHETIC_CHILD_FAILURE');
+    assert.equal(consumed.runnerState, 'INTERRUPTED');
+    await assert.rejects(fs.stat(filePath), { code: 'ENOENT' });
+  });
+});
+
+test('artifact creation failure blocks fake provider invocation', async () => {
+  const writer = createInsightQaResultWriter({
+    filePath: path.join(os.tmpdir(), 'student-insight-qa-invalid', 'result.json'),
+    testRunId: 'run-no-artifact',
+    candidateSha: '5'.repeat(40),
+    fsImpl: {
+      mkdir: async () => {},
+      writeFile: async () => { throw Object.assign(new Error('synthetic artifact failure'), { code: 'EACCES' }); },
+      rename: async () => {},
+      readFile: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
+      unlink: async () => {},
+    },
+  });
+  let providerCalls = 0;
+  await assert.rejects(writer.prepareProviderCallGate(), { code: 'EACCES' });
+  await assert.rejects(
+    writer.recordProviderCall({ execute: async () => { providerCalls += 1; } }),
+    (error) => error.code === 'QA_ARTIFACT_NOT_READY'
+  );
+  assert.equal(providerCalls, 0);
 });

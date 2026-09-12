@@ -4,6 +4,17 @@ const path = require('node:path');
 const QA_ARTIFACT_SCHEMA_VERSION = 1;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{1,160}$/;
 const SAFE_CODE_PATTERN = /^[A-Za-z0-9_.-]{1,120}$/;
+const QA_RUNNER_STATES = Object.freeze({
+  INITIALIZED: 'INITIALIZED',
+  READY: 'READY',
+  PROVIDER_STARTED: 'PROVIDER_STARTED',
+  PROVIDER_FINISHED: 'PROVIDER_FINISHED',
+  FINISHED: 'FINISHED',
+  INTERRUPTED: 'INTERRUPTED',
+  BLOCKED: 'BLOCKED',
+});
+
+const createQaError = (code, message) => Object.assign(new Error(message), { code });
 
 const ARTIFACT_FIELDS = new Set([
   'providerCallStartedAt',
@@ -40,6 +51,11 @@ const ARTIFACT_FIELDS = new Set([
   'renderedOutputValidation',
   'persistenceSucceeded',
   'finishedAt',
+  'runnerState',
+  'artifactReady',
+  'realProviderGate',
+  'providerCallStarted',
+  'lastKnownStage',
 ]);
 
 const toIsoTimestamp = (value) => {
@@ -164,6 +180,8 @@ const sanitizePatch = (patch = {}) => {
       sanitized[key] = safeKeyList(value);
     } else if (key === 'claimCounts') {
       sanitized[key] = safeClaimCounts(value);
+    } else if (['runnerState', 'realProviderGate', 'lastKnownStage'].includes(key)) {
+      sanitized[key] = safeCode(value);
     } else if (typeof value === 'boolean') {
       sanitized[key] = value;
     }
@@ -227,6 +245,11 @@ const createInsightQaResultWriter = ({
     renderedOutputValidation: null,
     persistenceSucceeded: null,
     finishedAt: null,
+    runnerState: QA_RUNNER_STATES.INITIALIZED,
+    artifactReady: false,
+    realProviderGate: 'BLOCKED',
+    providerCallStarted: false,
+    lastKnownStage: 'INITIALIZED',
   };
 
   const tempPath = `${filePath}.tmp`;
@@ -257,25 +280,78 @@ const createInsightQaResultWriter = ({
     return writeAtomically();
   };
 
+  const readArtifact = async () => {
+    try {
+      return JSON.parse(await fsImpl.readFile(filePath, 'utf8'));
+    } catch (error) {
+      if (error?.code === 'ENOENT') return null;
+      throw error;
+    }
+  };
+
+  const prepareProviderCallGate = async ({
+    resultConsumerReady = true,
+    parentRuntimeAdequate = true,
+  } = {}) => {
+    if (!resultConsumerReady || !parentRuntimeAdequate) {
+      state.runnerState = QA_RUNNER_STATES.BLOCKED;
+      state.artifactReady = false;
+      state.realProviderGate = 'BLOCKED';
+      state.lastKnownStage = 'REAL_PROVIDER_GATE_BLOCKED';
+      await writeAtomically();
+      return { ready: false, artifact: await readArtifact() };
+    }
+
+    try {
+      await writeAtomically();
+      const initialArtifact = await readArtifact();
+      if (!initialArtifact || initialArtifact.testRunId !== identity) {
+        throw createQaError('QA_ARTIFACT_NOT_READABLE', 'QA artifact was not readable after initialization.');
+      }
+      state.runnerState = QA_RUNNER_STATES.READY;
+      state.artifactReady = true;
+      state.realProviderGate = 'READY';
+      state.lastKnownStage = 'ARTIFACT_READY';
+      await writeAtomically();
+      const readyArtifact = await readArtifact();
+      if (!readyArtifact || readyArtifact.artifactReady !== true) {
+        throw createQaError('QA_ARTIFACT_NOT_READABLE', 'QA artifact readiness could not be confirmed.');
+      }
+      return { ready: true, artifact: readyArtifact };
+    } catch (error) {
+      state.runnerState = QA_RUNNER_STATES.BLOCKED;
+      state.artifactReady = false;
+      state.realProviderGate = 'BLOCKED';
+      state.lastKnownStage = 'ARTIFACT_INIT_FAILED';
+      try { await writeAtomically(); } catch {}
+      throw error;
+    }
+  };
+
   return {
     filePath,
     async update(patch) {
       return update(patch);
     },
     async read() {
-      try {
-        return JSON.parse(await fsImpl.readFile(filePath, 'utf8'));
-      } catch (error) {
-        if (error?.code === 'ENOENT') return null;
-        throw error;
-      }
+      return readArtifact();
     },
     async flush() {
       return writeAtomically();
     },
+    async prepareProviderCallGate(options) {
+      return prepareProviderCallGate(options);
+    },
     async markProviderCallStarted({ at = now() } = {}) {
+      if (state.artifactReady !== true) {
+        throw createQaError('QA_ARTIFACT_NOT_READY', 'Provider call is blocked until the QA artifact is initialized and read back.');
+      }
       state.providerCallCount += 1;
       providerStartedMs = Date.now();
+      state.runnerState = QA_RUNNER_STATES.PROVIDER_STARTED;
+      state.realProviderGate = 'OPEN';
+      state.providerCallStarted = true;
+      state.lastKnownStage = 'PROVIDER_CALL_STARTED';
       return update({
         providerCallStartedAt: at,
         providerCallFinishedAt: null,
@@ -284,6 +360,10 @@ const createInsightQaResultWriter = ({
     async markProviderCallFinished(details = {}) {
       const elapsedMs = details?.elapsedMs ?? (providerStartedMs === null ? null : Date.now() - providerStartedMs);
       providerStartedMs = null;
+      state.runnerState = QA_RUNNER_STATES.PROVIDER_FINISHED;
+      state.providerCallStarted = false;
+      state.realProviderGate = 'CLOSED';
+      state.lastKnownStage = 'PROVIDER_CALL_FINISHED';
       return update({
         ...diagnosticPatch(details),
         ...(elapsedMs === null ? {} : { elapsedMs }),
@@ -300,14 +380,27 @@ const createInsightQaResultWriter = ({
       return update({ cacheCheckPerformed: Boolean(performed), cacheHit: Boolean(hit) });
     },
     async recordInsightDiagnostics(diagnostics = {}) {
+      const safeDiagnostics = insightDiagnosticsPatch(diagnostics);
+      if (safeDiagnostics.validationStage) state.lastKnownStage = safeDiagnostics.validationStage;
       return update(insightDiagnosticsPatch(diagnostics));
     },
     async finish(patch = {}) {
+      state.runnerState = QA_RUNNER_STATES.FINISHED;
+      state.providerCallStarted = false;
+      state.realProviderGate = 'CLOSED';
+      if (!state.lastKnownStage || state.lastKnownStage === 'PROVIDER_CALL_FINISHED') state.lastKnownStage = 'FINISHED';
       return update({ ...patch, finishedAt: patch.finishedAt || now() });
+    },
+    async markInterrupted({ stage = 'INTERRUPTED' } = {}) {
+      state.runnerState = QA_RUNNER_STATES.INTERRUPTED;
+      state.realProviderGate = 'CLOSED';
+      state.lastKnownStage = safeCode(stage) || 'INTERRUPTED';
+      return update({ providerCallStarted: state.providerCallStarted });
     },
     async clearProviderCall() {
       state.providerCallCount = Math.max(0, state.providerCallCount - 1);
       providerStartedMs = null;
+      state.providerCallStarted = false;
       return update({
         providerCallCount: state.providerCallCount,
         providerCallStartedAt: null,
@@ -356,6 +449,10 @@ async function runInsightCacheVerification({
   onInsightDiagnostics,
 } = {}) {
   if (typeof resolveInsight !== 'function') throw new TypeError('resolveInsight must be a function.');
+  if (resultWriter && typeof resultWriter.prepareProviderCallGate === 'function') {
+    const gate = await resultWriter.prepareProviderCallGate();
+    if (!gate?.ready) throw createQaError('REAL_PROVIDER_GATE_BLOCKED', 'Real provider call blocked because the QA result consumer is not ready.');
+  }
   const insightDiagnosticsHandler = typeof onInsightDiagnostics === 'function'
     ? onInsightDiagnostics
     : resultWriter && typeof resultWriter.recordInsightDiagnostics === 'function'
@@ -432,7 +529,9 @@ async function runInsightCacheVerification({
 
 module.exports = {
   QA_ARTIFACT_SCHEMA_VERSION,
+  QA_RUNNER_STATES,
   createInsightQaResultWriter,
+  createQaError,
   diagnosticPatch,
   runInsightCacheVerification,
 };
