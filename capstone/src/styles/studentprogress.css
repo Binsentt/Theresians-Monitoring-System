@@ -251,6 +251,26 @@
   font-size: 0.95rem;
 }
 
+.student-progress-table th:nth-child(1),
+.student-progress-table td:nth-child(1) { min-width: 56px; white-space: nowrap; }
+.student-progress-table th:nth-child(2),
+.student-progress-table td:nth-child(2) { min-width: 180px; }
+.student-progress-table th:nth-child(3),
+.student-progress-table td:nth-child(3),
+.student-progress-table th:nth-child(4),
+.student-progress-table td:nth-child(4),
+.student-progress-table th:nth-child(5),
+.student-progress-table td:nth-child(5),
+.student-progress-table th:nth-child(7),
+.student-progress-table td:nth-child(7),
+.student-progress-table th:nth-child(8),
+.student-progress-table td:nth-child(8),
+.student-progress-table th:nth-child(9),
+.student-progress-table td:nth-child(9) { white-space: nowrap; min-width: 96px; }
+.student-progress-table th:nth-child(3), .student-progress-table td:nth-child(3) { min-width: 128px; }
+.student-progress-table th:nth-child(6), .student-progress-table td:nth-child(6) { min-width: 220px; }
+.student-progress-table th:nth-child(10), .student-progress-table td:nth-child(10) { min-width: 140px; white-space: nowrap; }
+
 .student-progress-table th,
 .student-progress-table td {
   padding: var(--spacing-md, 16px) var(--spacing-sm, 12px);

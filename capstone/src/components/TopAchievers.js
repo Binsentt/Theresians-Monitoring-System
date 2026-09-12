@@ -39,7 +39,11 @@ export default function TopAchievers() {
     return <div className="ta-error">{error}</div>;
   }
 
-  const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
+  const formatPercent = (value) => {
+    if (value === null || value === undefined || value === '') return 'N/A';
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${numeric.toFixed(1)}%` : 'N/A';
+  };
   const formatPlaytime = (seconds) => {
     const totalSeconds = Number(seconds || 0);
     if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return 'N/A';

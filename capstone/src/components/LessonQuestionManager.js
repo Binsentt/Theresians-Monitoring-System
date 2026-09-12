@@ -17,6 +17,7 @@ import {
   getQuestionFolderStructure,
   getQuestionFolderView,
   getQuestionFolderPath,
+  getGenerationStatusView,
   isSupportedLearningUpload,
   isValidDifficulty,
   isValidGradeLevel,
@@ -46,6 +47,7 @@ const LESSON_GENERATION_IDEMPOTENCY_STORAGE_PREFIX = 'theresians.lesson-generati
 const AI_PAUSED_MESSAGE = 'AI generation is temporarily paused. Recorded data and available questions remain accessible.';
 const GENERATION_POLL_INTERVAL_MS = 1500;
 const GENERATION_POLL_LIMIT = 120;
+const GENERATION_READY_ACK_PREFIX = 'theresians.lesson-generation-ready.';
 
 const fetchLessonManagerApi = (url, options = {}) => fetch(url, {
   ...options,
@@ -162,6 +164,10 @@ function normalizeManagedLearningFile(file = {}) {
 
 function getQuestionSetStatus(row) {
   const lifecycle = row?.lifecycle || {};
+  const generationStatus = String(row?.generation_status || '').trim().toLowerCase();
+  if (['queued', 'extracting', 'generating', 'validating', 'saving'].includes(generationStatus)) return 'Generating';
+  if (generationStatus === 'failed') return 'Generation Failed';
+  if (generationStatus === 'ready_for_review') return 'Ready for Review';
   return formatQuestionSetStatus(lifecycle.label || row?.status || (row?.published ? 'Active in Game' : 'Pending'));
 }
 
@@ -329,7 +335,19 @@ export default function LessonQuestionManager() {
       if (!filesRes.ok) throw new Error('Failed to load files');
       if (!trashFilesRes.ok) throw new Error('Failed to load trashed files');
       if (!storageRes.ok) throw new Error('Failed to load storage usage');
-      setFiles((await filesRes.json()).map(normalizeManagedLearningFile));
+      const nextFiles = (await filesRes.json()).map(normalizeManagedLearningFile);
+      setFiles(nextFiles);
+      const newlyReady = nextFiles.find((file) => {
+        if (file.generation_status !== 'ready_for_review' || !file.generated_at) return false;
+        const key = `${GENERATION_READY_ACK_PREFIX}${file.id}:${file.generated_at}`;
+        return !window.sessionStorage?.getItem(key);
+      });
+      if (newlyReady) {
+        const key = `${GENERATION_READY_ACK_PREFIX}${newlyReady.id}:${newlyReady.generated_at}`;
+        window.sessionStorage?.setItem(key, 'acknowledged');
+        const count = Number(newlyReady.question_count ?? newlyReady.generation_completed_count);
+        showNotification(`Question generation complete. ${Number.isFinite(count) ? count : 'The'} question${count === 1 ? '' : 's'} ${count === 1 ? 'is' : 'are'} ready for review.`);
+      }
       setTrashFiles((await trashFilesRes.json()).map(normalizeManagedLearningFile));
       setStorageSummary(await storageRes.json());
     } catch (error) {
@@ -425,6 +443,7 @@ export default function LessonQuestionManager() {
   ])), [filters.search, folderView.files]);
   const paginatedFiles = paginateTableRows(displayedFiles, page, pageSize);
   const previewFile = questionPreviewDetails || questionPreviewFile;
+  const previewGenerationStatus = getGenerationStatusView(previewFile || {});
   const previewPublicationEligibility = getPublicationEligibility(previewFile || {});
   const previewReviewEligibility = getReviewEligibility(previewFile || {});
   const previewApprovalRequired = previewFile?.approval_status === 'review_required';
@@ -1268,7 +1287,11 @@ export default function LessonQuestionManager() {
       key: 'question_count',
       header: 'Question Count',
       className: 'drive-count-column',
-      render: (value, row) => Number.isInteger(Number(value)) ? Number(value) : (row.file_type === 'lesson' ? row.requested_question_count || '-' : '-'),
+      render: (value, row) => {
+        const generation = getGenerationStatusView(row);
+        if (generation.inProgress && generation.progressLabel) return `— (${generation.progressLabel})`;
+        return Number.isInteger(Number(value)) ? Number(value) : (row.file_type === 'lesson' ? row.requested_question_count || '-' : '-');
+      },
     },
     {
       key: 'status',
@@ -1307,9 +1330,10 @@ export default function LessonQuestionManager() {
         const fixedQuestionPublicationBlockReason = getFixedQuestionPublicationBlockReason(row);
         const publicationEligibility = getPublicationEligibility(row);
         const fixedQuestionPublicationBlocked = row.file_type === 'fixed_questions' && !publicationEligibility.eligible;
+        const generationStatus = getGenerationStatusView(row);
         const pushDisabled = isActiveQuestionSet
-          || row.generation_status === 'generating'
-          || row.generation_status === 'failed'
+          || generationStatus.inProgress
+          || generationStatus.failed
           || row.validation_summary?.is_valid === false
           || !publicationEligibility.eligible;
         return (
@@ -1875,6 +1899,19 @@ export default function LessonQuestionManager() {
                     <div className="generated-questions-list">
                     {previewQuestionsLoading ? (
                       <p className="empty-text">Loading questions...</p>
+                    ) : previewGenerationStatus.inProgress ? (
+                      <section className="generation-status-view" role="status" aria-live="polite">
+                        <strong>{previewGenerationStatus.label}...</strong>
+                        {previewGenerationStatus.progressLabel && <p className="question-review-metadata">{previewGenerationStatus.progressLabel}</p>}
+                        <p className="question-review-metadata">Current stage: {previewGenerationStatus.stage || 'queued'}</p>
+                        <p className="empty-text">Please wait. Questions will become available for review when generation finishes.</p>
+                      </section>
+                    ) : previewGenerationStatus.failed ? (
+                      <section className="generation-status-view" role="alert">
+                        <strong>Question generation failed</strong>
+                        <p className="manager-inline-error">{previewFile.generation_error_message || previewFile.generation_error_code || 'The question set could not be generated.'}</p>
+                        <button type="button" className="btn btn-secondary" onClick={() => { closeQuestionPreview(); setSelectedLessonSourceId(String(previewFile.source_learning_file_id || previewFile.id || '')); setShowUploadForm(true); }}>Retry</button>
+                      </section>
                     ) : previewQuestions.length === 0 ? (
                       <>
                         {previewValidation?.is_valid === false && <p className="manager-inline-error" role="alert">Needs Correction — review the validation details before this set can be pushed to the game.</p>}

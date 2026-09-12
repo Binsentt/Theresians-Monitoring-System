@@ -101,7 +101,7 @@ const parseDurationSeconds = (value) => {
     + (minutes ? Number(minutes[1]) * 60 : 0)
     + (seconds ? Number(seconds[1]) : 0);
 
-  return total > 0 ? total : null;
+  return total >= 0 && (hours || minutes || seconds || text === '0') ? total : null;
 };
 
 export function formatActivityLogDuration(record) {
@@ -111,7 +111,7 @@ export function formatActivityLogDuration(record) {
   const seconds = parseDurationSeconds(
     record?.duration_seconds ?? record?.total_play_time ?? record?.duration
   );
-  if (seconds === null) return '-';
+  if (seconds === null) return 'N/A';
   if (seconds < 60) return `${seconds}s`;
 
   const hours = Math.floor(seconds / 3600);

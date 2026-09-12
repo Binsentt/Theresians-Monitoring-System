@@ -376,6 +376,45 @@ test('canonical game quest events use the active lease, canonical profile data, 
   assert.equal(forgedIdentity.status, 400);
 });
 
+test('canonical completed quest events persist one weighted milestone and true duration fields', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const credential = 'w'.repeat(64);
+  let milestoneParams = null;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('select ps.id') && sql.includes('from public.playtime_sessions ps')) {
+      return resultRows([{
+        id: 78, student_id: 45,
+        session_credential_hash: crypto.createHash('sha256').update(credential).digest('hex'),
+        learning_cycle_version: 2, current_learning_cycle_version: 2,
+        student_name: 'Milestone Student', grade_level: 'Grade 2', section: 'A',
+      }]);
+    }
+    if (sql.startsWith('insert into public.activity_logs')) return resultRows([{ id: 910 }]);
+    if (sql.startsWith('insert into public.student_quest_milestones')) {
+      milestoneParams = params;
+      return emptyResult;
+    }
+    return emptyResult;
+  });
+  const response = await requestJson(baseUrl, '/api/game/activity', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 78, session_credential: credential, learning_cycle_version: 2,
+      event_type: 'task_completed', event_key: 'tutorial:complete:v1', task_id: 'tutorial',
+      started_at: '2026-09-10T00:00:00.000Z', completed_at: '2026-09-10T00:01:12.000Z',
+    }),
+  });
+  assert.equal(response.status, 201);
+  assert.equal(milestoneParams[1], 'tutorial');
+  assert.equal(milestoneParams[3], 1);
+  assert.equal(milestoneParams[4], 2);
+});
+
 test('game leaderboard requires a current lease and exposes only ranked aggregate display data', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;

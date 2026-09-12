@@ -13,6 +13,7 @@ dns.setDefaultResultOrder('ipv4first');
 
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const pool = require('./database/db');
+const { classifyMilestoneWeight } = require('./questMilestones.utils');
 const {
   normalizeParentCode,
   normalizeNewStudentCode,
@@ -401,10 +402,29 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS current_scene TEXT');
     await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS current_map TEXT');
     await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS actor_account_id INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS activity_event_id TEXT');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS canonical_activity_id TEXT');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS map_id TEXT');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS session_id TEXT');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS duration_seconds INTEGER');
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS activity_logs_student_activity_event_id_unique ON public.activity_logs(student_id, activity_event_id) WHERE activity_event_id IS NOT NULL');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_timestamp ON public.activity_logs(activity_timestamp DESC)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_student_name ON public.activity_logs(student_name)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_grade_section ON public.activity_logs(grade_level, section)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_actor_account_id ON public.activity_logs(actor_account_id)');
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.student_quest_milestones (
+      id BIGSERIAL PRIMARY KEY,
+      student_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+      milestone_id TEXT NOT NULL,
+      map_id TEXT,
+      weight INTEGER NOT NULL DEFAULT 1 CHECK (weight > 0),
+      learning_cycle_version INTEGER NOT NULL DEFAULT 0,
+      completed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (student_id, milestone_id, learning_cycle_version)
+    );`);
+    await pool.query('CREATE INDEX IF NOT EXISTS student_quest_milestones_student_cycle_idx ON public.student_quest_milestones(student_id, learning_cycle_version)');
 
     await pool.query(`CREATE TABLE IF NOT EXISTS public.playtime_sessions (
       id SERIAL PRIMARY KEY,
@@ -2102,12 +2122,14 @@ const appendParentScopeFilter = ({ parentId, params, studentColumn, relationship
 };
 
 const normalizeTopAchieverRow = (row, index = 0) => {
-  const completion = Number(row.completion_percentage ?? row.progress_percentage ?? 0);
-  const accuracy = Number(row.accuracy ?? row.accuracy_rate ?? 0);
+  const completion = row.completion_percentage ?? row.progress_percentage;
+  const accuracy = row.accuracy ?? row.accuracy_rate;
   const correctAnswers = Number(row.total_correct_answers ?? row.correct_answers ?? 0);
   const totalQuestions = Number(row.total_questions_answered ?? row.total_questions ?? 0);
   const questsCompleted = Number(row.quests_completed ?? row.total_quests_completed ?? 0);
   const totalPlayTime = Number(row.total_play_time ?? row.duration_seconds ?? 0);
+  const normalizedCompletion = completion === null || completion === undefined || completion === '' ? null : Number(completion);
+  const normalizedAccuracy = accuracy === null || accuracy === undefined || accuracy === '' ? null : Number(accuracy);
 
   return {
     ...row,
@@ -2117,10 +2139,10 @@ const normalizeTopAchieverRow = (row, index = 0) => {
     grade_level: row.grade_level || row.grade || null,
     grade: row.grade || row.grade_level || null,
     section: row.section || null,
-    completion_percentage: Number.isFinite(completion) ? completion : 0,
-    progress_percentage: Number.isFinite(completion) ? completion : 0,
-    accuracy: Number.isFinite(accuracy) ? accuracy : 0,
-    accuracy_rate: Number.isFinite(accuracy) ? accuracy : 0,
+    completion_percentage: Number.isFinite(normalizedCompletion) ? normalizedCompletion : null,
+    progress_percentage: Number.isFinite(normalizedCompletion) ? normalizedCompletion : null,
+    accuracy: Number.isFinite(normalizedAccuracy) ? normalizedAccuracy : null,
+    accuracy_rate: Number.isFinite(normalizedAccuracy) ? normalizedAccuracy : null,
     total_correct_answers: Number.isFinite(correctAnswers) ? correctAnswers : 0,
     correct_answers: Number.isFinite(correctAnswers) ? correctAnswers : 0,
     total_questions_answered: Number.isFinite(totalQuestions) ? totalQuestions : 0,
@@ -2577,7 +2599,7 @@ const processLessonGenerationJob = async ({ learningFile, sourceFilePath, source
     }
     await pool.query(
       `UPDATE public.learning_files
-       SET generation_stage = 'generating', generation_completed_count = 0
+       SET generation_status = 'extracting', generation_stage = 'extracting', generation_completed_count = 0
        WHERE id = $1`,
       [learningFile.id]
     );
@@ -2589,14 +2611,20 @@ const processLessonGenerationJob = async ({ learningFile, sourceFilePath, source
     }, title, gradeLevel, difficulty, questionCount, async ({ completed }) => {
       await pool.query(
         `UPDATE public.learning_files
-         SET generation_stage = 'generating', generation_completed_count = $2
+         SET generation_status = 'generating', generation_stage = 'generating', generation_completed_count = $2
          WHERE id = $1`,
         [learningFile.id, completed]
       );
     });
     await pool.query(
       `UPDATE public.learning_files
-       SET generation_stage = 'saving', generation_completed_count = $2
+       SET generation_status = 'validating', generation_stage = 'validating', generation_completed_count = $2
+       WHERE id = $1`,
+      [learningFile.id, questions.length]
+    );
+    await pool.query(
+      `UPDATE public.learning_files
+       SET generation_status = 'saving', generation_stage = 'saving', generation_completed_count = $2
        WHERE id = $1`,
       [learningFile.id, questions.length]
     );
@@ -6246,7 +6274,8 @@ app.delete('/api/learning-files/trash', requireLessonQuestionManagerAccess, asyn
   try {
     await client.query('BEGIN');
     const filesResult = await client.query(
-      `SELECT id, title, file_name, file_url, published, publish_status, deleted_at
+      `SELECT id, title, file_name, file_url, published, publish_status, deleted_at,
+              source_learning_file_id, generation_status
        FROM public.learning_files
        WHERE id = ANY($1)
          AND deleted_at IS NOT NULL
@@ -6285,14 +6314,68 @@ app.delete('/api/learning-files/trash', requireLessonQuestionManagerAccess, asyn
       throw error;
     }
 
-    await client.query('DELETE FROM public.questions WHERE learning_file_id = ANY($1)', [fileIds]);
-    const deletedResult = await client.query(
-      `DELETE FROM public.learning_files
-       WHERE id = ANY($1)
-         AND deleted_at IS NOT NULL
-       RETURNING id, file_url`,
+    const selectedSet = new Set(fileIds);
+    const liveDependencyResult = await client.query(
+      `SELECT id, source_learning_file_id
+       FROM public.learning_files
+       WHERE source_learning_file_id = ANY($1)
+         AND deleted_at IS NULL`,
       [fileIds]
     );
+    if (liveDependencyResult.rows.length > 0) {
+      const error = createLifecycleHttpError('A reusable source is still referenced by a live question set and cannot be purged.', 409);
+      error.code = 'REUSABLE_SOURCE_STILL_REFERENCED';
+      error.blockedFileIds = liveDependencyResult.rows.map((row) => row.source_learning_file_id);
+      throw error;
+    }
+
+    const unselectedTrashedChildrenResult = await client.query(
+      `SELECT id, source_learning_file_id
+       FROM public.learning_files
+       WHERE source_learning_file_id = ANY($1)
+         AND deleted_at IS NOT NULL`,
+      [fileIds]
+    );
+    const unselectedTrashedChildren = unselectedTrashedChildrenResult.rows.filter((row) => !selectedSet.has(Number(row.id)));
+    if (unselectedTrashedChildren.length > 0) {
+      const error = createLifecycleHttpError('A trashed generated set must be selected with its reusable source before permanent deletion.', 409);
+      error.code = 'TRASHED_DERIVATIVE_NOT_SELECTED';
+      error.blockedFileIds = unselectedTrashedChildren.map((row) => row.id);
+      throw error;
+    }
+
+    const inFlightIds = files.filter((file) => ['queued', 'extracting', 'generating', 'validating', 'saving'].includes(String(file.generation_status || '').toLowerCase())).map((file) => file.id);
+    if (inFlightIds.length > 0) {
+      await client.query(
+        `UPDATE public.learning_files
+         SET generation_status = 'failed', generation_stage = 'failed',
+             generation_failed_at = CURRENT_TIMESTAMP, generation_error_code = 'TRASH_PURGED'
+         WHERE id = ANY($1)`,
+        [inFlightIds]
+      );
+      inFlightIds.forEach((id) => activeLessonGenerationJobs.delete(Number(id)));
+    }
+
+    await client.query('DELETE FROM public.questions WHERE learning_file_id = ANY($1)', [fileIds]);
+    const byId = new Map(files.map((file) => [Number(file.id), file]));
+    const depth = (id, seen = new Set()) => {
+      if (seen.has(id)) return 0;
+      seen.add(id);
+      const parent = byId.get(id)?.source_learning_file_id;
+      return parent && selectedSet.has(Number(parent)) ? 1 + depth(Number(parent), seen) : 0;
+    };
+    const orderedFileIds = [...fileIds].sort((left, right) => depth(right) - depth(left));
+    const deletedRows = [];
+    for (const id of orderedFileIds) {
+      const deleted = await client.query(
+        `DELETE FROM public.learning_files
+         WHERE id = $1 AND deleted_at IS NOT NULL
+         RETURNING id, file_url`,
+        [id]
+      );
+      deletedRows.push(...deleted.rows);
+    }
+    const deletedResult = { rows: deletedRows };
     if (deletedResult.rows.length !== fileIds.length) {
       throw createLifecycleHttpError('One or more selected files could not be permanently deleted.', 409);
     }
@@ -7411,7 +7494,8 @@ app.post('/api/game/activity', async (req, res) => {
     const sessionCredential = String(body.session_credential || '').trim();
     const learningCycleVersion = Number(body.learning_cycle_version);
     const eventType = String(body.event_type || '').trim().toLowerCase();
-    const eventKey = normalizeCanonicalGameActivityKey(body.event_key);
+    const activityEventId = normalizeCanonicalGameActivityKey(body.activity_event_id);
+    const eventKey = normalizeCanonicalGameActivityKey(body.event_key || body.activity_event_id);
     const taskId = normalizeCanonicalGameTaskId(body.task_id);
     if (!sessionId || Number.isNaN(sessionId) || !sessionCredential || !Number.isInteger(learningCycleVersion)) {
       return res.status(400).json({ error: 'A valid current playtime lease and learning cycle are required.' });
@@ -7456,11 +7540,22 @@ app.post('/api/game/activity', async (req, res) => {
     }
 
     const displayLabel = CANONICAL_GAME_ACTIVITY_TYPES[eventType];
+    const startedAt = body.started_at ? new Date(body.started_at) : null;
+    const completedAt = body.completed_at ? new Date(body.completed_at) : null;
+    const suppliedDuration = Number(body.duration_seconds);
+    const durationSeconds = Number.isFinite(suppliedDuration) && suppliedDuration >= 0
+      ? Math.floor(suppliedDuration)
+      : (startedAt && completedAt && !Number.isNaN(startedAt.getTime()) && !Number.isNaN(completedAt.getTime())
+        ? Math.max(0, Math.floor((completedAt.getTime() - startedAt.getTime()) / 1000))
+        : null);
     const insertResult = await pool.query(
       `INSERT INTO public.activity_logs (
          student_id, student_name, grade_level, section, activity_description,
-         current_quest, role, status, activity_timestamp, event_key
-       ) VALUES ($1, $2, $3, $4, $5, $6, 'student', 'Active', CURRENT_TIMESTAMP, $7)
+         current_quest, role, status, activity_timestamp, event_key,
+         activity_event_id, canonical_activity_id, map_id, session_id,
+         started_at, completed_at, duration_seconds
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'student', 'Active', CURRENT_TIMESTAMP, $7,
+                 $8, $9, $10, $11, $12, $13, $14)
        ON CONFLICT (student_id, event_key) WHERE event_key IS NOT NULL DO NOTHING
        RETURNING id`,
       [
@@ -7471,8 +7566,25 @@ app.post('/api/game/activity', async (req, res) => {
         `${displayLabel} — ${taskId}`,
         taskId,
         eventKey,
+        activityEventId,
+        taskId,
+        body.map_id ? String(body.map_id).trim() : null,
+        body.session_id ? String(body.session_id).trim() : null,
+        startedAt && !Number.isNaN(startedAt.getTime()) ? startedAt.toISOString() : null,
+        completedAt && !Number.isNaN(completedAt.getTime()) ? completedAt.toISOString() : null,
+        durationSeconds,
       ]
     );
+
+    if (insertResult.rows.length && (eventType === 'task_completed' || eventType === 'quest_completed')) {
+      await pool.query(
+        `INSERT INTO public.student_quest_milestones
+           (student_id, milestone_id, map_id, weight, learning_cycle_version)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (student_id, milestone_id, learning_cycle_version) DO NOTHING`,
+        [session.student_id, taskId.toLowerCase(), body.map_id ? String(body.map_id).trim() : null, classifyMilestoneWeight(taskId), learningCycleVersion]
+      );
+    }
 
     return res.status(insertResult.rows.length ? 201 : 200).json({
       success: true,
@@ -7533,28 +7645,37 @@ app.post('/api/game/leaderboard', async (req, res) => {
     const result = await pool.query(
       `SELECT student_id,
               progress_percentage,
-              accuracy_rate,
+              CASE WHEN COALESCE(total_questions, 0) > 0 THEN accuracy_rate ELSE NULL END AS accuracy_rate,
               correct_answers,
               total_questions,
               total_quests_completed AS quests_completed
        FROM (
          SELECT p.student_id,
                 p.progress_percentage,
-                p.accuracy_rate,
+                CASE WHEN COALESCE(p.total_questions, 0) > 0 THEN p.accuracy_rate ELSE NULL END AS accuracy_rate,
                 p.correct_answers,
                 p.total_questions,
-                COALESCE(p.total_quests_completed, 0) AS total_quests_completed,
+                CASE WHEN milestones.has_milestones THEN milestones.completed_count
+                     ELSE COALESCE(p.total_quests_completed, 0) END AS total_quests_completed,
                 ROW_NUMBER() OVER (
                   PARTITION BY p.student_id
                   ORDER BY p.progress_percentage DESC NULLS LAST,
-                           p.accuracy_rate DESC NULLS LAST,
+                           CASE WHEN COALESCE(p.total_questions, 0) > 0 THEN p.accuracy_rate ELSE NULL END DESC NULLS LAST,
                            p.correct_answers DESC NULLS LAST,
-                           COALESCE(p.total_quests_completed, 0) DESC,
+                           CASE WHEN milestones.has_milestones THEN milestones.completed_count
+                                ELSE COALESCE(p.total_quests_completed, 0) END DESC,
                            p.updated_at DESC NULLS LAST,
                            p.id DESC
                 ) AS student_rank
          FROM public.student_game_progress p
          JOIN public.accounts a ON a.id = p.student_id
+         LEFT JOIN LATERAL (
+           SELECT COUNT(DISTINCT sqm.milestone_id)::INTEGER AS completed_count,
+                  COUNT(sqm.milestone_id) > 0 AS has_milestones
+           FROM public.student_quest_milestones sqm
+           WHERE sqm.student_id = p.student_id
+             AND sqm.learning_cycle_version = COALESCE(a.current_learning_cycle_version, 0)
+         ) milestones ON true
          WHERE COALESCE(a.is_archived, false) = false
            AND a.progress_archived_at IS NULL
            AND (
@@ -8219,26 +8340,36 @@ const handleTopAchieversRequest = async (req, res) => {
           p.correct_answers AS total_correct_answers,
           p.total_questions,
           p.total_questions AS total_questions_answered,
-          p.accuracy_rate,
-          p.accuracy_rate AS accuracy,
+          CASE WHEN COALESCE(p.total_questions, 0) > 0 THEN p.accuracy_rate ELSE NULL END AS accuracy_rate,
+          CASE WHEN COALESCE(p.total_questions, 0) > 0 THEN p.accuracy_rate ELSE NULL END AS accuracy,
           p.progress_percentage,
           p.progress_percentage AS completion_percentage,
-          COALESCE(p.total_quests_completed, 0) AS quests_completed,
-          COALESCE(p.total_quests_completed, 0) AS total_quests_completed,
+          CASE WHEN milestones.has_milestones THEN milestones.completed_count
+               ELSE COALESCE(p.total_quests_completed, 0) END AS quests_completed,
+          CASE WHEN milestones.has_milestones THEN milestones.completed_count
+               ELSE COALESCE(p.total_quests_completed, 0) END AS total_quests_completed,
           COALESCE(p.total_play_time, latest_activity.total_play_time, 0) AS total_play_time,
           p.last_played,
           ROW_NUMBER() OVER (
             PARTITION BY p.student_id
             ORDER BY
               p.progress_percentage DESC NULLS LAST,
-              p.accuracy_rate DESC NULLS LAST,
+              CASE WHEN COALESCE(p.total_questions, 0) > 0 THEN p.accuracy_rate ELSE NULL END DESC NULLS LAST,
               p.correct_answers DESC NULLS LAST,
-              COALESCE(p.total_quests_completed, 0) DESC,
+              CASE WHEN milestones.has_milestones THEN milestones.completed_count
+                   ELSE COALESCE(p.total_quests_completed, 0) END DESC,
               p.updated_at DESC NULLS LAST,
               p.id DESC
           ) AS student_rank
         FROM public.student_game_progress p
         LEFT JOIN public.accounts a ON a.id = p.student_id
+        LEFT JOIN LATERAL (
+          SELECT COUNT(DISTINCT sqm.milestone_id)::INTEGER AS completed_count,
+                 COUNT(sqm.milestone_id) > 0 AS has_milestones
+          FROM public.student_quest_milestones sqm
+          WHERE sqm.student_id = p.student_id
+            AND sqm.learning_cycle_version = COALESCE(a.current_learning_cycle_version, 0)
+        ) milestones ON true
         LEFT JOIN LATERAL (
           SELECT al.total_play_time
           FROM public.activity_logs al
@@ -8319,7 +8450,13 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
         al.section,
         al.current_quest,
         al.save_status,
-        al.total_play_time AS duration_seconds,
+        al.duration_seconds,
+        al.activity_event_id,
+        al.canonical_activity_id,
+        al.map_id,
+        al.session_id,
+        al.started_at,
+        al.completed_at,
         al.total_play_time,
         al.last_played,
         al.quest_progress,

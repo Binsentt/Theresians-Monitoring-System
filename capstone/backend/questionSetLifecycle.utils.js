@@ -1,5 +1,9 @@
 const GENERATION_STATUSES = new Set([
+  'queued',
+  'extracting',
   'generating',
+  'validating',
+  'saving',
   'ready_for_review',
   'failed',
   'not_applicable',
@@ -72,7 +76,7 @@ function deriveQuestionSetLifecycle(row = {}) {
     };
   }
 
-  if (generationStatus === 'generating') {
+  if (['queued', 'extracting', 'generating', 'validating', 'saving'].includes(generationStatus)) {
     return {
       code: 'generating',
       label: 'Generating',

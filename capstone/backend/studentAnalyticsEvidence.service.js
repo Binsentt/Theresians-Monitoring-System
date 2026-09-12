@@ -25,8 +25,7 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
   const rows = Array.isArray(progressRows) ? progressRows : [];
   if (rows.length === 0) return [];
   const studentIds = [...new Set(rows.map((row) => Number(row.student_id)))];
-  const [results, playtime] = await Promise.all([
-    queryClient.query(
+  const results = await queryClient.query(
       `SELECT gr.resolved_student_id, gr.id, gr.math_topic, gr.difficulty, gr.current_map,
               gr.percentage, gr.score, gr.total_items, gr.played_at, gr.question_set_id
        FROM public.game_results gr
@@ -36,8 +35,8 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
               OR gr.played_at >= student.current_learning_cycle_started_at)
        ORDER BY gr.played_at ASC NULLS LAST, gr.id ASC`,
       [studentIds]
-    ),
-    queryClient.query(
+    );
+  const playtime = await queryClient.query(
       `SELECT ps.student_id, ps.total_playtime_minutes, ps.status, ps.date_played, ps.end_time
        FROM public.playtime_sessions ps
        JOIN public.accounts student ON student.id = ps.student_id
@@ -47,8 +46,21 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
               OR COALESCE(ps.end_time, ps.start_time) >= student.current_learning_cycle_started_at)
        ORDER BY ps.date_played DESC, ps.id DESC`,
       [studentIds]
-    ),
-  ]);
+    );
+  const milestones = await queryClient.query(
+      `SELECT student_id, milestone_id, map_id, weight, learning_cycle_version, completed_at
+       FROM public.student_quest_milestones
+       WHERE student_id = ANY($1::INTEGER[])
+       ORDER BY completed_at ASC, id ASC`,
+      [studentIds]
+    );
+  const cycleByStudent = new Map(rows.map((row) => [
+    Number(row.student_id),
+    Number(row.current_learning_cycle_version ?? row.learning_cycle_version ?? 0),
+  ]));
+  const currentCycleMilestones = (milestones?.rows || []).filter((row) => (
+    Number(row.learning_cycle_version ?? 0) === Number(cycleByStudent.get(Number(row.student_id)) ?? 0)
+  ));
   const groupByStudent = (records, key) => {
     const grouped = new Map();
     records.forEach((row) => {
@@ -60,11 +72,13 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
   };
   const resultsByStudent = groupByStudent(results.rows, 'resolved_student_id');
   const playtimeByStudent = groupByStudent(playtime.rows, 'student_id');
+  const milestonesByStudent = groupByStudent(currentCycleMilestones, 'student_id');
   return rows.map((progress) => {
     const quizSessions = resultsByStudent.get(Number(progress.student_id)) || [];
     const playtimeSessions = playtimeByStudent.get(Number(progress.student_id)) || [];
-    const metrics = buildStudentAnalyticsMetrics({ progress, quizSessions, playtimeSessions });
-    return { progress, quizSessions, playtimeSessions, metrics };
+    const completedMilestones = milestonesByStudent.get(Number(progress.student_id)) || [];
+    const metrics = buildStudentAnalyticsMetrics({ progress, quizSessions, playtimeSessions, completedMilestones });
+    return { progress, quizSessions, playtimeSessions, completedMilestones, metrics };
   });
 }
 

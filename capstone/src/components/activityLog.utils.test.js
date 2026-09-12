@@ -96,6 +96,8 @@ describe('normalizeActivityLogPayload', () => {
     expect(formatActivityLogDuration({ duration_seconds: 125 })).toBe('2m 5s');
     expect(formatActivityLogDuration({ total_play_time: 3600 })).toBe('1h 0m');
     expect(formatActivityLogDuration({ duration: '7m 30s' })).toBe('7m 30s');
+    expect(formatActivityLogDuration({})).toBe('N/A');
+    expect(formatActivityLogDuration({ duration_seconds: 0 })).toBe('0s');
   });
 
   test('renders stored canonical quests with only meaningful stored difficulty', () => {

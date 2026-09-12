@@ -281,7 +281,7 @@ router.post('/activity-logs', async (req, res) => {
     const section = req.body?.section || null;
     const current_quest = req.body?.current_quest || req.body?.quest || null;
     const save_status = req.body?.save_status || 'pending';
-    const total_play_time = req.body?.total_play_time ?? req.body?.duration_seconds ?? req.body?.duration ?? 0;
+    const total_play_time = req.body?.total_play_time ?? req.body?.duration_seconds ?? req.body?.duration ?? null;
     const quest_progress = req.body?.quest_progress ?? req.body?.completion_percentage ?? 0;
     const role = req.body?.role || 'Student';
     const status = req.body?.status || 'Online';
@@ -289,6 +289,14 @@ router.post('/activity-logs', async (req, res) => {
     const login_time = req.body?.login_time || req.body?.timestamp || req.body?.played_at || null;
     const logout_time = req.body?.logout_time || null;
     const activity_timestamp = req.body?.activity_timestamp || req.body?.timestamp || req.body?.played_at || null;
+    const started_at = req.body?.started_at || login_time || null;
+    const completed_at = req.body?.completed_at || logout_time || null;
+    const suppliedDuration = Number(req.body?.duration_seconds);
+    const duration_seconds = Number.isFinite(suppliedDuration) && suppliedDuration >= 0
+      ? Math.floor(suppliedDuration)
+      : (started_at && completed_at && !Number.isNaN(new Date(started_at).getTime()) && !Number.isNaN(new Date(completed_at).getTime())
+        ? Math.max(0, Math.floor((new Date(completed_at).getTime() - new Date(started_at).getTime()) / 1000))
+        : null);
 
     if (!student_id || !student_name) {
       return res.status(400).json({ error: 'student_id and student_name are required' });
@@ -299,12 +307,16 @@ router.post('/activity-logs', async (req, res) => {
         student_id, student_name, grade_level, section, current_quest,
         save_status, total_play_time, last_played, quest_progress, lesson_progress,
         difficulty_level, role, status, activity_description, current_scene, current_map,
-        login_time, logout_time, session_date, activity_timestamp, created_at
+        login_time, logout_time, session_date, activity_timestamp, created_at,
+        activity_event_id, canonical_activity_id, map_id, session_id,
+        started_at, completed_at, duration_seconds
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()), $9, $9,
         $10, $11, $12, $13, $14, $15,
-        $16, $17, CURRENT_DATE, COALESCE($18, COALESCE($8, NOW())), NOW()
+        $16, $17, CURRENT_DATE, COALESCE($18, COALESCE($8, NOW())), NOW(),
+        $19, $20, $21, $22, $23, $24, $25
       )
+      ON CONFLICT (student_id, activity_event_id) WHERE activity_event_id IS NOT NULL DO NOTHING
       RETURNING *
     `;
 
@@ -326,11 +338,19 @@ router.post('/activity-logs', async (req, res) => {
       req.body?.current_map || req.body?.currentMap || req.body?.map || req.body?.map_name || null,
       login_time || activity_timestamp,
       logout_time,
-      activity_timestamp
+      activity_timestamp,
+      req.body?.activity_event_id || null,
+      req.body?.canonical_activity_id || null,
+      req.body?.map_id || req.body?.current_map || req.body?.currentMap || null,
+      req.body?.session_id ? String(req.body.session_id) : null,
+      started_at,
+      completed_at,
+      duration_seconds
     ]);
 
-    res.status(201).json({
-      message: 'Activity log created successfully',
+    res.status(result.rows.length ? 201 : 200).json({
+      message: result.rows.length ? 'Activity log created successfully' : 'Activity log already recorded',
+      duplicate: result.rows.length === 0,
       data: result.rows[0]
     });
   } catch (error) {

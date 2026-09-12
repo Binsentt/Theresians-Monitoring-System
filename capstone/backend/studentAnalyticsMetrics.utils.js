@@ -1,4 +1,5 @@
 const { resolveCurrentDifficulty } = require('./progressScene.utils');
+const { countUniqueCompletedMilestones } = require('./questMilestones.utils');
 
 const toFiniteNumber = (value) => {
   if (value === null || value === undefined || value === '') return null;
@@ -50,7 +51,7 @@ const emptyDifficultyBreakdown = () => ({
   hard: { correctAnswers: 0, totalQuestions: 0, accuracy: null },
 });
 
-function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playtimeSessions = [] } = {}) {
+function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playtimeSessions = [], completedMilestones = [] } = {}) {
   const validResults = (Array.isArray(quizSessions) ? quizSessions : [])
     .map(normalizeResult)
     .filter(Boolean);
@@ -92,7 +93,9 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
   const accuracy = toPercentage(correctAnswers, totalQuestions);
 
   const totalProgressValue = toFiniteNumber(progress.progress_percentage);
-  const completedQuests = toNonNegativeInteger(progress.total_quests_completed);
+  const milestoneCount = countUniqueCompletedMilestones(completedMilestones);
+  const legacyQuestCount = toNonNegativeInteger(progress.total_quests_completed);
+  const completedQuests = milestoneCount > 0 ? milestoneCount : legacyQuestCount;
   const gameScore = toFiniteNumber(progress.score);
   const currentQuest = normalizeTopic(progress.current_quest) || null;
   const currentDifficulty = resolveCurrentDifficulty(progress);

@@ -16,6 +16,7 @@ import {
   normalizeDifficultyValue,
   normalizeMathTopicForGradeDifficulty,
   getQuestionFolderStructure,
+  getGenerationStatusView,
 } from './lessonQuestionManager.utils';
 import { normalizeCurriculumRegistry } from '../curriculumRegistry';
 
@@ -47,6 +48,16 @@ const registryFixture = {
 };
 
 describe('lesson question manager helpers', () => {
+  test('keeps in-flight generation distinct from validation failure', () => {
+    expect(getGenerationStatusView({ generation_status: 'generating', generation_stage: 'generating', generation_completed_count: 10, requested_question_count: 25 })).toEqual(expect.objectContaining({
+      inProgress: true,
+      label: 'Generating questions',
+      progressLabel: '10 / 25 completed',
+      canApprove: false,
+    }));
+    expect(getGenerationStatusView({ generation_status: 'ready_for_review', generation_stage: 'completed', generation_completed_count: 25, requested_question_count: 25 })).toEqual(expect.objectContaining({ inProgress: false, canApprove: true }));
+    expect(getGenerationStatusView({ generation_status: 'failed', generation_error_code: 'QUESTION_AI_NOT_CONFIGURED' })).toEqual(expect.objectContaining({ inProgress: false, failed: true, canRetry: true }));
+  });
   test('returns configured difficulty values and grade difficulty topics', () => {
     expect(getDifficultyLevels(registryFixture)).toEqual(['Easy', 'Normal', 'Difficult']);
     expect(getMathTopicsForGradeDifficulty('Grade 1', 'Easy', registryFixture)).toEqual([

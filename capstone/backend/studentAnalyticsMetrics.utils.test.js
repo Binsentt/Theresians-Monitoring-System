@@ -129,3 +129,17 @@ test('legacy progress percentage is not presented as graded accuracy', () => {
   assert.equal(metrics.reportedTotalProgress, 75);
   assert.equal(metrics.totalProgressUnavailableReason, 'full_game_milestones_unverified');
 });
+
+test('uses unique canonical milestones for quest count while accuracy stays N/A without graded answers', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    progress: { total_quests_completed: 0 },
+    completedMilestones: [
+      { milestone_id: 'tutorial' },
+      { milestone_id: 'tutorial' },
+      { milestone_id: 'teacher-house' },
+    ],
+    quizSessions: [],
+  });
+  assert.equal(metrics.completedQuests, 2);
+  assert.equal(metrics.accuracy, null);
+});

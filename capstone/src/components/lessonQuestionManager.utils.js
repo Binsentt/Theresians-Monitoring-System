@@ -1,5 +1,30 @@
 import { getRegistryScopeTopics } from '../curriculumRegistry';
 
+const IN_FLIGHT_GENERATION_STAGES = new Set(['queued', 'extracting', 'generating', 'validating', 'saving']);
+
+export const getGenerationStatusView = (file = {}) => {
+  const status = String(file.generation_status || '').trim().toLowerCase();
+  const stage = String(file.generation_stage || status).trim().toLowerCase();
+  const completed = Number(file.generation_completed_count);
+  const requested = Number(file.requested_question_count);
+  const inProgress = IN_FLIGHT_GENERATION_STAGES.has(status) || IN_FLIGHT_GENERATION_STAGES.has(stage);
+  const failed = status === 'failed' || stage === 'failed';
+  const ready = status === 'ready_for_review' || stage === 'completed';
+  const safeCompleted = Number.isFinite(completed) && completed >= 0 ? completed : null;
+  const safeRequested = Number.isFinite(requested) && requested > 0 ? requested : null;
+  return {
+    status,
+    stage,
+    inProgress,
+    failed,
+    ready,
+    canApprove: ready,
+    canRetry: failed,
+    label: inProgress ? 'Generating questions' : failed ? 'Question generation failed' : ready ? 'Ready for Review' : 'Question generation',
+    progressLabel: inProgress && safeCompleted !== null && safeRequested !== null ? `${safeCompleted} / ${safeRequested} completed` : null,
+  };
+};
+
 const normalizeRegistryDimension = (entry) => {
   if (typeof entry === 'string') {
     const value = entry.trim();
