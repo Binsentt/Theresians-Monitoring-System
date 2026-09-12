@@ -118,7 +118,7 @@ export default function AdminManagedChildrenPanel({ parentId, sectionRegistry, a
           <h3>Children ({children.length})</h3>
           <p className="edit-user-helper-text">Manage this Parent’s authoritative child relationships.</p>
         </div>
-        <button type="button" className="sts-add-btn" onClick={() => setShowAdd((value) => !value)}>
+        <button type="button" className="sts-add-btn semantic-action-add" onClick={() => setShowAdd((value) => !value)}>
           {showAdd ? 'Cancel Add Child' : 'Add Child'}
         </button>
       </div>
@@ -134,7 +134,7 @@ export default function AdminManagedChildrenPanel({ parentId, sectionRegistry, a
             authHeaders={authHeaders}
             onValidationStateChange={setDraftValidation}
           />
-          <button type="button" className="update-btn" disabled={busy || draftValidation.pending || !draftValidation.isValid} onClick={addChildren}>Save Children</button>
+          <button type="button" className="update-btn semantic-action-add" disabled={busy || draftValidation.pending || !draftValidation.isValid} onClick={addChildren}>Save Children</button>
         </div>
       )}
       {message && <p className="info-text" role="status">{message}</p>}
@@ -165,7 +165,7 @@ export default function AdminManagedChildrenPanel({ parentId, sectionRegistry, a
                   <td>{child.section || 'Not assigned'}</td>
                   <td className="managed-child-action-cell">
                     <div className="managed-child-action-group">
-                      <button type="button" className="delete-action-btn" data-action="unlink-child" onClick={() => { setPending({ ...child, operation: 'unlink' }); setConfirmation(''); setRemovalReason(''); }}>Remove Child</button>
+                      <button type="button" className="delete-action-btn semantic-action-amber" data-action="unlink-child" onClick={() => { setPending({ ...child, operation: 'unlink' }); setConfirmation(''); setRemovalReason(''); }}>Remove Child</button>
                       <button type="button" className="delete-action-btn" data-action="delete-student-permanently" onClick={() => { setPending({ ...child, operation: 'permanent' }); setConfirmation(''); setRemovalReason(''); }}>Delete Student Permanently</button>
                     </div>
                   </td>

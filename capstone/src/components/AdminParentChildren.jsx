@@ -105,7 +105,7 @@ export default function AdminParentChildren({
           <h4 id="admin-parent-children-title">Children *</h4>
           <p>Create or link at least one Student in the same account transaction.</p>
         </div>
-        <button type="button" className="sts-add-btn" data-action="add-child" onClick={addChild}>Add Another Child</button>
+        <button type="button" className="sts-add-btn semantic-action-add" data-action="add-child" onClick={addChild}>Add Another Child</button>
       </div>
       {formError && <p className="error-text" role="alert">{formError}</p>}
 

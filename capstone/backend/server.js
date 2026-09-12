@@ -124,6 +124,11 @@ const {
   toQuestionSetResponse,
 } = require('./questionSetLifecycle.utils');
 const {
+  buildQuestionCountEligibility,
+  findDuplicateQuestion,
+  isQuestionGenerationActive,
+} = require('./questionReview.utils');
+const {
   buildLearningFileApprovalFingerprint,
   buildPublicationApprovalEligibility,
   isApprovalCurrent,
@@ -2740,7 +2745,11 @@ const getQuestionSetValidationState = async (queryClient, learningFile, { lockRo
 };
 
 const buildQuestionSetReviewEligibility = (learningFile = {}, validation = {}) => {
-  if (validation?.isValid) return { eligible: true, code: 'ELIGIBLE', message: 'Eligible for review approval.' };
+  const countEligibility = buildQuestionCountEligibility(learningFile, validation?.questions?.length || 0, 'approval');
+  if (!countEligibility.eligible) return countEligibility;
+  if (validation?.isValid) {
+    return { eligible: true, code: 'ELIGIBLE', message: 'Eligible for review approval.' };
+  }
   return {
     eligible: false,
     code: 'STRUCTURAL_VALIDATION_FAILED',
@@ -2749,6 +2758,8 @@ const buildQuestionSetReviewEligibility = (learningFile = {}, validation = {}) =
 };
 
 const buildQuestionSetPublicationBaseEligibility = (learningFile = {}, validation = {}) => {
+  const countEligibility = buildQuestionCountEligibility(learningFile, validation?.questions?.length || 0, 'publication');
+  if (!countEligibility.eligible) return countEligibility;
   if (!validation?.isValid) {
     return {
       eligible: false,
@@ -2777,6 +2788,12 @@ const buildQuestionSetValidationSummary = (validationState, learningFile = {}) =
   const fingerprint = buildLearningFileApprovalFingerprint(learningFile, structuralValidation?.questions || []);
   return {
     is_valid: Boolean(structuralValidation?.isValid),
+    requested_question_count: Number.isInteger(Number(learningFile.requested_question_count))
+      ? Number(learningFile.requested_question_count)
+      : null,
+    current_question_count: Array.isArray(structuralValidation?.questions)
+      ? structuralValidation.questions.length
+      : 0,
     invalid_question_count: (structuralValidation?.questions || []).filter((question) => !question.is_valid).length,
     document_errors: structuralValidation?.document_errors || [],
     publication_errors: publicationValidation?.document_errors || [],
@@ -6097,6 +6114,120 @@ app.post('/api/learning-files/:id/approve', requireLessonQuestionManagerAccess, 
     }
     console.error('Approve question set failed:', err.message);
     return res.status(500).json({ error: 'Unable to approve this question set.' });
+  }
+});
+
+app.post('/api/learning-files/:id/questions', requireLessonQuestionManagerAccess, async (req, res) => {
+  const fileId = Number(req.params.id);
+  if (!Number.isSafeInteger(fileId) || fileId < 1) return res.status(400).json({ error: 'Invalid file ID.' });
+
+  const structural = validateFixedQuestion({
+    question: req.body?.question,
+    options: Array.isArray(req.body?.options) ? req.body.options : [],
+    correct_answer: req.body?.correct_answer,
+  });
+  if (!structural.is_valid) {
+    return res.status(400).json({ error: 'Correct the question before adding it.', validation_errors: structural.validation_errors });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const fileResult = await client.query(
+      'SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      [fileId]
+    );
+    const learningFile = fileResult.rows[0];
+    if (!learningFile) throw createLifecycleHttpError('Question set not found.', 404);
+    requireQuestionSetRecord(learningFile);
+    if (isQuestionGenerationActive(learningFile.generation_status)) {
+      const error = createLifecycleHttpError('Question generation is still in progress. Add a question after generation finishes.', 409);
+      error.code = 'QUESTION_SET_GENERATION_IN_PROGRESS';
+      throw error;
+    }
+    if (learningFile.published || learningFile.publish_status === 'active') {
+      const error = createLifecycleHttpError('This question set is Active in Game. Remove from Game before adding a question.', 409);
+      error.code = 'ACTIVE_QUESTION_SET_CANNOT_BE_EDITED';
+      throw error;
+    }
+    const historicalResult = await client.query('SELECT 1 FROM public.game_results WHERE question_set_id = $1 LIMIT 1', [fileId]);
+    if (historicalResult.rows.length > 0) {
+      const error = createLifecycleHttpError('A question set with historical results cannot be edited.', 409);
+      error.code = 'QUESTION_SET_HISTORY_PREVENTS_EDIT';
+      throw error;
+    }
+    const existingQuestionsResult = await client.query(
+      'SELECT id, question FROM public.questions WHERE learning_file_id = $1 ORDER BY id ASC FOR UPDATE',
+      [fileId]
+    );
+    const duplicate = findDuplicateQuestion(existingQuestionsResult.rows, structural.question);
+    if (duplicate) {
+      const error = createLifecycleHttpError('A question with the same text already exists in this question set.', 409);
+      error.code = 'DUPLICATE_QUESTION_IN_SET';
+      throw error;
+    }
+
+    const rawTopicId = String(req.body?.topic_id || learningFile.topic_id || '').trim();
+    const normalizedTopicId = rawTopicId ? normalizeTopicId(rawTopicId) : null;
+    if (rawTopicId && (!normalizedTopicId || !getTopicById(normalizedTopicId))) {
+      throw createLifecycleHttpError('Topic metadata must use a supported curriculum topic.', 400);
+    }
+    const canonicalScope = resolveCanonicalQuestionScope({
+      grade_level: learningFile.grade_level,
+      difficulty: learningFile.difficulty,
+      topic_id: normalizedTopicId,
+      math_topic: req.body?.math_topic ?? learningFile.math_topic,
+    });
+    if (!canonicalScope) throw createLifecycleHttpError('Question scope is not supported.', 400);
+
+    const insertedResult = await client.query(
+      `INSERT INTO public.questions
+        (learning_file_id, question, options, correct_answer, grade_level, difficulty, math_topic, topic_id, source, published)
+       VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, false)
+       RETURNING *`,
+      [
+        fileId,
+        structural.question,
+        JSON.stringify(structural.options),
+        structural.correct_answer,
+        canonicalScope.grade_level,
+        canonicalScope.difficulty,
+        canonicalScope.math_topic,
+        canonicalScope.topic_id,
+        'client_provided',
+      ]
+    );
+    const insertedQuestion = insertedResult.rows[0];
+    const updatedFileResult = await client.query(
+      `UPDATE public.learning_files
+       SET approval_status = 'review_required', approved_at = NULL, approved_by = NULL, approved_content_fingerprint = NULL
+       WHERE id = $1 AND deleted_at IS NULL AND NOT (COALESCE(published, false) = true OR publish_status = 'active')
+       RETURNING *`,
+      [fileId]
+    );
+    const updatedFile = updatedFileResult.rows[0];
+    if (!updatedFile) throw createLifecycleHttpError('Question set changed before the question could be added.', 409);
+    const validationState = await getQuestionSetValidationState(client, updatedFile, { lockRows: true });
+    const validation = buildQuestionSetValidationSummary(validationState, updatedFile);
+    await writeAdminAuditLog(req.authenticatedUser, 'Add Question', { id: insertedQuestion.id, name: `Question ${insertedQuestion.id}` }, {
+      reason: 'Question manually added in review preview.',
+      operationType: 'question_add',
+      afterMetadata: { learning_file_id: fileId, question: insertedQuestion.question, approval_status: 'review_required' },
+    }, client);
+    await client.query('COMMIT');
+    const validatedQuestion = validationState.structural.questions.find((question) => Number(question.id) === Number(insertedQuestion.id));
+    return res.status(201).json({
+      success: true,
+      file: normalizeLearningFileRow({ ...updatedFile, validation_summary: validation }),
+      question: { ...insertedQuestion, ...(validatedQuestion || {}) },
+      validation,
+      review_fingerprint: buildLearningFileApprovalFingerprint(updatedFile, validationState.structural.questions),
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Unable to add this question.', ...(err.code ? { code: err.code } : {}) });
+  } finally {
+    client.release();
   }
 });
 

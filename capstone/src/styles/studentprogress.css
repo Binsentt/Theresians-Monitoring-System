@@ -1201,6 +1201,18 @@
   background: #475569;
 }
 
+.table-reset-action {
+  background: #d97706;
+}
+
+.table-reset-action:hover {
+  background: #b45309;
+}
+
+.table-archive-action:hover {
+  background: #334155;
+}
+
 .table-permanent-delete-action {
   background: #b91c1c;
 }

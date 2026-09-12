@@ -1127,10 +1127,10 @@ export default function ManageUsers() {
                               </>
                             ) : (
                               <>
-                                <button type="button" className="edit-action-btn manage-user-action-btn" onClick={() => handleEditClick(u)}>Edit</button>
+                                <button type="button" className="edit-action-btn manage-user-action-btn semantic-action-edit" onClick={() => handleEditClick(u)}>Edit</button>
                                 <button
                                   type="button"
-                                  className="restore-action-btn manage-user-action-btn"
+                                  className="restore-action-btn manage-user-action-btn semantic-action-amber"
                                   onClick={() => handleRegenerateTemporaryPassword(u)}
                                   disabled={regeneratingUserId === u.id}
                                 >

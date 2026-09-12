@@ -134,7 +134,7 @@ export const StudentProgressArchiveAction = ({ studentId, role, onComplete, clas
             {error && <p className="learning-cycle-reset-error" role="alert">{error}</p>}
             <div className="learning-cycle-reset-actions">
               <button type="button" className="secondary-button" onClick={close} disabled={submitting}>Cancel</button>
-              <button type="submit" className="table-action-button" disabled={submitting}>{submitting ? 'Archiving…' : 'Archive Student Progress'}</button>
+              <button type="submit" className="table-action-button table-archive-action" disabled={submitting}>{submitting ? 'Archiving…' : 'Archive Student Progress'}</button>
             </div>
           </form>
         </LifecycleDialog>
@@ -347,7 +347,7 @@ export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete
   };
   return (
     <>
-      <button type="button" className="table-action-button" onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={openDialog}>{label}</button>
+      <button type="button" className={`table-action-button ${isArchive ? 'table-archive-action' : 'table-reset-action'}`} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={openDialog}>{label}</button>
       {open && (
         <LifecycleDialog onClose={close}>
           <form onSubmit={submit} onPointerDown={stopModalEvent} onClick={stopModalEvent}>
@@ -365,7 +365,7 @@ export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete
             {error && <p className="learning-cycle-reset-error" role="alert">{error}</p>}
             <div className="learning-cycle-reset-actions">
               <button type="button" className="secondary-button" onClick={close} disabled={submitting}>Cancel</button>
-              <button type="submit" className="table-action-button" disabled={submitting || summaryLoading || affectedCount === null}>{submitting ? 'Saving…' : label}</button>
+              <button type="submit" className={`table-action-button ${isArchive ? 'table-archive-action' : 'table-reset-action'}`} disabled={submitting || summaryLoading || affectedCount === null}>{submitting ? 'Saving…' : label}</button>
             </div>
           </form>
         </LifecycleDialog>

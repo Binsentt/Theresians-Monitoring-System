@@ -477,6 +477,29 @@ button.drive-folder-card {
   color: #ffffff;
 }
 
+.drive-action-button.warning {
+  border-color: #b45309;
+  background: #d97706;
+  color: #fff;
+}
+
+.drive-action-button.warning:hover:not(:disabled) {
+  border-color: #92400e;
+  background: #b45309;
+}
+
+.question-review-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 12px;
+}
+
+.question-preview-add-editor {
+  margin-bottom: 16px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+}
+
 .drive-action-button.danger:hover:not(:disabled),
 .btn-danger:hover:not(:disabled) {
   background: #991b1b;

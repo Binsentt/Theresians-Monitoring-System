@@ -153,6 +153,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       trashFolders: [],
       publishResponse: null,
       approvalResponse: null,
+      addQuestionResponse: null,
       uploadResponse: null,
     };
     global.fetch = jest.fn((url, options = {}) => {
@@ -272,6 +273,18 @@ describe('LessonQuestionManager upload and trash controls', () => {
           validation: { is_valid: true, invalid_question_count: 0 },
           review_fingerprint: `edited-${previewFileId}`,
         });
+      }
+      const questionAddMatch = value.match(/\/api\/learning-files\/(\d+)\/questions$/);
+      if (questionAddMatch && options.method === 'POST') {
+        if (fixtures.addQuestionResponse) return fixtures.addQuestionResponse(options);
+        const request = JSON.parse(options.body);
+        return okJson({
+          success: true,
+          file: { ...fixtures.files.find((file) => file.id === Number(questionAddMatch[1])), approval_status: 'review_required' },
+          question: { id: 999, ...request, is_valid: true, validation_errors: [] },
+          validation: { is_valid: true, invalid_question_count: 0 },
+          review_fingerprint: `added-${questionAddMatch[1]}`,
+        }, 201);
       }
       const questionPreviewMatch = value.match(/\/api\/learning-files\/(\d+)\/questions/);
       if (questionPreviewMatch) {
@@ -471,6 +484,34 @@ describe('LessonQuestionManager upload and trash controls', () => {
       correct_answer: 'Five',
     }));
     expect(document.body.textContent).toContain('Five (Correct)');
+  });
+
+  test('shows Add Question for a pending preview and persists a valid manual question', async () => {
+    fixtures.files = [buildReviewRequiredFile({ id: 77, title: 'manual-add.docx', file_name: 'manual-add.docx' })];
+    await act(async () => root.render(<LessonQuestionManager />));
+    await act(async () => clickByText(container, 'Preview'));
+    const addButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.includes('Add Question'));
+    expect(addButton).toBeTruthy();
+    await act(async () => addButton.click());
+    expect(document.body.querySelector('[aria-label="Add question form"]')).toBeTruthy();
+    await act(async () => setFieldValue(document.body.querySelector('textarea[aria-label="New question text"]'), 'What is 9 - 4?'));
+    await act(async () => setFieldValue(document.body.querySelector('input[aria-label="New question choice A"]'), '4'));
+    await act(async () => setFieldValue(document.body.querySelector('input[aria-label="New question choice B"]'), '5'));
+    await act(async () => setFieldValue(document.body.querySelector('input[aria-label="New question choice C"]'), '6'));
+    await act(async () => setFieldValue(document.body.querySelector('input[aria-label="New question choice D"]'), '7'));
+    await act(async () => setSelectValue(document.body.querySelector('select[aria-label="New question correct answer"]'), '5'));
+    await act(async () => {
+      const editor = document.body.querySelector('[aria-label="Add question form"]');
+      Array.from(editor.querySelectorAll('button')).find((button) => button.textContent.includes('Add Question')).click();
+    });
+    const request = global.fetch.mock.calls.find(([url, options]) => String(url).endsWith('/api/learning-files/77/questions') && options?.method === 'POST');
+    expect(request).toBeTruthy();
+    expect(JSON.parse(request[1].body)).toEqual(expect.objectContaining({
+      question: 'What is 9 - 4?',
+      options: ['4', '5', '6', '7'],
+      correct_answer: '5',
+    }));
+    expect(document.body.textContent).toContain('Question added');
   });
 
   test('uses a full-width editor, responsive choice grid, and hides topic/source metadata rows', async () => {

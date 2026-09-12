@@ -203,6 +203,30 @@ export const formatLearningPreviewText = (content, file) => {
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 
+export const validateManualQuestionDraft = (draft = {}) => {
+  const options = (draft.options || []).map((option) => String(option || '').trim());
+  const errors = [];
+  if (!String(draft.question || '').trim()) errors.push('Question text is required.');
+  if (options.length !== 4) errors.push('Exactly four answer choices are required.');
+  if (options.some((option) => !option)) errors.push('All four answer choices must be nonempty.');
+  if (new Set(options.map((option) => option.toLocaleLowerCase())).size !== options.length) errors.push('Answer choices must be distinct.');
+  if (options.filter((option) => option.toLocaleLowerCase() === String(draft.correct_answer || '').trim().toLocaleLowerCase()).length !== 1) {
+    errors.push('The correct answer must match one of the four choices.');
+  }
+  return errors;
+};
+
+export const getQuestionReviewActionClass = (action) => ({
+  add: 'btn btn-success',
+  edit: 'btn btn-primary',
+  delete: 'btn btn-danger',
+  approve: 'btn btn-success',
+  close: 'btn btn-secondary',
+  download: 'btn btn-secondary',
+  push: 'btn btn-primary',
+  remove: 'btn btn-warning',
+}[String(action || '').trim().toLowerCase()] || 'btn btn-secondary');
+
 export const normalizeLearningFileRecord = (file = {}) => ({
   ...file,
   difficulty: normalizeDifficultyValue(file.difficulty),

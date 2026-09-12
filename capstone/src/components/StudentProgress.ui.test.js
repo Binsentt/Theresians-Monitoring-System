@@ -229,6 +229,10 @@ describe('Student Progress summary cards', () => {
       'Reset Progress',
       'Archive Student Progress',
     ]);
+    const actionButtons = Array.from(actionStack.querySelectorAll('button'));
+    expect(actionButtons[0].classList.contains('table-action-button')).toBe(true);
+    expect(actionButtons[1].classList.contains('table-reset-action')).toBe(true);
+    expect(actionButtons[2].classList.contains('table-archive-action')).toBe(true);
   });
 
   test('records list state only when the explicit View Analytics action opens details', async () => {

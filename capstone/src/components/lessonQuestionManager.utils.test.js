@@ -1,4 +1,6 @@
 import {
+  getQuestionReviewActionClass,
+  validateManualQuestionDraft,
   filterLearningFiles,
   countFixedQuestionRecords,
   getLargestLearningFiles,
@@ -48,6 +50,20 @@ const registryFixture = {
 };
 
 describe('lesson question manager helpers', () => {
+  test('validates manual questions and assigns semantic review action classes', () => {
+    expect(validateManualQuestionDraft({ question: 'What is 2 + 2?', options: ['3', '4', '5', '6'], correct_answer: '4' })).toEqual([]);
+    expect(validateManualQuestionDraft({ question: '', options: ['A', 'A', '', 'D'], correct_answer: 'Z' })).toEqual([
+      'Question text is required.',
+      'All four answer choices must be nonempty.',
+      'Answer choices must be distinct.',
+      'The correct answer must match one of the four choices.',
+    ]);
+    expect(getQuestionReviewActionClass('add')).toBe('btn btn-success');
+    expect(getQuestionReviewActionClass('edit')).toBe('btn btn-primary');
+    expect(getQuestionReviewActionClass('delete')).toBe('btn btn-danger');
+    expect(getQuestionReviewActionClass('remove')).toBe('btn btn-warning');
+    expect(getQuestionReviewActionClass('download')).toBe('btn btn-secondary');
+  });
   test('keeps in-flight generation distinct from validation failure', () => {
     expect(getGenerationStatusView({ generation_status: 'generating', generation_stage: 'generating', generation_completed_count: 10, requested_question_count: 25 })).toEqual(expect.objectContaining({
       inProgress: true,

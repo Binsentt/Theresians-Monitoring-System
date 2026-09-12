@@ -43,6 +43,28 @@ button.btn-primary {
   background: #1e40af;
 }
 
+.btn-success,
+button.btn-success {
+  background: #15803d;
+  color: #fff;
+  border-color: #166534;
+}
+
+.btn-success:hover:not(:disabled) {
+  background: #166534;
+}
+
+.btn-warning,
+button.btn-warning {
+  background: #d97706;
+  color: #fff;
+  border-color: #b45309;
+}
+
+.btn-warning:hover:not(:disabled) {
+  background: #b45309;
+}
+
 .btn-secondary,
 button.btn-secondary {
   background: #f3f4f6;

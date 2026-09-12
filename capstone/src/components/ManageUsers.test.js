@@ -421,6 +421,9 @@ describe('ManageUsers edit flow', () => {
     actionButtons.forEach((button) => {
       expect(button.classList.contains('manage-user-action-btn')).toBe(true);
     });
+    expect(actionButtons[0].classList.contains('semantic-action-edit')).toBe(true);
+    expect(actionButtons[1].classList.contains('semantic-action-amber')).toBe(true);
+    expect(actionButtons[2].classList.contains('delete-action-btn')).toBe(true);
   });
 
   test('uses the compact shared action-button treatment for archived-user restore', async () => {
