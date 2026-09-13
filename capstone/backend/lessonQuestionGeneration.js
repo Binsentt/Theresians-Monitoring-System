@@ -341,6 +341,8 @@ const generateLessonQuestionsInBatches = async ({
   batchSize = 5,
   generateBatch = generateLessonQuestions,
   onBatchComplete = null,
+  onBatch = null,
+  existingQuestions = [],
   ...input
 }) => {
   if (!Number.isInteger(questionCount) || questionCount < 1) {
@@ -349,6 +351,10 @@ const generateLessonQuestionsInBatches = async ({
   const boundedBatchSize = Number.isInteger(batchSize) && batchSize > 0 ? Math.min(batchSize, 5) : 5;
   const questions = [];
   const seen = new Set();
+  (Array.isArray(existingQuestions) ? existingQuestions : []).forEach((question) => {
+    const normalized = normalizeGeneratedQuestion(question);
+    if (normalized) seen.add(normalized.question.toLocaleLowerCase());
+  });
   for (let offset = 0; offset < questionCount; offset += boundedBatchSize) {
     const count = Math.min(boundedBatchSize, questionCount - offset);
     const batch = await generateBatch({ ...input, questionCount: count });
@@ -366,6 +372,14 @@ const generateLessonQuestionsInBatches = async ({
     }
     if (typeof onBatchComplete === 'function') {
       await onBatchComplete({ completed: questions.length, total: questionCount });
+    }
+    if (typeof onBatch === 'function') {
+      await onBatch({
+        batch,
+        batch_index: Math.floor((questions.length - batch.length) / boundedBatchSize),
+        completed: questions.length,
+        total: questionCount,
+      });
     }
   }
   return questions;

@@ -7,6 +7,7 @@ const RELEASE_MIGRATIONS = Object.freeze([
   { version: 19, file: '019_playtime_history_removal.sql' },
   { version: 20, file: '020_add_auth_otp_challenge_security.sql' },
   { version: 21, file: '021_canonical_milestones_and_activity_contract.sql' },
+  { version: 22, file: '022_game_telemetry_contract.sql' },
 ]);
 
 const ADVISORY_LOCK_KEY = 4819020;
@@ -90,7 +91,7 @@ async function runReleaseMigrations({
 
 if (require.main === module) {
   runReleaseMigrations()
-    .then(() => console.log('Release migrations applied: 018, 019, 020, 021'))
+    .then(() => console.log('Release migrations applied: 018, 019, 020, 021, 022'))
     .catch((error) => {
       console.error(`Release migrations failed: ${error.message}`);
       process.exitCode = 1;

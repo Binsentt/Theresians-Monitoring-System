@@ -413,3 +413,31 @@ test('lesson generation batches larger requests and only returns a complete vali
   ]);
   assert.equal(questions.length, 12);
 });
+
+test('lesson generation retries only the missing questions and rejects duplicates from the retained set', async () => {
+  const batches = [];
+  const retained = [{
+    question: 'Retained question',
+    options: ['1', '2', '3', '4'],
+    correct_answer: '1',
+  }];
+  const generated = await require('./lessonQuestionGeneration').generateLessonQuestionsInBatches({
+    lessonText: 'A lesson about addition.',
+    title: 'Addition lesson',
+    gradeLevel: 'Grade 1',
+    difficulty: 'Easy',
+    questionCount: 2,
+    batchSize: 2,
+    existingQuestions: retained,
+    generateBatch: async ({ questionCount }) => Array.from({ length: questionCount }, (_, index) => ({
+      question: `New question ${index + 1}`,
+      options: ['1', '2', '3', '4'],
+      correct_answer: '1',
+    })),
+    onBatch: ({ batch, batch_index }) => batches.push({ batch, batch_index }),
+  });
+
+  assert.equal(generated.length, 2);
+  assert.equal(generated[0].question, 'New question 1');
+  assert.deepEqual(batches.map((entry) => entry.batch_index), [0]);
+});

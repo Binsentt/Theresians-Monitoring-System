@@ -68,6 +68,7 @@ const waitForLessonGeneration = async (learningFileId, { signal, onProgress } = 
     const learningFile = data.learningFile || {};
     if (typeof onProgress === 'function') onProgress(learningFile);
     if (learningFile.generation_status === 'ready_for_review') return learningFile;
+    if (learningFile.generation_status === 'partial_failed') return learningFile;
     if (learningFile.generation_status === 'failed') throw new Error('Question generation failed. Review the generation status and try again.');
     await new Promise((resolve) => setTimeout(resolve, GENERATION_POLL_INTERVAL_MS));
   }
@@ -610,7 +611,7 @@ export default function LessonQuestionManager() {
       }
       if (data.code === 'AI_GENERATION_QUEUED' || data.code === 'AI_GENERATION_IN_PROGRESS') {
         showNotification('Question generation is in progress. This page will update when it is ready.', 'info');
-        await waitForLessonGeneration(data.learningFile?.id, {
+        const completedGeneration = await waitForLessonGeneration(data.learningFile?.id, {
           onProgress: (learningFile) => {
             const completed = Number(learningFile.generation_completed_count || 0);
             const total = Number(learningFile.requested_question_count || requestedCount);
@@ -618,6 +619,14 @@ export default function LessonQuestionManager() {
             showNotification(`${stage} ${Math.min(completed, total)} / ${total}`, 'info');
           },
         });
+        if (completedGeneration?.generation_status === 'partial_failed') {
+          await loadFilesAndFolders();
+          const remaining = Number(completedGeneration.generation_remaining_count || 0);
+          const partialMessage = `Generated ${Number(completedGeneration.generation_completed_count || 0)} of ${Number(completedGeneration.requested_question_count || requestedCount)} questions. Retry the remaining ${remaining}.`;
+          setUploadError(partialMessage);
+          showNotification(partialMessage, 'error');
+          return;
+        }
       }
       await loadFilesAndFolders();
       if (data.code === 'AI_GENERATION_IN_PROGRESS') {
@@ -637,6 +646,31 @@ export default function LessonQuestionManager() {
       uploadInFlightRef.current = false;
       setUploading(false);
     }
+  };
+
+  const retryPartialGeneration = async () => {
+    const requestedCount = Number(previewFile?.requested_question_count || 0);
+    const sourceId = Number(previewFile?.source_learning_file_id || 0);
+    if (!Number.isSafeInteger(requestedCount) || requestedCount < 1) {
+      showNotification('The saved question count is unavailable. Upload the lesson again to retry.', 'error');
+      return;
+    }
+    if (Number.isSafeInteger(sourceId) && sourceId > 0) {
+      setForm((current) => ({
+        ...current,
+        grade_level: previewFile.grade_level || current.grade_level,
+        difficulty: previewFile.difficulty || current.difficulty,
+        expected_question_count: String(requestedCount),
+      }));
+      setSelectedLessonSourceId(String(sourceId));
+      closeQuestionPreview();
+      setShowUploadForm(true);
+      await generateQuestionSetFromLessonSource(String(requestedCount));
+      return;
+    }
+    closeQuestionPreview();
+    setShowUploadForm(true);
+    setUploadError('Select the original lesson file to retry the remaining questions. Existing generated questions will be preserved.');
   };
 
   const handleUpload = async (event) => {
@@ -744,6 +778,14 @@ export default function LessonQuestionManager() {
         clearLessonGenerationIdempotencyKey(lessonGenerationStorageKey);
         resetForm();
         setShowUploadForm(false);
+        return;
+      }
+      if (data.learningFile?.generation_status === 'partial_failed') {
+        await loadFilesAndFolders();
+        const remaining = Number(data.learningFile.generation_remaining_count || 0);
+        const partialMessage = `Generated ${Number(data.learningFile.generation_completed_count || 0)} of ${Number(data.learningFile.requested_question_count || requestedCount)} questions. Retry the remaining ${remaining}.`;
+        setUploadError(partialMessage);
+        showNotification(partialMessage, 'error');
         return;
       }
       const uploadedFile = normalizeManagedLearningFile({
@@ -1966,9 +2008,14 @@ export default function LessonQuestionManager() {
                       </section>
                     ) : previewGenerationStatus.failed ? (
                       <section className="generation-status-view" role="alert">
-                        <strong>Question generation failed</strong>
+                        <strong>{previewGenerationStatus.partial ? 'Question generation partially failed' : 'Question generation failed'}</strong>
+                        {previewGenerationStatus.partial && (
+                          <p className="question-review-metadata">
+                            {previewGenerationStatus.progressLabel}. Existing questions are preserved; retry only the remaining {previewGenerationStatus.retryCount ?? 'available'}.
+                          </p>
+                        )}
                         <p className="manager-inline-error">{previewFile.generation_error_message || previewFile.generation_error_code || 'The question set could not be generated.'}</p>
-                        <button type="button" className="btn btn-secondary" onClick={() => { closeQuestionPreview(); setSelectedLessonSourceId(String(previewFile.source_learning_file_id || previewFile.id || '')); setShowUploadForm(true); }}>Retry</button>
+                        <button type="button" className="btn btn-secondary" onClick={previewGenerationStatus.partial ? retryPartialGeneration : () => { closeQuestionPreview(); setSelectedLessonSourceId(String(previewFile.source_learning_file_id || previewFile.id || '')); setShowUploadForm(true); }}>{previewGenerationStatus.partial ? 'Retry remaining questions' : 'Retry'}</button>
                       </section>
                     ) : previewQuestions.length === 0 ? (
                       <>

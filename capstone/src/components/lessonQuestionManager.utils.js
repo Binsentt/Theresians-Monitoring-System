@@ -8,20 +8,25 @@ export const getGenerationStatusView = (file = {}) => {
   const completed = Number(file.generation_completed_count);
   const requested = Number(file.requested_question_count);
   const inProgress = IN_FLIGHT_GENERATION_STAGES.has(status) || IN_FLIGHT_GENERATION_STAGES.has(stage);
-  const failed = status === 'failed' || stage === 'failed';
+  const partial = status === 'partial_failed' || stage === 'partial_failed';
+  const failed = partial || status === 'failed' || stage === 'failed';
   const ready = status === 'ready_for_review' || stage === 'completed';
   const safeCompleted = Number.isFinite(completed) && completed >= 0 ? completed : null;
   const safeRequested = Number.isFinite(requested) && requested > 0 ? requested : null;
+  const remaining = Number(file.generation_remaining_count);
+  const safeRemaining = Number.isFinite(remaining) && remaining >= 0 ? remaining : null;
   return {
     status,
     stage,
     inProgress,
     failed,
+    partial,
     ready,
     canApprove: ready,
     canRetry: failed,
-    label: inProgress ? 'Generating questions' : failed ? 'Question generation failed' : ready ? 'Ready for Review' : 'Question generation',
-    progressLabel: inProgress && safeCompleted !== null && safeRequested !== null ? `${safeCompleted} / ${safeRequested} completed` : null,
+    retryCount: safeRemaining,
+    label: inProgress ? 'Generating questions' : partial ? 'Question generation partially failed' : failed ? 'Question generation failed' : ready ? 'Ready for Review' : 'Question generation',
+    progressLabel: (inProgress || partial) && safeCompleted !== null && safeRequested !== null ? `${safeCompleted} / ${safeRequested} completed` : null,
   };
 };
 

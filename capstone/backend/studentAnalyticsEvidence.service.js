@@ -27,7 +27,9 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
   const studentIds = [...new Set(rows.map((row) => Number(row.student_id)))];
   const results = await queryClient.query(
       `SELECT gr.resolved_student_id, gr.id, gr.math_topic, gr.difficulty, gr.current_map,
-              gr.percentage, gr.score, gr.total_items, gr.played_at, gr.question_set_id
+              gr.map_id, gr.canonical_quest_id, gr.canonical_task_id,
+              gr.result_event_id, gr.session_id, gr.percentage, gr.score,
+              gr.total_items, gr.played_at, gr.question_set_id
        FROM public.game_results gr
        JOIN public.accounts student ON student.id = gr.resolved_student_id
        WHERE gr.resolved_student_id = ANY($1::INTEGER[])
@@ -37,7 +39,8 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
       [studentIds]
     );
   const playtime = await queryClient.query(
-      `SELECT ps.student_id, ps.total_playtime_minutes, ps.status, ps.date_played, ps.end_time
+      `SELECT ps.student_id, ps.total_playtime_minutes, ps.total_playtime_seconds,
+              ps.status, ps.date_played, ps.end_time
        FROM public.playtime_sessions ps
        JOIN public.accounts student ON student.id = ps.student_id
        WHERE ps.student_id = ANY($1::INTEGER[])
@@ -48,7 +51,10 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
       [studentIds]
     );
   const milestones = await queryClient.query(
-      `SELECT student_id, milestone_id, map_id, weight, learning_cycle_version, completed_at
+    `SELECT student_id, milestone_id, map_id, weight, learning_cycle_version,
+           telemetry_contract_version, quest_graph_version, canonical_quest_id,
+           canonical_task_id, canonical_milestone_id, player_facing,
+           completed_at, source_activity_event_id
        FROM public.student_quest_milestones
        WHERE student_id = ANY($1::INTEGER[])
        ORDER BY completed_at ASC, id ASC`,

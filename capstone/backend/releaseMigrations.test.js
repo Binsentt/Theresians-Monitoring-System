@@ -2,6 +2,11 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const { applyReleaseMigrations } = require('./releaseMigrations');
+const { RELEASE_MIGRATIONS } = require('./releaseMigrations');
+
+test('release manifest uses migration 022 for telemetry fields missing from production 021', () => {
+  assert.deepEqual(RELEASE_MIGRATIONS.at(-1), { version: 22, file: '022_game_telemetry_contract.sql' });
+});
 
 test('release migrations apply in order under an advisory lock and record checksums', async () => {
   const calls = [];

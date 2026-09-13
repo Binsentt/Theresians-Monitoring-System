@@ -74,6 +74,22 @@ describe('lesson question manager helpers', () => {
     expect(getGenerationStatusView({ generation_status: 'ready_for_review', generation_stage: 'completed', generation_completed_count: 25, requested_question_count: 25 })).toEqual(expect.objectContaining({ inProgress: false, canApprove: true }));
     expect(getGenerationStatusView({ generation_status: 'failed', generation_error_code: 'QUESTION_AI_NOT_CONFIGURED' })).toEqual(expect.objectContaining({ inProgress: false, failed: true, canRetry: true }));
   });
+  test('partial generation exposes available questions and retries only remaining count', () => {
+    expect(getGenerationStatusView({
+      generation_status: 'partial_failed',
+      generation_stage: 'partial_failed',
+      generation_completed_count: 5,
+      generation_remaining_count: 3,
+      requested_question_count: 8,
+      generation_error_code: 'QUESTION_AI_GENERATION_FAILED',
+    })).toEqual(expect.objectContaining({
+      failed: true,
+      partial: true,
+      canRetry: true,
+      retryCount: 3,
+      progressLabel: '5 / 8 completed',
+    }));
+  });
   test('returns configured difficulty values and grade difficulty topics', () => {
     expect(getDifficultyLevels(registryFixture)).toEqual(['Easy', 'Normal', 'Difficult']);
     expect(getMathTopicsForGradeDifficulty('Grade 1', 'Easy', registryFixture)).toEqual([

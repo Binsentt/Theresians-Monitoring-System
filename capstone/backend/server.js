@@ -15,6 +15,12 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 const pool = require('./database/db');
 const { classifyMilestoneWeight } = require('./questMilestones.utils');
 const {
+  TELEMETRY_CONTRACT_VERSION,
+  QUEST_GRAPH_VERSION,
+  normalizeCanonicalTelemetry,
+  isPlayerFacingCompletion,
+} = require('./telemetryContract.utils');
+const {
   normalizeParentCode,
   normalizeNewStudentCode,
   normalizeExistingStudentCode,
@@ -358,6 +364,16 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS question_set_id INTEGER');
     await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS playtime_session_id INTEGER');
     await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS current_map TEXT');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS result_event_id VARCHAR(200)');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS telemetry_contract_version VARCHAR(32)');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS quest_graph_version VARCHAR(64)');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS session_id BIGINT');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS map_id VARCHAR(100)');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS canonical_quest_id VARCHAR(160)');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS canonical_task_id VARCHAR(160)');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS canonical_battle_id VARCHAR(160)');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS canonical_milestone_id VARCHAR(200)');
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS game_results_student_result_event_unique ON public.game_results(resolved_student_id, result_event_id) WHERE resolved_student_id IS NOT NULL AND result_event_id IS NOT NULL');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_parent_id ON public.game_results(parent_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_resolved_student_id ON public.game_results(resolved_student_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_question_set_id ON public.game_results(question_set_id)');
@@ -414,6 +430,12 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS duration_seconds INTEGER');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS telemetry_contract_version VARCHAR(32)');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS quest_graph_version VARCHAR(64)');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS canonical_quest_id VARCHAR(160)');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS canonical_task_id VARCHAR(160)');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS canonical_milestone_id VARCHAR(200)');
+    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS is_player_facing BOOLEAN');
     await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS activity_logs_student_activity_event_id_unique ON public.activity_logs(student_id, activity_event_id) WHERE activity_event_id IS NOT NULL');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_timestamp ON public.activity_logs(activity_timestamp DESC)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_student_name ON public.activity_logs(student_name)');
@@ -430,6 +452,13 @@ const ensureSchema = async () => {
       UNIQUE (student_id, milestone_id, learning_cycle_version)
     );`);
     await pool.query('CREATE INDEX IF NOT EXISTS student_quest_milestones_student_cycle_idx ON public.student_quest_milestones(student_id, learning_cycle_version)');
+    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS telemetry_contract_version VARCHAR(32)');
+    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS quest_graph_version VARCHAR(64)');
+    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS canonical_quest_id VARCHAR(160)');
+    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS canonical_task_id VARCHAR(160)');
+    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS canonical_milestone_id VARCHAR(200)');
+    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS player_facing BOOLEAN NOT NULL DEFAULT true');
+    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS source_activity_event_id VARCHAR(200)');
 
     await pool.query(`CREATE TABLE IF NOT EXISTS public.playtime_sessions (
       id SERIAL PRIMARY KEY,
@@ -550,6 +579,9 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_error_code VARCHAR(100)');
     await pool.query("ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_stage VARCHAR(32) NOT NULL DEFAULT 'queued'");
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_completed_count INTEGER NOT NULL DEFAULT 0');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_remaining_count INTEGER NOT NULL DEFAULT 0');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_failed_batch_index INTEGER');
+    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_retry_count INTEGER NOT NULL DEFAULT 0');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS published_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL');
     await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS last_fetched_at TIMESTAMPTZ');
@@ -1720,7 +1752,15 @@ const buildCanonicalStudentProgressQuery = (lifecycle = 'active') => `
                AND LOWER(parent_relationship.relationship_type) = 'parent'
            ) THEN NULLIF(a.section, '')
            ELSE COALESCE(NULLIF(a.section, ''), p.section)
-         END AS section
+         END AS section,
+         COALESCE((
+           SELECT ARRAY_AGG(DISTINCT COALESCE(m.canonical_task_id, m.milestone_id) ORDER BY COALESCE(m.canonical_task_id, m.milestone_id))
+           FROM public.student_quest_milestones m
+           WHERE m.student_id = a.id
+             AND m.learning_cycle_version = COALESCE(a.current_learning_cycle_version, 0)
+             AND COALESCE(m.player_facing, true) = true
+             AND NOT (COALESCE(m.canonical_milestone_id, m.milestone_id) ~ '^oakleaf\\.bandits\\.bandit_[1-5]$')
+         ), ARRAY[]::TEXT[]) AS completed_player_facing_task_ids
   FROM public.accounts a
   LEFT JOIN LATERAL (
     SELECT progress.*
@@ -2578,7 +2618,7 @@ const extractLessonTextForGeneration = async ({ filePath, fileName, mimeType }) 
   }
 };
 
-const generateQuestionTextFromLesson = async ({ filePath, fileName, mimeType, lessonText = null }, title, grade_level, difficulty, questionCount, onBatchComplete = null) => {
+const generateQuestionTextFromLesson = async ({ filePath, fileName, mimeType, lessonText = null }, title, grade_level, difficulty, questionCount, onBatchComplete = null, { existingQuestions = [], onBatch = null } = {}) => {
   const cleanLessonText = lessonText || await extractLessonTextForGeneration({ filePath, fileName, mimeType });
   return generateLessonQuestionsInBatches({
     lessonText: cleanLessonText,
@@ -2589,38 +2629,93 @@ const generateQuestionTextFromLesson = async ({ filePath, fileName, mimeType, le
     batchSize: 5,
     generateBatch: generateLessonQuestions,
     onBatchComplete,
+    onBatch,
+    existingQuestions,
   });
 };
 
 const activeLessonGenerationJobs = new Set();
 
-const processLessonGenerationJob = async ({ learningFile, sourceFilePath, sourceFileName, sourceMimeType, title, gradeLevel, difficulty, questionCount, lessonText = null }) => {
+const processLessonGenerationJob = async ({ learningFile, sourceFilePath, sourceFileName, sourceMimeType, title, gradeLevel, difficulty, questionCount, targetQuestionCount = questionCount, lessonText = null }) => {
   const jobId = Number(learningFile?.id);
   if (activeLessonGenerationJobs.has(jobId)) return { learningFile, questions: [] };
   activeLessonGenerationJobs.add(jobId);
+  let generatedCount = 0;
+  let existingQuestions = [];
+  let failedBatchIndex = null;
   try {
     if (!String(process.env.OPENAI_API_KEY || '').trim()) {
       throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
     }
-    await pool.query(
-      `UPDATE public.learning_files
-       SET generation_status = 'extracting', generation_stage = 'extracting', generation_completed_count = 0
-       WHERE id = $1`,
+    const existingResult = await pool.query(
+      `SELECT id, question, options, correct_answer, grade_level, difficulty, math_topic, topic_id, source
+       FROM public.questions
+       WHERE learning_file_id = $1
+       ORDER BY id ASC`,
       [learningFile.id]
     );
-    const questions = await generateQuestionTextFromLesson({
+    existingQuestions = existingResult.rows || [];
+    generatedCount = existingQuestions.length;
+    const remainingQuestionCount = Math.max(0, Number(targetQuestionCount) - generatedCount);
+    if (remainingQuestionCount === 0) {
+      const completed = await pool.query(
+        `UPDATE public.learning_files
+         SET generation_status = 'ready_for_review', generation_stage = 'completed',
+             generation_completed_count = $2, generation_remaining_count = 0,
+             generated_at = COALESCE(generated_at, CURRENT_TIMESTAMP),
+             generation_failed_at = NULL, generation_error_code = NULL,
+             generation_failed_batch_index = NULL
+         WHERE id = $1 RETURNING *`,
+        [learningFile.id, generatedCount]
+      );
+      return { learningFile: completed.rows[0] || learningFile, questions: existingQuestions };
+    }
+    await pool.query(
+      `UPDATE public.learning_files
+       SET generation_status = 'extracting', generation_stage = 'extracting',
+           generation_completed_count = $2, generation_remaining_count = $3,
+           generation_retry_count = COALESCE(generation_retry_count, 0) + CASE WHEN $2 > 0 THEN 1 ELSE 0 END,
+           generation_failed_batch_index = NULL, generation_error_code = NULL
+       WHERE id = $1`,
+      [learningFile.id, generatedCount, remainingQuestionCount]
+    );
+    const generatedQuestions = await generateQuestionTextFromLesson({
       filePath: sourceFilePath,
       fileName: sourceFileName,
       mimeType: sourceMimeType,
       lessonText,
-    }, title, gradeLevel, difficulty, questionCount, async ({ completed }) => {
+    }, title, gradeLevel, difficulty, remainingQuestionCount, async ({ completed }) => {
       await pool.query(
         `UPDATE public.learning_files
-         SET generation_status = 'generating', generation_stage = 'generating', generation_completed_count = $2
+         SET generation_status = 'generating', generation_stage = 'generating',
+             generation_completed_count = $2, generation_remaining_count = $3
          WHERE id = $1`,
-        [learningFile.id, completed]
+        [learningFile.id, generatedCount + completed, Math.max(0, Number(targetQuestionCount) - generatedCount - completed)]
       );
+    }, {
+      existingQuestions,
+      onBatch: async ({ batch, batch_index }) => {
+        failedBatchIndex = batch_index;
+        await saveQuestionsForFile(learningFile.id, batch.map((question) => ({
+          ...question,
+          grade_level: gradeLevel,
+          difficulty,
+          math_topic: learningFile.math_topic || null,
+          topic_id: learningFile.topic_id || null,
+          source: 'ai',
+        })));
+        generatedCount += batch.length;
+        await pool.query(
+          `UPDATE public.learning_files
+           SET generation_status = 'generating', generation_stage = 'generating',
+               generation_completed_count = $2, generation_remaining_count = $3,
+               generation_failed_batch_index = $4
+           WHERE id = $1`,
+          [learningFile.id, generatedCount, Math.max(0, Number(targetQuestionCount) - generatedCount), batch_index]
+        );
+      },
     });
+    const questions = [...existingQuestions, ...generatedQuestions];
     await pool.query(
       `UPDATE public.learning_files
        SET generation_status = 'validating', generation_stage = 'validating', generation_completed_count = $2
@@ -2633,51 +2728,104 @@ const processLessonGenerationJob = async ({ learningFile, sourceFilePath, source
        WHERE id = $1`,
       [learningFile.id, questions.length]
     );
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await saveQuestionsForFile(learningFile.id, questions.map((question) => ({
-        ...question,
-        grade_level: gradeLevel,
-        difficulty,
-        math_topic: learningFile.math_topic || null,
-        topic_id: learningFile.topic_id || null,
-        source: 'ai',
-      })), client);
-      const completed = await client.query(
+    const completed = await pool.query(
         `UPDATE public.learning_files
          SET generation_status = 'ready_for_review',
              generation_stage = 'completed',
              generation_completed_count = $2,
+             generation_remaining_count = 0,
              generated_at = CURRENT_TIMESTAMP,
              generation_failed_at = NULL,
-             generation_error_code = NULL
+             generation_error_code = NULL,
+             generation_failed_batch_index = NULL
          WHERE id = $1
          RETURNING *`,
         [learningFile.id, questions.length]
       );
-      await client.query('COMMIT');
-      return { learningFile: completed.rows[0] || learningFile, questions };
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
+    return { learningFile: completed.rows[0] || learningFile, questions };
   } catch (error) {
-    await pool.query(
-      `UPDATE public.learning_files
-       SET generation_status = 'failed',
-           generation_stage = 'failed',
-           generation_failed_at = CURRENT_TIMESTAMP,
-           generation_error_code = $2
-       WHERE id = $1`,
-      [learningFile.id, error instanceof QuestionGenerationError ? error.code : 'QUESTION_GENERATION_FAILED']
-    ).catch((persistError) => console.error('Failed to persist lesson generation status:', persistError.message));
+    const errorCode = error instanceof QuestionGenerationError ? error.code : 'QUESTION_GENERATION_FAILED';
+    const failureQuery = generatedCount > 0
+      ? `UPDATE public.learning_files
+         SET generation_status = 'partial_failed', generation_stage = 'partial_failed',
+             generation_failed_at = CURRENT_TIMESTAMP, generation_error_code = $2,
+             generation_completed_count = $3,
+             generation_remaining_count = GREATEST(0, $4 - $3),
+             generation_failed_batch_index = $5
+         WHERE id = $1`
+      : `UPDATE public.learning_files
+         SET generation_status = 'failed', generation_stage = 'failed',
+             generation_failed_at = CURRENT_TIMESTAMP, generation_error_code = $2,
+             generation_completed_count = 0,
+             generation_remaining_count = $4,
+             generation_failed_batch_index = $5
+         WHERE id = $1`;
+    await pool.query(failureQuery, [learningFile.id, errorCode, generatedCount, Number(targetQuestionCount), failedBatchIndex])
+      .catch((persistError) => console.error('Failed to persist lesson generation status:', persistError.message));
     throw error;
   } finally {
     activeLessonGenerationJobs.delete(jobId);
   }
+};
+
+const resumePartialLessonGeneration = async ({
+  res,
+  learningFile,
+  requestFingerprint,
+  sourceFilePath,
+  sourceFileName,
+  sourceMimeType,
+  title,
+  gradeLevel,
+  difficulty,
+  targetQuestionCount,
+  lessonText = null,
+}) => {
+  if (learningFile.generation_request_fingerprint !== requestFingerprint) {
+    return res.status(409).json({
+      error: 'This upload request key is already associated with a different lesson generation request.',
+      code: 'AI_GENERATION_IDEMPOTENCY_CONFLICT',
+    });
+  }
+  if (learningFile.generation_status !== 'partial_failed') return null;
+  if (!sourceFilePath || !fs.existsSync(sourceFilePath)) {
+    return res.status(422).json({
+      error: 'The Lesson source is unavailable. Upload the source again before retrying question generation.',
+      code: 'LESSON_SOURCE_FILE_MISSING',
+    });
+  }
+  const remainingQuestionCount = Math.max(0, Number(learningFile.generation_remaining_count || 0));
+  const jobInput = {
+    learningFile,
+    sourceFilePath,
+    sourceFileName,
+    sourceMimeType,
+    title,
+    gradeLevel,
+    difficulty,
+    questionCount: remainingQuestionCount,
+    targetQuestionCount,
+    lessonText,
+  };
+  if (remainingQuestionCount > 5) {
+    setImmediate(() => processLessonGenerationJob(jobInput).catch((error) => {
+      if (!(error instanceof QuestionGenerationError)) console.error('Queued lesson generation retry failed:', error.message);
+    }));
+    return res.status(202).json({
+      ...buildLessonGenerationResponse(learningFile, { idempotent: true }),
+      code: 'AI_GENERATION_RETRY_QUEUED',
+      message: `Question generation retry queued for the remaining ${remainingQuestionCount} questions.`,
+    });
+  }
+  const retryLessonText = lessonText || await extractLessonTextForGeneration({
+    filePath: sourceFilePath,
+    fileName: sourceFileName,
+    mimeType: sourceMimeType,
+  });
+  const completed = await processLessonGenerationJob({ ...jobInput, lessonText: retryLessonText });
+  return res.status(200).json({
+    ...buildLessonGenerationResponse({ ...completed.learningFile, question_count: completed.questions.length }, { idempotent: true }),
+  });
 };
 
 const saveUploadedLearningFile = async ({ title, grade_level, math_topic, file_type, folder_id, uploaded_by, file }) => {
@@ -5461,6 +5609,21 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
     });
     const existingGeneration = await getLessonGenerationByIdempotencyKey(req.authenticatedUser.id, idempotencyKey);
     if (existingGeneration) {
+      if (existingGeneration.generation_status === 'partial_failed') {
+        const sourceFilePath = getLessonSourceFilePath(lessonSource);
+        return await resumePartialLessonGeneration({
+          res,
+          learningFile: existingGeneration,
+          requestFingerprint,
+          sourceFilePath,
+          sourceFileName: lessonSource.file_name,
+          sourceMimeType: lessonSource.source_file_mime_type || 'application/pdf',
+          title: lessonSource.title,
+          gradeLevel: scope.gradeLevel,
+          difficulty: scope.difficulty,
+          targetQuestionCount: scope.questionCount,
+        });
+      }
       return respondToExistingLessonGeneration({ res, learningFile: existingGeneration, requestFingerprint });
     }
     const inProgressGeneration = await getInProgressLessonGenerationByFingerprint(req.authenticatedUser.id, requestFingerprint);
@@ -5760,6 +5923,21 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
       );
       if (existingGeneration) {
         cleanTemporaryUpload(req.file.path);
+        if (existingGeneration.generation_status === 'partial_failed') {
+          const sourceFilePath = getLessonSourceFilePath(existingGeneration);
+          return await resumePartialLessonGeneration({
+            res,
+            learningFile: existingGeneration,
+            requestFingerprint: lessonGenerationRequestFingerprint,
+            sourceFilePath,
+            sourceFileName: existingGeneration.file_name || req.file.originalname,
+            sourceMimeType: existingGeneration.source_file_mime_type || req.file.mimetype || 'application/pdf',
+            title: existingGeneration.title || String(title).trim(),
+            gradeLevel: normalizedGrade,
+            difficulty: normalizedDifficulty,
+            targetQuestionCount: requestedQuestionCount,
+          });
+        }
         return respondToExistingLessonGeneration({
           res,
           learningFile: existingGeneration,
@@ -7412,6 +7590,15 @@ app.post('/api/game/result', async (req, res) => {
   const played_at = req.body?.played_at || req.body?.timestamp;
   const playtimeSessionId = resolvePositiveInteger(req.body?.playtime_session_id);
   const playtimeSessionCredential = String(req.body?.playtime_session_credential || '').trim();
+  const resultEventId = normalizeCanonicalGameActivityKey(req.body?.result_event_id);
+  const telemetryContractVersion = String(req.body?.telemetry_contract_version || TELEMETRY_CONTRACT_VERSION).trim();
+  const questGraphVersion = String(req.body?.quest_graph_version || QUEST_GRAPH_VERSION).trim();
+  const telemetrySessionId = resolvePositiveInteger(req.body?.session_id) || playtimeSessionId;
+  const mapId = String(req.body?.map_id || req.body?.current_map || req.body?.currentMap || req.body?.map || req.body?.map_name || '').trim() || null;
+  const canonicalQuestId = String(req.body?.canonical_quest_id || '').trim() || null;
+  const canonicalTaskId = String(req.body?.canonical_task_id || '').trim() || null;
+  const canonicalBattleId = String(req.body?.canonical_battle_id || '').trim() || null;
+  const canonicalMilestoneId = String(req.body?.canonical_milestone_id || '').trim() || null;
   // A game question carries its own canonical difficulty.  Keep that value for
   // analytics, and only infer from the scene for older clients that do not
   // report a question difficulty yet.
@@ -7562,13 +7749,21 @@ app.post('/api/game/result', async (req, res) => {
       return res.status(400).json({ error: questionSetResolution.error });
     }
 
-    await pool.query(
+    const persistedResult = await pool.query(
       `INSERT INTO public.game_results (
          parent_id, student_name, resolved_student_id, grade_level, difficulty,
-         math_topic, score, total_items, percentage, played_at, question_set_id, playtime_session_id, is_unlinked, current_map
+         math_topic, score, total_items, percentage, played_at, question_set_id,
+         playtime_session_id, is_unlinked, current_map, result_event_id,
+         telemetry_contract_version, quest_graph_version, session_id, map_id,
+         canonical_quest_id, canonical_task_id, canonical_battle_id, canonical_milestone_id
         ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), $11, $12, $13, $14
-        )`,
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), $11, $12, $13,
+         $14, $15, $16, $17, $18, $19, $20, $21, $22
+        )
+        ON CONFLICT (resolved_student_id, result_event_id)
+        WHERE resolved_student_id IS NOT NULL AND result_event_id IS NOT NULL
+        DO NOTHING
+        RETURNING id`,
       [
         parentCode,
         resultStudentName,
@@ -7583,14 +7778,29 @@ app.post('/api/game/result', async (req, res) => {
         questionSetResolution.questionSetId,
         playtimeSessionId,
         !resolvedStudentId,
-        req.body?.current_map || req.body?.currentMap || req.body?.map || req.body?.map_name || null,
+        mapId,
+        resultEventId,
+        telemetryContractVersion,
+        questGraphVersion,
+        telemetrySessionId,
+        mapId,
+        canonicalQuestId,
+        canonicalTaskId,
+        canonicalBattleId,
+        canonicalMilestoneId,
       ]
     );
-    if (resolvedStudentId) {
+    if (resolvedStudentId && persistedResult.rows.length) {
       await markStudentInsightStale(pool, resolvedStudentId);
     }
 
-    res.status(201).json({ success: true, resolved: Boolean(resolvedStudentId), student_id: resolvedStudentId });
+    const duplicateResult = Boolean(resultEventId && !persistedResult.rows.length);
+    res.status(duplicateResult ? 200 : 201).json({
+      success: true,
+      ...(duplicateResult ? { duplicate: true } : {}),
+      resolved: Boolean(resolvedStudentId),
+      student_id: resolvedStudentId,
+    });
   } catch (err) {
     console.error('Save game result failed:', err.message);
     res.status(500).json({ error: 'Failed to save game result', details: err.message });
@@ -7671,22 +7881,22 @@ app.post('/api/game/activity', async (req, res) => {
     }
 
     const displayLabel = CANONICAL_GAME_ACTIVITY_TYPES[eventType];
-    const startedAt = body.started_at ? new Date(body.started_at) : null;
-    const completedAt = body.completed_at ? new Date(body.completed_at) : null;
-    const suppliedDuration = Number(body.duration_seconds);
-    const durationSeconds = Number.isFinite(suppliedDuration) && suppliedDuration >= 0
-      ? Math.floor(suppliedDuration)
-      : (startedAt && completedAt && !Number.isNaN(startedAt.getTime()) && !Number.isNaN(completedAt.getTime())
-        ? Math.max(0, Math.floor((completedAt.getTime() - startedAt.getTime()) / 1000))
-        : null);
+    const telemetry = normalizeCanonicalTelemetry({
+      ...body,
+      event_type: eventType,
+      event_key: eventKey,
+      task_id: taskId,
+    });
     const insertResult = await pool.query(
       `INSERT INTO public.activity_logs (
          student_id, student_name, grade_level, section, activity_description,
          current_quest, role, status, activity_timestamp, event_key,
-         activity_event_id, canonical_activity_id, map_id, session_id,
-         started_at, completed_at, duration_seconds
+         telemetry_contract_version, quest_graph_version, map_id,
+         canonical_activity_id, canonical_quest_id, canonical_task_id,
+         canonical_milestone_id, activity_event_id, session_id, started_at,
+         completed_at, duration_seconds, is_player_facing, difficulty_level
        ) VALUES ($1, $2, $3, $4, $5, $6, 'student', 'Active', CURRENT_TIMESTAMP, $7,
-                 $8, $9, $10, $11, $12, $13, $14)
+                 $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
        ON CONFLICT (student_id, event_key) WHERE event_key IS NOT NULL DO NOTHING
        RETURNING id`,
       [
@@ -7697,23 +7907,58 @@ app.post('/api/game/activity', async (req, res) => {
         `${displayLabel} — ${taskId}`,
         taskId,
         eventKey,
-        activityEventId,
-        taskId,
-        body.map_id ? String(body.map_id).trim() : null,
-        body.session_id ? String(body.session_id).trim() : null,
-        startedAt && !Number.isNaN(startedAt.getTime()) ? startedAt.toISOString() : null,
-        completedAt && !Number.isNaN(completedAt.getTime()) ? completedAt.toISOString() : null,
-        durationSeconds,
+        telemetry.telemetry_contract_version,
+        telemetry.quest_graph_version,
+        telemetry.map_id || 'unknown',
+        telemetry.canonical_activity_id || taskId,
+        telemetry.canonical_quest_id || 'main',
+        telemetry.canonical_task_id || taskId,
+        telemetry.canonical_milestone_id || `${taskId}.complete`,
+        telemetry.activity_event_id || eventKey,
+        session.id,
+        telemetry.started_at,
+        telemetry.completed_at,
+        telemetry.duration_seconds,
+        telemetry.is_player_facing,
+        telemetry.difficulty,
       ]
     );
 
-    if (insertResult.rows.length && (eventType === 'task_completed' || eventType === 'quest_completed')) {
+    if (insertResult.rows.length && isPlayerFacingCompletion(telemetry)) {
       await pool.query(
         `INSERT INTO public.student_quest_milestones
-           (student_id, milestone_id, map_id, weight, learning_cycle_version)
-         VALUES ($1, $2, $3, $4, $5)
+           (student_id, milestone_id, map_id, weight, learning_cycle_version,
+            telemetry_contract_version, quest_graph_version, canonical_quest_id,
+            canonical_task_id, canonical_milestone_id, player_facing,
+            completed_at, source_activity_event_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, COALESCE($11, CURRENT_TIMESTAMP), $12)
          ON CONFLICT (student_id, milestone_id, learning_cycle_version) DO NOTHING`,
-        [session.student_id, taskId.toLowerCase(), body.map_id ? String(body.map_id).trim() : null, classifyMilestoneWeight(taskId), learningCycleVersion]
+        [
+          session.student_id,
+          String(telemetry.canonical_task_id || taskId).toLowerCase(),
+          telemetry.map_id || null,
+          classifyMilestoneWeight(taskId),
+          learningCycleVersion,
+          telemetry.telemetry_contract_version,
+          telemetry.quest_graph_version,
+          telemetry.canonical_quest_id || 'main',
+          telemetry.canonical_task_id || taskId,
+          telemetry.canonical_milestone_id || `${taskId}.complete`,
+          telemetry.completed_at,
+          telemetry.activity_event_id || eventKey,
+        ]
+      );
+      await pool.query(
+        `UPDATE public.student_game_progress p
+         SET total_quests_completed = (
+           SELECT COUNT(DISTINCT COALESCE(m.canonical_task_id, m.milestone_id))::INTEGER
+           FROM public.student_quest_milestones m
+           WHERE m.student_id = p.student_id
+             AND m.learning_cycle_version = $2
+             AND COALESCE(m.player_facing, true) = true
+         ), updated_at = NOW()
+         WHERE p.student_id = $1`,
+        [session.student_id, learningCycleVersion]
       );
     }
 
@@ -7801,11 +8046,13 @@ app.post('/api/game/leaderboard', async (req, res) => {
          FROM public.student_game_progress p
          JOIN public.accounts a ON a.id = p.student_id
          LEFT JOIN LATERAL (
-           SELECT COUNT(DISTINCT sqm.milestone_id)::INTEGER AS completed_count,
+           SELECT COUNT(DISTINCT COALESCE(sqm.canonical_task_id, sqm.milestone_id))::INTEGER AS completed_count,
                   COUNT(sqm.milestone_id) > 0 AS has_milestones
            FROM public.student_quest_milestones sqm
            WHERE sqm.student_id = p.student_id
              AND sqm.learning_cycle_version = COALESCE(a.current_learning_cycle_version, 0)
+             AND COALESCE(sqm.player_facing, true) = true
+             AND NOT (COALESCE(sqm.canonical_milestone_id, sqm.milestone_id) ~ '^oakleaf\\.bandits\\.bandit_[1-5]$')
          ) milestones ON true
          WHERE COALESCE(a.is_archived, false) = false
            AND a.progress_archived_at IS NULL
@@ -8479,7 +8726,8 @@ const handleTopAchieversRequest = async (req, res) => {
                ELSE COALESCE(p.total_quests_completed, 0) END AS quests_completed,
           CASE WHEN milestones.has_milestones THEN milestones.completed_count
                ELSE COALESCE(p.total_quests_completed, 0) END AS total_quests_completed,
-          COALESCE(p.total_play_time, latest_activity.total_play_time, 0) AS total_play_time,
+          CASE WHEN canonical_playtime.has_playtime THEN canonical_playtime.total_playtime_seconds ELSE NULL END AS total_play_time,
+          CASE WHEN canonical_playtime.has_playtime THEN canonical_playtime.total_playtime_seconds ELSE NULL END AS total_playtime_seconds,
           p.last_played,
           ROW_NUMBER() OVER (
             PARTITION BY p.student_id
@@ -8495,19 +8743,27 @@ const handleTopAchieversRequest = async (req, res) => {
         FROM public.student_game_progress p
         LEFT JOIN public.accounts a ON a.id = p.student_id
         LEFT JOIN LATERAL (
-          SELECT COUNT(DISTINCT sqm.milestone_id)::INTEGER AS completed_count,
+          SELECT COUNT(DISTINCT COALESCE(sqm.canonical_task_id, sqm.milestone_id))::INTEGER AS completed_count,
                  COUNT(sqm.milestone_id) > 0 AS has_milestones
           FROM public.student_quest_milestones sqm
           WHERE sqm.student_id = p.student_id
             AND sqm.learning_cycle_version = COALESCE(a.current_learning_cycle_version, 0)
+            AND COALESCE(sqm.player_facing, true) = true
+            AND NOT (COALESCE(sqm.canonical_milestone_id, sqm.milestone_id) ~ '^oakleaf\\.bandits\\.bandit_[1-5]$')
         ) milestones ON true
         LEFT JOIN LATERAL (
-          SELECT al.total_play_time
-          FROM public.activity_logs al
-          WHERE al.student_id = p.student_id
-          ORDER BY al.activity_timestamp DESC NULLS LAST, al.id DESC
-          LIMIT 1
-        ) latest_activity ON true
+          SELECT COALESCE(SUM(CASE
+                    WHEN COALESCE(NULLIF(ps.total_playtime_seconds, 0), 0) > 0
+                      THEN ps.total_playtime_seconds
+                    ELSE COALESCE(ps.total_playtime_minutes, 0) * 60
+                  END), 0)::BIGINT AS total_playtime_seconds,
+                 COUNT(*) > 0 AS has_playtime
+          FROM public.playtime_sessions ps
+          WHERE ps.student_id = p.student_id
+            AND COALESCE(ps.learning_cycle_version, 0) = COALESCE(a.current_learning_cycle_version, 0)
+            AND (a.current_learning_cycle_started_at IS NULL
+                 OR COALESCE(ps.end_time, ps.start_time) >= a.current_learning_cycle_started_at)
+        ) canonical_playtime ON true
         WHERE 1=1
           AND COALESCE(a.is_archived, false) = false
           AND a.progress_archived_at IS NULL
