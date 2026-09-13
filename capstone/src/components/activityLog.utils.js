@@ -108,10 +108,11 @@ export function formatActivityLogDuration(record) {
   const formatted = String(record?.duration || '').trim();
   if (formatted && !/^\d+$/.test(formatted)) return formatted;
 
-  const seconds = parseDurationSeconds(
-    record?.duration_seconds ?? record?.total_play_time ?? record?.duration
-  );
-  if (seconds === null) return '-';
+  const hasCanonicalDuration = Object.prototype.hasOwnProperty.call(record || {}, 'duration_seconds');
+  const seconds = parseDurationSeconds(hasCanonicalDuration
+    ? record?.duration_seconds
+    : record?.total_play_time ?? record?.duration);
+  if (seconds === null) return hasCanonicalDuration ? 'N/A' : '-';
   if (seconds < 60) return `${seconds}s`;
 
   const hours = Math.floor(seconds / 3600);

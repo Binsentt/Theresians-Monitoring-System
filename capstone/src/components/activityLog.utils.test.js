@@ -95,6 +95,7 @@ describe('normalizeActivityLogPayload', () => {
     expect(getActivityLogActivity({ activity_description: 'Gameplay Session' })).toBe('No active quest');
     expect(formatActivityLogDuration({ duration_seconds: 125 })).toBe('2m 5s');
     expect(formatActivityLogDuration({ total_play_time: 3600 })).toBe('1h 0m');
+    expect(formatActivityLogDuration({ duration_seconds: null, total_play_time: 3600 })).toBe('N/A');
     expect(formatActivityLogDuration({ duration: '7m 30s' })).toBe('7m 30s');
   });
 

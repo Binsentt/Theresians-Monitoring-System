@@ -8414,7 +8414,7 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
         al.section,
         al.current_quest,
         al.save_status,
-        COALESCE(al.duration_seconds, al.total_play_time) AS duration_seconds,
+        al.duration_seconds AS duration_seconds,
         al.total_play_time,
         al.last_played,
         al.quest_progress,
