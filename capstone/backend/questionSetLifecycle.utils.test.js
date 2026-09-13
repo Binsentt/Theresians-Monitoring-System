@@ -81,3 +81,17 @@ test('adds source traceability labels without fabricating a lifecycle', () => {
   assert.equal(toQuestionSetResponse({ source: 'fixed' }).source_label, 'Fixed Question File');
   assert.equal(toQuestionSetResponse({ source: 'lesson' }).source_label, 'AI Generated');
 });
+
+test('fixed question sets never inherit an AI generation status from stale rows', () => {
+  const response = toQuestionSetResponse({
+    id: 19,
+    file_type: 'fixed_questions',
+    generation_status: 'generating',
+    generation_stage: 'generating',
+    publish_status: 'staged',
+  });
+
+  assert.equal(response.generation_status, 'not_applicable');
+  assert.equal(response.lifecycle.code, 'staged');
+  assert.equal(response.lifecycle.label, 'Pending');
+});

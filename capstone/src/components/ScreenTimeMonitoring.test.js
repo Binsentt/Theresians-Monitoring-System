@@ -345,6 +345,40 @@ describe('ScreenTimeMonitoring', () => {
     expect(document.body.textContent).toContain('This action removes the record from Screen Time history');
   });
 
+  test('bulk Delete All closes the confirmation and refreshes after the server confirms deletion', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
+    localStorage.setItem('rememberToken', 'remember-token');
+    let bulkDeleteCalls = 0;
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).includes('/deletion-summary')) {
+        return jsonResponse({ affected_count: 1, target_ids: [5], target_fingerprint: 'fingerprint' });
+      }
+      if (String(url).includes('/api/playtime/completed/bulk')) {
+        bulkDeleteCalls += 1;
+        return jsonResponse({ success: true, deleted_count: 1 });
+      }
+      return jsonResponse(playtimePayload);
+    });
+
+    act(() => root.render(<ScreenTimeMonitoring mode="all" />));
+    await waitForContent(container, 'Ava Santos');
+    await act(async () => container.querySelector('button[data-action="delete-all-completed-playtime"]').click());
+    expect(document.body.textContent).toContain('Delete All Completed Records');
+
+    const reason = document.querySelector('#screen-time-deletion-reason');
+    const confirmation = document.querySelector('#screen-time-deletion-confirmation');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set.call(reason, 'Remove completed QA history');
+      reason.dispatchEvent(new Event('input', { bubbles: true }));
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(confirmation, 'DELETE');
+      confirmation.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => document.querySelector('.screen-time-deletion-dialog').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+
+    expect(bulkDeleteCalls).toBe(1);
+    expect(document.querySelector('.screen-time-deletion-dialog')).toBeNull();
+  });
+
   test('active enrolled students expose Reset Screen Time instead of Delete', async () => {
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
     localStorage.setItem('rememberToken', 'remember-token');

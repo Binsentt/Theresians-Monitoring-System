@@ -268,8 +268,8 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   const isAdminAllView = !isChildView && normalizeRole(user?.role) === 'admin';
   const isHistoryDeletionEligible = (record) => record.screen_time_delete_eligible === true
     || typeof record.screen_time_delete_eligible === 'undefined';
-  const closeDeletionDialog = () => {
-    if (deleting) return;
+  const closeDeletionDialog = (force = false) => {
+    if (deleting && !force) return;
     setPendingDeletion(null);
     setDeletionReason('');
     setDeletionConfirmation('');
@@ -325,7 +325,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || 'Unable to remove Screen Time history.');
-      closeDeletionDialog();
+      closeDeletionDialog(true);
       setPage(1);
       setRefreshToken((value) => value + 1);
     } catch (requestError) {

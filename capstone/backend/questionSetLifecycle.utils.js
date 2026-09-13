@@ -13,6 +13,12 @@ const GENERATION_STATUSES = new Set([
 const PUBLISH_STATUSES = new Set(['staged', 'active', 'superseded']);
 
 function normalizeGenerationStatus(row = {}) {
+  // Fixed question sets are imported and reviewed locally; they never run
+  // through the AI generation lifecycle.  Ignore stale/null generation fields
+  // from older rows so preview cannot present a fixed file as "Generating".
+  if (Object.prototype.hasOwnProperty.call(row, 'file_type') && row.file_type !== 'lesson') {
+    return 'not_applicable';
+  }
   if (GENERATION_STATUSES.has(row.generation_status)) {
     return row.generation_status;
   }
