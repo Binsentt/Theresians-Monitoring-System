@@ -159,17 +159,17 @@ export default function StudentAnalytics() {
   const currentDifficulty = resolveCurrentDifficulty({ ...progress, metrics });
   const currentLocation = safeDisplayText(progress?.current_location, 'Not available');
   const metricCards = [
-    { label: 'Total Progress', value: formatPercent(metrics?.totalProgress), note: getTotalProgressNote(metrics), icon: Target, tone: 'blue' },
-    { label: 'Accuracy', value: formatPercent(metrics?.accuracy), icon: BarChart3, tone: 'green' },
+    { label: 'Overall Campaign Progress (Total Progress)', value: formatPercent(metrics?.totalProgress), note: getTotalProgressNote(metrics), icon: Target, tone: 'blue' },
+    { label: 'Overall Q&A Accuracy', value: formatPercent(metrics?.accuracy), note: 'Graded battle/quiz answers only.', icon: BarChart3, tone: 'green' },
     { label: 'Correct Answers', value: formatCount(metrics?.correctAnswers), icon: CheckCircle2, tone: 'green' },
     { label: 'Incorrect Answers', value: formatCount(metrics?.incorrectAnswers), icon: XCircle, tone: 'red' },
     { label: 'Game Score', value: formatCount(metrics?.gameScore), icon: Trophy, tone: 'blue' },
-    { label: 'Completed Quests', value: formatCount(metrics?.completedQuests), icon: BookOpen, tone: 'orange' },
+    { label: 'Quests Completed', value: formatCount(metrics?.completedQuests), icon: BookOpen, tone: 'orange' },
   ];
   const performanceBars = [
-    { label: 'Total Progress', value: toNullableNumber(metrics?.totalProgress), tone: 'blue' },
-    { label: 'Accuracy', value: toNullableNumber(metrics?.accuracy), tone: 'green' },
-    { label: 'Quest Completion', value: toNullableNumber(metrics?.questCompletionPercentage), tone: 'orange' },
+    { label: 'Overall Campaign Progress', value: toNullableNumber(metrics?.totalProgress), tone: 'blue' },
+    { label: 'Overall Q&A Accuracy', value: toNullableNumber(metrics?.accuracy), tone: 'green' },
+    { label: 'Current Quest Progress', value: toNullableNumber(metrics?.questCompletionPercentage), tone: 'orange' },
   ];
   const insightMessage = insightError || aiInsight?.message || 'Generate an insight only when you want an interpretation of the recorded metrics.';
   const topicRows = useMemo(() => Object.entries(metrics?.topicPerformance || metrics?.topic_breakdown || {})
@@ -182,10 +182,10 @@ export default function StudentAnalytics() {
     { label: 'Correct Answers', value: formatCount(metrics?.correctAnswers) },
     { label: 'Incorrect Answers', value: formatCount(metrics?.incorrectAnswers) },
     { label: 'Total Questions', value: formatCount(metrics?.totalQuestions) },
-    { label: 'Accuracy', value: formatPercent(metrics?.accuracy) },
+    { label: 'Overall Q&A Accuracy', value: formatPercent(metrics?.accuracy) },
     { label: 'Game Score', value: formatCount(metrics?.gameScore) },
-    { label: 'Total Progress', value: formatPercent(metrics?.totalProgress) },
-    { label: 'Completed Quests', value: formatCount(metrics?.completedQuests) },
+    { label: 'Overall Campaign Progress', value: formatPercent(metrics?.totalProgress) },
+    { label: 'Quests Completed', value: formatCount(metrics?.completedQuests) },
   ];
   const analyticsPrintRows = [
     ['Student Information', 'Student Name', studentName],
@@ -279,7 +279,7 @@ export default function StudentAnalytics() {
             <div className="student-dashboard-card student-performance-card">
               <div className="student-card-heading">
                 <span className="student-card-icon blue"><Layers size={20} aria-hidden="true" /></span>
-                <div><h2>Game Performance</h2><p>Authoritative progress and result-history metrics.</p></div>
+                <div><h2>Game Performance</h2><p>Accuracy reflects graded battle/quiz answers only. Progress reflects required quest and map milestones.</p></div>
               </div>
               <div className="student-performance-meta">
                 <div><span>Current Quest</span><strong>{currentQuest}</strong></div>

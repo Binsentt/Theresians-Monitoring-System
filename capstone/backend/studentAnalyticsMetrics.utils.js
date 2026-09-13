@@ -1,4 +1,6 @@
 const { resolveCurrentDifficulty } = require('./progressScene.utils');
+const { canonicalPlaytimeSeconds } = require('./playtimeAggregation.utils');
+const { calculateWeightedCompletion } = require('./questGraph.utils');
 
 const toFiniteNumber = (value) => {
   if (value === null || value === undefined || value === '') return null;
@@ -39,6 +41,9 @@ const normalizeResult = (row = {}) => {
     totalQuestions,
     difficulty: normalizeDifficulty(row.difficulty),
     topic: normalizeTopic(row.math_topic ?? row.mathTopic),
+    resultEventId: String(row.result_event_id || '').trim() || null,
+    mapId: String(row.map_id || '').trim() || null,
+    canonicalTaskId: String(row.canonical_task_id || '').trim() || null,
     isPerQuestion: totalQuestions === 1 && (correctAnswers === 0 || correctAnswers === 1),
   };
 };
@@ -50,9 +55,16 @@ const emptyDifficultyBreakdown = () => ({
 });
 
 function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playtimeSessions = [] } = {}) {
+  const seenResultEventIds = new Set();
   const validResults = (Array.isArray(quizSessions) ? quizSessions : [])
     .map(normalizeResult)
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((result) => {
+      if (!result.resultEventId) return true;
+      if (seenResultEventIds.has(result.resultEventId)) return false;
+      seenResultEventIds.add(result.resultEventId);
+      return true;
+    });
   const validResultCount = validResults.filter((result) => result.isPerQuestion).length;
   const difficultyBreakdown = emptyDifficultyBreakdown();
   const topicTotals = new Map();
@@ -90,17 +102,17 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
     : toPercentage(correctAnswers, totalQuestions);
 
   const totalProgressValue = toFiniteNumber(progress.progress_percentage);
-  const completedQuests = toNonNegativeInteger(progress.total_quests_completed);
+  const canonicalCompletedTaskIds = Array.isArray(progress.completed_player_facing_task_ids)
+    ? progress.completed_player_facing_task_ids
+    : null;
+  const completedQuests = canonicalCompletedTaskIds
+    ? canonicalCompletedTaskIds.length
+    : toNonNegativeInteger(progress.total_quests_completed);
   const gameScore = toFiniteNumber(progress.score);
   const currentQuest = normalizeTopic(progress.current_quest) || null;
   const currentDifficulty = resolveCurrentDifficulty(progress);
-  const completedPlaytime = (Array.isArray(playtimeSessions) ? playtimeSessions : [])
-    .filter((session) => String(session?.status || '').trim().toLowerCase() !== 'playing')
-    .map((session) => toNonNegativeInteger(session?.total_playtime_minutes))
-    .filter((minutes) => minutes !== null);
-  const playtimeMinutes = completedPlaytime.length > 0
-    ? completedPlaytime.reduce((total, minutes) => total + minutes, 0)
-    : null;
+  const playtimeSeconds = canonicalPlaytimeSeconds(playtimeSessions, { includePlaying: false });
+  const playtimeMinutes = playtimeSeconds > 0 ? Number((playtimeSeconds / 60).toFixed(2)) : null;
 
   const topicPerformance = Array.from(topicTotals.entries())
     .map(([topic, totals]) => ({
@@ -128,12 +140,15 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
     totalProgressUnavailableReason: 'full_game_milestones_unverified',
     completedQuests,
     // There is no authoritative total-quest denominator in the current data model.
-    questCompletionPercentage: null,
+    questCompletionPercentage: canonicalCompletedTaskIds
+      ? calculateWeightedCompletion(canonicalCompletedTaskIds)
+      : null,
     currentQuest,
     currentDifficulty: currentDifficulty === 'Unknown' ? null : currentDifficulty,
     difficultyBreakdown,
     topicPerformance,
     playtimeMinutes,
+    playtimeSeconds: playtimeSeconds > 0 ? playtimeSeconds : null,
   };
 }
 

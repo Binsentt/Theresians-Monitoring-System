@@ -316,6 +316,51 @@ const generateLessonQuestions = async ({
   }
 };
 
+const generateLessonQuestionsInBatches = async ({
+  questionCount,
+  batchSize = 5,
+  generateBatch,
+}) => {
+  if (!Number.isInteger(questionCount) || questionCount < 1) {
+    throw new QuestionGenerationError('QUESTION_AI_INVALID_REQUEST', 'Question Count must be a positive whole number.');
+  }
+  if (typeof generateBatch !== 'function') {
+    throw new TypeError('generateBatch must be a function');
+  }
+  const boundedBatchSize = Math.min(Math.max(Number(batchSize) || 5, 1), 5);
+  const questions = [];
+  const failures = [];
+  let batchIndex = 0;
+  while (questions.length < questionCount) {
+    const remaining = questionCount - questions.length;
+    const requested = Math.min(boundedBatchSize, remaining);
+    try {
+      const batch = await generateBatch(requested, batchIndex);
+      if (!Array.isArray(batch) || batch.length !== requested) {
+        throw new QuestionGenerationError('QUESTION_AI_INVALID_RESPONSE', 'Question batch did not return the requested number of valid questions.');
+      }
+      questions.push(...batch);
+      batchIndex += 1;
+    } catch (error) {
+      failures.push({
+        batch_index: batchIndex,
+        failure_code: error?.code || 'QUESTION_AI_BATCH_FAILED',
+        valid_count: questions.length,
+        requested_count: questionCount,
+      });
+      break;
+    }
+  }
+  return {
+    questions,
+    failures,
+    requested: questionCount,
+    valid: questions.length,
+    remaining: Math.max(0, questionCount - questions.length),
+    status: questions.length === questionCount ? 'complete' : (questions.length ? 'partial_failed' : 'failed'),
+  };
+};
+
 module.exports = {
   MAX_LESSON_TEXT_CHARS,
   OPENAI_RESPONSES_URL,
@@ -325,5 +370,6 @@ module.exports = {
   buildProviderDiagnostics,
   buildGenerationInput,
   generateLessonQuestions,
+  generateLessonQuestionsInBatches,
   toQuestionGenerationHttpFailure,
 };

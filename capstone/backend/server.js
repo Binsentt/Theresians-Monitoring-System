@@ -95,6 +95,7 @@ const {
 const {
   QuestionGenerationError,
   generateLessonQuestions,
+  generateLessonQuestionsInBatches,
   toQuestionGenerationHttpFailure,
 } = require('./lessonQuestionGeneration');
 const {
@@ -135,6 +136,12 @@ const {
   getEmailSendTimeoutMs,
   sendEmailWithProviders,
 } = require('./emailDelivery.utils');
+const {
+  TELEMETRY_CONTRACT_VERSION,
+  QUEST_GRAPH_VERSION,
+  normalizeCanonicalTelemetry,
+  isPlayerFacingCompletion,
+} = require('./telemetryContract.utils');
 const {
   normalizePlaytimeStatus: normalizeMonitoringStatus,
   resolveDifficultyFromScene,
@@ -1639,6 +1646,13 @@ const buildCanonicalStudentProgressQuery = (lifecycle = 'active') => `
          a.progress_archived_at,
          a.progress_archived_by,
          a.progress_archive_reason,
+         COALESCE((
+           SELECT ARRAY_AGG(DISTINCT sqm.canonical_task_id ORDER BY sqm.canonical_task_id)
+           FROM public.student_quest_milestones sqm
+           WHERE sqm.student_id = a.id
+             AND sqm.learning_cycle_version = COALESCE(a.current_learning_cycle_version, 0)
+             AND sqm.player_facing = true
+         ), ARRAY[]::TEXT[]) AS completed_player_facing_task_ids,
          COALESCE(NULLIF(a.grade_level, ''), p.grade_level) AS grade_level,
          CASE
            WHEN EXISTS (
@@ -2056,9 +2070,13 @@ const appendParentScopeFilter = ({ parentId, params, studentColumn, relationship
 
 const normalizeTopAchieverRow = (row, index = 0) => {
   const completion = Number(row.completion_percentage ?? row.progress_percentage ?? 0);
-  const accuracy = Number(row.accuracy ?? row.accuracy_rate ?? 0);
+  const rawAccuracy = row.accuracy ?? row.accuracy_rate;
+  const totalQuestionsValue = Number(row.total_questions_answered ?? row.total_questions ?? 0);
+  const accuracy = rawAccuracy === null || rawAccuracy === undefined || totalQuestionsValue <= 0
+    ? null
+    : Number(rawAccuracy);
   const correctAnswers = Number(row.total_correct_answers ?? row.correct_answers ?? 0);
-  const totalQuestions = Number(row.total_questions_answered ?? row.total_questions ?? 0);
+  const totalQuestions = totalQuestionsValue;
   const questsCompleted = Number(row.quests_completed ?? row.total_quests_completed ?? 0);
   const totalPlayTime = Number(row.total_play_time ?? row.duration_seconds ?? 0);
 
@@ -2072,8 +2090,8 @@ const normalizeTopAchieverRow = (row, index = 0) => {
     section: row.section || null,
     completion_percentage: Number.isFinite(completion) ? completion : 0,
     progress_percentage: Number.isFinite(completion) ? completion : 0,
-    accuracy: Number.isFinite(accuracy) ? accuracy : 0,
-    accuracy_rate: Number.isFinite(accuracy) ? accuracy : 0,
+    accuracy: Number.isFinite(accuracy) ? accuracy : null,
+    accuracy_rate: Number.isFinite(accuracy) ? accuracy : null,
     total_correct_answers: Number.isFinite(correctAnswers) ? correctAnswers : 0,
     correct_answers: Number.isFinite(correctAnswers) ? correctAnswers : 0,
     total_questions_answered: Number.isFinite(totalQuestions) ? totalQuestions : 0,
@@ -5333,18 +5351,43 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
     if (!String(process.env.OPENAI_API_KEY || '').trim()) {
       throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
     }
-    const questions = await generateQuestionTextFromLesson(
-      {
-        filePath: sourceFilePath,
-        fileName: lessonSource.file_name,
-        mimeType: lessonSource.source_file_mime_type || 'application/pdf',
-        lessonText,
-      },
-      lessonSource.title,
-      scope.gradeLevel,
-      scope.difficulty,
-      scope.questionCount
-    );
+    const generationResult = scope.questionCount > 5
+      ? await generateLessonQuestionsInBatches({
+        questionCount: scope.questionCount,
+        batchSize: 5,
+        generateBatch: (batchCount) => generateQuestionTextFromLesson(
+          {
+            filePath: sourceFilePath,
+            fileName: lessonSource.file_name,
+            mimeType: lessonSource.source_file_mime_type || 'application/pdf',
+            lessonText,
+          },
+          lessonSource.title,
+          scope.gradeLevel,
+          scope.difficulty,
+          batchCount
+        ),
+      })
+      : {
+        questions: await generateQuestionTextFromLesson(
+          {
+            filePath: sourceFilePath,
+            fileName: lessonSource.file_name,
+            mimeType: lessonSource.source_file_mime_type || 'application/pdf',
+            lessonText,
+          },
+          lessonSource.title,
+          scope.gradeLevel,
+          scope.difficulty,
+          scope.questionCount
+        ),
+        failures: [],
+        requested: scope.questionCount,
+        valid: scope.questionCount,
+        remaining: 0,
+        status: 'complete',
+      };
+    const questions = generationResult.questions;
 
     const client = await pool.connect();
     try {
@@ -5357,15 +5400,16 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
         topic_id: null,
         source: 'ai',
       })), client);
+      const generationStatus = generationResult.status === 'complete' ? 'ready_for_review' : 'partial_failed';
       const completed = await client.query(
         `UPDATE public.learning_files
-         SET generation_status = 'ready_for_review',
+         SET generation_status = '${generationStatus}',
              generated_at = CURRENT_TIMESTAMP,
-             generation_failed_at = NULL,
-             generation_error_code = NULL
+             generation_failed_at = CASE WHEN '${generationStatus}' = 'ready_for_review' THEN NULL ELSE CURRENT_TIMESTAMP END,
+             generation_error_code = $2
          WHERE id = $1
          RETURNING *`,
-        [childLearningFile.id]
+        [childLearningFile.id, generationResult.failures[0]?.failure_code || null]
       );
       childLearningFile = completed.rows[0] || childLearningFile;
       await client.query('COMMIT');
@@ -5376,9 +5420,13 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
       client.release();
     }
 
-    return res.status(201).json({
+    return res.status(generationResult.status === 'complete' ? 201 : 207).json({
       success: true,
-      learningFile: normalizeLearningFileRow({ ...childLearningFile, question_count: questions.length }),
+      generation_status: generationResult.status,
+      valid_question_count: generationResult.valid,
+      remaining_question_count: generationResult.remaining,
+      batch_failures: generationResult.failures,
+      learningFile: normalizeLearningFileRow({ ...childLearningFile, question_count: questions.length, generation_status: generationResult.status }),
     });
   } catch (error) {
     if (childLearningFile?.id) {
@@ -5662,18 +5710,43 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         if (!String(process.env.OPENAI_API_KEY || '').trim()) {
           throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
         }
-        const questions = await generateQuestionTextFromLesson(
-          {
-            filePath: storedFilePath,
-            fileName: req.file.originalname,
-            mimeType: req.file.mimetype,
-            lessonText: preflightLessonText,
-          },
-          String(title).trim(),
-          normalizedGrade,
-          normalizedDifficulty,
-          requestedQuestionCount
-        );
+        const generationResult = requestedQuestionCount > 5
+          ? await generateLessonQuestionsInBatches({
+            questionCount: requestedQuestionCount,
+            batchSize: 5,
+            generateBatch: (batchCount) => generateQuestionTextFromLesson(
+              {
+                filePath: storedFilePath,
+                fileName: req.file.originalname,
+                mimeType: req.file.mimetype,
+                lessonText: preflightLessonText,
+              },
+              String(title).trim(),
+              normalizedGrade,
+              normalizedDifficulty,
+              batchCount
+            ),
+          })
+          : {
+            questions: await generateQuestionTextFromLesson(
+              {
+                filePath: storedFilePath,
+                fileName: req.file.originalname,
+                mimeType: req.file.mimetype,
+                lessonText: preflightLessonText,
+              },
+              String(title).trim(),
+              normalizedGrade,
+              normalizedDifficulty,
+              requestedQuestionCount
+            ),
+            failures: [],
+            requested: requestedQuestionCount,
+            valid: requestedQuestionCount,
+            remaining: 0,
+            status: 'complete',
+          };
+        const questions = generationResult.questions;
 
         const client = await pool.connect();
         try {
@@ -5686,15 +5759,16 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
             topic_id: learningFile.topic_id,
             source: 'ai',
           })), client);
+          const generationStatus = generationResult.status === 'complete' ? 'ready_for_review' : 'partial_failed';
           const completedResult = await client.query(
             `UPDATE public.learning_files
-             SET generation_status = 'ready_for_review',
+             SET generation_status = '${generationStatus}',
                  generated_at = CURRENT_TIMESTAMP,
-                 generation_failed_at = NULL,
-                 generation_error_code = NULL
+                 generation_failed_at = CASE WHEN '${generationStatus}' = 'ready_for_review' THEN NULL ELSE CURRENT_TIMESTAMP END,
+                 generation_error_code = $2
              WHERE id = $1
              RETURNING *`,
-            [learningFile.id]
+            [learningFile.id, generationResult.failures[0]?.failure_code || null]
           );
           learningFile = completedResult.rows[0] || learningFile;
           await client.query('COMMIT');
@@ -5705,9 +5779,13 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
           client.release();
         }
 
-        return res.status(201).json({
+        return res.status(generationResult.status === 'complete' ? 201 : 207).json({
           success: true,
-          learningFile: normalizeLearningFileRow({ ...learningFile, question_count: questions.length }),
+          generation_status: generationResult.status,
+          valid_question_count: generationResult.valid,
+          remaining_question_count: generationResult.remaining,
+          batch_failures: generationResult.failures,
+          learningFile: normalizeLearningFileRow({ ...learningFile, question_count: questions.length, generation_status: generationResult.status }),
         });
       } catch (error) {
         await pool.query(
@@ -7081,6 +7159,15 @@ app.post('/api/game/result', async (req, res) => {
   const played_at = req.body?.played_at || req.body?.timestamp;
   const playtimeSessionId = resolvePositiveInteger(req.body?.playtime_session_id);
   const playtimeSessionCredential = String(req.body?.playtime_session_credential || '').trim();
+  const resultEventId = normalizeCanonicalGameActivityKey(req.body?.result_event_id);
+  const telemetryContractVersion = String(req.body?.telemetry_contract_version || TELEMETRY_CONTRACT_VERSION).trim();
+  const questGraphVersion = String(req.body?.quest_graph_version || QUEST_GRAPH_VERSION).trim();
+  const telemetrySessionId = resolvePositiveInteger(req.body?.session_id) || playtimeSessionId;
+  const mapId = String(req.body?.map_id || '').trim() || null;
+  const canonicalQuestId = String(req.body?.canonical_quest_id || '').trim() || null;
+  const canonicalTaskId = String(req.body?.canonical_task_id || '').trim() || null;
+  const canonicalBattleId = String(req.body?.canonical_battle_id || '').trim() || null;
+  const canonicalMilestoneId = String(req.body?.canonical_milestone_id || '').trim() || null;
   // A game question carries its own canonical difficulty.  Keep that value for
   // analytics, and only infer from the scene for older clients that do not
   // report a question difficulty yet.
@@ -7231,13 +7318,21 @@ app.post('/api/game/result', async (req, res) => {
       return res.status(400).json({ error: questionSetResolution.error });
     }
 
-    await pool.query(
+    const persistedResult = await pool.query(
       `INSERT INTO public.game_results (
          parent_id, student_name, resolved_student_id, grade_level, difficulty,
-          math_topic, score, total_items, percentage, played_at, question_set_id, playtime_session_id, is_unlinked
+          math_topic, score, total_items, percentage, played_at, question_set_id,
+          playtime_session_id, is_unlinked, result_event_id, telemetry_contract_version,
+          quest_graph_version, session_id, map_id, canonical_quest_id,
+          canonical_task_id, canonical_battle_id, canonical_milestone_id
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), $11, $12, $13
-        )`,
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), $11, $12, $13,
+          $14, $15, $16, $17, $18, $19, $20, $21, $22
+        )
+        ON CONFLICT (resolved_student_id, result_event_id)
+        WHERE resolved_student_id IS NOT NULL AND result_event_id IS NOT NULL
+        DO NOTHING
+        RETURNING id`,
       [
         parentCode,
         resultStudentName,
@@ -7252,13 +7347,28 @@ app.post('/api/game/result', async (req, res) => {
         questionSetResolution.questionSetId,
         playtimeSessionId,
         !resolvedStudentId,
+        resultEventId,
+        telemetryContractVersion,
+        questGraphVersion,
+        telemetrySessionId,
+        mapId,
+        canonicalQuestId,
+        canonicalTaskId,
+        canonicalBattleId,
+        canonicalMilestoneId,
       ]
     );
-    if (resolvedStudentId) {
+    if (resolvedStudentId && persistedResult.rows.length) {
       await markStudentInsightStale(pool, resolvedStudentId);
     }
 
-    res.status(201).json({ success: true, resolved: Boolean(resolvedStudentId), student_id: resolvedStudentId });
+    const duplicateResult = Boolean(resultEventId && !persistedResult.rows.length);
+    res.status(duplicateResult ? 200 : 201).json({
+      success: true,
+      ...(duplicateResult ? { duplicate: true } : {}),
+      resolved: Boolean(resolvedStudentId),
+      student_id: resolvedStudentId,
+    });
   } catch (err) {
     console.error('Save game result failed:', err.message);
     res.status(500).json({ error: 'Failed to save game result', details: err.message });
@@ -7338,12 +7448,23 @@ app.post('/api/game/activity', async (req, res) => {
     }
 
     const displayLabel = CANONICAL_GAME_ACTIVITY_TYPES[eventType];
+    const telemetry = normalizeCanonicalTelemetry({
+      ...body,
+      event_type: eventType,
+      event_key: eventKey,
+      task_id: taskId,
+    });
     const insertResult = await pool.query(
       `INSERT INTO public.activity_logs (
          student_id, student_name, grade_level, section, activity_description,
-         current_quest, role, status, activity_timestamp, event_key
-       ) VALUES ($1, $2, $3, $4, $5, $6, 'student', 'Active', CURRENT_TIMESTAMP, $7)
-       ON CONFLICT (student_id, event_key) WHERE event_key IS NOT NULL DO NOTHING
+         current_quest, role, status, activity_timestamp, event_key,
+         telemetry_contract_version, quest_graph_version, map_id,
+         canonical_activity_id, canonical_quest_id, canonical_task_id,
+         canonical_milestone_id, activity_event_id, session_id, started_at,
+         completed_at, duration_seconds, is_player_facing, difficulty_level
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'student', 'Active', CURRENT_TIMESTAMP, $7,
+         $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+       ON CONFLICT (student_id, activity_event_id) WHERE activity_event_id IS NOT NULL DO NOTHING
        RETURNING id`,
       [
         session.student_id,
@@ -7353,8 +7474,58 @@ app.post('/api/game/activity', async (req, res) => {
         `${displayLabel} — ${taskId}`,
         taskId,
         eventKey,
+        telemetry.telemetry_contract_version,
+        telemetry.quest_graph_version,
+        telemetry.map_id || 'unknown',
+        telemetry.canonical_activity_id,
+        telemetry.canonical_quest_id || 'main',
+        telemetry.canonical_task_id || taskId,
+        telemetry.canonical_milestone_id || `${taskId}.complete`,
+        telemetry.activity_event_id || eventKey,
+        session.id,
+        telemetry.started_at,
+        telemetry.completed_at,
+        telemetry.duration_seconds,
+        telemetry.is_player_facing,
+        telemetry.difficulty,
       ]
     );
+
+    if (insertResult.rows.length && isPlayerFacingCompletion(telemetry)) {
+      await pool.query(
+        `INSERT INTO public.student_quest_milestones (
+           student_id, learning_cycle_version, telemetry_contract_version,
+           quest_graph_version, map_id, canonical_quest_id, canonical_task_id,
+           canonical_milestone_id, player_facing, completed_at, source_activity_event_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, COALESCE($9, CURRENT_TIMESTAMP), $10)
+         ON CONFLICT (student_id, learning_cycle_version, canonical_milestone_id) DO NOTHING
+         RETURNING canonical_milestone_id`,
+        [
+          session.student_id,
+          learningCycleVersion,
+          telemetry.telemetry_contract_version,
+          telemetry.quest_graph_version,
+          telemetry.map_id || 'unknown',
+          telemetry.canonical_quest_id || 'main',
+          telemetry.canonical_task_id || taskId,
+          telemetry.canonical_milestone_id || `${taskId}.complete`,
+          telemetry.completed_at,
+          telemetry.activity_event_id || eventKey,
+        ]
+      );
+      await pool.query(
+        `UPDATE public.student_game_progress p
+         SET total_quests_completed = (
+           SELECT COUNT(*)::INTEGER
+           FROM public.student_quest_milestones m
+           WHERE m.student_id = p.student_id
+             AND m.learning_cycle_version = $2
+             AND m.player_facing = true
+         ), updated_at = NOW()
+         WHERE p.student_id = $1`,
+        [session.student_id, learningCycleVersion]
+      );
+    }
 
     return res.status(insertResult.rows.length ? 201 : 200).json({
       success: true,
@@ -8105,9 +8276,9 @@ const handleTopAchieversRequest = async (req, res) => {
           p.accuracy_rate AS accuracy,
           p.progress_percentage,
           p.progress_percentage AS completion_percentage,
-          COALESCE(p.total_quests_completed, 0) AS quests_completed,
-          COALESCE(p.total_quests_completed, 0) AS total_quests_completed,
-          COALESCE(p.total_play_time, latest_activity.total_play_time, 0) AS total_play_time,
+          COALESCE(canonical_milestones.quests_completed, p.total_quests_completed, 0) AS quests_completed,
+          COALESCE(canonical_milestones.quests_completed, p.total_quests_completed, 0) AS total_quests_completed,
+          COALESCE(canonical_playtime.total_playtime_seconds, p.total_play_time, 0) AS total_play_time,
           p.last_played,
           ROW_NUMBER() OVER (
             PARTITION BY p.student_id
@@ -8128,6 +8299,20 @@ const handleTopAchieversRequest = async (req, res) => {
           ORDER BY al.activity_timestamp DESC NULLS LAST, al.id DESC
           LIMIT 1
         ) latest_activity ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*)::INTEGER AS quests_completed
+          FROM public.student_quest_milestones sqm
+          WHERE sqm.student_id = p.student_id
+            AND sqm.learning_cycle_version = COALESCE(a.current_learning_cycle_version, 0)
+            AND sqm.player_facing = true
+        ) canonical_milestones ON true
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(COALESCE(ps.total_playtime_seconds, ps.total_playtime_minutes * 60, 0)), 0)::INTEGER AS total_playtime_seconds
+          FROM public.playtime_sessions ps
+          WHERE ps.student_id = p.student_id
+            AND ps.status IN ('Completed', 'Playing')
+            AND ps.learning_cycle_version = COALESCE(a.current_learning_cycle_version, 0)
+        ) canonical_playtime ON true
         WHERE 1=1
           AND COALESCE(a.is_archived, false) = false
           AND a.progress_archived_at IS NULL
@@ -8201,7 +8386,7 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
         al.section,
         al.current_quest,
         al.save_status,
-        al.total_play_time AS duration_seconds,
+        COALESCE(al.duration_seconds, al.total_play_time) AS duration_seconds,
         al.total_play_time,
         al.last_played,
         al.quest_progress,

@@ -28,7 +28,9 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
   const [results, playtime] = await Promise.all([
     queryClient.query(
       `SELECT gr.resolved_student_id, gr.id, gr.math_topic, gr.difficulty,
-              gr.percentage, gr.score, gr.total_items, gr.played_at, gr.question_set_id
+              gr.percentage, gr.score, gr.total_items, gr.played_at, gr.question_set_id,
+              gr.result_event_id, gr.map_id, gr.canonical_quest_id,
+              gr.canonical_task_id, gr.canonical_battle_id, gr.canonical_milestone_id
        FROM public.game_results gr
        JOIN public.accounts student ON student.id = gr.resolved_student_id
        WHERE gr.resolved_student_id = ANY($1::INTEGER[])
@@ -38,7 +40,8 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
       [studentIds]
     ),
     queryClient.query(
-      `SELECT ps.student_id, ps.total_playtime_minutes, ps.status, ps.date_played, ps.end_time
+      `SELECT ps.student_id, ps.total_playtime_seconds, ps.total_playtime_minutes,
+              ps.status, ps.date_played, ps.end_time
        FROM public.playtime_sessions ps
        JOIN public.accounts student ON student.id = ps.student_id
        WHERE ps.student_id = ANY($1::INTEGER[])
