@@ -6690,7 +6690,10 @@ app.delete('/api/learning-files/trash', requireLessonQuestionManagerAccess, asyn
     }
     await writeAdminAuditLog(req.authenticatedUser, 'Empty Question Set Trash', { name: `${files.length} Question Sets` }, {
       reason: reasonResult.reason,
-      operationType: 'question_set_bulk_permanent_delete',
+      // Keep the audit operation code within the deployed schema's VARCHAR(32)
+      // limit.  The longer historical label caused PostgreSQL 22001 and made
+      // an otherwise successful transactional Trash purge roll back.
+      operationType: 'question_trash_bulk_delete',
       beforeMetadata: { files: files.map((file) => ({ id: file.id, title: file.title, file_name: file.file_name, deleted_at: file.deleted_at })) },
       afterMetadata: { permanently_deleted_file_ids: deletedResult.rows.map((file) => file.id) },
     }, client);
