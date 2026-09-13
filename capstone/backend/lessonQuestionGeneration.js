@@ -320,12 +320,16 @@ const generateLessonQuestionsInBatches = async ({
   questionCount,
   batchSize = 5,
   generateBatch,
+  onBatch,
 }) => {
   if (!Number.isInteger(questionCount) || questionCount < 1) {
     throw new QuestionGenerationError('QUESTION_AI_INVALID_REQUEST', 'Question Count must be a positive whole number.');
   }
   if (typeof generateBatch !== 'function') {
     throw new TypeError('generateBatch must be a function');
+  }
+  if (onBatch !== undefined && typeof onBatch !== 'function') {
+    throw new TypeError('onBatch must be a function when provided');
   }
   const boundedBatchSize = Math.min(Math.max(Number(batchSize) || 5, 1), 5);
   const questions = [];
@@ -340,6 +344,14 @@ const generateLessonQuestionsInBatches = async ({
         throw new QuestionGenerationError('QUESTION_AI_INVALID_RESPONSE', 'Question batch did not return the requested number of valid questions.');
       }
       questions.push(...batch);
+      if (onBatch) {
+        await onBatch({
+          batch,
+          batch_index: batchIndex,
+          valid_count: questions.length,
+          requested_count: questionCount,
+        });
+      }
       batchIndex += 1;
     } catch (error) {
       failures.push({

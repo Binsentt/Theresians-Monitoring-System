@@ -5351,6 +5351,7 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
     if (!String(process.env.OPENAI_API_KEY || '').trim()) {
       throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
     }
+    let batchesPersisted = false;
     const generationResult = scope.questionCount > 5
       ? await generateLessonQuestionsInBatches({
         questionCount: scope.questionCount,
@@ -5367,6 +5368,17 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
           scope.difficulty,
           batchCount
         ),
+        onBatch: async ({ batch }) => {
+          await saveQuestionsForFile(childLearningFile.id, batch.map((question) => ({
+            ...question,
+            grade_level: scope.gradeLevel,
+            difficulty: scope.difficulty,
+            math_topic: null,
+            topic_id: null,
+            source: 'ai',
+          })), pool);
+          batchesPersisted = true;
+        },
       })
       : {
         questions: await generateQuestionTextFromLesson(
@@ -5392,14 +5404,16 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await saveQuestionsForFile(childLearningFile.id, questions.map((question) => ({
-        ...question,
-        grade_level: scope.gradeLevel,
-        difficulty: scope.difficulty,
-        math_topic: null,
-        topic_id: null,
-        source: 'ai',
-      })), client);
+      if (!batchesPersisted) {
+        await saveQuestionsForFile(childLearningFile.id, questions.map((question) => ({
+          ...question,
+          grade_level: scope.gradeLevel,
+          difficulty: scope.difficulty,
+          math_topic: null,
+          topic_id: null,
+          source: 'ai',
+        })), client);
+      }
       const generationStatus = generationResult.status === 'complete' ? 'ready_for_review' : 'partial_failed';
       const completed = await client.query(
         `UPDATE public.learning_files
@@ -5682,6 +5696,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
 
     if (normalizedType === 'lesson') {
       let learningFile;
+      let batchesPersisted = false;
       try {
         learningFile = await createLearningFile('generating');
       } catch (error) {
@@ -5726,6 +5741,17 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
               normalizedDifficulty,
               batchCount
             ),
+            onBatch: async ({ batch }) => {
+              await saveQuestionsForFile(learningFile.id, batch.map((question) => ({
+                ...question,
+                grade_level: learningFile.grade_level,
+                difficulty: learningFile.difficulty,
+                math_topic: learningFile.math_topic,
+                topic_id: learningFile.topic_id,
+                source: 'ai',
+              })), pool);
+              batchesPersisted = true;
+            },
           })
           : {
             questions: await generateQuestionTextFromLesson(
@@ -5751,14 +5777,16 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         const client = await pool.connect();
         try {
           await client.query('BEGIN');
-          await saveQuestionsForFile(learningFile.id, questions.map((question) => ({
-            ...question,
-            grade_level: learningFile.grade_level,
-            difficulty: learningFile.difficulty,
-            math_topic: learningFile.math_topic,
-            topic_id: learningFile.topic_id,
-            source: 'ai',
-          })), client);
+          if (!batchesPersisted) {
+            await saveQuestionsForFile(learningFile.id, questions.map((question) => ({
+              ...question,
+              grade_level: learningFile.grade_level,
+              difficulty: learningFile.difficulty,
+              math_topic: learningFile.math_topic,
+              topic_id: learningFile.topic_id,
+              source: 'ai',
+            })), client);
+          }
           const generationStatus = generationResult.status === 'complete' ? 'ready_for_review' : 'partial_failed';
           const completedResult = await client.query(
             `UPDATE public.learning_files
