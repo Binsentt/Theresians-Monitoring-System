@@ -439,6 +439,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
       difficulty: 'Easy',
       math_topic: 'Basic Addition',
       file_type: 'fixed_questions',
+      generation_status: 'generating',
+      generation_stage: 'generating',
       published: false,
     }];
 
@@ -455,6 +457,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(global.fetch).not.toHaveBeenCalledWith('/api/learning-files/77/preview', expect.anything());
     expect(document.body.textContent).toContain('Question Review');
     expect(document.body.textContent).toContain('What is 2 + 3?');
+    expect(document.body.textContent).not.toContain('Generating questions');
     expect(document.body.textContent).toContain('Grade 1 · Easy');
     expect(document.body.textContent).not.toContain('Grade Grade 1');
     expect(document.body.querySelector('button[aria-label="Edit question 1"]')).not.toBeNull();
@@ -1146,6 +1149,36 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).toContain('What is 2 + 3?');
     expect(document.body.textContent).toContain('5 (Correct)');
     expect(document.body.textContent).toContain('ready for manual Push to Game');
+  });
+
+  test('Lesson Preview keeps persisted partial questions visible while generation is incomplete', async () => {
+    fixtures.files = [{
+      id: 78,
+      title: 'partial-lesson',
+      file_name: 'partial-lesson.pptx',
+      file_url: '/uploads/partial-lesson.pptx',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Basic Addition',
+      file_type: 'lesson',
+      question_count: 5,
+      requested_question_count: 20,
+      generation_status: 'partial_failed',
+      generation_stage: 'partial_failed',
+      generation_completed_count: 5,
+      generation_remaining_count: 15,
+      generation_error_code: 'QUESTION_AI_GENERATION_FAILED',
+      published: false,
+    }];
+
+    await act(async () => root.render(<LessonQuestionManager />));
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+    await act(async () => clickByText(container, 'Preview'));
+
+    expect(document.body.textContent).toContain('What is 2 + 3?');
+    expect(document.body.textContent).toContain('5 / 20 completed');
+    expect(document.body.textContent).toContain('Existing questions are preserved');
+    expect(document.body.textContent).toContain('Retry remaining questions');
   });
 
   test('requires the final question card in the inner Preview scroll container before Approve', async () => {

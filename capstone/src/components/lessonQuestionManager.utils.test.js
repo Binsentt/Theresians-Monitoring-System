@@ -90,6 +90,26 @@ describe('lesson question manager helpers', () => {
       progressLabel: '5 / 8 completed',
     }));
   });
+  test('fixed question sets never expose stale AI generation state', () => {
+    expect(getGenerationStatusView({
+      file_type: 'fixed_questions',
+      generation_status: 'generating',
+      generation_stage: 'generating',
+      generation_completed_count: 0,
+      requested_question_count: 20,
+    })).toEqual(expect.objectContaining({
+      status: 'not_applicable',
+      stage: 'not_applicable',
+      inProgress: false,
+      failed: false,
+      partial: false,
+      ready: false,
+      canApprove: false,
+      canRetry: false,
+      label: 'Question generation',
+      progressLabel: null,
+    }));
+  });
   test('returns configured difficulty values and grade difficulty topics', () => {
     expect(getDifficultyLevels(registryFixture)).toEqual(['Easy', 'Normal', 'Difficult']);
     expect(getMathTopicsForGradeDifficulty('Grade 1', 'Easy', registryFixture)).toEqual([

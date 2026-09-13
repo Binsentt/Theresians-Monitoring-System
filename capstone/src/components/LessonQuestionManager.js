@@ -1999,14 +1999,14 @@ export default function LessonQuestionManager() {
                     )}
                     {previewQuestionsLoading ? (
                       <p className="empty-text">Loading questions...</p>
-                    ) : previewGenerationStatus.inProgress ? (
+                    ) : previewGenerationStatus.inProgress && previewQuestions.length === 0 ? (
                       <section className="generation-status-view" role="status" aria-live="polite">
                         <strong>{previewGenerationStatus.label}...</strong>
                         {previewGenerationStatus.progressLabel && <p className="question-review-metadata">{previewGenerationStatus.progressLabel}</p>}
                         <p className="question-review-metadata">Current stage: {previewGenerationStatus.stage || 'queued'}</p>
                         <p className="empty-text">Please wait. Questions will become available for review when generation finishes.</p>
                       </section>
-                    ) : previewGenerationStatus.failed ? (
+                    ) : previewGenerationStatus.failed && previewQuestions.length === 0 ? (
                       <section className="generation-status-view" role="alert">
                         <strong>{previewGenerationStatus.partial ? 'Question generation partially failed' : 'Question generation failed'}</strong>
                         {previewGenerationStatus.partial && (
@@ -2025,6 +2025,20 @@ export default function LessonQuestionManager() {
                       </>
                     ) : (
                       <>
+                        {(previewGenerationStatus.inProgress || previewGenerationStatus.failed) && (
+                          <section className="generation-status-view" role={previewGenerationStatus.failed ? 'alert' : 'status'} aria-live="polite">
+                            <strong>{previewGenerationStatus.inProgress ? `${previewGenerationStatus.label}...` : (previewGenerationStatus.partial ? 'Question generation partially failed' : 'Question generation failed')}</strong>
+                            {previewGenerationStatus.progressLabel && <p className="question-review-metadata">{previewGenerationStatus.progressLabel}</p>}
+                            {previewGenerationStatus.inProgress && <p className="question-review-metadata">Existing questions are preserved while the remaining questions are generated.</p>}
+                            {previewGenerationStatus.partial && (
+                              <p className="question-review-metadata">
+                                Existing questions are preserved; retry only the remaining {previewGenerationStatus.retryCount ?? 'available'}.
+                              </p>
+                            )}
+                            {previewGenerationStatus.failed && <p className="manager-inline-error">{previewFile.generation_error_message || previewFile.generation_error_code || 'The question set could not be generated.'}</p>}
+                            {previewGenerationStatus.failed && <button type="button" className="btn btn-secondary" onClick={previewGenerationStatus.partial ? retryPartialGeneration : () => { closeQuestionPreview(); setSelectedLessonSourceId(String(previewFile.source_learning_file_id || previewFile.id || '')); setShowUploadForm(true); }}>{previewGenerationStatus.partial ? 'Retry remaining questions' : 'Retry'}</button>}
+                          </section>
+                        )}
                         <p className="question-review-metadata">Requested: {previewFile.requested_question_count ?? 'Not specified'} · Available: {previewQuestions.length}</p>
                         {previewValidation?.is_valid === false && <p className="manager-inline-error" role="alert">Needs Correction — every question must have four distinct choices and a mapped correct answer.</p>}
                         {previewValidation?.is_valid !== false && previewIsReadyForGame && <p className="question-validation-valid">Valid — this question set is ready for manual Push to Game.</p>}

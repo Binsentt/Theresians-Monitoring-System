@@ -3,8 +3,10 @@ import { getRegistryScopeTopics } from '../curriculumRegistry';
 const IN_FLIGHT_GENERATION_STAGES = new Set(['queued', 'extracting', 'generating', 'validating', 'saving']);
 
 export const getGenerationStatusView = (file = {}) => {
-  const status = String(file.generation_status || '').trim().toLowerCase();
-  const stage = String(file.generation_stage || status).trim().toLowerCase();
+  const hasExplicitFileType = Object.prototype.hasOwnProperty.call(file, 'file_type');
+  const isLessonSource = !hasExplicitFileType || String(file.file_type || '').trim().toLowerCase() === 'lesson';
+  const status = isLessonSource ? String(file.generation_status || '').trim().toLowerCase() : 'not_applicable';
+  const stage = isLessonSource ? String(file.generation_stage || status).trim().toLowerCase() : 'not_applicable';
   const completed = Number(file.generation_completed_count);
   const requested = Number(file.requested_question_count);
   const inProgress = IN_FLIGHT_GENERATION_STAGES.has(status) || IN_FLIGHT_GENERATION_STAGES.has(stage);
