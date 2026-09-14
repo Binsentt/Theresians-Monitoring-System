@@ -136,7 +136,13 @@ export function StudentInsightsPanel({ students = [], role = 'admin' }) {
   return (
     <div className="embedded-student-insights">
       <label htmlFor="embedded-student-insight-select">Student Insights</label>
-      <select id="embedded-student-insight-select" value={selectedStudentId} onChange={handleSelection}>
+      <select
+        id="embedded-student-insight-select"
+        className="student-insight-selector"
+        aria-label="Student Insights student selector"
+        value={selectedStudentId}
+        onChange={handleSelection}
+      >
         <option value="">Select a student</option>
         {students.map((student) => (
           <option key={student.student_id} value={student.student_id}>

@@ -33,4 +33,11 @@ describe('responsive text and table layout guardrails', () => {
     expect(styles).toMatch(/\.table-container,[\s\S]*overflow-x:\s*auto;/);
     expect(progressStyles).toMatch(/\.table-wrapper\s*\{[\s\S]*overflow-x:\s*auto;/);
   });
+
+  test('Student Progress uses a compact no-scroll desktop table while retaining mobile overflow fallback', () => {
+    expect(progressStyles).toMatch(/@media\s*\(min-width:\s*1200px\)[\s\S]*\.student-progress-table\s*\{[\s\S]*min-width:\s*0/);
+    expect(progressStyles).toMatch(/@media\s*\(min-width:\s*1200px\)[\s\S]*table-layout:\s*fixed/);
+    expect(progressStyles).toMatch(/@media\s*\(max-width:\s*980px\)[\s\S]*\.table-wrapper\s*\{[\s\S]*overflow-x:\s*auto/);
+    expect(progressStyles).toMatch(/\.student-progress-table th:nth-child\(6\)/);
+  });
 });

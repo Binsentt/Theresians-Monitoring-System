@@ -8023,6 +8023,9 @@ app.post('/api/game/leaderboard', async (req, res) => {
 
     const result = await pool.query(
       `SELECT student_id,
+              display_name,
+              grade,
+              game_score,
               progress_percentage,
               CASE WHEN COALESCE(total_questions, 0) > 0 THEN accuracy_rate ELSE NULL END AS accuracy_rate,
               correct_answers,
@@ -8030,6 +8033,9 @@ app.post('/api/game/leaderboard', async (req, res) => {
               total_quests_completed AS quests_completed
        FROM (
          SELECT p.student_id,
+                COALESCE(NULLIF(TRIM(p.student_name), ''), a.name, 'Unknown') AS display_name,
+                COALESCE(NULLIF(TRIM(a.grade_level), ''), NULLIF(TRIM(p.grade_level), '')) AS grade,
+                p.score AS game_score,
                 p.progress_percentage,
                 CASE WHEN COALESCE(p.total_questions, 0) > 0 THEN p.accuracy_rate ELSE NULL END AS accuracy_rate,
                 p.correct_answers,
@@ -8066,13 +8072,15 @@ app.post('/api/game/leaderboard', async (req, res) => {
        ) ranked_progress
        WHERE student_rank = 1
        ORDER BY ${CANONICAL_TOP_ACHIEVER_ORDER_SQL}
-       LIMIT 10`
+       LIMIT 6`
     );
 
     return res.json({
       entries: result.rows.map((row, index) => ({
         rank: index + 1,
-        display_name: `Player ${index + 1}`,
+        display_name: row.display_name || 'Unknown',
+        grade: row.grade || null,
+        game_score: row.game_score ?? null,
         progress_percentage: row.progress_percentage ?? null,
         accuracy_rate: row.accuracy_rate ?? null,
         correct_answers: row.correct_answers ?? null,

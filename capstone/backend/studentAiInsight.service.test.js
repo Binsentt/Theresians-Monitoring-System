@@ -2,6 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { resolveStudentAiInsight: resolveStudentAiInsightWithPolicy } = require('./studentAiInsight.service');
+const { buildStudentAnalyticsMetrics } = require('./studentAnalyticsMetrics.utils');
+const {
+  buildGroundedClaimCatalog,
+  renderValidatedClaimSelection,
+  GROUNDING_POLICY_VERSION,
+} = require('./studentAnalyticsGrounding.utils');
 
 const resolveStudentAiInsight = (input) => resolveStudentAiInsightWithPolicy({
   aiGenerationEnabled: true,
@@ -117,6 +123,73 @@ test('four Grade 1 Oakleaf Easy results generate a real preliminary 75 percent i
   assert.equal(providerInput.accuracy, 75);
   assert.equal(providerInput.current_difficulty, 'Easy');
   assert.equal(state.insight.performance_insight, 'Recorded overall accuracy is 75%.');
+});
+
+test('five graded answers with two correct and three incorrect produce grounded weakness and recommendation evidence', async () => {
+  const quizSessions = [1, 0, 0, 1, 0].map((score, index) => ({
+    score,
+    total_items: 1,
+    difficulty: 'Easy',
+    math_topic: 'Oakleaf',
+    result_event_id: `qa-battle-${index + 1}`,
+  }));
+  const metrics = buildStudentAnalyticsMetrics({
+    progress: { score: 17, current_quest: 'First Bandit' },
+    quizSessions,
+  });
+
+  assert.equal(metrics.validResultCount, 5);
+  assert.equal(metrics.correctAnswers, 2);
+  assert.equal(metrics.incorrectAnswers, 3);
+  assert.equal(metrics.totalQuestions, 5);
+  assert.equal(metrics.accuracy, 40);
+
+  const { buildGroundedInsightInput } = require('./studentAnalyticsInsight.utils');
+  const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics });
+  const catalog = buildGroundedClaimCatalog(input);
+  const grounded = renderValidatedClaimSelection({
+    grounding_policy_version: GROUNDING_POLICY_VERSION,
+    performance_claim_ids: ['results_recorded', 'answer_counts', 'overall_accuracy'],
+    strength_claim_ids: [],
+    weakness_claim_ids: ['overall_accuracy_weakness'],
+  }, catalog);
+  assert.match(grounded.performance_insight, /40%/);
+  assert.match(grounded.weaknesses[0], /40%/);
+  assert.deepEqual(grounded.recommendations, [
+    'Provide additional overall practice based on the recorded 40% accuracy.',
+  ]);
+
+  const harness = createHarness();
+  let providerCalls = 0;
+  const state = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics,
+    actorId: 1,
+    pool: harness.pool,
+    generateInsight: async () => {
+      providerCalls += 1;
+      return grounded;
+    },
+  });
+  assert.equal(state.status, 'generated');
+  assert.equal(state.data_level, 'sufficient_data');
+  assert.equal(state.preliminary, false);
+  assert.deepEqual(state.insight.recommendations, grounded.recommendations);
+
+  const cached = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics,
+    actorId: 2,
+    pool: harness.pool,
+    generateInsight: async () => {
+      providerCalls += 1;
+      return grounded;
+    },
+  });
+  assert.equal(cached.status, 'cached');
+  assert.equal(providerCalls, 1);
 });
 
 test('paused insight with no cache returns a stable state without provider, transaction, or write', async () => {

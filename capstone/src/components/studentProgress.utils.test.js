@@ -80,6 +80,15 @@ describe('student progress helpers', () => {
     }));
   });
 
+  test('normalizes the canonical game score for the primary progress table', () => {
+    expect(normalizeStudentProgressRow({ score: 17, metrics: { gameScore: 23 } })).toEqual(
+      expect.objectContaining({ game_score: 23 })
+    );
+    expect(normalizeStudentProgressRow({ score: 17 })).toEqual(
+      expect.objectContaining({ game_score: 17 })
+    );
+  });
+
   test('keeps unavailable canonical facts unavailable despite populated legacy aliases', () => {
     const normalized = normalizeStudentProgressRow({
       current_quest: 'Old quest', current_scene: 'oak_leaf_village.tscn', difficulty_level: 'Easy',

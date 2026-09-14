@@ -92,6 +92,31 @@ describe('Student Progress summary cards', () => {
     ))).toBe(true);
   });
 
+  test('shows Correct, Incorrect, and canonical Game Score in the primary table', async () => {
+    global.fetch = jest.fn((url) => {
+      const value = String(url);
+      if (value.startsWith('/api/students/progress')) {
+        return jsonResponse([{
+          student_id: 44,
+          student_name: 'Ava Santos',
+          correct_answers: 2,
+          incorrect_answers: 3,
+          score: 17,
+          metrics: { correctAnswers: 2, incorrectAnswers: 3, gameScore: 17 },
+        }]);
+      }
+      if (value.startsWith('/api/analytics/overview')) return jsonResponse({ studentCount: 1, averageAccuracy: 40, averageProgress: null });
+      return jsonResponse({});
+    });
+
+    await act(async () => root.render(<AdminStudentProgress />));
+
+    const headers = Array.from(container.querySelectorAll('.student-progress-table thead th')).map((cell) => cell.textContent);
+    expect(headers).toEqual(expect.arrayContaining(['Correct', 'Incorrect', 'Game Score']));
+    expect(headers).not.toContain('Accuracy');
+    expect(container.querySelector('.student-progress-table tbody')?.textContent).toContain('17');
+  });
+
   test('does not render unavailable student metrics as fabricated zeroes', async () => {
     global.fetch = jest.fn((url) => {
       const value = String(url);

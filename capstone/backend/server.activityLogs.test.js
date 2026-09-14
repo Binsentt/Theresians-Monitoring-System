@@ -415,7 +415,7 @@ test('canonical completed quest events persist one weighted milestone and true d
   assert.equal(milestoneParams[4], 2);
 });
 
-test('game leaderboard requires a current lease and exposes only ranked aggregate display data', async (t) => {
+test('game leaderboard requires a current lease and exposes canonical student display data', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const credential = 'l'.repeat(64);
@@ -436,6 +436,10 @@ test('game leaderboard requires a current lease and exposes only ranked aggregat
     }
     if (sql.includes('from public.student_game_progress p') && sql.includes('ranked_progress')) {
       return resultRows([{
+        student_id: 44,
+        display_name: 'Ava Santos',
+        grade: 'Grade 3',
+        game_score: 87,
         progress_percentage: 82,
         accuracy_rate: 91,
         correct_answers: 9,
@@ -458,7 +462,9 @@ test('game leaderboard requires a current lease and exposes only ranked aggregat
   assert.equal(response.status, 200);
   assert.deepEqual(response.body.entries, [{
     rank: 1,
-    display_name: 'Player 1',
+    display_name: 'Ava Santos',
+    grade: 'Grade 3',
+    game_score: 87,
     progress_percentage: 82,
     accuracy_rate: 91,
     correct_answers: 9,

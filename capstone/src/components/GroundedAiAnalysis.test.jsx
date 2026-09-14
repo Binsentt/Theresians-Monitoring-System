@@ -178,4 +178,20 @@ describe('GroundedAiAnalysis', () => {
     expect(container.textContent).toContain('Evidence: 3 valid results');
     expect(container.textContent).toContain('Current');
   });
+
+  test('renders the Student Insights selector with the dashboard styling hook', async () => {
+    await act(async () => root.render(<StudentInsightsPanel
+      students={[{ student_id: 11, student_name: 'Ana Reyes', game_student_id: '00000011' }]}
+      role="admin"
+    />));
+
+    const wrapper = container.querySelector('.embedded-student-insights');
+    const label = container.querySelector('label[for="embedded-student-insight-select"]');
+    const select = container.querySelector('#embedded-student-insight-select');
+    expect(wrapper).not.toBeNull();
+    expect(label).not.toBeNull();
+    expect(label.textContent).toBe('Student Insights');
+    expect(select.classList.contains('student-insight-selector')).toBe(true);
+    expect(select.getAttribute('aria-label')).toBe('Student Insights student selector');
+  });
 });
