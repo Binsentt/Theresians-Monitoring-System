@@ -305,12 +305,15 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   const confirmDeletion = async (event) => {
     event.preventDefault();
     if (!deletionReason.trim()) return setDeletionError('Provide a reason for history removal.');
+    const isBulk = pendingDeletion?.kind === 'bulk';
+    if (isBulk && Number(deletionTarget?.affected_count || 0) === 0) {
+      return setDeletionError('No eligible completed Screen Time records can be permanently deleted.');
+    }
     const isReset = pendingDeletion?.kind === 'reset';
     if (deletionConfirmation !== (isReset ? 'RESET' : 'DELETE')) return setDeletionError(`Type ${isReset ? 'RESET' : 'DELETE'} to confirm.`);
     setDeleting(true);
     setDeletionError('');
     try {
-       const isBulk = pendingDeletion?.kind === 'bulk';
        const endpoint = isBulk ? '/api/playtime/completed/bulk' : `/api/playtime/${pendingDeletion.record.id}${isReset ? '/reset' : ''}`;
        const response = await fetch(apiUrl(endpoint), {
          method: isBulk ? 'POST' : isReset ? 'POST' : 'DELETE',
@@ -503,7 +506,16 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                       <form className="screen-time-deletion-dialog" role="dialog" aria-modal="true" aria-labelledby="screen-time-deletion-title" onSubmit={confirmDeletion} onMouseDown={(event) => event.stopPropagation()}>
                         <h2 id="screen-time-deletion-title">{pendingDeletion.kind === 'bulk' ? 'Delete All Completed Records' : pendingDeletion.kind === 'reset' ? 'Reset Screen Time' : 'Delete Screen Time Record'}</h2>
                         <p>This action removes the record from Screen Time history. Daily playtime usage accounting remains preserved.</p>
-                        {pendingDeletion.kind === 'bulk' ? <p><strong>{deletionTarget?.affected_count || 0} completed records match the current filters.</strong></p> : <p><strong>{pendingDeletion.record.student_name || pendingDeletion.record.game_student_id || 'Selected student'} · {formatDate(pendingDeletion.record.date_played)}</strong></p>}
+                        {pendingDeletion.kind === 'bulk' ? (
+                          <>
+                            <p><strong>{deletionTarget?.visible_count ?? deletionTarget?.affected_count ?? 0} visible records match the current filters.</strong></p>
+                            {Number(deletionTarget?.affected_count || 0) === 0 ? (
+                              <p className="screen-time-error">No eligible completed Screen Time records can be permanently deleted.</p>
+                            ) : (
+                              <p><strong>{deletionTarget.affected_count} eligible for deletion · {deletionTarget.preserved_count || 0} preserved.</strong></p>
+                            )}
+                          </>
+                        ) : <p><strong>{pendingDeletion.record.student_name || pendingDeletion.record.game_student_id || 'Selected student'} · {formatDate(pendingDeletion.record.date_played)}</strong></p>}
                         {pendingDeletion.kind === 'reset' && <p>This resets the Screen Time baseline for the active student. Existing history and the active session are preserved.</p>}
                         <label htmlFor="screen-time-deletion-reason">Reason for {pendingDeletion.kind === 'reset' ? 'reset' : 'removal'}</label>
                         <textarea id="screen-time-deletion-reason" value={deletionReason} onChange={(event) => setDeletionReason(event.target.value.slice(0, 1000))} maxLength={1000} rows={4} disabled={deleting} />
@@ -512,7 +524,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                         {deletionError && <p className="screen-time-error" role="alert">{deletionError}</p>}
                         <div className="screen-time-deletion-actions">
                           <button type="button" className="screen-time-clear" onClick={closeDeletionDialog} disabled={deleting}>Cancel</button>
-                          <button type="submit" className="screen-time-danger-button" disabled={deleting}>{deleting ? (pendingDeletion.kind === 'reset' ? 'Resetting…' : 'Deleting…') : pendingDeletion.kind === 'reset' ? 'Confirm Reset' : 'Confirm Delete'}</button>
+                          <button type="submit" className="screen-time-danger-button" disabled={deleting || (pendingDeletion.kind === 'bulk' && Number(deletionTarget?.affected_count || 0) === 0)}>{deleting ? (pendingDeletion.kind === 'reset' ? 'Resetting…' : 'Deleting…') : pendingDeletion.kind === 'reset' ? 'Confirm Reset' : 'Confirm Delete'}</button>
                         </div>
                       </form>
                     </div>

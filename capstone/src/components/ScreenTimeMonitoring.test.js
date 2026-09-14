@@ -379,6 +379,40 @@ describe('ScreenTimeMonitoring', () => {
     expect(document.querySelector('.screen-time-deletion-dialog')).toBeNull();
   });
 
+  test('bulk Delete All explains a zero-eligible result and does not send a mutation', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
+    localStorage.setItem('rememberToken', 'remember-token');
+    let bulkDeleteCalls = 0;
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/deletion-summary')) {
+        return jsonResponse({
+          visible_count: 2,
+          affected_count: 0,
+          eligible_count: 0,
+          preserved_count: 2,
+          target_ids: [],
+          target_fingerprint: 'empty',
+        });
+      }
+      if (String(url).includes('/api/playtime/completed/bulk')) {
+        bulkDeleteCalls += 1;
+        return jsonResponse({ success: true, deleted_count: 0 });
+      }
+      return jsonResponse(playtimePayload);
+    });
+
+    act(() => root.render(<ScreenTimeMonitoring mode="all" />));
+    await waitForContent(container, 'Ava Santos');
+    await act(async () => container.querySelector('button[data-action="delete-all-completed-playtime"]').click());
+
+    expect(document.body.textContent).toContain('2 visible records');
+    expect(document.body.textContent).toContain('No eligible completed Screen Time records can be permanently deleted.');
+    const confirmButton = document.querySelector('.screen-time-deletion-dialog button[type="submit"]');
+    expect(confirmButton.disabled).toBe(true);
+    await act(async () => document.querySelector('.screen-time-deletion-dialog').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    expect(bulkDeleteCalls).toBe(0);
+  });
+
   test('active enrolled students expose Reset Screen Time instead of Delete', async () => {
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
     localStorage.setItem('rememberToken', 'remember-token');

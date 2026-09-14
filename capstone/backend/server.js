@@ -9443,9 +9443,7 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
                 student_account.is_archived AS student_is_archived,
                 student_account.progress_archived_at AS student_progress_archived_at,
                 CASE
-                  WHEN student_account.id IS NULL
-                    OR COALESCE(student_account.is_archived, false) = true
-                    OR LOWER(COALESCE(student_account.status, '')) IN ('deleted', 'inactive', 'graduated', 'former')
+                  WHEN (${getPlaytimePresenceStatusSql('ps.')}) <> 'Playing'
                   THEN true ELSE false
                 END AS screen_time_delete_eligible
        FROM public.playtime_sessions ps
@@ -9492,21 +9490,32 @@ const resolvePlaytimeDeletionTargets = async (queryClient, req, { forUpdate = fa
                  LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
                  WHERE 1=1${filterResult.whereSql}
                    AND (${getPlaytimePresenceStatusSql('ps.')}) <> 'Playing'
-                   AND (student_account.id IS NULL
-                     OR COALESCE(student_account.is_archived, false) = true
-                     OR LOWER(COALESCE(student_account.status, '')) IN ('deleted', 'inactive', 'graduated', 'former'))
-                ORDER BY ps.id ASC${forUpdate ? ' FOR UPDATE' : ''}`;
+                 ORDER BY ps.id ASC${forUpdate ? ' FOR UPDATE OF ps' : ''}`;
   const result = await queryClient.query(query, params);
   return { rows: result.rows };
 };
 
 app.get('/api/playtime/deletion-summary', requireAccountManagementAdmin, async (req, res) => {
   try {
+    const visibleParams = [];
+    const visibleFilterResult = applyPlaytimeFilters({ req, params: visibleParams, scope: 'all' });
+    if (visibleFilterResult.error) return res.status(400).json({ error: visibleFilterResult.error });
+    const visibleResult = await pool.query(
+      `SELECT COUNT(*)::INTEGER AS visible_count
+         FROM public.playtime_sessions ps
+         LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
+        WHERE 1=1${visibleFilterResult.whereSql}`,
+      visibleParams
+    );
     const result = await resolvePlaytimeDeletionTargets(pool, req);
     if (result.error) return res.status(400).json({ error: result.error });
     const targetIds = result.rows.map((row) => Number(row.id));
+    const visibleCount = Number(visibleResult.rows[0]?.visible_count || 0);
     return res.json({
+      visible_count: visibleCount,
       affected_count: targetIds.length,
+      eligible_count: targetIds.length,
+      preserved_count: Math.max(0, visibleCount - targetIds.length),
       target_ids: targetIds,
       target_fingerprint: crypto.createHash('sha256').update(JSON.stringify(targetIds)).digest('hex'),
     });
@@ -9529,10 +9538,9 @@ app.delete('/api/playtime/:id', requireAccountManagementAdmin, async (req, res) 
     await client.query('BEGIN');
     const targetResult = await client.query(
        `SELECT ps.id, ps.student_id, ps.student_name, ps.parent_id, ps.status, ps.end_time, ps.date_played, ps.total_playtime_minutes,
+               (${getPlaytimePresenceStatusSql('ps.')}) AS presence_status,
                student_account.id AS student_account_id,
-               CASE WHEN student_account.id IS NULL
-                      OR COALESCE(student_account.is_archived, false) = true
-                      OR LOWER(COALESCE(student_account.status, '')) IN ('deleted', 'inactive', 'graduated', 'former')
+               CASE WHEN (${getPlaytimePresenceStatusSql('ps.')}) <> 'Playing'
                     THEN true ELSE false END AS screen_time_delete_eligible
         FROM public.playtime_sessions ps
         LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
@@ -9545,7 +9553,9 @@ app.delete('/api/playtime/:id', requireAccountManagementAdmin, async (req, res) 
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Screen Time record not found.' });
     }
-    if (String(target.status || '').toLowerCase() === 'playing' && !target.end_time) {
+    if (target.presence_status === 'Playing'
+      || (typeof target.presence_status === 'undefined'
+        && String(target.status || '').toLowerCase() === 'playing' && !target.end_time)) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Active Screen Time sessions cannot be removed.' });
     }
@@ -9646,6 +9656,10 @@ app.post('/api/playtime/completed/bulk', requireAccountManagementAdmin, async (r
       || expectedIds.length !== actualIds.length || expectedIds.some((id, index) => id !== actualIds[index])) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'The completed Screen Time target set changed. Review and confirm again.' });
+    }
+    if (actualIds.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'No eligible completed Screen Time records can be permanently deleted.' });
     }
     if (actualIds.length > 0) {
       await client.query(

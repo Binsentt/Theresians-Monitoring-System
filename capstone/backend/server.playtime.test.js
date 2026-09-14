@@ -198,6 +198,122 @@ test('Screen Time reset is admin-only, atomic, and limited to active enrolled st
   assert.equal(accountResetUpdates, 1);
 });
 
+test('Screen Time deletion summary counts ended active-student history and reports preserved rows', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, _params, rawSql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
+    }
+    if (sql.startsWith('select count(*)::integer as visible_count')) {
+      return resultRows([{ visible_count: 2 }]);
+    }
+    if (sql.startsWith('select ps.id') && sql.includes('for update') === false) {
+      // Simulate the database's actual rows: one ended session for an active
+      // Student and one active session that must remain protected. The old
+      // account-lifecycle predicate incorrectly excluded the ended row.
+      if (String(rawSql).includes("coalesce(student_account.is_archived, false) = true")) {
+        return emptyResult;
+      }
+      return resultRows([{
+        id: 77,
+        student_id: 44,
+        student_name: 'Active Student History',
+        parent_id: '123456',
+        status: 'Completed',
+        end_time: '2026-09-14T08:30:00.000Z',
+        date_played: '2026-09-14',
+        total_playtime_minutes: 30,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime/deletion-summary', {
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.visible_count, 2);
+  assert.equal(response.body.affected_count, 1);
+  assert.equal(response.body.eligible_count, 1);
+  assert.equal(response.body.preserved_count, 1);
+  assert.deepEqual(response.body.target_ids, [77]);
+});
+
+test('Screen Time bulk deletion soft-deletes eligible ended history and preserves active sessions', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let updateCalls = 0;
+  let auditWrites = 0;
+  let committed = false;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  const targetFingerprint = crypto.createHash('sha256').update(JSON.stringify([77])).digest('hex');
+  setQueryHandler(async (sql, _params, rawSql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
+    }
+    if (sql.startsWith('select ps.id') && sql.includes('for update')) {
+      assert.match(String(rawSql), /presence_status|case\s+when/i);
+      assert.match(String(rawSql), /<>\s*'Playing'/i);
+      return resultRows([{
+        id: 77,
+        student_id: 44,
+        student_name: 'Ended Active History',
+        parent_id: '123456',
+        status: 'Completed',
+        end_time: '2026-09-14T08:30:00.000Z',
+        date_played: '2026-09-14',
+        total_playtime_minutes: 30,
+      }]);
+    }
+    if (sql.startsWith('update public.playtime_sessions')) {
+      updateCalls += 1;
+      assert.match(String(rawSql), /deleted_at = now\(\)/i);
+      return resultRows([]);
+    }
+    if (sql.startsWith('insert into public.admin_audit_logs')) {
+      auditWrites += 1;
+      return resultRows([]);
+    }
+    if (sql === 'begin') return resultRows([]);
+    if (sql === 'commit') {
+      committed = true;
+      return resultRows([]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime/completed/bulk', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({
+      reason: 'Remove ended local QA history',
+      confirmation: 'DELETE',
+      expected_count: 1,
+      target_ids: [77],
+      target_fingerprint: targetFingerprint,
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.deleted_count, 1);
+  assert.equal(updateCalls, 1);
+  assert.equal(auditWrites, 1);
+  assert.equal(committed, true);
+});
+
 test('playtime start creates a Playing session for Godot gameplay', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
