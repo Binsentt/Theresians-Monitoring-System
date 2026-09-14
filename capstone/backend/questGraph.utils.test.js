@@ -21,3 +21,10 @@ test('weighted progress distinguishes first Bandit progress from completion', ()
   assert(firstTasks > tutorial);
   assert(allOakleaf > firstTasks);
 });
+
+test('weighted progress counts tutorial once and caps a complete campaign at 100 percent', () => {
+  const totalWeight = PLAYER_FACING_TASKS.reduce((sum, taskId) => sum + canonicalTaskWeight(taskId), 0) + 1;
+  assert.equal(calculateWeightedCompletion(['tutorial']), Number(((1 / totalWeight) * 100).toFixed(2)));
+  assert.equal(calculateWeightedCompletion(['tutorial', 'tutorial']), Number(((1 / totalWeight) * 100).toFixed(2)));
+  assert.equal(calculateWeightedCompletion(['tutorial', ...PLAYER_FACING_TASKS]), 100);
+});

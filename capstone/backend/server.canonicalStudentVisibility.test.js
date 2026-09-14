@@ -136,9 +136,12 @@ test('canonical students remain visible before gameplay through only their authe
   assert.equal(admin.body[0].game_student_id, '001234');
   assert.equal(admin.body[0].grade_level, 'Grade 3');
   assert.equal(admin.body[0].section, 'Jade');
-  assert.equal(admin.body[0].correct_answers, null);
-  assert.equal(admin.body[0].total_questions, null);
+  assert.equal(admin.body[0].correct_answers, 0);
+  assert.equal(admin.body[0].incorrect_answers, 0);
+  assert.equal(admin.body[0].total_questions, 0);
+  assert.equal(admin.body[0].game_score, 0);
   assert.equal(admin.body[0].accuracy_rate, null);
+  assert.equal(admin.body[0].progress_percentage, 0);
   assert.equal(admin.body[0].difficultyBreakdown.easy.accuracy, null);
 
   const teacher = await requestJson(baseUrl, '/api/students/progress?teacher_id=999', { headers: authHeaders('teacher') });
@@ -251,8 +254,11 @@ test('an authenticated parent can open a canonical zero-gameplay child analysis 
   assert.equal(response.body.progress.game_student_id, '001234');
   assert.equal(response.body.progress.grade_level, 'Grade 3');
   assert.equal(response.body.progress.section, 'Jade');
-  assert.equal(response.body.metrics.correctAnswers, null);
-  assert.equal(response.body.metrics.totalQuestions, null);
+  assert.equal(response.body.metrics.correctAnswers, 0);
+  assert.equal(response.body.metrics.incorrectAnswers, 0);
+  assert.equal(response.body.metrics.totalQuestions, 0);
+  assert.equal(response.body.metrics.gameScore, 0);
   assert.equal(response.body.metrics.accuracy, null);
-  assert.equal(response.body.metrics.totalProgress, null);
+  assert.equal(response.body.metrics.completedQuests, 0);
+  assert.equal(response.body.metrics.totalProgress, 0);
 });

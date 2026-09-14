@@ -1,7 +1,9 @@
 const { resolveCurrentDifficulty } = require('./progressScene.utils');
 const { countUniqueCompletedMilestones } = require('./questMilestones.utils');
 const { canonicalPlaytimeSeconds } = require('./playtimeAggregation.utils');
-const { calculateWeightedCompletion } = require('./questGraph.utils');
+const { calculateWeightedCompletion, PLAYER_FACING_TASKS } = require('./questGraph.utils');
+
+const CANONICAL_CAMPAIGN_TASK_IDS = new Set(['tutorial', ...PLAYER_FACING_TASKS]);
 
 const toFiniteNumber = (value) => {
   if (value === null || value === undefined || value === '') return null;
@@ -56,7 +58,7 @@ const emptyDifficultyBreakdown = () => ({
   hard: { correctAnswers: 0, totalQuestions: 0, accuracy: null },
 });
 
-function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playtimeSessions = [], completedMilestones = [] } = {}) {
+function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playtimeSessions = [], completedMilestones = null } = {}) {
   const seenResultEventIds = new Set();
   const validResults = (Array.isArray(quizSessions) ? quizSessions : [])
     .map(normalizeResult)
@@ -67,7 +69,10 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
       seenResultEventIds.add(result.resultEventId);
       return true;
     });
-  const validResultCount = validResults.filter((result) => result.isPerQuestion).length;
+  // One aggregate game-result row can represent several graded answers.  Count
+  // the authoritative graded items rather than database rows so preliminary-AI
+  // thresholds and "Recorded Results" stay truthful for both payload shapes.
+  const validResultCount = validResults.reduce((total, result) => total + result.totalQuestions, 0);
   const difficultyBreakdown = emptyDifficultyBreakdown();
   const topicTotals = new Map();
   const mapTotals = new Map();
@@ -99,20 +104,27 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
   const resultCorrectAnswers = validResults.reduce((total, result) => total + result.correctAnswers, 0);
   const resultTotalQuestions = validResults.reduce((total, result) => total + result.totalQuestions, 0);
   const hasResultHistory = resultTotalQuestions > 0;
-  const correctAnswers = hasResultHistory ? resultCorrectAnswers : null;
-  const totalQuestions = hasResultHistory ? resultTotalQuestions : null;
-  const incorrectAnswers = hasResultHistory ? Math.max(0, totalQuestions - correctAnswers) : null;
-  const accuracy = toPercentage(correctAnswers, totalQuestions);
+  const correctAnswers = hasResultHistory ? resultCorrectAnswers : 0;
+  const totalQuestions = hasResultHistory ? resultTotalQuestions : 0;
+  const incorrectAnswers = hasResultHistory ? Math.max(0, totalQuestions - correctAnswers) : 0;
+  const accuracy = hasResultHistory ? toPercentage(correctAnswers, totalQuestions) : null;
 
   const totalProgressValue = toFiniteNumber(progress.progress_percentage);
-  const canonicalCompletedTaskIds = Array.isArray(progress.completed_player_facing_task_ids)
+  const hasCanonicalMilestoneState = Array.isArray(progress.completed_player_facing_task_ids)
+    || Array.isArray(completedMilestones);
+  const rawCanonicalCompletedTaskIds = Array.isArray(progress.completed_player_facing_task_ids)
     ? progress.completed_player_facing_task_ids
-    : (Array.isArray(completedMilestones) && completedMilestones.length > 0
+    : (Array.isArray(completedMilestones)
       ? completedMilestones
         .filter((row) => row?.player_facing !== false)
-        .map((row) => row?.canonical_task_id || row?.task_id || row?.milestone_id)
+        .map((row) => row?.canonical_task_id || row?.canonical_milestone_id || row?.task_id || row?.milestone_id)
         .filter(Boolean)
       : null);
+  const canonicalCompletedTaskIds = rawCanonicalCompletedTaskIds === null
+    ? null
+    : rawCanonicalCompletedTaskIds
+      .map((taskId) => String(taskId || '').trim().toLowerCase())
+      .filter((taskId) => CANONICAL_CAMPAIGN_TASK_IDS.has(taskId));
   const milestoneCount = countUniqueCompletedMilestones(
     (Array.isArray(completedMilestones) ? completedMilestones : [])
       .filter((row) => row?.player_facing === true || row?.player_facing === undefined)
@@ -122,7 +134,10 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
   const completedQuests = canonicalCompletedTaskIds
     ? new Set(canonicalCompletedTaskIds).size
     : (milestoneCount > 0 ? milestoneCount : legacyQuestCount);
-  const gameScore = toFiniteNumber(progress.score);
+  // Game Score is the current-cycle count of correct graded answers. The
+  // result history is authoritative; legacy progress.score may use old point
+  // formulas and must not leak into this metric.
+  const gameScore = correctAnswers;
   const currentQuest = normalizeTopic(progress.current_quest) || null;
   const currentDifficulty = resolveCurrentDifficulty(progress);
   const playtimeSeconds = canonicalPlaytimeSeconds(playtimeSessions, { includePlaying: false });
@@ -155,15 +170,15 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
     gameScore,
     // The preserved legacy client percentage has no verified full-game milestone
     // denominator. Keep it traceable without presenting it as game completion.
-    totalProgress: null,
+    totalProgress: hasCanonicalMilestoneState ? calculateWeightedCompletion(canonicalCompletedTaskIds || []) : null,
     reportedTotalProgress: totalProgressValue === null ? null : Number(totalProgressValue.toFixed(2)),
-    totalProgressSource: totalProgressValue === null ? 'unavailable' : 'legacy_client_snapshot',
-    totalProgressVerified: false,
-    totalProgressUnavailableReason: 'full_game_milestones_unverified',
+    totalProgressSource: hasCanonicalMilestoneState ? 'canonical_quest_milestones' : 'unavailable',
+    totalProgressVerified: hasCanonicalMilestoneState,
+    totalProgressUnavailableReason: hasCanonicalMilestoneState ? null : 'full_game_milestones_unverified',
     completedQuests,
     // There is no authoritative total-quest denominator in the current data model.
-    questCompletionPercentage: canonicalCompletedTaskIds
-      ? calculateWeightedCompletion(canonicalCompletedTaskIds)
+    questCompletionPercentage: hasCanonicalMilestoneState
+      ? calculateWeightedCompletion(canonicalCompletedTaskIds || [])
       : null,
     currentQuest,
     currentDifficulty: currentDifficulty === 'Unknown' ? null : currentDifficulty,

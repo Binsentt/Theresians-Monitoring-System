@@ -85,7 +85,13 @@ describe('student progress helpers', () => {
       expect.objectContaining({ game_score: 23 })
     );
     expect(normalizeStudentProgressRow({ score: 17 })).toEqual(
-      expect.objectContaining({ game_score: 17 })
+      expect.objectContaining({ game_score: 0 })
+    );
+  });
+
+  test('normalizes a student with no graded answers to the canonical Game Score of zero', () => {
+    expect(normalizeStudentProgressRow({ student_id: 44 })).toEqual(
+      expect.objectContaining({ game_score: 0 })
     );
   });
 

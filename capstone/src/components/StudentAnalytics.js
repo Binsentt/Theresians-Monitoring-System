@@ -34,6 +34,11 @@ const formatPercent = (value) => {
   return number === null ? 'Not available' : `${number.toFixed(0)}%`;
 };
 
+const formatAttemptPercent = (value) => {
+  const number = toNullableNumber(value);
+  return number === null ? 'No attempts yet' : `${number.toFixed(0)}%`;
+};
+
 const formatCount = (value) => {
   const number = toNullableNumber(value);
   return number === null ? 'Not available' : String(Math.round(number));
@@ -160,7 +165,7 @@ export default function StudentAnalytics() {
   const currentLocation = safeDisplayText(progress?.current_location, 'Not available');
   const metricCards = [
     { label: 'Total Progress', value: formatPercent(metrics?.totalProgress), note: getTotalProgressNote(metrics), icon: Target, tone: 'blue' },
-    { label: 'Accuracy', value: formatPercent(metrics?.accuracy), icon: BarChart3, tone: 'green' },
+    { label: 'Accuracy', value: formatAttemptPercent(metrics?.accuracy), icon: BarChart3, tone: 'green' },
     { label: 'Correct Answers', value: formatCount(metrics?.correctAnswers), icon: CheckCircle2, tone: 'green' },
     { label: 'Incorrect Answers', value: formatCount(metrics?.incorrectAnswers), icon: XCircle, tone: 'red' },
     { label: 'Game Score', value: formatCount(metrics?.gameScore), icon: Trophy, tone: 'blue' },
@@ -182,7 +187,7 @@ export default function StudentAnalytics() {
     { label: 'Correct Answers', value: formatCount(metrics?.correctAnswers) },
     { label: 'Incorrect Answers', value: formatCount(metrics?.incorrectAnswers) },
     { label: 'Total Questions', value: formatCount(metrics?.totalQuestions) },
-    { label: 'Accuracy', value: formatPercent(metrics?.accuracy) },
+    { label: 'Accuracy', value: formatAttemptPercent(metrics?.accuracy) },
     { label: 'Game Score', value: formatCount(metrics?.gameScore) },
     { label: 'Total Progress', value: formatPercent(metrics?.totalProgress) },
     { label: 'Completed Quests', value: formatCount(metrics?.completedQuests) },
@@ -196,7 +201,7 @@ export default function StudentAnalytics() {
     ['Student Information', 'Current Difficulty', currentDifficulty],
     ['Student Information', 'Current Location', currentLocation],
     ...reportSummary.map((metric) => ['Performance Summary', metric.label, metric.value]),
-    ...difficultyRows.map((row) => ['Difficulty Performance', row.label, formatPercent(row.value)]),
+    ...difficultyRows.map((row) => ['Difficulty Performance', row.label, formatAttemptPercent(row.value)]),
     ...topicRows.map((row) => ['Topic Performance', row.topic, formatPercent(row.accuracy)]),
     ['Analysis', 'Performance Insight', insight?.performance_insight || insightMessage],
     ['Analysis', 'Strengths', strengths.length ? strengths.join('; ') : 'Analysis not available.'],
@@ -290,9 +295,9 @@ export default function StudentAnalytics() {
               <div className="student-progress-bars">
                 {performanceBars.map((bar) => (
                   <div className="student-progress-row" key={bar.label}>
-                    <div className="student-progress-label"><span>{bar.label}</span><strong>{formatPercent(bar.value)}</strong></div>
+                    <div className="student-progress-label"><span>{bar.label}</span><strong>{bar.label === 'Accuracy' ? formatAttemptPercent(bar.value) : formatPercent(bar.value)}</strong></div>
                     {bar.value === null ? (
-                      <p className="student-data-unavailable">No authoritative value is available yet.</p>
+                      <p className="student-data-unavailable">{bar.label === 'Accuracy' ? 'No attempts yet' : 'No authoritative value is available yet.'}</p>
                     ) : (
                       <div className="student-progress-track"><div className={`student-progress-fill ${bar.tone}`} style={{ width: `${Math.max(0, Math.min(100, bar.value))}%` }} /></div>
                     )}
@@ -309,9 +314,9 @@ export default function StudentAnalytics() {
               <div className="student-difficulty-bars">
                 {difficultyRows.map((row) => (
                   <div className="student-difficulty-row" key={row.label}>
-                    <div className="student-progress-label"><span>{row.label}</span><strong>{formatPercent(row.value)}</strong></div>
+                    <div className="student-progress-label"><span>{row.label}</span><strong>{formatAttemptPercent(row.value)}</strong></div>
                     {row.value === null ? (
-                      <p className="student-data-unavailable">No recorded {row.label.toLowerCase()} results.</p>
+                      <p className="student-data-unavailable">No attempts yet.</p>
                     ) : (
                       <div className="student-progress-track"><div className={`student-progress-fill ${row.tone}`} style={{ width: `${Math.max(0, Math.min(100, row.value))}%` }} /></div>
                     )}

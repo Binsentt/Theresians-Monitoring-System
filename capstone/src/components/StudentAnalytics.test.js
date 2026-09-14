@@ -110,11 +110,11 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).not.toContain('Stale quest alias');
   });
 
-  test('explains unavailable overall progress while keeping recorded accuracy separate', async () => {
+  test('renders canonical weighted progress while keeping recorded accuracy separate', async () => {
     global.fetch = jest.fn(() => jsonResponse({
       progress: { student_id: 44, student_name: 'Ava Santos', progress_percentage: 75 },
       metrics: {
-        totalProgress: null, reportedTotalProgress: 75, totalProgressUnavailableReason: 'full_game_milestones_unverified',
+        totalProgress: 25, reportedTotalProgress: 75, totalProgressVerified: true, totalProgressSource: 'canonical_quest_milestones',
         accuracy: 75, correctAnswers: 3, incorrectAnswers: 1,
       },
       aiInsight: { status: 'not_generated' },
@@ -124,11 +124,44 @@ describe('StudentAnalytics defensive rendering', () => {
 
     const progressCard = Array.from(container.querySelectorAll('.student-metric-card'))
       .find((card) => card.textContent.includes('Total Progress'));
-    expect(progressCard.querySelector('strong').textContent).toBe('Not available');
-    expect(progressCard.textContent).toContain('Progress unavailable: full-game milestones are not yet verified.');
+    expect(progressCard.querySelector('strong').textContent).toBe('25%');
+    expect(progressCard.textContent).not.toContain('Progress unavailable');
     const accuracyCard = Array.from(container.querySelectorAll('.student-metric-card'))
       .find((card) => card.textContent.includes('Accuracy'));
     expect(accuracyCard.querySelector('strong').textContent).toBe('75%');
+  });
+
+  test('renders truthful zero counts and no-attempt labels before any graded result', async () => {
+    global.fetch = jest.fn(() => jsonResponse({
+      progress: { student_id: 44, student_name: 'Ava Santos' },
+      metrics: {
+        validResultCount: 0,
+        totalProgress: 0,
+        questCompletionPercentage: 0,
+        accuracy: null,
+        correctAnswers: 0,
+        incorrectAnswers: 0,
+        totalQuestions: 0,
+        gameScore: 0,
+        completedQuests: 0,
+        difficultyBreakdown: {
+          easy: { accuracy: null }, medium: { accuracy: null }, hard: { accuracy: null },
+        },
+      },
+      aiInsight: { status: 'insufficient_data', message: 'No valid gameplay results are recorded yet.' },
+    }));
+
+    await act(async () => root.render(<StudentAnalytics />));
+
+    const cardValue = (label) => Array.from(container.querySelectorAll('.student-metric-card'))
+      .find((card) => card.textContent.includes(label))?.querySelector('strong')?.textContent;
+    expect(cardValue('Total Progress')).toBe('0%');
+    expect(cardValue('Accuracy')).toBe('No attempts yet');
+    expect(cardValue('Correct Answers')).toBe('0');
+    expect(cardValue('Incorrect Answers')).toBe('0');
+    expect(cardValue('Game Score')).toBe('0');
+    expect(container.querySelector('.student-performance-meta')?.textContent).toContain('Recorded Results0');
+    expect(container.querySelector('.student-difficulty-bars')?.textContent).toContain('No attempts yet');
   });
 
   test('renders defaults instead of crashing on malformed progress detail values', async () => {

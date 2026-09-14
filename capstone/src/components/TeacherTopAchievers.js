@@ -62,7 +62,7 @@ export default function TeacherTopAchievers() {
   const filteredAchievers = useMemo(() => topAchievers.filter((achiever) => matchesTableSearch(
     achiever,
     searchQuery,
-    ['student_name', 'game_student_id', 'grade_level', 'section', 'completion_percentage', 'accuracy', 'quests_completed']
+    ['student_name', 'game_student_id', 'grade_level', 'section', 'completion_percentage', 'game_score', 'score', 'quests_completed']
   )), [searchQuery, topAchievers]);
   const paginatedAchievers = paginateTableRows(filteredAchievers, page, pageSize);
 
@@ -105,7 +105,7 @@ export default function TeacherTopAchievers() {
     { header: 'Grade', value: (row) => row.grade_level },
     { header: 'Section', value: (row) => row.section },
     { header: 'Progress', value: (row) => formatPercent(row.completion_percentage ?? row.progress_percentage) },
-    { header: 'Accuracy', value: (row) => formatPercent(row.accuracy ?? row.accuracy_rate) },
+    { header: 'Game Score', value: (row) => formatMetric(row.game_score ?? row.score) },
     { header: 'Correct / Total', value: (row) => `${formatMetric(row.total_correct_answers ?? row.correct_answers)}/${formatMetric(row.total_questions_answered ?? row.total_questions)}` },
     { header: 'Completed Quests', value: (row) => formatMetric(row.quests_completed ?? row.total_quests_completed) },
     { header: 'Playtime', value: (row) => formatPlaytime(row.total_play_time ?? row.duration_seconds) },
@@ -153,7 +153,7 @@ export default function TeacherTopAchievers() {
                     <label>Search Top Achievers</label>
                     <input
                       type="search"
-                      placeholder="Search name, ID, grade, section, progress, or accuracy..."
+                      placeholder="Search name, ID, grade, section, progress, or game score..."
                       value={searchQuery}
                       onChange={(e) => {
                         setSearchQuery(e.target.value);
@@ -222,7 +222,7 @@ export default function TeacherTopAchievers() {
                         <th>Grade</th>
                         <th>Section</th>
                         <th>Completion</th>
-                        <th>Accuracy</th>
+                        <th>Game Score</th>
                         <th>Correct Answers</th>
                         <th>Quests</th>
                         <th>Playtime</th>
@@ -232,9 +232,8 @@ export default function TeacherTopAchievers() {
                       {paginatedAchievers.rows.map((achiever, index) => {
                         const rank = paginatedAchievers.start + index;
                         const completion = achiever.completion_percentage ?? achiever.progress_percentage;
-                        const accuracy = achiever.accuracy ?? achiever.accuracy_rate;
                         const completionWidth = metricPercentWidth(completion);
-                        const accuracyWidth = metricPercentWidth(accuracy);
+                        const gameScore = achiever.game_score ?? achiever.score ?? 0;
                         return (
                         <tr key={achiever.id || `achiever-${rank}`} className={rank <= 3 ? 'top-three' : ''}>
                           <td className="rank-cell">
@@ -255,14 +254,7 @@ export default function TeacherTopAchievers() {
                             </div>
                             <span className="progress-text">{formatPercent(completion)}</span>
                           </td>
-                          <td className="accuracy-cell">
-                            <div className="accuracy-bar">
-                              {accuracyWidth !== null && (
-                                <div className="accuracy-fill" style={{ width: `${accuracyWidth}%` }} />
-                              )}
-                            </div>
-                            <span className="accuracy-text">{formatPercent(accuracy)}</span>
-                          </td>
+                          <td className="game-score-cell">{formatMetric(gameScore)}</td>
                           <td>{formatMetric(achiever.total_correct_answers ?? achiever.correct_answers)}/{formatMetric(achiever.total_questions_answered ?? achiever.total_questions)}</td>
                           <td>{formatMetric(achiever.quests_completed ?? achiever.total_quests_completed)}</td>
                           <td>{formatPlaytime(achiever.total_play_time ?? achiever.duration_seconds)}</td>

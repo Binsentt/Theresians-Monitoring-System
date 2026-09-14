@@ -41,7 +41,8 @@ test('calculates factual accuracy, difficulty, topic, and playtime from valid re
   assert.equal(metrics.playtimeMinutes, 20);
   assert.equal(metrics.totalProgress, null);
   assert.equal(metrics.reportedTotalProgress, 63);
-  assert.equal(metrics.gameScore, 25);
+  assert.equal(metrics.totalProgressVerified, false);
+  assert.equal(metrics.gameScore, 2);
   assert.equal(metrics.completedQuests, 2);
   assert.equal(metrics.currentQuest, 'Fraction Forest');
   assert.equal(metrics.questCompletionPercentage, null);
@@ -56,8 +57,10 @@ test('does not treat ungraded progress snapshots as graded accuracy evidence', (
 
   assert.equal(metrics.validResultCount, 0);
   assert.equal(metrics.answerSource, 'no_graded_answers');
-  assert.equal(metrics.correctAnswers, null);
-  assert.equal(metrics.incorrectAnswers, null);
+  assert.equal(metrics.correctAnswers, 0);
+  assert.equal(metrics.incorrectAnswers, 0);
+  assert.equal(metrics.totalQuestions, 0);
+  assert.equal(metrics.gameScore, 0);
   assert.equal(metrics.accuracy, null);
   assert.equal(metrics.difficultyBreakdown.easy.accuracy, null);
   assert.equal(metrics.difficultyBreakdown.medium.accuracy, null);
@@ -74,6 +77,9 @@ test('aggregates graded answers by map without allowing legacy percentage snapsh
       { score: 1, total_items: 2, current_map: 'Pinehill' },
     ],
   });
+  assert.equal(metrics.validResultCount, 6);
+  assert.equal(metrics.totalQuestions, 6);
+  assert.equal(metrics.gameScore, 4);
   assert.equal(metrics.accuracy, 66.67);
   assert.deepEqual(metrics.mapBreakdown, {
     Oakleaf: { correctAnswers: 3, totalQuestions: 4, accuracy: 75 },
@@ -115,9 +121,10 @@ test('current gameplay difficulty stays separate from historical answer performa
   assert.equal(metrics.difficultyBreakdown.easy.accuracy, null);
   assert.equal(metrics.difficultyBreakdown.hard.accuracy, 0);
   assert.equal(metrics.totalProgress, null);
+  assert.equal(metrics.totalProgressVerified, false);
   assert.equal(metrics.reportedTotalProgress, 75);
   assert.equal(metrics.totalProgressVerified, false);
-  assert.equal(metrics.totalProgressSource, 'legacy_client_snapshot');
+  assert.equal(metrics.totalProgressSource, 'unavailable');
 });
 
 test('legacy progress percentage is not presented as graded accuracy', () => {
@@ -126,6 +133,7 @@ test('legacy progress percentage is not presented as graded accuracy', () => {
   });
   assert.equal(metrics.accuracy, null);
   assert.equal(metrics.totalProgress, null);
+  assert.equal(metrics.totalProgressVerified, false);
   assert.equal(metrics.reportedTotalProgress, 75);
   assert.equal(metrics.totalProgressUnavailableReason, 'full_game_milestones_unverified');
 });
@@ -136,10 +144,44 @@ test('uses unique canonical milestones for quest count while accuracy stays N/A 
     completedMilestones: [
       { milestone_id: 'tutorial' },
       { milestone_id: 'tutorial' },
-      { milestone_id: 'teacher-house' },
+      { milestone_id: 'go-to-teachers-house' },
+      { milestone_id: 'noncanonical-display-only-event' },
     ],
     quizSessions: [],
   });
   assert.equal(metrics.completedQuests, 2);
   assert.equal(metrics.accuracy, null);
+  assert.equal(metrics.correctAnswers, 0);
+  assert.equal(metrics.incorrectAnswers, 0);
+  assert.equal(metrics.gameScore, 0);
+});
+
+test('excludes unknown task IDs from canonical quest counts and weighted completion', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    completedMilestones: [
+      { canonical_task_id: 'tutorial' },
+      { canonical_task_id: 'tutorial' },
+      { canonical_task_id: 'go-to-teachers-house' },
+      { canonical_task_id: 'display-label-only' },
+    ],
+  });
+
+  assert.equal(metrics.completedQuests, 2);
+  assert.equal(metrics.totalProgress, metrics.questCompletionPercentage);
+});
+
+test('uses explicit canonical milestone evidence for weighted completion', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    progress: { total_quests_completed: 0 },
+    completedMilestones: [
+      { canonical_task_id: 'tutorial' },
+      { canonical_task_id: 'go-to-teachers-house' },
+    ],
+    quizSessions: [],
+  });
+  assert.equal(metrics.completedQuests, 2);
+  assert.equal(metrics.totalProgressVerified, true);
+  assert.equal(metrics.totalProgressSource, 'canonical_quest_milestones');
+  assert.equal(metrics.totalProgress, metrics.questCompletionPercentage);
+  assert.ok(metrics.totalProgress > 0);
 });

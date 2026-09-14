@@ -320,7 +320,7 @@ test('grounded insight endpoint returns a current cache without another provider
   }));
   const input = buildGroundedInsightInput({
     gradeLevel: progress.grade_level,
-    metrics: buildStudentAnalyticsMetrics({ progress, quizSessions: results, playtimeSessions: [] }),
+    metrics: buildStudentAnalyticsMetrics({ progress, quizSessions: results, playtimeSessions: [], completedMilestones: [] }),
   });
   const cachedInsight = { performance_insight: 'Cached grounded insight.', strengths: [], weaknesses: [], recommendations: [] };
   queryHandler = async (sql) => {

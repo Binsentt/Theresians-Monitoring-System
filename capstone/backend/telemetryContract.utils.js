@@ -27,7 +27,7 @@ const normalizeDuration = (value) => {
 const normalizeCanonicalTelemetry = (input = {}) => {
   const mapId = String(input.map_id || '').trim().toLowerCase() || null;
   const eventType = String(input.event_type || '').trim().toLowerCase() || null;
-  const canonicalTaskId = String(input.canonical_task_id || input.task_id || '').trim() || null;
+  const canonicalTaskId = String(input.canonical_task_id || input.task_id || '').trim().toLowerCase() || null;
   const canonicalMilestoneId = String(input.canonical_milestone_id || '').trim() || null;
   const explicitPlayerFacing = input.is_player_facing;
   const inferredPlayerFacing = !(canonicalMilestoneId && /^oakleaf\.bandits\.bandit_[1-5]$/.test(canonicalMilestoneId));

@@ -170,6 +170,9 @@ describe('ScreenTimeMonitoring', () => {
     await waitForContent(container, 'Ava Santos');
 
     expect(global.fetch.mock.calls.some(([url]) => String(url).includes('/api/playtime?') && String(url).includes('lifecycle=archived'))).toBe(true);
+    expect(container.querySelector('[data-action="archive-all-completed-playtime"]')).toBeNull();
+    expect(container.querySelector('[data-action="archive-playtime-record"]')).toBeNull();
+    expect(container.querySelector('[data-action="reset-screen-time"]')).toBeNull();
   });
 
   test('paginates the authorised Screen Time records after server filtering', async () => {
@@ -327,7 +330,7 @@ describe('ScreenTimeMonitoring', () => {
     expect(container.textContent).toContain('Completed');
   });
 
-  test('admin can open a reason dialog for one completed record or the filtered completed set', async () => {
+  test('admin can open an Archive reason dialog for one completed record or the filtered completed set', async () => {
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
     localStorage.setItem('rememberToken', 'remember-token');
     global.fetch = jest.fn((url) => {
@@ -338,14 +341,14 @@ describe('ScreenTimeMonitoring', () => {
     act(() => root.render(<ScreenTimeMonitoring mode="all" />));
     await waitForContent(container, 'Ava Santos');
 
-    expect(container.querySelector('button[data-action="delete-playtime-record"]')).not.toBeNull();
-    expect(container.querySelector('button[data-action="delete-all-completed-playtime"]')).not.toBeNull();
-    await act(async () => container.querySelector('button[data-action="delete-playtime-record"]').click());
-    expect(document.body.textContent).toContain('Delete Screen Time Record');
-    expect(document.body.textContent).toContain('This action removes the record from Screen Time history');
+    expect(container.querySelector('button[data-action="archive-playtime-record"]')).not.toBeNull();
+    expect(container.querySelector('button[data-action="archive-all-completed-playtime"]')).not.toBeNull();
+    await act(async () => container.querySelector('button[data-action="archive-playtime-record"]').click());
+    expect(document.body.textContent).toContain('Archive Screen Time Record');
+    expect(document.body.textContent).toContain('This action archives the record from Screen Time history');
   });
 
-  test('bulk Delete All closes the confirmation and refreshes after the server confirms deletion', async () => {
+  test('bulk Archive All closes the confirmation and refreshes after the server confirms archival', async () => {
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
     localStorage.setItem('rememberToken', 'remember-token');
     let bulkDeleteCalls = 0;
@@ -353,24 +356,24 @@ describe('ScreenTimeMonitoring', () => {
       if (String(url).includes('/deletion-summary')) {
         return jsonResponse({ affected_count: 1, target_ids: [5], target_fingerprint: 'fingerprint' });
       }
-      if (String(url).includes('/api/playtime/completed/bulk')) {
+      if (String(url).includes('/api/playtime/completed/bulk/archive')) {
         bulkDeleteCalls += 1;
-        return jsonResponse({ success: true, deleted_count: 1 });
+        return jsonResponse({ success: true, archived_count: 1 });
       }
       return jsonResponse(playtimePayload);
     });
 
     act(() => root.render(<ScreenTimeMonitoring mode="all" />));
     await waitForContent(container, 'Ava Santos');
-    await act(async () => container.querySelector('button[data-action="delete-all-completed-playtime"]').click());
-    expect(document.body.textContent).toContain('Delete All Completed Records');
+    await act(async () => container.querySelector('button[data-action="archive-all-completed-playtime"]').click());
+    expect(document.body.textContent).toContain('Archive Completed Screen Time Records');
 
     const reason = document.querySelector('#screen-time-deletion-reason');
     const confirmation = document.querySelector('#screen-time-deletion-confirmation');
     await act(async () => {
       Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set.call(reason, 'Remove completed QA history');
       reason.dispatchEvent(new Event('input', { bubbles: true }));
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(confirmation, 'DELETE');
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(confirmation, 'ARCHIVE');
       confirmation.dispatchEvent(new Event('input', { bubbles: true }));
     });
     await act(async () => document.querySelector('.screen-time-deletion-dialog').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
@@ -379,7 +382,7 @@ describe('ScreenTimeMonitoring', () => {
     expect(document.querySelector('.screen-time-deletion-dialog')).toBeNull();
   });
 
-  test('bulk Delete All explains a zero-eligible result and does not send a mutation', async () => {
+  test('bulk Archive All explains a zero-eligible result and does not send an archive mutation', async () => {
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
     localStorage.setItem('rememberToken', 'remember-token');
     let bulkDeleteCalls = 0;
@@ -394,7 +397,7 @@ describe('ScreenTimeMonitoring', () => {
           target_fingerprint: 'empty',
         });
       }
-      if (String(url).includes('/api/playtime/completed/bulk')) {
+      if (String(url).includes('/api/playtime/completed/bulk/archive')) {
         bulkDeleteCalls += 1;
         return jsonResponse({ success: true, deleted_count: 0 });
       }
@@ -403,10 +406,10 @@ describe('ScreenTimeMonitoring', () => {
 
     act(() => root.render(<ScreenTimeMonitoring mode="all" />));
     await waitForContent(container, 'Ava Santos');
-    await act(async () => container.querySelector('button[data-action="delete-all-completed-playtime"]').click());
+    await act(async () => container.querySelector('button[data-action="archive-all-completed-playtime"]').click());
 
     expect(document.body.textContent).toContain('2 visible records');
-    expect(document.body.textContent).toContain('No eligible completed Screen Time records can be permanently deleted.');
+    expect(document.body.textContent).toContain('No eligible completed Screen Time records can be archived.');
     const confirmButton = document.querySelector('.screen-time-deletion-dialog button[type="submit"]');
     expect(confirmButton.disabled).toBe(true);
     await act(async () => document.querySelector('.screen-time-deletion-dialog').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
@@ -424,5 +427,8 @@ describe('ScreenTimeMonitoring', () => {
     await waitForContent(container, 'Ava Santos');
     expect(container.querySelector('[data-action="reset-screen-time"]')).not.toBeNull();
     expect(container.querySelector('[data-action="delete-playtime-record"]')).toBeNull();
+    await act(async () => container.querySelector('[data-action="reset-screen-time"]').click());
+    expect(document.body.textContent).toContain('Reason for reset');
+    expect(document.body.textContent).not.toContain('This action archives the record');
   });
 });

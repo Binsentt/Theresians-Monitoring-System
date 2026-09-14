@@ -143,6 +143,7 @@ test('five graded answers with two correct and three incorrect produce grounded 
   assert.equal(metrics.incorrectAnswers, 3);
   assert.equal(metrics.totalQuestions, 5);
   assert.equal(metrics.accuracy, 40);
+  assert.equal(metrics.gameScore, 2);
 
   const { buildGroundedInsightInput } = require('./studentAnalyticsInsight.utils');
   const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics });

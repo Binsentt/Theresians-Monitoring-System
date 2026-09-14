@@ -30,6 +30,7 @@ const leaderboardRows = Array.from({ length: 11 }, (_, index) => ({
   section: 'Section A',
   completion_percentage: 80,
   accuracy: 90,
+  game_score: 9,
   total_correct_answers: 9,
   total_questions_answered: 10,
   quests_completed: 1,
@@ -110,6 +111,8 @@ describe('Top Achievers authenticated analytics requests', () => {
     expect(container.querySelectorAll('.filters-row input[type="search"]')).toHaveLength(1);
     expect(container.querySelectorAll('.filters-row select')).toHaveLength(0);
     const search = container.querySelector('.filters-row input[type="search"]');
+    expect(search.placeholder).toContain('game score');
+    expect(search.placeholder).not.toContain('accuracy');
     await act(async () => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(search, 'Grade 1 Section A 001234');
       search.dispatchEvent(new Event('input', { bubbles: true }));
@@ -132,6 +135,23 @@ describe('Top Achievers authenticated analytics requests', () => {
 
     expect(container.textContent).toContain('No Data');
     expect(container.querySelectorAll('.progress-fill, .accuracy-fill')).toHaveLength(0);
+  });
+
+  test('renders the canonical integer Game Score instead of Accuracy in the visible ranking', async () => {
+    global.fetch = jest.fn(() => jsonResponse([{
+      ...leaderboardRows[0],
+      game_score: 2,
+      accuracy: 40,
+    }]));
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin' }));
+    localStorage.setItem('token', 'top-achievers-token');
+
+    await act(async () => root.render(<AdminTopAchievers />));
+
+    const headers = Array.from(container.querySelectorAll('.ta-table thead th')).map((cell) => cell.textContent);
+    expect(headers).toContain('Game Score');
+    expect(headers).not.toContain('Accuracy');
+    expect(container.querySelector('.ta-table tbody')?.textContent).toContain('2');
   });
 
   test('uses the existing scoped lifecycle reset flow for admin and teacher leaderboard resets', async () => {

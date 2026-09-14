@@ -92,7 +92,7 @@ describe('Student Progress summary cards', () => {
     ))).toBe(true);
   });
 
-  test('shows Correct, Incorrect, and canonical Game Score in the primary table', async () => {
+  test('keeps the primary table focused on identity, quest, Game Score, difficulty, and actions', async () => {
     global.fetch = jest.fn((url) => {
       const value = String(url);
       if (value.startsWith('/api/students/progress')) {
@@ -112,12 +112,17 @@ describe('Student Progress summary cards', () => {
     await act(async () => root.render(<AdminStudentProgress />));
 
     const headers = Array.from(container.querySelectorAll('.student-progress-table thead th')).map((cell) => cell.textContent);
-    expect(headers).toEqual(expect.arrayContaining(['Correct', 'Incorrect', 'Game Score']));
+    expect(headers).toEqual([
+      'No.', 'Student Name', 'Student ID', 'Grade Level', 'Section',
+      'Current Quest', 'Game Score', 'Difficulty', 'Actions',
+    ]);
+    expect(headers).not.toContain('Correct');
+    expect(headers).not.toContain('Incorrect');
     expect(headers).not.toContain('Accuracy');
     expect(container.querySelector('.student-progress-table tbody')?.textContent).toContain('17');
   });
 
-  test('does not render unavailable student metrics as fabricated zeroes', async () => {
+  test('renders the canonical zero Game Score while leaving unavailable percentages unclaimed', async () => {
     global.fetch = jest.fn((url) => {
       const value = String(url);
       if (value.startsWith('/api/students/progress')) {
@@ -138,8 +143,9 @@ describe('Student Progress summary cards', () => {
       root.render(<AdminStudentProgress />);
     });
 
-    expect(container.textContent).toContain('Not available');
     expect(container.textContent).not.toContain('0%');
+    const gameScoreCell = container.querySelectorAll('.student-progress-table tbody tr td')[6];
+    expect(gameScoreCell?.textContent).toBe('0');
   });
 
   test('renders a canonical null Section as Not assigned', async () => {

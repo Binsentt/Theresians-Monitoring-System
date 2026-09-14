@@ -128,7 +128,7 @@ export const normalizeStudentProgressRow = (row = {}) => {
   const fallbackIncorrectAnswers = hasAnswerTotals ? Math.max(totalQuestions - correctAnswers, 0) : null;
   const incorrectAnswers = metricValue('incorrectAnswers', row.incorrect_answers);
   const accuracy = metricValue('accuracy', row.performance_percentage !== undefined ? row.performance_percentage : row.accuracy_rate);
-  const gameScore = metricValue('gameScore', row.game_score !== undefined ? row.game_score : row.score);
+  const gameScore = metricValue('gameScore', row.game_score);
   const difficultyBreakdown = metricValue('difficultyBreakdown', row.difficultyBreakdown);
   const difficultyLevel = resolveCurrentDifficulty(row);
 
@@ -140,7 +140,7 @@ export const normalizeStudentProgressRow = (row = {}) => {
     correct_answers: correctAnswers,
     incorrect_answers: toNullableNumber(incorrectAnswers === undefined ? fallbackIncorrectAnswers : incorrectAnswers),
     performance_percentage: toNullableNumber(accuracy),
-    game_score: toNullableNumber(gameScore),
+    game_score: toNullableNumber(gameScore) ?? 0,
     difficultyBreakdown: {
       easy: toNullableNumber(difficultyBreakdown?.easy?.accuracy ?? difficultyBreakdown?.easy),
       medium: toNullableNumber(difficultyBreakdown?.medium?.accuracy ?? difficultyBreakdown?.medium),

@@ -288,12 +288,14 @@ test('game progress rejects a heartbeat-stale current-cycle lease before writing
   const credential = 'p'.repeat(64);
   let progressWritten = false;
   let staleLeaseFinalized = false;
+  let accountLockSql = '';
+  let sessionLockSql = '';
   t.after(async () => {
     setQueryHandler(async () => emptyResult);
     await close(server);
   });
 
-  setQueryHandler(async (sql) => {
+  setQueryHandler(async (sql, _params, rawSql) => {
     if (sql === 'begin' || sql === 'rollback') return emptyResult;
     if (sql.startsWith('select id, name, parent_id from public.accounts')) {
       return resultRows([{ id: 19, name: 'Parent User', parent_id: '123456' }]);
@@ -302,9 +304,11 @@ test('game progress rejects a heartbeat-stale current-cycle lease before writing
       return resultRows([{ id: 44, name: 'Canonical Student', grade_level: 'Grade 1', section: null }]);
     }
     if (sql.startsWith('select coalesce(current_learning_cycle_version')) {
+      accountLockSql = String(rawSql);
       return resultRows([{ current_learning_cycle_version: 1 }]);
     }
     if (sql.startsWith('select id, session_credential_hash') && sql.includes('from public.playtime_sessions')) {
+      sessionLockSql = String(rawSql);
       return resultRows([{
         id: 700,
         session_credential_hash: crypto.createHash('sha256').update(credential).digest('hex'),
@@ -338,6 +342,68 @@ test('game progress rejects a heartbeat-stale current-cycle lease before writing
   assert.equal(response.status, 409);
   assert.equal(response.body.code, 'PLAYTIME_HEARTBEAT_STALE');
   assert.equal(staleLeaseFinalized, true);
+  assert.equal(progressWritten, false);
+  assert.match(accountLockSql, /FOR UPDATE/i);
+  assert.match(sessionLockSql, /FOR UPDATE/i);
+});
+
+test('game progress locks and rejects a supplied stale learning cycle before selecting a progress row', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const credential = 'c'.repeat(64);
+  let accountLockSql = '';
+  let sessionLockSql = '';
+  let progressWritten = false;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, _params, rawSql) => {
+    if (['begin', 'commit', 'rollback'].includes(sql)) return emptyResult;
+    if (sql.startsWith('select id, name, parent_id from public.accounts')) {
+      return resultRows([{ id: 19, name: 'Parent User', parent_id: '123456' }]);
+    }
+    if (sql.startsWith('select s.* from public.accounts s join public.teacher_student_relationships')) {
+      return resultRows([{ id: 44, name: 'Canonical Student', grade_level: 'Grade 1', section: null }]);
+    }
+    if (sql.startsWith('select coalesce(current_learning_cycle_version')) {
+      accountLockSql = String(rawSql);
+      return resultRows([{ current_learning_cycle_version: 2 }]);
+    }
+    if (sql.startsWith('select id, session_credential_hash') && sql.includes('from public.playtime_sessions')) {
+      sessionLockSql = String(rawSql);
+      return resultRows([{
+        id: 700,
+        session_credential_hash: crypto.createHash('sha256').update(credential).digest('hex'),
+        learning_cycle_version: 2,
+        heartbeat_stale: false,
+      }]);
+    }
+    if (sql.includes('student_game_progress') || sql.startsWith('insert into public.activity_logs')) progressWritten = true;
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/progress', {
+    method: 'POST',
+    body: JSON.stringify({
+      parent_id: '123456',
+      student_id: '001234',
+      student_name: 'Canonical Student',
+      current_quest: 'Stale Quest',
+      score: 1,
+      correct_answers: 1,
+      total_questions: 1,
+      playtime_session_id: 700,
+      playtime_session_credential: credential,
+      learning_cycle_version: 1,
+      learning_cycle_version: 1,
+    }),
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'LEARNING_CYCLE_CHANGED');
+  assert.match(accountLockSql, /FOR UPDATE/i);
   assert.equal(progressWritten, false);
 });
 

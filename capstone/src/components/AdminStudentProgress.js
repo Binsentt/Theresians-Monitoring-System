@@ -7,7 +7,6 @@ import { buildScopedApiUrl } from './analyticsEndpoints';
 import { buildAuthHeaders } from './session.utils';
 import {
   filterStudentProgress,
-  formatPercent,
   loadStudentProgressListState,
   normalizeStudentProgressPayload,
   saveStudentProgressListState,
@@ -32,8 +31,6 @@ const studentReportColumns = [
   { header: 'Grade', value: (row) => row.grade_level },
   { header: 'Section', value: (row) => row.section },
   { header: 'Current Quest', value: (row) => row.current_quest },
-  { header: 'Correct', value: (row) => row.correct_answers },
-  { header: 'Incorrect', value: (row) => row.incorrect_answers },
   { header: 'Game Score', value: (row) => row.game_score ?? 'Not available' },
   { header: 'Difficulty', value: (row) => row.difficulty_level || row.difficulty },
 ];
@@ -235,8 +232,6 @@ export default function AdminStudentProgress() {
                         <th>Grade Level</th>
                         <th>Section</th>
                         <th>Current Quest</th>
-                        <th>Correct</th>
-                        <th>Incorrect</th>
                         <th>Game Score</th>
                         <th>Difficulty</th>
                         <th className="no-print">Actions</th>
@@ -251,8 +246,6 @@ export default function AdminStudentProgress() {
                           <td>{student.grade_level || 'N/A'}</td>
                           <td>{student.section || 'Not assigned'}</td>
                           <td>{student.current_quest || 'N/A'}</td>
-                          <td>{student.correct_answers ?? 'Not available'}</td>
-                          <td>{student.incorrect_answers ?? 'Not available'}</td>
                           <td>{student.game_score ?? 'Not available'}</td>
                           <td className="difficulty-cell">
                             <div className={`difficulty-chip ${String(student.difficulty_level || student.difficulty || 'Unknown').toLowerCase()}`}>

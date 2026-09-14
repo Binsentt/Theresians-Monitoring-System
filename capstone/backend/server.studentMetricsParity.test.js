@@ -43,6 +43,7 @@ const query = async (rawSql, params = [], readFixture = fixture) => {
     return { rows: applySqlLimit(rows, sql) };
   }
   if (sql.includes('from public.playtime_sessions')) return { rows: readFixture.playtime || [] };
+  if (sql.includes('from public.student_quest_milestones')) return { rows: readFixture.milestones || [] };
   if (sql.includes('from public.student_ai_insights')) return { rows: readFixture.cached ? [readFixture.cached] : [] };
   if (sql.includes('insert into public.student_ai_insights')) {
     readFixture.cached = {
@@ -110,6 +111,7 @@ const setup = async (t, answers = [1, 1, 1, 0], { providerSelection = null, aiGe
       played_at: '2026-09-07T00:00:00.000Z', question_set_id: 77,
     })),
     playtime: [],
+    milestones: [],
   };
   const server = await new Promise((resolve) => { const running = app.listen(0, () => resolve(running)); });
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -231,7 +233,12 @@ test('detail includes every current-cycle answer after the first 100 results', a
 
 test('detail and AI reuse the same complete evidence fingerprint after 500 results', async (t) => {
   const get = await setup(t, [...Array(500).fill(1), 0]);
-  const metrics = buildStudentAnalyticsMetrics({ progress: fixture.progress, quizSessions: fixture.results, playtimeSessions: [] });
+  const metrics = buildStudentAnalyticsMetrics({
+    progress: fixture.progress,
+    quizSessions: fixture.results,
+    playtimeSessions: [],
+    completedMilestones: fixture.milestones,
+  });
   fixture.cached = {
     input_fingerprint: buildInsightFingerprint(buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics })),
     insight: { performance_insight: 'Backend-rendered cached claim.', strengths: [], weaknesses: [], recommendations: [] },
@@ -262,28 +269,28 @@ test('read aliases and AI evidence never present legacy answer-like percentages 
   const [row] = await get('/api/students/progress');
   const { children: [child] } = await get('/api/parent/children', 'parent');
   assert.equal(detail.metrics.accuracy, 75);
-  assert.equal(detail.metrics.totalProgress, null);
+  assert.equal(detail.metrics.totalProgress, 0);
   assert.equal(detail.metrics.reportedTotalProgress, 75);
-  assert.equal(detail.progress.progress_percentage, null);
-  assert.equal(row.progress_percentage, null);
-  assert.equal(child.completion_percentage, null);
+  assert.equal(detail.progress.progress_percentage, 0);
+  assert.equal(row.progress_percentage, 0);
+  assert.equal(child.completion_percentage, 0);
   const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics: detail.metrics });
-  assert.equal(input.total_progress, null);
-  assert.equal(input.total_progress_verified, false);
+  assert.equal(input.total_progress, 0);
+  assert.equal(input.total_progress_verified, true);
   assert.equal(input.accuracy, 75);
 });
 
-test('unknown total game progress and unrecorded difficulty remain null in summaries and readiness', async (t) => {
+test('empty canonical progress is zero while unattempted accuracy and difficulty remain null', async (t) => {
   const get = await setup(t, []);
   fixture.progress.correct_answers = null;
   fixture.progress.total_questions = null;
   const overview = await get('/api/analytics/overview');
-  assert.equal(overview.averageProgress, null);
-  assert.equal(overview.gradeSummary[0].averageProgress, null);
+  assert.equal(overview.averageProgress, 0);
+  assert.equal(overview.gradeSummary[0].averageProgress, 0);
   assert.equal(overview.gradeSummary[0].averageAccuracy, null);
   assert.equal(overview.gradeSummary[0].difficultyAverage.medium, null);
   const detail = await get('/api/student-progress/44');
-  assert.equal(detail.analyticsReadiness.performanceSignals.progressPercentage, null);
+  assert.equal(detail.analyticsReadiness.performanceSignals.progressPercentage, 0);
   assert.equal(detail.analyticsReadiness.performanceSignals.accuracyRate, null);
 });
 
@@ -294,7 +301,16 @@ for (const nextCycleAnswers of [[0, 0], []]) {
       fixture.progress.score = 120;
       fixture.progress.total_quests_completed = 2;
       fixture.playtime = [{ student_id: 44, total_playtime_minutes: 10, status: 'Completed' }];
-      const expected = buildStudentAnalyticsMetrics({ progress: fixture.progress, quizSessions: fixture.results, playtimeSessions: fixture.playtime });
+      fixture.milestones = [
+        { student_id: 44, milestone_id: 'tutorial', canonical_task_id: 'tutorial', learning_cycle_version: 2, player_facing: true },
+        { student_id: 44, milestone_id: 'go-to-teachers-house', canonical_task_id: 'go-to-teachers-house', learning_cycle_version: 2, player_facing: true },
+      ];
+      const expected = buildStudentAnalyticsMetrics({
+        progress: fixture.progress,
+        quizSessions: fixture.results,
+        playtimeSessions: fixture.playtime,
+        completedMilestones: fixture.milestones,
+      });
       fixture.cached = {
         input_fingerprint: buildInsightFingerprint(buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics: expected })),
         insight: { performance_insight: 'Recorded overall accuracy is 60%.', strengths: [], weaknesses: [], recommendations: [] },
@@ -312,6 +328,7 @@ for (const nextCycleAnswers of [[0, 0], []]) {
             id: index + 100, resolved_student_id: 44, score, total_items: 1, difficulty: 'Easy', played_at: '2026-09-08T01:00:00.000Z',
           })),
           playtime: [],
+          milestones: [],
         };
       };
       let actual;

@@ -237,6 +237,7 @@
 .table-wrapper {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  min-width: 0;
   background: var(--panel-bg, #ffffff);
   border: 1px solid var(--border-color, #e5e7eb);
   border-radius: var(--border-radius-lg, 12px);
@@ -269,7 +270,7 @@
 .student-progress-table td:nth-child(9) { white-space: nowrap; min-width: 96px; }
 .student-progress-table th:nth-child(3), .student-progress-table td:nth-child(3) { min-width: 128px; }
 .student-progress-table th:nth-child(6), .student-progress-table td:nth-child(6) { min-width: 220px; }
-.student-progress-table th:nth-child(10), .student-progress-table td:nth-child(10) { min-width: 140px; white-space: nowrap; }
+.student-progress-table th:nth-child(9), .student-progress-table td:nth-child(9) { min-width: 140px; white-space: nowrap; }
 
 .student-progress-table th,
 .student-progress-table td {
@@ -1167,42 +1168,51 @@
 
   .student-progress-table th,
   .student-progress-table td {
+    min-width: 0;
     padding: 10px 8px;
   }
 
+  .student-progress-table th {
+    white-space: normal;
+  }
+
+  /* Match the specificity of the narrow-screen nth-child constraints above.
+     Without this override, multi-word desktop headers can still inherit
+     nowrap/min-width and paint across adjacent fixed-layout columns. */
+  .student-progress-table th:nth-child(n+1) {
+    min-width: 0;
+    white-space: normal;
+  }
+
   .student-progress-table th:nth-child(1),
-  .student-progress-table td:nth-child(1) { width: 4%; }
+  .student-progress-table td:nth-child(1) { width: 4%; min-width: 0; }
   .student-progress-table th:nth-child(2),
-  .student-progress-table td:nth-child(2) { width: 13%; }
+  .student-progress-table td:nth-child(2) { width: 14%; min-width: 0; }
   .student-progress-table th:nth-child(3),
-  .student-progress-table td:nth-child(3) { width: 9%; }
+  .student-progress-table td:nth-child(3) { width: 9%; min-width: 0; }
   .student-progress-table th:nth-child(4),
-  .student-progress-table td:nth-child(4) { width: 7%; }
+  .student-progress-table td:nth-child(4) { width: 9%; min-width: 0; }
   .student-progress-table th:nth-child(5),
-  .student-progress-table td:nth-child(5) { width: 7%; }
+  .student-progress-table td:nth-child(5) { width: 8%; min-width: 0; }
   .student-progress-table th:nth-child(6),
   .student-progress-table td:nth-child(6) {
-    width: 17%;
+    width: 22%;
     min-width: 0;
     white-space: normal;
   }
   .student-progress-table th:nth-child(7),
-  .student-progress-table td:nth-child(7),
+  .student-progress-table td:nth-child(7) {
+    width: 9%;
+    min-width: 0;
+  }
   .student-progress-table th:nth-child(8),
-  .student-progress-table td:nth-child(8),
+  .student-progress-table td:nth-child(8) {
+    width: 9%;
+    min-width: 0;
+  }
   .student-progress-table th:nth-child(9),
   .student-progress-table td:nth-child(9) {
-    width: 6%;
-    min-width: 0;
-  }
-  .student-progress-table th:nth-child(10),
-  .student-progress-table td:nth-child(10) {
-    width: 8%;
-    min-width: 0;
-  }
-  .student-progress-table th:nth-child(11),
-  .student-progress-table td:nth-child(11) {
-    width: 17%;
+    width: 16%;
     min-width: 0;
   }
 

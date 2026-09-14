@@ -237,7 +237,10 @@ test('class assignment grants only the matching teacher automatic canonical zero
   assert.equal(assignedTeacher.status, 200);
   assert.equal(assignedTeacher.body.length, 1);
   assert.equal(assignedTeacher.body[0].game_student_id, '001234');
-  assert.equal(assignedTeacher.body[0].correct_answers, null);
+  assert.equal(assignedTeacher.body[0].correct_answers, 0);
+  assert.equal(assignedTeacher.body[0].incorrect_answers, 0);
+  assert.equal(assignedTeacher.body[0].total_questions, 0);
+  assert.equal(assignedTeacher.body[0].game_score, 0);
   assert.equal(assignedTeacher.body[0].accuracy_rate, null);
 
   const unrelatedTeacher = await requestJson(baseUrl, '/api/students/progress?teacher_id=16', { headers: authHeaders('otherTeacher') });

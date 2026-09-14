@@ -132,7 +132,10 @@ test('playtime history removal is additive, soft-marked, and does not remove usa
   assert.match(migration, /deleted_at TIMESTAMPTZ/i);
   assert.match(migration, /deletion_reason VARCHAR\(1000\)/i);
   assert.match(serverSource, /app\.delete\('\/api\/playtime\/:id'/);
+  assert.match(serverSource, /app\.post\('\/api\/playtime\/:id\/archive'/);
   assert.match(serverSource, /app\.post\('\/api\/playtime\/completed\/bulk'/);
+  assert.match(serverSource, /app\.post\('\/api\/playtime\/completed\/bulk\/archive'/);
+  assert.doesNotMatch(serverSource, /Unable to prepare Screen Time history removal\./);
   assert.match(serverSource, /deleted_at IS NULL/i);
   const dailyTotals = serverSource.slice(serverSource.indexOf('const getDailyPlaytimeTotals'), serverSource.indexOf('const finalizeStalePlaytimeSession'));
   assert.doesNotMatch(dailyTotals, /deleted_at IS NULL/i);
@@ -198,6 +201,90 @@ test('Screen Time reset is admin-only, atomic, and limited to active enrolled st
   assert.equal(accountResetUpdates, 1);
 });
 
+test('Screen Time single archive soft-marks an ended row and blocks an active session', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let presenceStatus = 'Completed';
+  let archiveUpdates = 0;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
+    }
+    if (sql.startsWith('select ps.id, ps.student_id') && sql.includes('where ps.id = $1')) {
+      return resultRows([{
+        id: 77,
+        student_id: 44,
+        student_name: 'QA Student',
+        status: presenceStatus,
+        presence_status: presenceStatus,
+        end_time: presenceStatus === 'Playing' ? null : '2026-09-14T08:30:00.000Z',
+        screen_time_delete_eligible: presenceStatus !== 'Playing',
+      }]);
+    }
+    if (sql.startsWith('update public.playtime_sessions')) {
+      archiveUpdates += 1;
+      return resultRows([]);
+    }
+    return emptyResult;
+  });
+
+  const archived = await requestJson(baseUrl, '/api/playtime/77/archive', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({ reason: 'Archive completed local QA history', confirmation: 'ARCHIVE' }),
+  });
+  assert.equal(archived.status, 200);
+  assert.equal(archived.body.archived_record_id, 77);
+  assert.equal(archiveUpdates, 1);
+
+  presenceStatus = 'Playing';
+  const active = await requestJson(baseUrl, '/api/playtime/77/archive', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({ reason: 'Archive active local QA history', confirmation: 'ARCHIVE' }),
+  });
+  assert.equal(active.status, 409);
+  assert.match(active.body.error, /active.*cannot be archived/i);
+  assert.equal(archiveUpdates, 1);
+});
+
+test('Screen Time archived monitoring view reads soft-archived session rows', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let archivedPredicates = 0;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, _params, rawSql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
+    }
+    if (sql.startsWith('select count(*)::integer as total') || sql.startsWith('select ps.id')) {
+      assert.match(String(rawSql), /ps\.deleted_at IS NOT NULL/i);
+      archivedPredicates += 1;
+      return sql.startsWith('select count(*)')
+        ? resultRows([{ total: 0, total_playtime_seconds: 0, playing_count: 0 }])
+        : emptyResult;
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime?lifecycle=archived', {
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(archivedPredicates, 2);
+});
+
 test('Screen Time deletion summary counts ended active-student history and reports preserved rows', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -247,7 +334,7 @@ test('Screen Time deletion summary counts ended active-student history and repor
   assert.deepEqual(response.body.target_ids, [77]);
 });
 
-test('Screen Time bulk deletion soft-deletes eligible ended history and preserves active sessions', async (t) => {
+test('Screen Time bulk archive soft-marks eligible ended history and preserves active sessions', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   let updateCalls = 0;
@@ -295,12 +382,12 @@ test('Screen Time bulk deletion soft-deletes eligible ended history and preserve
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/playtime/completed/bulk', {
+  const response = await requestJson(baseUrl, '/api/playtime/completed/bulk/archive', {
     method: 'POST',
     headers: { Authorization: 'Bearer admin-token' },
     body: JSON.stringify({
-      reason: 'Remove ended local QA history',
-      confirmation: 'DELETE',
+      reason: 'Archive ended local QA history',
+      confirmation: 'ARCHIVE',
       expected_count: 1,
       target_ids: [77],
       target_fingerprint: targetFingerprint,
@@ -308,7 +395,7 @@ test('Screen Time bulk deletion soft-deletes eligible ended history and preserve
   });
 
   assert.equal(response.status, 200);
-  assert.equal(response.body.deleted_count, 1);
+  assert.equal(response.body.archived_count, 1);
   assert.equal(updateCalls, 1);
   assert.equal(auditWrites, 1);
   assert.equal(committed, true);

@@ -63,7 +63,7 @@ test('bulk reset is registered before the single-student route so it never treat
   assert.doesNotMatch(confirmationHelper, /student_id|parent_id/i);
 });
 
-test('active monitoring excludes only soft-archived students while archive history remains queryable', () => {
+test('Screen Time monitoring separates active and soft-archived session history', () => {
   const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   const playtimeFilters = source.slice(
     source.indexOf('const applyPlaytimeFilters'),
@@ -75,8 +75,8 @@ test('active monitoring excludes only soft-archived students while archive histo
   );
 
   assert.match(playtimeFilters, /lifecycle === 'archived'/);
-  assert.match(playtimeFilters, /archived_student\.progress_archived_at IS NOT NULL/);
-  assert.match(playtimeFilters, /NOT EXISTS/);
+  assert.match(playtimeFilters, /ps\.deleted_at IS NOT NULL/);
+  assert.match(playtimeFilters, /ps\.deleted_at IS NULL/);
   assert.match(topAchievers, /a\.progress_archived_at IS NULL/);
   assert.match(source, /Archive: Progress Archived/);
   assert.match(source, /Reset: New Learning Cycle Started/);
@@ -94,9 +94,18 @@ test('archived bulk permanent delete exposes an admin-only preview-token contrac
   const previewRoute = source.slice(previewIndex, deleteIndex);
   const deleteRoute = source.slice(deleteIndex, singleIndex);
   const targetResolver = source.slice(source.indexOf('const getArchivedProgressBulkTargets'), previewIndex);
+  const canonicalProgressBuilder = source.slice(
+    source.indexOf('const buildCanonicalStudentProgressQuery'),
+    source.indexOf('const normalizeTopAchieverRow')
+  );
+  const archivePredicateHelper = source.slice(
+    source.indexOf('const getStudentProgressArchivePredicate'),
+    source.indexOf('const getLifecycleMutationScope')
+  );
   assert.match(previewRoute, /requireAccountManagementAdmin/);
   assert.match(targetResolver, /buildCanonicalStudentProgressQuery\('archived'\)/);
-  assert.match(targetResolver, /progress_archived_at IS NOT NULL/);
+  assert.match(canonicalProgressBuilder, /getStudentProgressArchivePredicate\(lifecycle/);
+  assert.match(archivePredicateHelper, /progress_archived_at IS NOT NULL/);
   assert.match(previewRoute, /preview_token/);
   assert.match(previewRoute, /targets/);
   assert.match(previewRoute, /student_game_progress|game_results|student_ai_insights/);

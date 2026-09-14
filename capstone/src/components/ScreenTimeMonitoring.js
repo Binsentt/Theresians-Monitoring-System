@@ -290,13 +290,13 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     try {
       const response = await fetch(apiUrl(`/api/playtime/deletion-summary?${buildQueryString(filters, mode, 1, 200)}&completed_only=true`), { headers: buildAuthHeaders() });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || 'Unable to prepare completed Screen Time history removal.');
+      if (!response.ok) throw new Error(payload.error || 'Unable to prepare completed Screen Time history archive.');
       setDeletionTarget(payload);
       setPendingDeletion({ kind: 'bulk' });
       setDeletionReason('');
       setDeletionConfirmation('');
     } catch (requestError) {
-      setDeletionError(requestError.message || 'Unable to prepare completed Screen Time history removal.');
+      setDeletionError(requestError.message || 'Unable to prepare completed Screen Time history archive.');
     } finally {
       setDeleting(false);
     }
@@ -304,19 +304,21 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
 
   const confirmDeletion = async (event) => {
     event.preventDefault();
-    if (!deletionReason.trim()) return setDeletionError('Provide a reason for history removal.');
+    if (!deletionReason.trim()) {
+      return setDeletionError(`Provide a reason for ${pendingDeletion?.kind === 'reset' ? 'reset' : 'archive'}.`);
+    }
     const isBulk = pendingDeletion?.kind === 'bulk';
     if (isBulk && Number(deletionTarget?.affected_count || 0) === 0) {
-      return setDeletionError('No eligible completed Screen Time records can be permanently deleted.');
+      return setDeletionError('No eligible completed Screen Time records can be archived.');
     }
     const isReset = pendingDeletion?.kind === 'reset';
-    if (deletionConfirmation !== (isReset ? 'RESET' : 'DELETE')) return setDeletionError(`Type ${isReset ? 'RESET' : 'DELETE'} to confirm.`);
+    if (deletionConfirmation !== (isReset ? 'RESET' : 'ARCHIVE')) return setDeletionError(`Type ${isReset ? 'RESET' : 'ARCHIVE'} to confirm.`);
     setDeleting(true);
     setDeletionError('');
     try {
-       const endpoint = isBulk ? '/api/playtime/completed/bulk' : `/api/playtime/${pendingDeletion.record.id}${isReset ? '/reset' : ''}`;
+       const endpoint = isBulk ? '/api/playtime/completed/bulk/archive' : `/api/playtime/${pendingDeletion.record.id}${isReset ? '/reset' : '/archive'}`;
        const response = await fetch(apiUrl(endpoint), {
-         method: isBulk ? 'POST' : isReset ? 'POST' : 'DELETE',
+         method: 'POST',
         headers: { ...buildAuthHeaders(), 'Content-Type': 'application/json' },
          body: JSON.stringify(isBulk ? {
           reason: deletionReason.trim(),
@@ -327,12 +329,12 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
          } : { reason: deletionReason.trim(), confirmation: deletionConfirmation }),
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || 'Unable to remove Screen Time history.');
+      if (!response.ok) throw new Error(payload.error || 'Unable to archive Screen Time history.');
       closeDeletionDialog(true);
       setPage(1);
       setRefreshToken((value) => value + 1);
     } catch (requestError) {
-      setDeletionError(requestError.message || 'Unable to remove Screen Time history.');
+      setDeletionError(requestError.message || 'Unable to archive Screen Time history.');
     } finally {
       setDeleting(false);
     }
@@ -489,9 +491,9 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                       preparing={reportPreparing}
                       onPrint={prepareFilteredScreenTimeReport}
                     />
-                    {isAdminAllView && (
-                      <button type="button" className="screen-time-danger-button" data-action="delete-all-completed-playtime" onClick={openBulkDeletion} disabled={deleting || loading}>
-                        Delete All Completed Records
+                    {isAdminAllView && filters.lifecycle !== 'archived' && (
+                      <button type="button" className="screen-time-danger-button" data-action="archive-all-completed-playtime" onClick={openBulkDeletion} disabled={deleting || loading}>
+                        Archive All Completed Records
                       </button>
                     )}
                   </div>
@@ -504,27 +506,27 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                   <ModalPortal onClose={closeDeletionDialog}>
                     <div className="screen-time-deletion-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDeletionDialog(); }}>
                       <form className="screen-time-deletion-dialog" role="dialog" aria-modal="true" aria-labelledby="screen-time-deletion-title" onSubmit={confirmDeletion} onMouseDown={(event) => event.stopPropagation()}>
-                        <h2 id="screen-time-deletion-title">{pendingDeletion.kind === 'bulk' ? 'Delete All Completed Records' : pendingDeletion.kind === 'reset' ? 'Reset Screen Time' : 'Delete Screen Time Record'}</h2>
-                        <p>This action removes the record from Screen Time history. Daily playtime usage accounting remains preserved.</p>
+                        <h2 id="screen-time-deletion-title">{pendingDeletion.kind === 'bulk' ? 'Archive Completed Screen Time Records' : pendingDeletion.kind === 'reset' ? 'Reset Screen Time' : 'Archive Screen Time Record'}</h2>
+                        {pendingDeletion.kind !== 'reset' && <p>This action archives the record from Screen Time history. Daily playtime usage accounting and the audit trail remain preserved.</p>}
                         {pendingDeletion.kind === 'bulk' ? (
                           <>
                             <p><strong>{deletionTarget?.visible_count ?? deletionTarget?.affected_count ?? 0} visible records match the current filters.</strong></p>
                             {Number(deletionTarget?.affected_count || 0) === 0 ? (
-                              <p className="screen-time-error">No eligible completed Screen Time records can be permanently deleted.</p>
+                              <p className="screen-time-error">No eligible completed Screen Time records can be archived.</p>
                             ) : (
-                              <p><strong>{deletionTarget.affected_count} eligible for deletion · {deletionTarget.preserved_count || 0} preserved.</strong></p>
+                              <p><strong>{deletionTarget.affected_count} eligible for archive · {deletionTarget.preserved_count || 0} preserved.</strong></p>
                             )}
                           </>
                         ) : <p><strong>{pendingDeletion.record.student_name || pendingDeletion.record.game_student_id || 'Selected student'} · {formatDate(pendingDeletion.record.date_played)}</strong></p>}
                         {pendingDeletion.kind === 'reset' && <p>This resets the Screen Time baseline for the active student. Existing history and the active session are preserved.</p>}
-                        <label htmlFor="screen-time-deletion-reason">Reason for {pendingDeletion.kind === 'reset' ? 'reset' : 'removal'}</label>
+                        <label htmlFor="screen-time-deletion-reason">Reason for {pendingDeletion.kind === 'reset' ? 'reset' : 'archive'}</label>
                         <textarea id="screen-time-deletion-reason" value={deletionReason} onChange={(event) => setDeletionReason(event.target.value.slice(0, 1000))} maxLength={1000} rows={4} disabled={deleting} />
-                        <label htmlFor="screen-time-deletion-confirmation">Type {pendingDeletion.kind === 'reset' ? 'RESET' : 'DELETE'} to confirm</label>
+                        <label htmlFor="screen-time-deletion-confirmation">Type {pendingDeletion.kind === 'reset' ? 'RESET' : 'ARCHIVE'} to confirm</label>
                         <input id="screen-time-deletion-confirmation" value={deletionConfirmation} onChange={(event) => setDeletionConfirmation(event.target.value)} autoComplete="off" disabled={deleting} />
                         {deletionError && <p className="screen-time-error" role="alert">{deletionError}</p>}
                         <div className="screen-time-deletion-actions">
                           <button type="button" className="screen-time-clear" onClick={closeDeletionDialog} disabled={deleting}>Cancel</button>
-                          <button type="submit" className="screen-time-danger-button" disabled={deleting || (pendingDeletion.kind === 'bulk' && Number(deletionTarget?.affected_count || 0) === 0)}>{deleting ? (pendingDeletion.kind === 'reset' ? 'Resetting…' : 'Deleting…') : pendingDeletion.kind === 'reset' ? 'Confirm Reset' : 'Confirm Delete'}</button>
+                          <button type="submit" className="screen-time-danger-button" disabled={deleting || (pendingDeletion.kind === 'bulk' && Number(deletionTarget?.affected_count || 0) === 0)}>{deleting ? (pendingDeletion.kind === 'reset' ? 'Resetting…' : 'Archiving…') : pendingDeletion.kind === 'reset' ? 'Confirm Reset' : 'Confirm Archive'}</button>
                         </div>
                       </form>
                     </div>
@@ -580,14 +582,14 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                                 `Student: ${record.student_name || record.child_name || record.game_student_id || 'Selected student'}`
                               )}
                             />
-                            {isAdminAllView && !isHistoryDeletionEligible(record) && (
+                            {isAdminAllView && filters.lifecycle !== 'archived' && !isHistoryDeletionEligible(record) && (
                               <button type="button" className="screen-time-clear" data-action="reset-screen-time" onClick={() => openSingleDeletion(record)}>
                                 Reset Screen Time
                               </button>
                             )}
-                            {isAdminAllView && String(record.status || '').toLowerCase() !== 'playing' && isHistoryDeletionEligible(record) && (
-                              <button type="button" className="screen-time-danger-link" data-action="delete-playtime-record" onClick={() => openSingleDeletion(record)}>
-                                Delete
+                            {isAdminAllView && filters.lifecycle !== 'archived' && String(record.status || '').toLowerCase() !== 'playing' && isHistoryDeletionEligible(record) && (
+                              <button type="button" className="screen-time-danger-link" data-action="archive-playtime-record" onClick={() => openSingleDeletion(record)}>
+                                Archive
                               </button>
                             )}
                           </td>

@@ -9,6 +9,7 @@ const GAME_RESULT_SESSION_CREDENTIAL = 'e'.repeat(64);
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
 let useDefaultGameResultLease = true;
+let gameResultReleaseCount = 0;
 const authenticatedAccounts = {
   1: { id: 1, role: 'admin', session_version: 0, is_archived: false },
   16: { id: 16, role: 'teacher', session_version: 0, is_archived: false },
@@ -21,9 +22,9 @@ const tokenPayloads = {
 };
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
-const runQuery = async (sql, params = []) => {
+const runQuery = async (sql, params = [], querySource = 'pool') => {
   const compacted = compactSql(sql);
-  const result = (await queryHandler(compacted, params, sql)) || emptyResult;
+  const result = (await queryHandler(compacted, params, sql, querySource)) || emptyResult;
   if (result.handled) return { rows: result.rows || [] };
   if (result.rows?.length > 0) return result;
 
@@ -57,8 +58,8 @@ const runQuery = async (sql, params = []) => {
 const mockPool = {
   query: runQuery,
   connect: async () => ({
-    query: runQuery,
-    release: () => {},
+    query: (sql, params = []) => runQuery(sql, params, 'transaction'),
+    release: () => { gameResultReleaseCount += 1; },
   }),
 };
 
@@ -172,7 +173,8 @@ test('parent game results routes and access middleware', async (t) => {
 
   await t.test('stores a resolved game result session', async () => {
     let insertedValues = null;
-    setQueryHandler(async (sql, params) => {
+    let insertedSql = '';
+    setQueryHandler(async (sql, params, rawSql) => {
       if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
         return resultRows([{ id: 19, parent_id: '123456' }]);
       }
@@ -180,6 +182,7 @@ test('parent game results routes and access middleware', async (t) => {
         return resultRows([{ id: 44 }]);
       }
       if (sql.startsWith('insert into public.game_results')) {
+        insertedSql = String(rawSql);
         insertedValues = params;
         return emptyResult;
       }
@@ -207,11 +210,36 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(insertedValues[10], null);
     assert.equal(insertedValues[11], GAME_RESULT_SESSION_ID);
     assert.equal(insertedValues[12], false);
+    assert.match(insertedSql, /\$23\s*\)/);
+    assert.equal(insertedValues.length, 23);
+  });
+
+  await t.test('rejects impossible graded totals before persisting leaderboard evidence', async () => {
+    let queries = 0;
+    setQueryHandler(async () => {
+      queries += 1;
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456',
+        student_id: 44,
+        student_name: 'Ava Santos',
+        score: 6,
+        total_items: 5,
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.match(response.body.error, /valid quiz totals/i);
+    assert.equal(queries, 0);
   });
 
   await t.test('stores an unlinked game result session when the child name is not resolved', async () => {
     let insertedValues = null;
-    setQueryHandler(async (sql, params) => {
+    setQueryHandler(async (sql, params, rawSql) => {
       if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
         return resultRows([{ id: 19, parent_id: '123456' }]);
       }
@@ -359,7 +387,7 @@ test('parent game results routes and access middleware', async (t) => {
   await t.test('stores a matching active question set when result Topic metadata is omitted or differs', async () => {
     let insertedValues = null;
     let questionSetChecked = false;
-    setQueryHandler(async (sql, params) => {
+    setQueryHandler(async (sql, params, rawSql) => {
       if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
         return resultRows([{ id: 19, parent_id: '123456' }]);
       }
@@ -369,6 +397,7 @@ test('parent game results routes and access middleware', async (t) => {
       if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
         questionSetChecked = true;
         assert.deepEqual(params, [77]);
+        assert.match(String(rawSql), /FOR KEY SHARE/i);
         return resultRows([{
           id: 77,
           grade_level: 'Grade 3',
@@ -1034,10 +1063,10 @@ test('parent game results routes and access middleware', async (t) => {
 
     assert.equal(response.status, 200);
     assert.equal(response.body.children[0].accuracy, 80);
-    assert.equal(response.body.children[0].completion_percentage, null);
+    assert.equal(response.body.children[0].completion_percentage, 0);
     assert.equal(response.body.children[0].metrics.reportedTotalProgress, 42);
     assert.equal(response.body.children[1].accuracy, null);
-    assert.equal(response.body.children[1].completion_percentage, null);
+    assert.equal(response.body.children[1].completion_percentage, 0);
     assert.match(childrenSql, /coalesce\(nullif\(a\.grade_level, ''\), p\.grade_level\) as grade_level/);
     assert.match(childrenSql, /then nullif\(a\.section, ''\)/);
   });
@@ -1113,7 +1142,7 @@ test('parent game results routes and access middleware', async (t) => {
     assert.notEqual(response.body[0].student_id, response.body[1].student_id);
   });
 
-  await t.test('leaderboard top achievers uses completion accuracy answers and quests ranking', async () => {
+  await t.test('leaderboard top achievers uses completion, canonical Game Score, answers, and quests ranking', async () => {
     let receivedSql = '';
     setQueryHandler(async (sql, params) => {
       if (sql.includes('from public.student_game_progress')) {
@@ -1121,7 +1150,7 @@ test('parent game results routes and access middleware', async (t) => {
         assert.equal(params[0], 16);
         assert.match(
           sql,
-          /order by progress_percentage desc nulls last, accuracy_rate desc nulls last, correct_answers desc nulls last, quests_completed desc nulls last, student_id asc/
+          /order by progress_percentage desc nulls last, game_score desc nulls last, correct_answers desc nulls last, quests_completed desc nulls last, student_id asc/
         );
         assert.match(sql, /tsr\.teacher_id = \$1/);
         return resultRows([
@@ -1150,11 +1179,13 @@ test('parent game results routes and access middleware', async (t) => {
     });
 
     assert.equal(response.status, 200);
-    assert.equal(receivedSql.includes('coalesce(p.total_quests_completed'), true);
+    assert.equal(receivedSql.includes('coalesce(p.total_quests_completed'), false);
+    assert.match(receivedSql, /milestones\.completed_count as quests_completed/);
     assert.equal(response.body[0].rank, 1);
     assert.equal(response.body[0].student_name, 'Ava Santos');
     assert.equal(response.body[0].completion_percentage, 90);
     assert.equal(response.body[0].accuracy, 80);
+    assert.equal(response.body[0].game_score, 12);
     assert.equal(response.body[0].quests_completed, 4);
     assert.equal(response.body[0].total_play_time, 600);
   });
@@ -1330,7 +1361,13 @@ test('game result endpoint rejects missing, expired, and forged playtime leases'
   assert.equal(missingLease.status, 400);
 
   useDefaultGameResultLease = false;
+  gameResultReleaseCount = 0;
+  const transactionCommands = [];
   setQueryHandler(async (sql) => {
+    if (['begin', 'commit', 'rollback'].includes(sql)) {
+      transactionCommands.push(sql);
+      return emptyResult;
+    }
     if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
       return resultRows([{ id: 19, parent_id: '123456' }]);
     }
@@ -1352,6 +1389,215 @@ test('game result endpoint rejects missing, expired, and forged playtime leases'
     }),
   });
   assert.equal(expiredLease.status, 403);
+  assert.deepEqual(transactionCommands, ['begin', 'rollback']);
+  assert.equal(gameResultReleaseCount, 1);
+});
+
+test('game result ingestion locks the current learning cycle and cannot carry a future client timestamp across reset', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const commands = [];
+  let resultSql = '';
+  let resultInserted = false;
+  t.after(async () => {
+    useDefaultGameResultLease = true;
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  useDefaultGameResultLease = false;
+  setQueryHandler(async (sql, params, rawSql) => {
+    if (['begin', 'commit', 'rollback'].includes(sql)) {
+      commands.push(sql);
+      return emptyResult;
+    }
+    if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+      return resultRows([{ id: 19, parent_id: '123456' }]);
+    }
+    if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+      return resultRows([{ id: 44, name: 'Canonical Student', grade_level: 'Grade 1' }]);
+    }
+    if (sql.includes('from public.playtime_sessions ps') && sql.includes('expires_at > now()')) {
+      assert.match(sql, /for update of ps, a/);
+      return resultRows([{
+        id: GAME_RESULT_SESSION_ID,
+        student_id: 44,
+        parent_id: '123456',
+        session_credential_hash: crypto.createHash('sha256').update(GAME_RESULT_SESSION_CREDENTIAL).digest('hex'),
+        learning_cycle_version: 2,
+        current_learning_cycle_version: 2,
+        current_learning_cycle_started_at: '2026-09-14T03:59:00.000Z',
+        heartbeat_stale: false,
+      }]);
+    }
+    if (sql.startsWith('insert into public.game_results')) {
+      resultInserted = true;
+      resultSql = String(rawSql);
+      return resultRows([{ id: 901 }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/result', {
+    method: 'POST',
+    body: JSON.stringify({
+      parent_id: '123456',
+      student_id: '001234',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Addition',
+      score: 1,
+      total_items: 1,
+      played_at: '2099-01-01T00:00:00.000Z',
+    }),
+  });
+  assert.equal(response.status, 201);
+  assert.equal(resultInserted, true);
+  assert.deepEqual(commands, ['begin', 'commit']);
+  assert.match(resultSql, /GREATEST\([\s\S]*LEAST\(COALESCE\(\$10::TIMESTAMPTZ, NOW\(\)\), NOW\(\)\)[\s\S]*cycle\.current_learning_cycle_started_at[\s\S]*cycle\.id = \$3/i);
+});
+
+test('game result rejects a supplied learning cycle that does not match the locked lease and account cycle', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const commands = [];
+  let resultInserted = false;
+  t.after(async () => {
+    useDefaultGameResultLease = true;
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  useDefaultGameResultLease = false;
+  setQueryHandler(async (sql) => {
+    if (['begin', 'commit', 'rollback'].includes(sql)) {
+      commands.push(sql);
+      return emptyResult;
+    }
+    if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+      return resultRows([{ id: 19, parent_id: '123456' }]);
+    }
+    if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+      return resultRows([{ id: 44, name: 'Canonical Student', grade_level: 'Grade 1' }]);
+    }
+    if (sql.includes('from public.playtime_sessions ps') && sql.includes('expires_at > now()')) {
+      return resultRows([{
+        id: GAME_RESULT_SESSION_ID,
+        student_id: 44,
+        parent_id: '123456',
+        session_credential_hash: crypto.createHash('sha256').update(GAME_RESULT_SESSION_CREDENTIAL).digest('hex'),
+        learning_cycle_version: 2,
+        current_learning_cycle_version: 2,
+        heartbeat_stale: false,
+      }]);
+    }
+    if (sql.startsWith('insert into public.game_results')) {
+      resultInserted = true;
+      return resultRows([{ id: 902 }]);
+    }
+    return emptyResult;
+  });
+
+  const mismatch = await requestJson(baseUrl, '/api/game/result', {
+    method: 'POST',
+    body: JSON.stringify({
+      parent_id: '123456',
+      student_id: '001234',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      math_topic: 'Addition',
+      score: 1,
+      total_items: 1,
+      learning_cycle_version: 1,
+    }),
+  });
+  assert.equal(mismatch.status, 409);
+  assert.equal(mismatch.body.code, 'LEARNING_CYCLE_CHANGED');
+  assert.equal(resultInserted, false);
+  assert.deepEqual(commands, ['begin', 'rollback']);
+
+  const malformed = await requestJson(baseUrl, '/api/game/result', {
+    method: 'POST',
+    body: JSON.stringify({
+      parent_id: '123456',
+      student_id: '001234',
+      score: 1,
+      total_items: 1,
+      learning_cycle_version: 'not-a-cycle',
+    }),
+  });
+  assert.equal(malformed.status, 400);
+  assert.equal(commands.length, 2);
+});
+
+test('game result IDs reject malformed canonical IDs, preserve legacy insert-each-event behavior, and dedupe canonical retries', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const insertedEventIds = [];
+  const seenEventIds = new Set();
+  const writeSources = [];
+  let staleWrites = 0;
+  t.after(async () => {
+    useDefaultGameResultLease = true;
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params, rawSql, querySource) => {
+    if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+      return resultRows([{ id: 19, parent_id: '123456' }]);
+    }
+    if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+      return resultRows([{ id: 44, name: 'Canonical Student', grade_level: 'Grade 1' }]);
+    }
+    if (sql.startsWith('insert into public.game_results')) {
+      writeSources.push(['result', querySource]);
+      insertedEventIds.push(params[14]);
+      if (params[14] && seenEventIds.has(params[14])) return emptyResult;
+      if (params[14]) seenEventIds.add(params[14]);
+      return resultRows([{ id: 902 }]);
+    }
+    if (sql.startsWith('update public.student_ai_insights')) {
+      writeSources.push(['insight', querySource]);
+      staleWrites += 1;
+    }
+    return emptyResult;
+  });
+
+  const basePayload = {
+    parent_id: '123456', student_id: '001234', grade_level: 'Grade 1', difficulty: 'Easy',
+    math_topic: 'Addition', score: 1, total_items: 1, played_at: '2026-09-14T04:00:00.000Z',
+  };
+  const malformed = await requestJson(baseUrl, '/api/game/result', {
+    method: 'POST', body: JSON.stringify({ ...basePayload, result_event_id: 'not valid!' }),
+  });
+  assert.equal(malformed.status, 400);
+  assert.equal(insertedEventIds.length, 0);
+
+  const legacyFirst = await requestJson(baseUrl, '/api/game/result', {
+    method: 'POST', body: JSON.stringify(basePayload),
+  });
+  const legacyReplay = await requestJson(baseUrl, '/api/game/result', {
+    method: 'POST', body: JSON.stringify(basePayload),
+  });
+  assert.equal(legacyFirst.status, 201);
+  assert.equal(legacyReplay.status, 201);
+  assert.equal(insertedEventIds.length, 2);
+  assert.equal(insertedEventIds[0], null);
+  assert.equal(insertedEventIds[1], null);
+
+  const canonicalPayload = { ...basePayload, result_event_id: 'qa:answer:event:1' };
+  const canonicalFirst = await requestJson(baseUrl, '/api/game/result', {
+    method: 'POST', body: JSON.stringify(canonicalPayload),
+  });
+  const replay = await requestJson(baseUrl, '/api/game/result', {
+    method: 'POST', body: JSON.stringify(canonicalPayload),
+  });
+  assert.equal(canonicalFirst.status, 201);
+  assert.equal(replay.status, 200);
+  assert.equal(replay.body.duplicate, true);
+  assert.equal(staleWrites, 3, 'each legacy request and only the first canonical event invalidate evidence; canonical retries leave unchanged evidence cached');
+  assert.equal(writeSources.every(([, source]) => source === 'transaction'), true);
 });
 
 test('game result endpoint rejects a heartbeat-stale lease before inserting a result', async (t) => {
@@ -1539,5 +1785,6 @@ test('student analytics derives difficulty recommendations from recorded questio
   assert.deepEqual(response.body.analysis.strengths, []);
   assert.deepEqual(response.body.analysis.weaknesses, []);
   assert.deepEqual(response.body.analysis.recommendations, []);
-  assert.equal(response.body.aiInsight.status, 'no_data');
+  assert.equal(response.body.aiInsight.status, 'paused');
+  assert.equal(response.body.aiInsight.valid_result_count, 30);
 });

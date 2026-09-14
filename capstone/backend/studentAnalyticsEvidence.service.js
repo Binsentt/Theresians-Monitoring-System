@@ -96,6 +96,7 @@ function withStudentAnalyticsAliases({ progress, metrics }) {
     total_questions: metrics.totalQuestions,
     accuracy_rate: metrics.accuracy,
     performance_percentage: metrics.accuracy,
+    game_score: metrics.gameScore,
     progress_percentage: metrics.totalProgress,
     current_quest: metrics.currentQuest,
     difficulty: metrics.currentDifficulty || 'Unknown',

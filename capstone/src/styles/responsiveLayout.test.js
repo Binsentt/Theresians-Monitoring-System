@@ -10,6 +10,27 @@ describe('responsive text and table layout guardrails', () => {
   const manageUsersStyles = fs.readFileSync(path.resolve(__dirname, 'manageusers.css'), 'utf8');
 
   const rule = (source, selector) => source.match(new RegExp(`${selector}\\s*\\{([^}]*)\\}`, 's'))?.[1] || '';
+  const mediaBlock = (source, query, startingAt = 0) => {
+    const markerIndex = source.indexOf(`@media (${query})`, startingAt);
+    if (markerIndex < 0) return '';
+
+    const openingBrace = source.indexOf('{', markerIndex);
+    let depth = 1;
+    for (let index = openingBrace + 1; index < source.length; index += 1) {
+      if (source[index] === '{') depth += 1;
+      if (source[index] === '}') depth -= 1;
+      if (depth === 0) return source.slice(openingBrace + 1, index);
+    }
+
+    return '';
+  };
+  const columnWidth = (source, column) => Number(
+    source.match(new RegExp(
+      `\\.student-progress-table th:nth-child\\(${column}\\),\\s*` +
+      `\\.student-progress-table td:nth-child\\(${column}\\)\\s*\\{[^}]*width:\\s*(\\d+)%`,
+      's'
+    ))?.[1]
+  );
 
   test('shared text and sidebar labels wrap at word boundaries instead of arbitrary characters', () => {
     expect(rule(styles, 'p,\\s*label,\\s*h1,\\s*h2,\\s*h3,\\s*h4,\\s*h5,\\s*h6')).toContain('overflow-wrap: normal');
@@ -40,4 +61,46 @@ describe('responsive text and table layout guardrails', () => {
     expect(progressStyles).toMatch(/@media\s*\(max-width:\s*980px\)[\s\S]*\.table-wrapper\s*\{[\s\S]*overflow-x:\s*auto/);
     expect(progressStyles).toMatch(/\.student-progress-table th:nth-child\(6\)/);
   });
+
+  test.each([1366, 1440, 1536, 1920])(
+    'Student Progress stays within its table wrapper at %ipx desktop width',
+    (viewportWidth) => {
+      const desktopStyles = mediaBlock(
+        progressStyles,
+        'min-width: 1200px',
+        progressStyles.indexOf('.student-progress-row-actions')
+      );
+      const tableRule = rule(desktopStyles, '\\.student-progress-table');
+      const baseTableRule = rule(progressStyles, '\\.student-progress-table');
+      const wrapperRule = rule(progressStyles, '\\.table-wrapper');
+      const widths = Array.from({ length: 9 }, (_, index) => columnWidth(desktopStyles, index + 1));
+
+      expect(viewportWidth).toBeGreaterThanOrEqual(1200);
+      expect(wrapperRule).toContain('max-width: 100%');
+      expect(wrapperRule).toContain('min-width: 0');
+      expect(baseTableRule).toContain('width: 100%');
+      expect(tableRule).toContain('min-width: 0');
+      expect(tableRule).toContain('table-layout: fixed');
+      expect(desktopStyles).toMatch(/\.student-progress-table th,\s*\.student-progress-table td\s*\{[^}]*min-width:\s*0/s);
+      expect(rule(desktopStyles, '\\.student-progress-table th')).toContain('white-space: normal');
+      expect(rule(desktopStyles, '\\.student-progress-table th:nth-child\\(n\\+1\\)')).toContain('white-space: normal');
+      expect(rule(desktopStyles, '\\.student-progress-table th:nth-child\\(n\\+1\\)')).toContain('min-width: 0');
+      expect(widths).toEqual([4, 14, 9, 9, 8, 22, 9, 9, 16]);
+      expect(widths.reduce((total, width) => total + width, 0)).toBeLessThanOrEqual(100);
+    }
+  );
+
+  test.each([1024, 768, 390])(
+    'Student Progress uses intentional horizontal scrolling without broken text at %ipx',
+    (viewportWidth) => {
+      const wrapperRule = rule(progressStyles, '\\.table-wrapper');
+      const tableRule = rule(progressStyles, '\\.student-progress-table');
+
+      expect(viewportWidth).toBeLessThan(1200);
+      expect(wrapperRule).toContain('overflow-x: auto');
+      expect(tableRule).toContain('min-width: 1040px');
+      expect(progressStyles).not.toMatch(/word-break:\s*break-all/);
+      expect(progressStyles).not.toMatch(/overflow-wrap:\s*anywhere/);
+    }
+  );
 });

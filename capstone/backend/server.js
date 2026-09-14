@@ -159,6 +159,11 @@ const {
 const {
   buildStudentAnalyticsMetrics,
 } = require('./studentAnalyticsMetrics.utils');
+const {
+  PLAYER_FACING_TASKS,
+  MILESTONE_WEIGHTS,
+  canonicalTaskWeight,
+} = require('./questGraph.utils');
 const { loadStudentAnalyticsEvidence, withStudentAnalyticsAliases } = require('./studentAnalyticsEvidence.service');
 const { resolveStudentAiInsight } = require('./studentAiInsight.service');
 const {
@@ -182,6 +187,37 @@ const {
 const app = express();
 const port = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-in-production';
+const CANONICAL_CAMPAIGN_WEIGHT = PLAYER_FACING_TASKS
+  .reduce((total, taskId) => total + canonicalTaskWeight(taskId), 0) + MILESTONE_WEIGHTS.tutorial;
+const CANONICAL_CAMPAIGN_TASK_IDS = Object.freeze(['tutorial', ...PLAYER_FACING_TASKS]);
+const CANONICAL_CAMPAIGN_TASK_SQL = CANONICAL_CAMPAIGN_TASK_IDS
+  .map((taskId) => `'${taskId}'`)
+  .join(', ');
+const CANONICAL_TASK_WEIGHT_WHENS = CANONICAL_CAMPAIGN_TASK_IDS
+  .map((taskId) => `WHEN '${taskId}' THEN ${taskId === 'tutorial' ? MILESTONE_WEIGHTS.tutorial : canonicalTaskWeight(taskId)}`)
+  .join(' ');
+const resolvePersistedMilestoneWeight = (taskId) => {
+  const normalizedTaskId = String(taskId || '').trim().toLowerCase();
+  if (normalizedTaskId === 'tutorial') return MILESTONE_WEIGHTS.tutorial;
+  if (PLAYER_FACING_TASKS.includes(normalizedTaskId)) return canonicalTaskWeight(normalizedTaskId);
+  return classifyMilestoneWeight(normalizedTaskId);
+};
+const CANONICAL_MILESTONE_AGGREGATE_SQL = `
+  SELECT COUNT(*)::INTEGER AS completed_count,
+         COALESCE(SUM(completed_tasks.task_weight), 0)::INTEGER AS completed_weight,
+         COUNT(*) > 0 AS has_milestones
+  FROM (
+    SELECT LOWER(BTRIM(COALESCE(sqm.canonical_task_id, sqm.milestone_id))) AS task_id,
+           MAX(CASE LOWER(BTRIM(COALESCE(sqm.canonical_task_id, sqm.milestone_id)))
+                 ${CANONICAL_TASK_WEIGHT_WHENS}
+                 ELSE 0 END) AS task_weight
+    FROM public.student_quest_milestones sqm
+    WHERE sqm.student_id = p.student_id
+      AND sqm.learning_cycle_version = COALESCE(a.current_learning_cycle_version, 0)
+      AND COALESCE(sqm.player_facing, true) = true
+      AND LOWER(BTRIM(COALESCE(sqm.canonical_task_id, sqm.milestone_id))) IN (${CANONICAL_CAMPAIGN_TASK_SQL})
+    GROUP BY LOWER(BTRIM(COALESCE(sqm.canonical_task_id, sqm.milestone_id)))
+  ) completed_tasks`;
 
 const getValidatedActiveParentAccount = async (parentCode) => {
   const result = await pool.query(
@@ -1271,15 +1307,33 @@ const startFreshLearningCycle = async (client, studentId) => {
   return toLearningCycleDescriptor(result.rows[0]);
 };
 
-const validateProgressLearningCycleLease = async (client, { studentId, sessionId, sessionCredential }) => {
+const validateProgressLearningCycleLease = async (client, {
+  studentId,
+  sessionId,
+  sessionCredential,
+  learningCycleVersion,
+  hasSuppliedLearningCycleVersion = false,
+}) => {
   const accountResult = await client.query(
     `SELECT COALESCE(current_learning_cycle_version, 0) AS current_learning_cycle_version
      FROM public.accounts
      WHERE id = $1
-     LIMIT 1`,
+     LIMIT 1
+     FOR UPDATE`,
     [studentId]
   );
   const currentVersion = Number(accountResult.rows[0]?.current_learning_cycle_version ?? 0);
+  if (hasSuppliedLearningCycleVersion
+    && (!Number.isInteger(learningCycleVersion) || learningCycleVersion !== currentVersion)) {
+    return {
+      ok: false,
+      status: 409,
+      body: {
+        code: 'LEARNING_CYCLE_CHANGED',
+        error: 'This progress belongs to a previous learning cycle. Start a new game for the current cycle.',
+      },
+    };
+  }
   // Legacy cycle-zero clients did not attach a lease to progress writes. They
   // remain compatible until the Student's lifecycle has advanced.
   if (currentVersion === 0 && (!sessionId || !sessionCredential)) return { ok: true };
@@ -1303,7 +1357,8 @@ const validateProgressLearningCycleLease = async (client, { studentId, sessionId
        AND student_id = $2
        AND status = 'Playing'
        AND expires_at > NOW()
-     LIMIT 1`,
+     LIMIT 1
+     FOR UPDATE`,
     [sessionId, studentId]
   );
   const session = sessionResult.rows[0];
@@ -1996,7 +2051,7 @@ const resolveScopeId = (value) => {
   return Number.isNaN(parsed) ? NaN : parsed;
 };
 
-const resolveGameResultQuestionSet = async ({ rawQuestionSetId, gradeLevel, difficulty }) => {
+const resolveGameResultQuestionSet = async ({ rawQuestionSetId, gradeLevel, difficulty, queryClient = pool }) => {
   if (rawQuestionSetId === undefined || rawQuestionSetId === null || rawQuestionSetId === '') {
     return { questionSetId: null };
   }
@@ -2011,11 +2066,12 @@ const resolveGameResultQuestionSet = async ({ rawQuestionSetId, gradeLevel, diff
     return { error: 'question_set_id must be a positive integer.' };
   }
 
-  const result = await pool.query(
+  const result = await queryClient.query(
     `SELECT id, grade_level, difficulty, topic_id, math_topic, publish_status
      FROM public.learning_files
      WHERE id = $1
-     LIMIT 1`,
+     LIMIT 1
+     FOR KEY SHARE`,
     [questionSetId]
   );
   const questionSet = result.rows[0];
@@ -2171,6 +2227,7 @@ const normalizeTopAchieverRow = (row, index = 0) => {
   const accuracy = row.accuracy ?? row.accuracy_rate;
   const correctAnswers = Number(row.total_correct_answers ?? row.correct_answers ?? 0);
   const totalQuestions = Number(row.total_questions_answered ?? row.total_questions ?? 0);
+  const gameScore = Number(row.game_score ?? row.correct_answers ?? 0);
   const questsCompleted = Number(row.quests_completed ?? row.total_quests_completed ?? 0);
   const totalPlayTime = Number(row.total_play_time ?? row.duration_seconds ?? 0);
   const normalizedCompletion = completion === null || completion === undefined || completion === '' ? null : Number(completion);
@@ -2190,6 +2247,8 @@ const normalizeTopAchieverRow = (row, index = 0) => {
     accuracy_rate: Number.isFinite(normalizedAccuracy) ? normalizedAccuracy : null,
     total_correct_answers: Number.isFinite(correctAnswers) ? correctAnswers : 0,
     correct_answers: Number.isFinite(correctAnswers) ? correctAnswers : 0,
+    game_score: Number.isFinite(gameScore) ? Math.max(0, Math.round(gameScore)) : 0,
+    score: Number.isFinite(gameScore) ? Math.max(0, Math.round(gameScore)) : 0,
     total_questions_answered: Number.isFinite(totalQuestions) ? totalQuestions : 0,
     total_questions: Number.isFinite(totalQuestions) ? totalQuestions : 0,
     quests_completed: Number.isFinite(questsCompleted) ? questsCompleted : 0,
@@ -4615,7 +4674,7 @@ const resolveManagedParentAccount = async (queryClient, parentId, { forUpdate = 
 };
 
 const CANONICAL_TOP_ACHIEVER_ORDER_SQL = `progress_percentage DESC NULLS LAST,
-              accuracy_rate DESC NULLS LAST,
+              game_score DESC NULLS LAST,
               correct_answers DESC NULLS LAST,
               quests_completed DESC NULLS LAST,
               student_id ASC`;
@@ -7287,6 +7346,8 @@ app.post('/api/game/progress', async (req, res) => {
     quest_progress: quest_progress ?? req.body?.completion_percentage,
   };
   const activityTimestamp = req.body?.timestamp || req.body?.played_at || req.body?.last_played || null;
+  const hasSuppliedLearningCycleVersion = Object.prototype.hasOwnProperty.call(req.body || {}, 'learning_cycle_version');
+  const suppliedLearningCycleVersion = Number(req.body?.learning_cycle_version);
 
   const parentCode = normalizeParentCode(parent_id);
   const studentName = normalizeGameStudentName(student_name);
@@ -7296,6 +7357,9 @@ app.post('/api/game/progress', async (req, res) => {
   }
   if (!studentName) {
     return res.status(400).json({ error: 'Student/Player Name is required.' });
+  }
+  if (hasSuppliedLearningCycleVersion && !Number.isInteger(suppliedLearningCycleVersion)) {
+    return res.status(400).json({ error: 'learning_cycle_version must be a valid integer.' });
   }
 
   const client = await pool.connect();
@@ -7428,11 +7492,15 @@ app.post('/api/game/progress', async (req, res) => {
       studentId: student.id,
       sessionId: resolvePositiveInteger(req.body?.playtime_session_id),
       sessionCredential: String(req.body?.playtime_session_credential || '').trim(),
+      learningCycleVersion: suppliedLearningCycleVersion,
+      hasSuppliedLearningCycleVersion,
     });
     if (!lifecycleLease.ok) {
-      await client.query('ROLLBACK');
       if (lifecycleLease.staleSessionId) {
-        await finalizeStalePlaytimeSession(lifecycleLease.staleSessionId);
+        await finalizeStalePlaytimeSession(lifecycleLease.staleSessionId, client);
+        await client.query('COMMIT');
+      } else {
+        await client.query('ROLLBACK');
       }
       return res.status(lifecycleLease.status).json(lifecycleLease.body);
     }
@@ -7451,8 +7519,13 @@ app.post('/api/game/progress', async (req, res) => {
       `SELECT id
        FROM public.student_game_progress
        WHERE student_id = $1
+         AND (
+           (SELECT current_learning_cycle_started_at FROM public.accounts WHERE id = $1) IS NULL
+           OR updated_at >= (SELECT current_learning_cycle_started_at FROM public.accounts WHERE id = $1)
+         )
        ORDER BY updated_at DESC NULLS LAST, id DESC
-       LIMIT 1`,
+       LIMIT 1
+       FOR UPDATE`,
       [student.id]
     );
 
@@ -7577,6 +7650,66 @@ app.post('/api/game/progress', async (req, res) => {
   }
 });
 
+const ensureCurrentLearningProgressRow = async (queryClient, {
+  studentId,
+  studentName,
+  gradeLevel,
+  currentQuest = null,
+  currentMap = null,
+  difficulty = null,
+}) => {
+  if (!studentId) return;
+  await queryClient.query(
+    `INSERT INTO public.student_game_progress (
+       student_id, student_name, grade_level, section, current_quest,
+       score, correct_answers, total_questions, accuracy_rate,
+       progress_percentage, lesson_progress, total_quests_completed,
+       total_play_time, current_map, difficulty_level, last_played,
+       created_at, updated_at
+     )
+     SELECT a.id,
+            COALESCE(NULLIF(BTRIM($2), ''), NULLIF(BTRIM(a.name), ''), 'Student'),
+            COALESCE(NULLIF(BTRIM(a.grade_level), ''), NULLIF(BTRIM($3), '')),
+            NULLIF(BTRIM(a.section), ''), NULLIF(BTRIM($4), ''),
+            0, 0, 0, 0, 0, 0, 0, 0, NULLIF(BTRIM($5), ''),
+            COALESCE(NULLIF(BTRIM($6), ''), 'Unknown'), NOW(), NOW(), NOW()
+     FROM public.accounts a
+     WHERE a.id = $1
+       AND NOT EXISTS (
+         SELECT 1
+         FROM public.student_game_progress p
+         WHERE p.student_id = a.id
+           AND (
+             a.current_learning_cycle_started_at IS NULL
+             OR p.updated_at >= a.current_learning_cycle_started_at
+           )
+       )`,
+    [studentId, studentName || '', gradeLevel || '', currentQuest || '', currentMap || '', difficulty || '']
+  );
+  if (String(currentQuest || '').trim()) {
+    await queryClient.query(
+      `UPDATE public.student_game_progress
+       SET current_quest = $2,
+           current_map = COALESCE(NULLIF(BTRIM($3), ''), current_map),
+           difficulty_level = COALESCE(NULLIF(BTRIM($4), ''), difficulty_level),
+           updated_at = NOW()
+       WHERE id = (
+         SELECT p.id
+         FROM public.student_game_progress p
+         JOIN public.accounts a ON a.id = p.student_id
+         WHERE p.student_id = $1
+           AND (
+             a.current_learning_cycle_started_at IS NULL
+             OR p.updated_at >= a.current_learning_cycle_started_at
+           )
+         ORDER BY p.updated_at DESC, p.id DESC
+         LIMIT 1
+       )`,
+      [studentId, String(currentQuest).trim(), currentMap || '', difficulty || '']
+    );
+  }
+};
+
 app.post('/api/game/result', async (req, res) => {
   const {
     parent_id,
@@ -7593,6 +7726,9 @@ app.post('/api/game/result', async (req, res) => {
   const played_at = req.body?.played_at || req.body?.timestamp;
   const playtimeSessionId = resolvePositiveInteger(req.body?.playtime_session_id);
   const playtimeSessionCredential = String(req.body?.playtime_session_credential || '').trim();
+  const hasSuppliedLearningCycleVersion = Object.prototype.hasOwnProperty.call(req.body || {}, 'learning_cycle_version');
+  const suppliedLearningCycleVersion = Number(req.body?.learning_cycle_version);
+  const hasSuppliedResultEventId = Object.prototype.hasOwnProperty.call(req.body || {}, 'result_event_id');
   const resultEventId = normalizeCanonicalGameActivityKey(req.body?.result_event_id);
   const telemetryContractVersion = String(req.body?.telemetry_contract_version || TELEMETRY_CONTRACT_VERSION).trim();
   const questGraphVersion = String(req.body?.quest_graph_version || QUEST_GRAPH_VERSION).trim();
@@ -7625,13 +7761,28 @@ app.post('/api/game/result', async (req, res) => {
   if (!studentName && !submittedStudentId && !submittedStudentCode) {
     return res.status(400).json({ error: 'Student/Player Name or Student ID is required.' });
   }
-  if (scoreValue === null || totalItemsValue === null || totalItemsValue <= 0 || percentage === null) {
+  if (scoreValue === null || totalItemsValue === null
+    || !Number.isInteger(scoreValue) || !Number.isInteger(totalItemsValue)
+    || totalItemsValue <= 0 || scoreValue < 0 || scoreValue > totalItemsValue || percentage === null) {
     return res.status(400).json({ error: 'score and total_items must be valid quiz totals.' });
   }
   if (Number.isNaN(playtimeSessionId) || !playtimeSessionId || !playtimeSessionCredential) {
     return res.status(400).json({ error: 'An active playtime session is required to save a game result.' });
   }
+  if (hasSuppliedLearningCycleVersion && !Number.isInteger(suppliedLearningCycleVersion)) {
+    return res.status(400).json({ error: 'learning_cycle_version must be a valid integer.' });
+  }
+  if (hasSuppliedResultEventId && !resultEventId) {
+    return res.status(400).json({ error: 'result_event_id must be a valid stable event ID.' });
+  }
 
+  let resultClient = null;
+  let resultTransactionOpen = false;
+  const rollbackResultTransaction = async () => {
+    if (!resultClient || !resultTransactionOpen) return;
+    await resultClient.query('ROLLBACK').catch(() => {});
+    resultTransactionOpen = false;
+  };
   try {
     const parentResult = await pool.query(
       `SELECT id, parent_id
@@ -7706,37 +7857,48 @@ app.post('/api/game/result', async (req, res) => {
       resultGradeLevel = String(studentResult.rows[0]?.grade_level || '').trim() || resultGradeLevel;
     }
 
-    const playtimeSessionResult = await pool.query(
-      `SELECT id, student_id, parent_id, status, expires_at, session_credential_hash,
-              COALESCE(learning_cycle_version, 0) AS learning_cycle_version,
-              (SELECT COALESCE(a.current_learning_cycle_version, 0)
-                 FROM public.accounts a
-                WHERE a.id = public.playtime_sessions.student_id) AS current_learning_cycle_version,
-              (${getPlaytimeHeartbeatStaleSql()}) AS heartbeat_stale
-       FROM public.playtime_sessions
-       WHERE id = $1
-         AND student_id = $2
-         AND parent_id = $3
-         AND status = 'Playing'
-         AND expires_at > NOW()
-       LIMIT 1`,
+    resultClient = await pool.connect();
+    await resultClient.query('BEGIN');
+    resultTransactionOpen = true;
+    const playtimeSessionResult = await resultClient.query(
+      `SELECT ps.id, ps.student_id, ps.parent_id, ps.status, ps.expires_at, ps.session_credential_hash,
+              COALESCE(ps.learning_cycle_version, 0) AS learning_cycle_version,
+              COALESCE(a.current_learning_cycle_version, 0) AS current_learning_cycle_version,
+              (${getPlaytimeHeartbeatStaleSql('ps.')}) AS heartbeat_stale
+       FROM public.playtime_sessions ps
+       JOIN public.accounts a ON a.id = ps.student_id
+       WHERE ps.id = $1
+         AND ps.student_id = $2
+         AND ps.parent_id = $3
+         AND ps.status = 'Playing'
+         AND ps.expires_at > NOW()
+         AND COALESCE(a.is_archived, false) = false
+       LIMIT 1
+       FOR UPDATE OF ps, a`,
       [playtimeSessionId, resolvedStudentId, parentCode]
     );
     const playtimeSession = playtimeSessionResult.rows[0];
     if (!playtimeSession) {
+      await rollbackResultTransaction();
       return res.status(403).json({ error: 'The active playtime session has expired or is invalid.' });
     }
     if (!hasMatchingPlaytimeSessionCredential(playtimeSessionCredential, playtimeSession.session_credential_hash)) {
+      await rollbackResultTransaction();
       return res.status(403).json({ error: 'The active playtime session credential is invalid.' });
     }
     if (playtimeSession.heartbeat_stale) {
-      await finalizeStalePlaytimeSession(playtimeSessionId);
+      await finalizeStalePlaytimeSession(playtimeSessionId, resultClient);
+      await resultClient.query('COMMIT');
+      resultTransactionOpen = false;
       return res.status(409).json({
         code: 'PLAYTIME_HEARTBEAT_STALE',
         error: 'The playtime session is no longer active. Start a new session to continue.',
       });
     }
-    if (Number(playtimeSession.learning_cycle_version ?? 0) !== Number(playtimeSession.current_learning_cycle_version ?? 0)) {
+    if (Number(playtimeSession.learning_cycle_version ?? 0) !== Number(playtimeSession.current_learning_cycle_version ?? 0)
+      || (hasSuppliedLearningCycleVersion
+        && suppliedLearningCycleVersion !== Number(playtimeSession.learning_cycle_version ?? 0))) {
+      await rollbackResultTransaction();
       return res.status(409).json({
         code: 'LEARNING_CYCLE_CHANGED',
         error: 'This result belongs to a previous learning cycle. Start a new game for the current cycle.',
@@ -7747,12 +7909,22 @@ app.post('/api/game/result', async (req, res) => {
       rawQuestionSetId: req.body?.question_set_id,
       gradeLevel: resultGradeLevel,
       difficulty,
+      queryClient: resultClient,
     });
     if (questionSetResolution.error) {
+      await rollbackResultTransaction();
       return res.status(400).json({ error: questionSetResolution.error });
     }
 
-    const persistedResult = await pool.query(
+    const effectiveResultEventId = resultEventId || null;
+    await ensureCurrentLearningProgressRow(resultClient, {
+      studentId: resolvedStudentId,
+      studentName: resultStudentName,
+      gradeLevel: resultGradeLevel,
+      currentMap: mapId,
+      difficulty,
+    });
+    const persistedResult = await resultClient.query(
       `INSERT INTO public.game_results (
          parent_id, student_name, resolved_student_id, grade_level, difficulty,
          math_topic, score, total_items, percentage, played_at, question_set_id,
@@ -7760,8 +7932,17 @@ app.post('/api/game/result', async (req, res) => {
          telemetry_contract_version, quest_graph_version, session_id, map_id,
          canonical_quest_id, canonical_task_id, canonical_battle_id, canonical_milestone_id
         ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), $11, $12, $13,
-         $14, $15, $16, $17, $18, $19, $20, $21, $22
+         $1, $2, $3, $4, $5, $6, $7, $8, $9,
+         GREATEST(
+           LEAST(COALESCE($10::TIMESTAMPTZ, NOW()), NOW()),
+           COALESCE(
+             (SELECT cycle.current_learning_cycle_started_at
+              FROM public.accounts cycle
+              WHERE cycle.id = $3),
+             '-infinity'::TIMESTAMPTZ
+           )
+         ), $11, $12, $13,
+         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
         )
         ON CONFLICT (resolved_student_id, result_event_id)
         WHERE resolved_student_id IS NOT NULL AND result_event_id IS NOT NULL
@@ -7782,7 +7963,7 @@ app.post('/api/game/result', async (req, res) => {
         playtimeSessionId,
         !resolvedStudentId,
         mapId,
-        resultEventId,
+        effectiveResultEventId,
         telemetryContractVersion,
         questGraphVersion,
         telemetrySessionId,
@@ -7794,9 +7975,16 @@ app.post('/api/game/result', async (req, res) => {
       ]
     );
     if (resolvedStudentId && persistedResult.rows.length) {
-      await markStudentInsightStale(pool, resolvedStudentId);
+      // Invalidate derived evidence only when this transaction inserted a new
+      // result. Duplicate retries do not change the fingerprint and must leave
+      // an unchanged-evidence cache reusable.
+      await markStudentInsightStale(resultClient, resolvedStudentId);
     }
+    await resultClient.query('COMMIT');
+    resultTransactionOpen = false;
 
+    // Preserve the legacy 201 response contract for clients that did not yet
+    // supply an event ID; their derived ID still prevents duplicate storage.
     const duplicateResult = Boolean(resultEventId && !persistedResult.rows.length);
     res.status(duplicateResult ? 200 : 201).json({
       success: true,
@@ -7805,8 +7993,11 @@ app.post('/api/game/result', async (req, res) => {
       student_id: resolvedStudentId,
     });
   } catch (err) {
+    await rollbackResultTransaction();
     console.error('Save game result failed:', err.message);
     res.status(500).json({ error: 'Failed to save game result', details: err.message });
+  } finally {
+    resultClient?.release();
   }
 });
 
@@ -7823,7 +8014,7 @@ const normalizeCanonicalGameActivityKey = (value) => {
 
 const normalizeCanonicalGameTaskId = (value) => {
   const taskId = String(value || '').trim();
-  return /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,95}$/.test(taskId) ? taskId : null;
+  return /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,95}$/.test(taskId) ? taskId.toLowerCase() : null;
 };
 
 app.post('/api/game/activity', async (req, res) => {
@@ -7841,6 +8032,7 @@ app.post('/api/game/activity', async (req, res) => {
     const activityEventId = normalizeCanonicalGameActivityKey(body.activity_event_id);
     const eventKey = normalizeCanonicalGameActivityKey(body.event_key || body.activity_event_id);
     const taskId = normalizeCanonicalGameTaskId(body.task_id);
+    const currentQuest = String(body.current_quest || '').trim();
     if (!sessionId || Number.isNaN(sessionId) || !sessionCredential || !Number.isInteger(learningCycleVersion)) {
       return res.status(400).json({ error: 'A valid current playtime lease and learning cycle are required.' });
     }
@@ -7850,9 +8042,18 @@ app.post('/api/game/activity', async (req, res) => {
     if (!eventKey || !taskId) {
       return res.status(400).json({ error: 'A valid task ID and stable event key are required.' });
     }
+    if (currentQuest.length > 255) {
+      return res.status(400).json({ error: 'Current Quest must be 255 characters or fewer.' });
+    }
 
-    const sessionResult = await pool.query(
-      `SELECT ps.id,
+    const client = await pool.connect();
+    let transactionOpen = false;
+    let insertResult;
+    try {
+      await client.query('BEGIN');
+      transactionOpen = true;
+      const sessionResult = await client.query(
+        `SELECT ps.id,
               ps.student_id,
               ps.session_credential_hash,
               COALESCE(ps.learning_cycle_version, 0) AS learning_cycle_version,
@@ -7868,30 +8069,35 @@ app.post('/api/game/activity', async (req, res) => {
          AND ps.expires_at > NOW()
          AND NOT (${getPlaytimeHeartbeatStaleSql('ps.')})
          AND COALESCE(a.is_archived, false) = false
-       LIMIT 1`,
-      [sessionId]
-    );
-    const session = sessionResult.rows[0];
-    if (!session || !hasMatchingPlaytimeSessionCredential(sessionCredential, session.session_credential_hash)) {
-      return res.status(403).json({ error: 'The active playtime session is invalid.' });
-    }
-    if (Number(session.learning_cycle_version) !== Number(session.current_learning_cycle_version)
-      || Number(session.learning_cycle_version) !== learningCycleVersion) {
-      return res.status(409).json({
-        code: 'LEARNING_CYCLE_CHANGED',
-        error: 'This activity belongs to a previous learning cycle. Start a new game for the current cycle.',
-      });
-    }
+       LIMIT 1
+       FOR UPDATE OF ps, a`,
+        [sessionId]
+      );
+      const session = sessionResult.rows[0];
+      if (!session || !hasMatchingPlaytimeSessionCredential(sessionCredential, session.session_credential_hash)) {
+        await client.query('ROLLBACK');
+        transactionOpen = false;
+        return res.status(403).json({ error: 'The active playtime session is invalid.' });
+      }
+      if (Number(session.learning_cycle_version) !== Number(session.current_learning_cycle_version)
+        || Number(session.learning_cycle_version) !== learningCycleVersion) {
+        await client.query('ROLLBACK');
+        transactionOpen = false;
+        return res.status(409).json({
+          code: 'LEARNING_CYCLE_CHANGED',
+          error: 'This activity belongs to a previous learning cycle. Start a new game for the current cycle.',
+        });
+      }
 
-    const displayLabel = CANONICAL_GAME_ACTIVITY_TYPES[eventType];
-    const telemetry = normalizeCanonicalTelemetry({
-      ...body,
-      event_type: eventType,
-      event_key: eventKey,
-      task_id: taskId,
-    });
-    const insertResult = await pool.query(
-      `INSERT INTO public.activity_logs (
+      const displayLabel = CANONICAL_GAME_ACTIVITY_TYPES[eventType];
+      const telemetry = normalizeCanonicalTelemetry({
+        ...body,
+        event_type: eventType,
+        event_key: eventKey,
+        task_id: taskId,
+      });
+      insertResult = await client.query(
+        `INSERT INTO public.activity_logs (
          student_id, student_name, grade_level, section, activity_description,
          current_quest, role, status, activity_timestamp, event_key,
          telemetry_contract_version, quest_graph_version, map_id,
@@ -7908,7 +8114,7 @@ app.post('/api/game/activity', async (req, res) => {
         session.grade_level || null,
         session.section || null,
         `${displayLabel} — ${taskId}`,
-        taskId,
+        currentQuest || null,
         eventKey,
         telemetry.telemetry_contract_version,
         telemetry.quest_graph_version,
@@ -7924,45 +8130,75 @@ app.post('/api/game/activity', async (req, res) => {
         telemetry.duration_seconds,
         telemetry.is_player_facing,
         telemetry.difficulty,
-      ]
-    );
+        ]
+      );
 
-    if (insertResult.rows.length && isPlayerFacingCompletion(telemetry)) {
-      await pool.query(
-        `INSERT INTO public.student_quest_milestones
+      if (insertResult.rows.length > 0 && isPlayerFacingCompletion(telemetry)) {
+        const canonicalTaskId = String(telemetry.canonical_task_id || taskId).trim().toLowerCase();
+        await ensureCurrentLearningProgressRow(client, {
+          studentId: session.student_id,
+          studentName: session.student_name,
+          gradeLevel: session.grade_level,
+          currentQuest: currentQuest || null,
+          currentMap: telemetry.map_id,
+          difficulty: telemetry.difficulty,
+        });
+        await client.query(
+          `INSERT INTO public.student_quest_milestones
            (student_id, milestone_id, map_id, weight, learning_cycle_version,
             telemetry_contract_version, quest_graph_version, canonical_quest_id,
             canonical_task_id, canonical_milestone_id, player_facing,
             completed_at, source_activity_event_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, COALESCE($11, CURRENT_TIMESTAMP), $12)
          ON CONFLICT (student_id, milestone_id, learning_cycle_version) DO NOTHING`,
-        [
-          session.student_id,
-          String(telemetry.canonical_task_id || taskId).toLowerCase(),
-          telemetry.map_id || null,
-          classifyMilestoneWeight(taskId),
-          learningCycleVersion,
-          telemetry.telemetry_contract_version,
-          telemetry.quest_graph_version,
-          telemetry.canonical_quest_id || 'main',
-          telemetry.canonical_task_id || taskId,
-          telemetry.canonical_milestone_id || `${taskId}.complete`,
-          telemetry.completed_at,
-          telemetry.activity_event_id || eventKey,
-        ]
-      );
-      await pool.query(
-        `UPDATE public.student_game_progress p
+          [
+            session.student_id,
+            canonicalTaskId,
+            telemetry.map_id || null,
+            resolvePersistedMilestoneWeight(canonicalTaskId),
+            learningCycleVersion,
+            telemetry.telemetry_contract_version,
+            telemetry.quest_graph_version,
+            telemetry.canonical_quest_id || 'main',
+            canonicalTaskId,
+            telemetry.canonical_milestone_id || `${taskId}.complete`,
+            telemetry.completed_at,
+            telemetry.activity_event_id || eventKey,
+          ]
+        );
+        await client.query(
+          `UPDATE public.student_game_progress p
          SET total_quests_completed = (
-           SELECT COUNT(DISTINCT COALESCE(m.canonical_task_id, m.milestone_id))::INTEGER
+           SELECT COUNT(DISTINCT LOWER(BTRIM(COALESCE(m.canonical_task_id, m.milestone_id))))::INTEGER
            FROM public.student_quest_milestones m
            WHERE m.student_id = p.student_id
-             AND m.learning_cycle_version = $2
-             AND COALESCE(m.player_facing, true) = true
+              AND m.learning_cycle_version = $2
+              AND COALESCE(m.player_facing, true) = true
+              AND LOWER(BTRIM(COALESCE(m.canonical_task_id, m.milestone_id))) IN (${CANONICAL_CAMPAIGN_TASK_SQL})
          ), updated_at = NOW()
-         WHERE p.student_id = $1`,
-        [session.student_id, learningCycleVersion]
-      );
+         WHERE p.id = (
+           SELECT current_progress.id
+           FROM public.student_game_progress current_progress
+           JOIN public.accounts account ON account.id = current_progress.student_id
+           WHERE current_progress.student_id = $1
+             AND (
+               account.current_learning_cycle_started_at IS NULL
+               OR current_progress.updated_at >= account.current_learning_cycle_started_at
+             )
+           ORDER BY current_progress.updated_at DESC, current_progress.id DESC
+           LIMIT 1
+         )`,
+          [session.student_id, learningCycleVersion]
+        );
+      }
+      await client.query('COMMIT');
+      transactionOpen = false;
+    } catch (transactionError) {
+      if (transactionOpen) await client.query('ROLLBACK').catch(() => {});
+      transactionOpen = false;
+      throw transactionError;
+    } finally {
+      client.release();
     }
 
     return res.status(insertResult.rows.length ? 201 : 200).json({
@@ -7977,6 +8213,13 @@ app.post('/api/game/activity', async (req, res) => {
 });
 
 app.post('/api/game/leaderboard', async (req, res) => {
+  let leaderboardClient = null;
+  let leaderboardTransactionOpen = false;
+  const rollbackLeaderboardTransaction = async () => {
+    if (!leaderboardClient || !leaderboardTransactionOpen) return;
+    await leaderboardClient.query('ROLLBACK').catch(() => {});
+    leaderboardTransactionOpen = false;
+  };
   try {
     const sessionId = resolvePositiveInteger(req.body?.session_id);
     const sessionCredential = String(req.body?.session_credential || '').trim();
@@ -7985,7 +8228,10 @@ app.post('/api/game/leaderboard', async (req, res) => {
       return res.status(400).json({ error: 'A valid current playtime lease and learning cycle are required.' });
     }
 
-    const sessionResult = await pool.query(
+    leaderboardClient = await pool.connect();
+    await leaderboardClient.query('BEGIN');
+    leaderboardTransactionOpen = true;
+    const sessionResult = await leaderboardClient.query(
       `SELECT ps.id,
               ps.student_id,
               ps.session_credential_hash,
@@ -7999,15 +8245,19 @@ app.post('/api/game/leaderboard', async (req, res) => {
          AND ps.end_time IS NULL
          AND ps.expires_at > NOW()
          AND COALESCE(a.is_archived, false) = false
-       LIMIT 1`,
+       LIMIT 1
+       FOR UPDATE OF ps, a`,
       [sessionId]
     );
     const session = sessionResult.rows[0];
     if (!session || !hasMatchingPlaytimeSessionCredential(sessionCredential, session.session_credential_hash)) {
+      await rollbackLeaderboardTransaction();
       return res.status(403).json({ error: 'The active playtime session is invalid.' });
     }
     if (session.heartbeat_stale) {
-      await finalizeStalePlaytimeSession(sessionId);
+      await finalizeStalePlaytimeSession(sessionId, leaderboardClient);
+      await leaderboardClient.query('COMMIT');
+      leaderboardTransactionOpen = false;
       return res.status(409).json({
         code: 'PLAYTIME_HEARTBEAT_STALE',
         error: 'The playtime session is no longer active. Start a new session to continue.',
@@ -8015,13 +8265,14 @@ app.post('/api/game/leaderboard', async (req, res) => {
     }
     if (Number(session.learning_cycle_version) !== Number(session.current_learning_cycle_version)
       || Number(session.learning_cycle_version) !== learningCycleVersion) {
+      await rollbackLeaderboardTransaction();
       return res.status(409).json({
         code: 'LEARNING_CYCLE_CHANGED',
         error: 'This leaderboard request belongs to a previous learning cycle. Start a new game for the current cycle.',
       });
     }
 
-    const result = await pool.query(
+    const result = await leaderboardClient.query(
       `SELECT student_id,
               display_name,
               grade,
@@ -8035,34 +8286,41 @@ app.post('/api/game/leaderboard', async (req, res) => {
          SELECT p.student_id,
                 COALESCE(NULLIF(TRIM(p.student_name), ''), a.name, 'Unknown') AS display_name,
                 COALESCE(NULLIF(TRIM(a.grade_level), ''), NULLIF(TRIM(p.grade_level), '')) AS grade,
-                p.score AS game_score,
-                p.progress_percentage,
-                CASE WHEN COALESCE(p.total_questions, 0) > 0 THEN p.accuracy_rate ELSE NULL END AS accuracy_rate,
-                p.correct_answers,
-                p.total_questions,
-                CASE WHEN milestones.has_milestones THEN milestones.completed_count
-                     ELSE COALESCE(p.total_quests_completed, 0) END AS total_quests_completed,
+                canonical_results.game_score,
+                CASE WHEN milestones.has_milestones
+                     THEN ROUND((milestones.completed_weight * 100.0) / ${CANONICAL_CAMPAIGN_WEIGHT}, 2)
+                     ELSE 0 END AS progress_percentage,
+                CASE WHEN canonical_results.total_questions > 0
+                     THEN ROUND((canonical_results.game_score * 100.0) / canonical_results.total_questions, 2)
+                     ELSE NULL END AS accuracy_rate,
+                canonical_results.game_score AS correct_answers,
+                canonical_results.total_questions,
+                 milestones.completed_count AS total_quests_completed,
                 ROW_NUMBER() OVER (
                   PARTITION BY p.student_id
-                  ORDER BY p.progress_percentage DESC NULLS LAST,
-                           CASE WHEN COALESCE(p.total_questions, 0) > 0 THEN p.accuracy_rate ELSE NULL END DESC NULLS LAST,
-                           p.correct_answers DESC NULLS LAST,
-                           CASE WHEN milestones.has_milestones THEN milestones.completed_count
-                                ELSE COALESCE(p.total_quests_completed, 0) END DESC,
+                  ORDER BY CASE WHEN milestones.has_milestones
+                                THEN ROUND((milestones.completed_weight * 100.0) / ${CANONICAL_CAMPAIGN_WEIGHT}, 2)
+                                ELSE 0 END DESC,
+                           canonical_results.game_score DESC,
+                           milestones.completed_count DESC,
                            p.updated_at DESC NULLS LAST,
                            p.id DESC
                 ) AS student_rank
          FROM public.student_game_progress p
          JOIN public.accounts a ON a.id = p.student_id
          LEFT JOIN LATERAL (
-           SELECT COUNT(DISTINCT COALESCE(sqm.canonical_task_id, sqm.milestone_id))::INTEGER AS completed_count,
-                  COUNT(sqm.milestone_id) > 0 AS has_milestones
-           FROM public.student_quest_milestones sqm
-           WHERE sqm.student_id = p.student_id
-             AND sqm.learning_cycle_version = COALESCE(a.current_learning_cycle_version, 0)
-             AND COALESCE(sqm.player_facing, true) = true
-             AND NOT (COALESCE(sqm.canonical_milestone_id, sqm.milestone_id) ~ '^oakleaf\\.bandits\\.bandit_[1-5]$')
+           ${CANONICAL_MILESTONE_AGGREGATE_SQL}
          ) milestones ON true
+         LEFT JOIN LATERAL (
+           SELECT COALESCE(SUM(gr.score), 0)::INTEGER AS game_score,
+                  COALESCE(SUM(gr.total_items), 0)::INTEGER AS total_questions
+           FROM public.game_results gr
+           WHERE gr.resolved_student_id = p.student_id
+             AND gr.total_items > 0
+             AND gr.score BETWEEN 0 AND gr.total_items
+             AND (a.current_learning_cycle_started_at IS NULL
+                  OR gr.played_at >= a.current_learning_cycle_started_at)
+         ) canonical_results ON true
          WHERE COALESCE(a.is_archived, false) = false
            AND a.progress_archived_at IS NULL
            AND (
@@ -8075,6 +8333,8 @@ app.post('/api/game/leaderboard', async (req, res) => {
        LIMIT 6`
     );
 
+    await leaderboardClient.query('COMMIT');
+    leaderboardTransactionOpen = false;
     return res.json({
       entries: result.rows.map((row, index) => ({
         rank: index + 1,
@@ -8089,8 +8349,11 @@ app.post('/api/game/leaderboard', async (req, res) => {
       })),
     });
   } catch (err) {
+    await rollbackLeaderboardTransaction();
     console.error('Fetch game leaderboard failed:', err.message);
     return res.status(500).json({ error: 'Failed to fetch the game leaderboard.' });
+  } finally {
+    leaderboardClient?.release();
   }
 });
 
@@ -8725,43 +8988,54 @@ const handleTopAchieversRequest = async (req, res) => {
           COALESCE(NULLIF(TRIM(a.section), ''), p.section) AS section,
           p.current_quest,
           p.score,
-          p.correct_answers,
-          p.correct_answers AS total_correct_answers,
-          p.total_questions,
-          p.total_questions AS total_questions_answered,
-          CASE WHEN COALESCE(p.total_questions, 0) > 0 THEN p.accuracy_rate ELSE NULL END AS accuracy_rate,
-          CASE WHEN COALESCE(p.total_questions, 0) > 0 THEN p.accuracy_rate ELSE NULL END AS accuracy,
-          p.progress_percentage,
-          p.progress_percentage AS completion_percentage,
-          CASE WHEN milestones.has_milestones THEN milestones.completed_count
-               ELSE COALESCE(p.total_quests_completed, 0) END AS quests_completed,
-          CASE WHEN milestones.has_milestones THEN milestones.completed_count
-               ELSE COALESCE(p.total_quests_completed, 0) END AS total_quests_completed,
+          canonical_results.game_score AS game_score,
+          canonical_results.game_score AS correct_answers,
+          canonical_results.game_score AS total_correct_answers,
+          canonical_results.total_questions,
+          canonical_results.total_questions AS total_questions_answered,
+          CASE WHEN canonical_results.total_questions > 0
+               THEN ROUND((canonical_results.game_score * 100.0) / canonical_results.total_questions, 2)
+               ELSE NULL END AS accuracy_rate,
+          CASE WHEN canonical_results.total_questions > 0
+               THEN ROUND((canonical_results.game_score * 100.0) / canonical_results.total_questions, 2)
+               ELSE NULL END AS accuracy,
+          CASE WHEN milestones.has_milestones
+               THEN ROUND((milestones.completed_weight * 100.0) / ${CANONICAL_CAMPAIGN_WEIGHT}, 2)
+               ELSE 0 END AS progress_percentage,
+          CASE WHEN milestones.has_milestones
+               THEN ROUND((milestones.completed_weight * 100.0) / ${CANONICAL_CAMPAIGN_WEIGHT}, 2)
+               ELSE 0 END AS completion_percentage,
+           milestones.completed_count AS quests_completed,
+           milestones.completed_count AS total_quests_completed,
           CASE WHEN canonical_playtime.has_playtime THEN canonical_playtime.total_playtime_seconds ELSE NULL END AS total_play_time,
           CASE WHEN canonical_playtime.has_playtime THEN canonical_playtime.total_playtime_seconds ELSE NULL END AS total_playtime_seconds,
           p.last_played,
           ROW_NUMBER() OVER (
             PARTITION BY p.student_id
             ORDER BY
-              p.progress_percentage DESC NULLS LAST,
-              CASE WHEN COALESCE(p.total_questions, 0) > 0 THEN p.accuracy_rate ELSE NULL END DESC NULLS LAST,
-              p.correct_answers DESC NULLS LAST,
-              CASE WHEN milestones.has_milestones THEN milestones.completed_count
-                   ELSE COALESCE(p.total_quests_completed, 0) END DESC,
+              CASE WHEN milestones.has_milestones
+                   THEN ROUND((milestones.completed_weight * 100.0) / ${CANONICAL_CAMPAIGN_WEIGHT}, 2)
+                   ELSE 0 END DESC,
+              canonical_results.game_score DESC,
+              milestones.completed_count DESC,
               p.updated_at DESC NULLS LAST,
               p.id DESC
           ) AS student_rank
         FROM public.student_game_progress p
         LEFT JOIN public.accounts a ON a.id = p.student_id
         LEFT JOIN LATERAL (
-          SELECT COUNT(DISTINCT COALESCE(sqm.canonical_task_id, sqm.milestone_id))::INTEGER AS completed_count,
-                 COUNT(sqm.milestone_id) > 0 AS has_milestones
-          FROM public.student_quest_milestones sqm
-          WHERE sqm.student_id = p.student_id
-            AND sqm.learning_cycle_version = COALESCE(a.current_learning_cycle_version, 0)
-            AND COALESCE(sqm.player_facing, true) = true
-            AND NOT (COALESCE(sqm.canonical_milestone_id, sqm.milestone_id) ~ '^oakleaf\\.bandits\\.bandit_[1-5]$')
+          ${CANONICAL_MILESTONE_AGGREGATE_SQL}
         ) milestones ON true
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(gr.score), 0)::INTEGER AS game_score,
+                 COALESCE(SUM(gr.total_items), 0)::INTEGER AS total_questions
+          FROM public.game_results gr
+          WHERE gr.resolved_student_id = p.student_id
+            AND gr.total_items > 0
+            AND gr.score BETWEEN 0 AND gr.total_items
+            AND (a.current_learning_cycle_started_at IS NULL
+                 OR gr.played_at >= a.current_learning_cycle_started_at)
+        ) canonical_results ON true
         LEFT JOIN LATERAL (
           SELECT COALESCE(SUM(CASE
                     WHEN COALESCE(NULLIF(ps.total_playtime_seconds, 0), 0) > 0
@@ -9200,9 +9474,9 @@ const getDailyPlaytimeTotals = async (studentId) => {
   };
 };
 
-const finalizeStalePlaytimeSession = async (sessionId) => {
+const finalizeStalePlaytimeSession = async (sessionId, queryClient = pool) => {
   const effectiveEndSql = getPlaytimeEffectiveEndSql();
-  return pool.query(
+  return queryClient.query(
     `UPDATE public.playtime_sessions
      SET end_time = ${effectiveEndSql},
          total_playtime_seconds = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
@@ -9226,7 +9500,7 @@ const getDailyPlaytimeTotal = async (studentId) => {
 };
 
 const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
-  const filters = ['ps.deleted_at IS NULL'];
+  const filters = [];
   const addParam = (value) => {
     params.push(value);
     return `$${params.length}`;
@@ -9237,19 +9511,9 @@ const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
     return { error: 'Invalid monitoring lifecycle.' };
   }
   if (lifecycle === 'archived') {
-    filters.push(`EXISTS (
-      SELECT 1
-      FROM public.accounts archived_student
-      WHERE archived_student.id = ps.student_id
-        AND archived_student.progress_archived_at IS NOT NULL
-    )`);
+    filters.push('ps.deleted_at IS NOT NULL');
   } else {
-    filters.push(`NOT EXISTS (
-      SELECT 1
-      FROM public.accounts archived_student
-      WHERE archived_student.id = ps.student_id
-        AND archived_student.progress_archived_at IS NOT NULL
-    )`);
+    filters.push('ps.deleted_at IS NULL');
   }
 
   if (scope === 'children') {
@@ -9521,16 +9785,18 @@ app.get('/api/playtime/deletion-summary', requireAccountManagementAdmin, async (
     });
   } catch (error) {
     console.error('Playtime deletion summary failed:', error.message);
-    return res.status(500).json({ error: 'Unable to prepare Screen Time history removal.' });
+    return res.status(500).json({ error: 'Unable to prepare Screen Time history archive.' });
   }
 });
 
-app.delete('/api/playtime/:id', requireAccountManagementAdmin, async (req, res) => {
+const handlePlaytimeArchive = async (req, res) => {
   const sessionId = resolvePositiveInteger(req.params.id);
   const reasonResult = resolveAccountRemovalReason(req.body?.reason);
   const confirmation = String(req.body?.confirmation || '').trim();
-  if (!sessionId || reasonResult.error || confirmation !== 'DELETE') {
-    return res.status(400).json({ error: reasonResult.error || 'Type DELETE to confirm Screen Time history removal.' });
+  const archiveRoute = req.path.endsWith('/archive');
+  const expectedConfirmation = archiveRoute ? 'ARCHIVE' : 'DELETE';
+  if (!sessionId || reasonResult.error || confirmation !== expectedConfirmation) {
+    return res.status(400).json({ error: reasonResult.error || `Type ${expectedConfirmation} to confirm Screen Time history archive.` });
   }
   const client = await pool.connect();
   const operationId = crypto.randomUUID();
@@ -9545,7 +9811,7 @@ app.delete('/api/playtime/:id', requireAccountManagementAdmin, async (req, res) 
         FROM public.playtime_sessions ps
         LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
         WHERE ps.id = $1 AND ps.deleted_at IS NULL
-       FOR UPDATE`,
+       FOR UPDATE OF ps`,
       [sessionId]
     );
     const target = targetResult.rows[0];
@@ -9557,11 +9823,11 @@ app.delete('/api/playtime/:id', requireAccountManagementAdmin, async (req, res) 
       || (typeof target.presence_status === 'undefined'
         && String(target.status || '').toLowerCase() === 'playing' && !target.end_time)) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'Active Screen Time sessions cannot be removed.' });
+      return res.status(409).json({ error: 'Active Screen Time sessions cannot be archived.' });
     }
     if (!target.screen_time_delete_eligible) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'Active or enrolled students must use Reset Screen Time. History deletion is limited to former or deleted students.' });
+      return res.status(409).json({ error: 'Active or enrolled students must use Reset Screen Time. History archive is limited to former or deleted students.' });
     }
     await client.query(
       `UPDATE public.playtime_sessions
@@ -9569,22 +9835,28 @@ app.delete('/api/playtime/:id', requireAccountManagementAdmin, async (req, res) 
        WHERE id = $1 AND deleted_at IS NULL`,
       [sessionId, req.authenticatedUser.id, reasonResult.reason, operationId]
     );
-    await writeAdminAuditLog(req.authenticatedUser, 'Delete Screen Time Record', target, {
+    await writeAdminAuditLog(req.authenticatedUser, archiveRoute ? 'Archive Screen Time Record' : 'Delete Screen Time Record', target, {
       reason: reasonResult.reason,
-      operationType: 'playtime_history_remove',
+      operationType: archiveRoute ? 'playtime_history_archive' : 'playtime_history_remove',
       beforeMetadata: target,
       afterMetadata: { deleted_at: true, deletion_operation_id: operationId, usage_accounting_preserved: true },
     }, client);
     await client.query('COMMIT');
-    return res.json({ success: true, deleted_record_id: sessionId, deletion_operation_id: operationId });
+    return res.json(archiveRoute
+      ? { success: true, archived_record_id: sessionId, archive_operation_id: operationId }
+      : { success: true, deleted_record_id: sessionId, deletion_operation_id: operationId });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
-    console.error('Delete Screen Time record failed:', error.message);
-    return res.status(500).json({ error: 'Unable to remove this Screen Time record.' });
+    console.error('Archive Screen Time record failed:', error.message);
+    return res.status(500).json({ error: 'Unable to archive this Screen Time record.' });
   } finally {
     client.release();
   }
-});
+};
+
+app.post('/api/playtime/:id/archive', requireAccountManagementAdmin, handlePlaytimeArchive);
+// Keep the historical DELETE route as a compatibility alias for existing clients.
+app.delete('/api/playtime/:id', requireAccountManagementAdmin, handlePlaytimeArchive);
 
 app.post('/api/playtime/:id/reset', requireAccountManagementAdmin, async (req, res) => {
   const sessionId = resolvePositiveInteger(req.params.id);
@@ -9630,16 +9902,18 @@ app.post('/api/playtime/:id/reset', requireAccountManagementAdmin, async (req, r
   } finally { client.release(); }
 });
 
-app.post('/api/playtime/completed/bulk', requireAccountManagementAdmin, async (req, res) => {
+const handleBulkPlaytimeArchive = async (req, res) => {
   const reasonResult = resolveAccountRemovalReason(req.body?.reason);
   const confirmation = String(req.body?.confirmation || '').trim();
+  const archiveRoute = req.path.endsWith('/archive');
+  const expectedConfirmation = archiveRoute ? 'ARCHIVE' : 'DELETE';
   const expectedCount = Number(req.body?.expected_count);
   const expectedIds = Array.isArray(req.body?.target_ids)
     ? req.body.target_ids.map((id) => Number(id)).filter((id) => Number.isInteger(id)).sort((a, b) => a - b)
     : [];
   const expectedFingerprint = String(req.body?.target_fingerprint || '').trim();
-  if (reasonResult.error || confirmation !== 'DELETE' || !Number.isInteger(expectedCount) || expectedCount < 0) {
-    return res.status(400).json({ error: reasonResult.error || 'A valid completed-record target set and typed DELETE confirmation are required.' });
+  if (reasonResult.error || confirmation !== expectedConfirmation || !Number.isInteger(expectedCount) || expectedCount < 0) {
+    return res.status(400).json({ error: reasonResult.error || `A valid completed-record target set and typed ${expectedConfirmation} confirmation are required.` });
   }
   const client = await pool.connect();
   const operationId = crypto.randomUUID();
@@ -9659,7 +9933,7 @@ app.post('/api/playtime/completed/bulk', requireAccountManagementAdmin, async (r
     }
     if (actualIds.length === 0) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'No eligible completed Screen Time records can be permanently deleted.' });
+      return res.status(409).json({ error: 'No eligible completed Screen Time records can be archived.' });
     }
     if (actualIds.length > 0) {
       await client.query(
@@ -9669,22 +9943,28 @@ app.post('/api/playtime/completed/bulk', requireAccountManagementAdmin, async (r
         [req.authenticatedUser.id, reasonResult.reason, operationId, actualIds]
       );
     }
-    await writeAdminAuditLog(req.authenticatedUser, 'Delete Completed Screen Time Records', { id: null, name: `${actualIds.length} completed Screen Time records` }, {
+    await writeAdminAuditLog(req.authenticatedUser, archiveRoute ? 'Archive Completed Screen Time Records' : 'Delete Completed Screen Time Records', { id: null, name: `${actualIds.length} completed Screen Time records` }, {
       reason: reasonResult.reason,
-      operationType: 'playtime_history_bulk_remove',
+      operationType: archiveRoute ? 'playtime_history_bulk_archive' : 'playtime_history_bulk_remove',
       beforeMetadata: { target_ids: actualIds, target_fingerprint: actualFingerprint },
       afterMetadata: { deleted_at: true, deletion_operation_id: operationId, usage_accounting_preserved: true },
     }, client);
     await client.query('COMMIT');
-    return res.json({ success: true, deleted_count: actualIds.length, deletion_operation_id: operationId });
+    return res.json(archiveRoute
+      ? { success: true, archived_count: actualIds.length, archive_operation_id: operationId }
+      : { success: true, deleted_count: actualIds.length, deletion_operation_id: operationId });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
-    console.error('Bulk Screen Time removal failed:', error.message);
-    return res.status(500).json({ error: 'Unable to remove completed Screen Time records.' });
+    console.error('Bulk Screen Time archive failed:', error.message);
+    return res.status(500).json({ error: 'Unable to archive completed Screen Time records.' });
   } finally {
     client.release();
   }
-});
+};
+
+app.post('/api/playtime/completed/bulk/archive', requireAccountManagementAdmin, handleBulkPlaytimeArchive);
+// Keep the historical bulk route as a compatibility alias for existing clients.
+app.post('/api/playtime/completed/bulk', requireAccountManagementAdmin, handleBulkPlaytimeArchive);
 
 app.post('/api/playtime/start', async (req, res) => {
   try {

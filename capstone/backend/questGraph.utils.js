@@ -40,7 +40,9 @@ const calculateWeightedCompletion = (completedTaskIds = []) => {
     .filter((id) => id === 'tutorial' || PLAYER_FACING_TASKS.includes(id)));
   const total = PLAYER_FACING_TASKS.reduce((sum, taskId) => sum + canonicalTaskWeight(taskId), 0) + MILESTONE_WEIGHTS.tutorial;
   const completedWeight = (completed.has('tutorial') ? MILESTONE_WEIGHTS.tutorial : 0)
-    + [...completed].reduce((sum, taskId) => sum + canonicalTaskWeight(taskId), 0);
+    + [...completed]
+      .filter((taskId) => taskId !== 'tutorial')
+      .reduce((sum, taskId) => sum + canonicalTaskWeight(taskId), 0);
   return total > 0 ? Number(((completedWeight / total) * 100).toFixed(2)) : 0;
 };
 
