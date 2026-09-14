@@ -167,10 +167,10 @@ function normalizeManagedLearningFile(file = {}) {
 
 function getQuestionSetStatus(row) {
   const lifecycle = row?.lifecycle || {};
-  const generationStatus = String(row?.generation_status || '').trim().toLowerCase();
-  if (['queued', 'extracting', 'generating', 'validating', 'saving'].includes(generationStatus)) return 'Generating';
-  if (generationStatus === 'failed') return 'Generation Failed';
-  if (generationStatus === 'ready_for_review') return 'Ready for Review';
+  const generationView = getGenerationStatusView(row);
+  if (generationView.inProgress) return 'Generating';
+  if (generationView.failed) return 'Generation Failed';
+  if (generationView.ready) return 'Ready for Review';
   return formatQuestionSetStatus(lifecycle.label || row?.status || (row?.published ? 'Active in Game' : 'Pending'));
 }
 
@@ -257,6 +257,7 @@ export default function LessonQuestionManager() {
   const [reviewComplete, setReviewComplete] = useState(false);
   const [reviewSnapshotKey, setReviewSnapshotKey] = useState('');
   const previewBodyRef = useRef(null);
+  const previewRequestRef = useRef({ token: 0 });
   const finalQuestionCardRef = useRef(null);
   const uploadInFlightRef = useRef(false);
   const [fixedUploadValidation, setFixedUploadValidation] = useState(null);
@@ -981,6 +982,7 @@ export default function LessonQuestionManager() {
 
   const closeQuestionPreview = () => {
     if (previewQuestionDirty && !window.confirm('Discard unsaved question changes?')) return;
+    previewRequestRef.current = { token: previewRequestRef.current.token + 1 };
     setQuestionPreviewFile(null);
     setQuestionPreviewDetails(null);
     setPreviewQuestions([]);
@@ -998,6 +1000,8 @@ export default function LessonQuestionManager() {
   };
 
   const openQuestionSetPreview = async (file) => {
+    const requestToken = previewRequestRef.current.token + 1;
+    previewRequestRef.current = { token: requestToken };
     setQuestionPreviewFile(file);
     setQuestionPreviewDetails(null);
     setPreviewQuestions([]);
@@ -1015,15 +1019,17 @@ export default function LessonQuestionManager() {
       const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/questions`));
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to preview generated questions.');
+      if (previewRequestRef.current.token !== requestToken) return;
       setQuestionPreviewDetails(data.file || file);
       setPreviewQuestions(Array.isArray(data.questions) ? data.questions : []);
       setPreviewValidation(data.validation || null);
       setReviewSnapshotKey(String(data.review_fingerprint || `${file.id}:${(data.questions || []).map((question) => question.id || question.question || '').join('|')}`));
     } catch (error) {
+      if (previewRequestRef.current.token !== requestToken) return;
       console.error(error);
       showNotification(error.message || 'Unable to preview generated questions.', 'error');
     } finally {
-      setPreviewQuestionsLoading(false);
+      if (previewRequestRef.current.token === requestToken) setPreviewQuestionsLoading(false);
     }
   };
 

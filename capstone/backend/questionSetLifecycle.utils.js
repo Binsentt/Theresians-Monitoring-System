@@ -5,25 +5,46 @@ const GENERATION_STATUSES = new Set([
   'validating',
   'saving',
   'ready_for_review',
+  'partial_failed',
   'failed',
   'not_applicable',
   'source_ready',
 ]);
 
 const PUBLISH_STATUSES = new Set(['staged', 'active', 'superseded']);
+const GENERATION_STAGES = new Set(['queued', 'extracting', 'generating', 'validating', 'saving', 'completed', 'failed', 'partial_failed']);
+
+function deriveQuestionSetReviewMode(row = {}) {
+  const explicitMode = String(row.review_mode || '').trim().toLowerCase();
+  if (explicitMode === 'fixed' || explicitMode === 'generated' || explicitMode === 'source') return explicitMode;
+
+  const fileType = String(row.file_type || '').trim().toLowerCase();
+  const contentRole = String(row.content_role || '').trim().toLowerCase();
+  const source = String(row.source || '').trim().toLowerCase();
+  if (contentRole === 'lesson_source') return 'source';
+  if (fileType === 'fixed' || fileType === 'fixed_questions' || ['fixed', 'restored_import', 'client_provided'].includes(source)) {
+    return 'fixed';
+  }
+  if (
+    fileType === 'lesson'
+    || contentRole === 'question_set'
+    || (row.source_learning_file_id !== undefined && row.source_learning_file_id !== null)
+    || GENERATION_STATUSES.has(String(row.generation_status || '').trim().toLowerCase())
+    || GENERATION_STAGES.has(String(row.generation_stage || '').trim().toLowerCase())
+    || (row.requested_question_count !== undefined && row.requested_question_count !== null)
+  ) return 'generated';
+  return 'fixed';
+}
 
 function normalizeGenerationStatus(row = {}) {
-  // Fixed question sets are imported and reviewed locally; they never run
-  // through the AI generation lifecycle.  Ignore stale/null generation fields
-  // from older rows so preview cannot present a fixed file as "Generating".
-  if (Object.prototype.hasOwnProperty.call(row, 'file_type') && row.file_type !== 'lesson') {
-    return 'not_applicable';
-  }
+  const reviewMode = deriveQuestionSetReviewMode(row);
+  if (reviewMode === 'fixed') return 'not_applicable';
+  if (reviewMode === 'source') return row.generation_status === 'source_ready' ? 'source_ready' : 'not_applicable';
   if (GENERATION_STATUSES.has(row.generation_status)) {
     return row.generation_status;
   }
 
-  return row.file_type === 'lesson' ? 'ready_for_review' : 'not_applicable';
+  return reviewMode === 'generated' ? 'ready_for_review' : 'not_applicable';
 }
 
 function normalizePublishStatus(row = {}) {
@@ -70,10 +91,10 @@ function deriveQuestionSetLifecycle(row = {}) {
     };
   }
 
-  if (generationStatus === 'failed') {
+  if (generationStatus === 'failed' || generationStatus === 'partial_failed') {
     return {
-      code: 'failed',
-      label: 'Failed',
+      code: generationStatus,
+      label: generationStatus === 'partial_failed' ? 'Partial Failure' : 'Failed',
       tone: 'failed',
       generationStatus,
       publishStatus: normalizedPublishStatus,
@@ -148,12 +169,41 @@ function deriveQuestionSetLifecycle(row = {}) {
 }
 
 function toQuestionSetResponse(row = {}) {
-  const lifecycle = deriveQuestionSetLifecycle(row);
+  const reviewMode = deriveQuestionSetReviewMode(row);
+  const normalizedRow = { ...row, review_mode: reviewMode };
+  const persistedQuestionCount = Number(normalizedRow.question_count);
+  const requestedQuestionCount = Number(normalizedRow.requested_question_count);
+  const hasPersistedQuestionCount = reviewMode === 'generated'
+    && Number.isFinite(persistedQuestionCount)
+    && persistedQuestionCount >= 0;
+
+  if (hasPersistedQuestionCount) {
+    normalizedRow.generation_completed_count = persistedQuestionCount;
+    if (Number.isFinite(requestedQuestionCount) && requestedQuestionCount > 0) {
+      normalizedRow.generation_remaining_count = Math.max(0, requestedQuestionCount - persistedQuestionCount);
+      if (persistedQuestionCount >= requestedQuestionCount && normalizedRow.generation_status !== 'ready_for_review') {
+        normalizedRow.generation_status = 'ready_for_review';
+        normalizedRow.generation_stage = 'completed';
+      }
+    }
+  }
+
+  if (reviewMode === 'fixed') {
+    normalizedRow.generation_status = 'not_applicable';
+    normalizedRow.generation_stage = 'not_applicable';
+  } else if (reviewMode === 'source' && normalizedRow.generation_status !== 'source_ready') {
+    normalizedRow.generation_stage = 'not_applicable';
+  } else if (normalizedRow.generation_status === 'ready_for_review') {
+    normalizedRow.generation_stage = 'completed';
+  }
+  const lifecycle = deriveQuestionSetLifecycle(normalizedRow);
   const isLesson = row.file_type === 'lesson';
 
   return {
-    ...row,
+    ...normalizedRow,
     generation_status: lifecycle.generationStatus,
+    generation_stage: normalizedRow.generation_stage,
+    review_mode: reviewMode,
     publish_status: lifecycle.publishStatus,
     lifecycle,
     status: lifecycle.label,
@@ -167,6 +217,7 @@ function toQuestionSetResponse(row = {}) {
 
 module.exports = {
   deriveQuestionSetLifecycle,
+  deriveQuestionSetReviewMode,
   generationFailureLabel,
   normalizeGenerationStatus,
   normalizePublishStatus,

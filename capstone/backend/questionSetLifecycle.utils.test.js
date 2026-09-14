@@ -86,12 +86,81 @@ test('fixed question sets never inherit an AI generation status from stale rows'
   const response = toQuestionSetResponse({
     id: 19,
     file_type: 'fixed_questions',
+    review_mode: 'fixed',
     generation_status: 'generating',
     generation_stage: 'generating',
     publish_status: 'staged',
   });
 
+  assert.equal(response.review_mode, 'fixed');
   assert.equal(response.generation_status, 'not_applicable');
+  assert.equal(response.generation_stage, 'not_applicable');
   assert.equal(response.lifecycle.code, 'staged');
   assert.equal(response.lifecycle.label, 'Pending');
+});
+
+test('generated lesson children expose an authoritative generated review mode', () => {
+  const response = toQuestionSetResponse({
+    id: 20,
+    file_type: 'lesson',
+    content_role: 'question_set',
+    source_learning_file_id: 7,
+    generation_status: 'generating',
+    generation_stage: 'generating',
+  });
+
+  assert.equal(response.review_mode, 'generated');
+  assert.equal(response.generation_status, 'generating');
+  assert.equal(response.generation_stage, 'generating');
+});
+
+test('generated lifecycle counts reconcile to persisted question rows', () => {
+  const response = toQuestionSetResponse({
+    id: 21,
+    file_type: 'lesson',
+    content_role: 'question_set',
+    source_learning_file_id: 8,
+    requested_question_count: 10,
+    question_count: 5,
+    generation_status: 'generating',
+    generation_stage: 'generating',
+    generation_completed_count: 0,
+    generation_remaining_count: 10,
+  });
+
+  assert.equal(response.generation_completed_count, 5);
+  assert.equal(response.generation_remaining_count, 5);
+  assert.equal(response.generation_status, 'generating');
+
+  const complete = toQuestionSetResponse({
+    ...response,
+    question_count: 10,
+    generation_status: 'generating',
+    generation_stage: 'generating',
+  });
+  assert.equal(complete.generation_completed_count, 10);
+  assert.equal(complete.generation_remaining_count, 0);
+  assert.equal(complete.generation_status, 'ready_for_review');
+  assert.equal(complete.generation_stage, 'completed');
+});
+
+test('partial generated children retain their persisted partial status and count', () => {
+  const response = toQuestionSetResponse({
+    id: 22,
+    file_type: 'lesson',
+    content_role: 'question_set',
+    source_learning_file_id: 9,
+    requested_question_count: 10,
+    question_count: 5,
+    generation_status: 'partial_failed',
+    generation_stage: 'partial_failed',
+    generation_completed_count: 0,
+    generation_remaining_count: 10,
+  });
+
+  assert.equal(response.generation_status, 'partial_failed');
+  assert.equal(response.generation_stage, 'partial_failed');
+  assert.equal(response.generation_completed_count, 5);
+  assert.equal(response.generation_remaining_count, 5);
+  assert.equal(response.lifecycle.code, 'partial_failed');
 });

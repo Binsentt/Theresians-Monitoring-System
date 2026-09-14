@@ -110,6 +110,38 @@ describe('lesson question manager helpers', () => {
       progressLabel: null,
     }));
   });
+  test('authoritative fixed review mode wins over stale lesson generation fields', () => {
+    expect(getGenerationStatusView({
+      file_type: 'lesson',
+      review_mode: 'fixed',
+      generation_status: 'generating',
+      generation_stage: 'generating',
+      generation_completed_count: 0,
+      requested_question_count: 10,
+    })).toEqual(expect.objectContaining({
+      status: 'not_applicable',
+      stage: 'not_applicable',
+      inProgress: false,
+      failed: false,
+      ready: false,
+      progressLabel: null,
+    }));
+  });
+  test('uses persisted question_count for generated progress when metadata lags', () => {
+    expect(getGenerationStatusView({
+      file_type: 'lesson',
+      review_mode: 'generated',
+      generation_status: 'generating',
+      generation_stage: 'generating',
+      question_count: 5,
+      generation_completed_count: 0,
+      generation_remaining_count: 10,
+      requested_question_count: 10,
+    })).toEqual(expect.objectContaining({
+      inProgress: true,
+      progressLabel: '5 / 10 completed',
+    }));
+  });
   test('returns configured difficulty values and grade difficulty topics', () => {
     expect(getDifficultyLevels(registryFixture)).toEqual(['Easy', 'Normal', 'Difficult']);
     expect(getMathTopicsForGradeDifficulty('Grade 1', 'Easy', registryFixture)).toEqual([

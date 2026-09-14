@@ -2,12 +2,34 @@ import { getRegistryScopeTopics } from '../curriculumRegistry';
 
 const IN_FLIGHT_GENERATION_STAGES = new Set(['queued', 'extracting', 'generating', 'validating', 'saving']);
 
+const deriveReviewMode = (file = {}) => {
+  const explicitMode = String(file.review_mode || '').trim().toLowerCase();
+  if (explicitMode === 'fixed' || explicitMode === 'generated' || explicitMode === 'source') return explicitMode;
+  const fileType = String(file.file_type || '').trim().toLowerCase();
+  const contentRole = String(file.content_role || '').trim().toLowerCase();
+  const source = String(file.source || '').trim().toLowerCase();
+  if (contentRole === 'lesson_source') return 'source';
+  if (fileType === 'fixed' || fileType === 'fixed_questions' || ['fixed', 'restored_import', 'client_provided'].includes(source)) return 'fixed';
+  if (
+    fileType === 'lesson'
+    || contentRole === 'question_set'
+    || (file.source_learning_file_id !== undefined && file.source_learning_file_id !== null)
+    || file.generation_status
+    || file.generation_stage
+    || (file.requested_question_count !== undefined && file.requested_question_count !== null)
+  ) return 'generated';
+  return 'fixed';
+};
+
 export const getGenerationStatusView = (file = {}) => {
-  const hasExplicitFileType = Object.prototype.hasOwnProperty.call(file, 'file_type');
-  const isLessonSource = !hasExplicitFileType || String(file.file_type || '').trim().toLowerCase() === 'lesson';
-  const status = isLessonSource ? String(file.generation_status || '').trim().toLowerCase() : 'not_applicable';
-  const stage = isLessonSource ? String(file.generation_stage || status).trim().toLowerCase() : 'not_applicable';
-  const completed = Number(file.generation_completed_count);
+  const reviewMode = deriveReviewMode(file);
+  const isGenerated = reviewMode === 'generated';
+  const status = isGenerated ? String(file.generation_status || '').trim().toLowerCase() : reviewMode === 'source' ? String(file.generation_status || '').trim().toLowerCase() : 'not_applicable';
+  const stage = isGenerated ? String(file.generation_stage || status).trim().toLowerCase() : reviewMode === 'source' ? String(file.generation_stage || status).trim().toLowerCase() : 'not_applicable';
+  const persistedQuestionCount = Number(file.question_count);
+  const completed = Number.isFinite(persistedQuestionCount) && persistedQuestionCount >= 0
+    ? persistedQuestionCount
+    : Number(file.generation_completed_count);
   const requested = Number(file.requested_question_count);
   const inProgress = IN_FLIGHT_GENERATION_STAGES.has(status) || IN_FLIGHT_GENERATION_STAGES.has(stage);
   const partial = status === 'partial_failed' || stage === 'partial_failed';
@@ -16,7 +38,9 @@ export const getGenerationStatusView = (file = {}) => {
   const safeCompleted = Number.isFinite(completed) && completed >= 0 ? completed : null;
   const safeRequested = Number.isFinite(requested) && requested > 0 ? requested : null;
   const remaining = Number(file.generation_remaining_count);
-  const safeRemaining = Number.isFinite(remaining) && remaining >= 0 ? remaining : null;
+  const safeRemaining = Number.isFinite(requested) && requested > 0 && Number.isFinite(persistedQuestionCount) && persistedQuestionCount >= 0
+    ? Math.max(0, requested - persistedQuestionCount)
+    : Number.isFinite(remaining) && remaining >= 0 ? remaining : null;
   return {
     status,
     stage,

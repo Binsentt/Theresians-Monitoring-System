@@ -1181,6 +1181,78 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).toContain('Retry remaining questions');
   });
 
+  test('ignores a late Preview response after switching to another exact question set', async () => {
+    fixtures.files = [
+      {
+        id: 101,
+        title: 'Generated A',
+        file_name: 'generated-a.pdf',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        file_type: 'lesson',
+        content_role: 'question_set',
+        source_learning_file_id: 501,
+        generation_status: 'ready_for_review',
+        generation_stage: 'completed',
+        requested_question_count: 5,
+        generation_completed_count: 5,
+        published: false,
+      },
+      {
+        id: 102,
+        title: 'Generated B',
+        file_name: 'generated-b.pdf',
+        grade_level: 'Grade 1',
+        difficulty: 'Easy',
+        file_type: 'lesson',
+        content_role: 'question_set',
+        source_learning_file_id: 502,
+        generation_status: 'ready_for_review',
+        generation_stage: 'completed',
+        requested_question_count: 5,
+        generation_completed_count: 5,
+        published: false,
+      },
+    ];
+
+    await act(async () => root.render(<LessonQuestionManager />));
+    await openQuestionFolder(container, 'Grade 1', 'Easy');
+
+    const baseFetch = global.fetch;
+    const pending = {};
+    global.fetch = jest.fn((url, options = {}) => {
+      const match = String(url).match(/\/api\/learning-files\/(101|102)\/questions$/);
+      if (match) {
+        return new Promise((resolve) => {
+          pending[Number(match[1])] = resolve;
+        });
+      }
+      return baseFetch(url, options);
+    });
+
+    const previewButtons = Array.from(container.querySelectorAll('button')).filter((button) => button.textContent.includes('Preview'));
+    expect(previewButtons).toHaveLength(2);
+    await act(async () => previewButtons[0].dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await act(async () => previewButtons[1].dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    await act(async () => pending[102](await okJson({
+      file: fixtures.files[1],
+      validation: { is_valid: true, invalid_question_count: 0 },
+      review_fingerprint: 'review-b',
+      questions: [{ id: 1021, question: 'Question belonging to B', options: ['1', '2', '3', '4'], correct_answer: '1' }],
+    })));
+    expect(document.body.textContent).toContain('Question belonging to B');
+
+    await act(async () => pending[101](await okJson({
+      file: fixtures.files[0],
+      validation: { is_valid: true, invalid_question_count: 0 },
+      review_fingerprint: 'review-a',
+      questions: [{ id: 1011, question: 'Late question belonging to A', options: ['1', '2', '3', '4'], correct_answer: '1' }],
+    })));
+    expect(document.body.textContent).toContain('Question belonging to B');
+    expect(document.body.textContent).not.toContain('Late question belonging to A');
+  });
+
   test('requires the final question card in the inner Preview scroll container before Approve', async () => {
     fixtures.files = [buildReviewRequiredFile()];
 
