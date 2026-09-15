@@ -9268,14 +9268,11 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
       studentIdPredicate: (placeholder) => `REPLACE(COALESCE(account.game_student_id, ''), '-', '') = ${placeholder}`,
       textExpressions: [
         "LOWER(COALESCE(al.student_name, ''))",
+        "LOWER(REPLACE(COALESCE(account.game_student_id, ''), '-', ''))",
         "LOWER(COALESCE(al.grade_level, ''))",
-        "LOWER(COALESCE(al.section, ''))",
         "LOWER(COALESCE(al.current_quest, ''))",
         "LOWER(COALESCE(al.difficulty_level, ''))",
-        'LOWER(CAST(al.activity_timestamp AS TEXT))',
-        'LOWER(CAST(al.started_at AS TEXT))',
-        'LOWER(CAST(al.duration_seconds AS TEXT))',
-        'LOWER(CAST(al.total_play_time AS TEXT))',
+        "LOWER(TO_CHAR(COALESCE(al.started_at, al.activity_timestamp, al.last_played, al.created_at), 'HH12:MI AM'))",
       ],
     });
     query += activitySearchClauses.map((clause) => ` AND ${clause}`).join('');
@@ -9343,14 +9340,11 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
       studentIdPredicate: (placeholder) => `REPLACE(COALESCE(account.game_student_id, ''), '-', '') = ${placeholder}`,
       textExpressions: [
         "LOWER(COALESCE(al.student_name, ''))",
+        "LOWER(REPLACE(COALESCE(account.game_student_id, ''), '-', ''))",
         "LOWER(COALESCE(al.grade_level, ''))",
-        "LOWER(COALESCE(al.section, ''))",
         "LOWER(COALESCE(al.current_quest, ''))",
         "LOWER(COALESCE(al.difficulty_level, ''))",
-        'LOWER(CAST(al.activity_timestamp AS TEXT))',
-        'LOWER(CAST(al.started_at AS TEXT))',
-        'LOWER(CAST(al.duration_seconds AS TEXT))',
-        'LOWER(CAST(al.total_play_time AS TEXT))',
+        "LOWER(TO_CHAR(COALESCE(al.started_at, al.activity_timestamp, al.last_played, al.created_at), 'HH12:MI AM'))",
       ],
     });
     countQuery += activityCountSearchClauses.map((clause) => ` AND ${clause}`).join('');
@@ -9728,6 +9722,9 @@ const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
 
 const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
   try {
+    // Reconcile abandoned leases before exposing Screen Time. This records a
+    // bounded server-authoritative end and prevents durable stale Playing rows.
+    await reconcileExpiredPlaytimeSessions();
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 200);
     const offset = Math.max(parseInt(req.query.offset, 10) || ((page - 1) * limit), 0);
@@ -9787,7 +9784,24 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
               ps.date_played,
               ps.start_time,
                ps.end_time,
-               COALESCE(ps.total_playtime_minutes, 0) AS total_playtime_minutes,
+               CASE
+                 WHEN ps.status = 'Playing' AND ps.end_time IS NULL THEN GREATEST(
+                   0,
+                   FLOOR(EXTRACT(EPOCH FROM (
+                     ${getPlaytimeEffectiveEndSql('ps.')} - COALESCE(ps.server_started_at, ps.start_time)
+                   )))::INTEGER
+                 )
+                 ELSE COALESCE(NULLIF(ps.total_playtime_seconds, 0), ps.total_playtime_minutes * 60, 0)
+               END AS total_playtime_seconds,
+               CASE
+                 WHEN ps.status = 'Playing' AND ps.end_time IS NULL THEN GREATEST(
+                   0,
+                   FLOOR(EXTRACT(EPOCH FROM (
+                     ${getPlaytimeEffectiveEndSql('ps.')} - COALESCE(ps.server_started_at, ps.start_time)
+                   )) / 60)::INTEGER
+                 )
+                 ELSE COALESCE(ps.total_playtime_minutes, FLOOR(COALESCE(ps.total_playtime_seconds, 0) / 60), 0)
+               END AS total_playtime_minutes,
                ps.status,
                ps.last_heartbeat_at,
                ps.expires_at,
@@ -9859,6 +9873,32 @@ const resolvePlaytimeDeletionTargets = async (queryClient, req, { forUpdate = fa
                  ORDER BY ps.id ASC${forUpdate ? ' FOR UPDATE OF ps' : ''}`;
   const result = await queryClient.query(query, params);
   return { rows: result.rows };
+};
+
+const reconcileExpiredPlaytimeSessions = async (queryClient = pool) => {
+  const effectiveEndSql = getPlaytimeEffectiveEndSql();
+  return queryClient.query(
+    `UPDATE public.playtime_sessions
+     SET end_time = ${effectiveEndSql},
+         total_playtime_seconds = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+           ${effectiveEndSql} - COALESCE(server_started_at, start_time)
+         )))::INTEGER),
+         total_playtime_minutes = GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (
+           ${effectiveEndSql} - COALESCE(server_started_at, start_time)
+         )) / 60)::INTEGER),
+         status = CASE
+           WHEN COALESCE(expires_at, NOW()) <= NOW() THEN 'Timed Out'
+           ELSE 'Offline'
+         END,
+         updated_at = NOW()
+     WHERE status = 'Playing'
+       AND end_time IS NULL
+       AND (
+         COALESCE(expires_at, NOW()) <= NOW()
+         OR ${getPlaytimeHeartbeatStaleSql()}
+       )
+     RETURNING id, status`,
+  );
 };
 
 app.get('/api/playtime/deletion-summary', requireAccountManagementAdmin, async (req, res) => {

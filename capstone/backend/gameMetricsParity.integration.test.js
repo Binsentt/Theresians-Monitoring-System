@@ -297,6 +297,52 @@ if (!isSafeDatabase(databaseUrl)) {
 
   });
 
+  test('a real second session is live while heartbeats are fresh, then freezes with end time and cross-view playtime parity', async () => {
+    const base = `http://127.0.0.1:${appServer.address().port}`;
+    const adminHeaders = { Authorization: `Bearer ${token(adminId, 'admin')}` };
+    const lease = await json(`${base}/api/playtime/start`, {
+      method: 'POST',
+      body: JSON.stringify({ parent_id: parentCode, student_id: studentCode, student_name: studentName }),
+    });
+    assert.equal(lease.status, 201);
+    const sessionId = Number(lease.body.session_id);
+    const credential = lease.body.session_credential;
+    await pool.query(
+      `UPDATE public.playtime_sessions
+          SET start_time = NOW() - INTERVAL '2 minutes',
+              server_started_at = NOW() - INTERVAL '2 minutes',
+              last_heartbeat_at = NOW(),
+              expires_at = NOW() + INTERVAL '5 minutes'
+        WHERE id = $1`,
+      [sessionId],
+    );
+
+    const live = await json(`${base}/api/playtime?search=${encodeURIComponent(studentCode)}&limit=20`, { headers: adminHeaders });
+    const liveRow = live.body.data.find((row) => Number(row.id) === sessionId);
+    assert.equal(live.status, 200);
+    assert.equal(liveRow.status, 'Playing');
+    assert.equal(liveRow.end_time, null);
+    assert.ok(Number(liveRow.total_playtime_seconds) >= 119);
+
+    const ended = await json(`${base}/api/playtime/end`, {
+      method: 'POST',
+      body: JSON.stringify({ session_id: sessionId, session_credential: credential, status: 'Completed' }),
+    });
+    assert.equal(ended.status, 200);
+    assert.ok(ended.body.session.end_time);
+    assert.ok(Number(ended.body.session.total_playtime_seconds) >= 119);
+
+    const offline = await json(`${base}/api/playtime?search=${encodeURIComponent(studentCode)}&limit=20`, { headers: adminHeaders });
+    const offlineRow = offline.body.data.find((row) => Number(row.id) === sessionId);
+    assert.equal(offlineRow.status, 'Offline');
+    assert.ok(offlineRow.end_time);
+    assert.ok(Number(offlineRow.total_playtime_seconds) >= 119);
+
+    const top = await json(`${base}/api/top-achievers`, { headers: adminHeaders });
+    const topRow = top.body.find((row) => Number(row.student_id) === studentId);
+    assert.equal(Number(topRow.total_playtime_seconds), Number(offline.body.summary.total_playtime_seconds));
+  });
+
   test('Admin permanently deletes only the reviewed archived Screen Time row', async () => {
     const base = `http://127.0.0.1:${appServer.address().port}`;
     const adminHeaders = { Authorization: `Bearer ${token(adminId, 'admin')}` };

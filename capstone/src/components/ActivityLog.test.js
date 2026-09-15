@@ -63,11 +63,11 @@ describe('ActivityLog table', () => {
     });
 
     const headers = Array.from(container.querySelectorAll('.al-table th')).map((header) => header.textContent.trim());
-    expect(headers).toEqual(['Student Name', 'Student ID', 'Grade', 'Time', 'Activity', 'Duration']);
+    expect(headers).toEqual(['Student Name', 'Student ID', 'Grade', 'Time', 'Activity']);
     expect(container.textContent).toContain('Ava Santos');
     expect(container.textContent).toContain('001234');
     expect(container.textContent).toContain('Fractions Gate');
-    expect(container.textContent).toContain('2m 5s');
+    expect(container.textContent).not.toContain('2m 5s');
     expect(container.querySelector('button[aria-label="Print Filtered Activity Log"]')).not.toBeNull();
     let opened = false;
     act(() => { opened = openPreparedReport(); });

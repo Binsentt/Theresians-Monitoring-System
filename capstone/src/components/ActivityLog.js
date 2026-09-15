@@ -3,7 +3,6 @@ import ModalPortal from './ModalPortal';
 import '../styles/activitylog.css';
 import {
   buildActivityLogQueryParams,
-  formatActivityLogDuration,
   getActivityLogActivity,
   getActivityLogGrade,
   normalizeActivityLogPayload,
@@ -223,7 +222,6 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
     { header: 'Grade', value: (row) => getActivityLogGrade(row) },
     { header: 'Section', value: (row) => row.section },
     { header: 'Activity', value: (row) => getActivityLogActivity(row) },
-    { header: 'Duration', value: (row) => formatActivityLogDuration(row) },
   ];
 
   const prepareActivityReport = async () => {
@@ -306,7 +304,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
             <input
               id="search-input"
               type="text"
-            placeholder="Search name, ID, grade, section, quest, difficulty, date, or duration..."
+            placeholder="Search name, Student ID, grade, time, activity, or difficulty..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="filter-input search-input"
@@ -396,7 +394,6 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
                   <th>Grade</th>
                   <th>Time</th>
                   <th>Activity</th>
-                  <th>Duration</th>
                 </tr>
               </thead>
               <tbody>
@@ -416,9 +413,6 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
                     </td>
                     <td className="quest-cell">
                       <span className="quest-name">{getActivityLogActivity(activity)}</span>
-                    </td>
-                    <td className="playtime-cell">
-                      <span className="playtime">{formatActivityLogDuration(activity)}</span>
                     </td>
                   </tr>
                 ))}

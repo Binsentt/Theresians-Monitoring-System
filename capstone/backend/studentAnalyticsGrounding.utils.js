@@ -121,6 +121,25 @@ function addRecordedPerformanceClaims(catalog, input) {
       accuracy: input.accuracy,
       category: 'non-performance',
     });
+    if (
+      input.accuracy === WEAK_PERFORMANCE_THRESHOLD
+      && isNonNegativeInteger(input.incorrect_answers)
+      && input.incorrect_answers > 0
+    ) {
+      const missText = input.incorrect_answers === 1
+        ? 'One incorrect response was recorded'
+        : `${input.incorrect_answers} incorrect responses were recorded`;
+      addClaim(catalog, 'weakness', {
+        id: 'overall_consistency_improvement',
+        text: `${missText}. Overall performance remains positive, but additional practice may improve consistency.`,
+      });
+      addClaim(catalog, 'recommendation', {
+        id: 'review_recorded_misses',
+        supportId: 'overall_consistency_improvement',
+        supportCategory: 'weakness',
+        text: 'Review the missed question and practice similar problems to improve consistency.',
+      });
+    }
   }
   if (isFiniteNumber(input.game_score)) {
     addPerformanceClaim(catalog, 'game_score', `Recorded game score is ${formatNumber(input.game_score)}.`);

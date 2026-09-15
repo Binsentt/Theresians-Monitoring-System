@@ -1226,6 +1226,7 @@ test('screen time projects stale open sessions as Offline with a heartbeat cutof
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   let playtimeSelectSql = '';
+  let staleReconciliationSql = '';
   t.after(async () => {
     resetTestState();
     await close(server);
@@ -1238,6 +1239,10 @@ test('screen time projects stale open sessions as Offline with a heartbeat cutof
     }
     if (sql.startsWith('select count(*)::integer as total') && sql.includes('from public.playtime_sessions ps')) {
       return resultRows([{ total: 1 }]);
+    }
+    if (sql.startsWith('update public.playtime_sessions') && sql.includes("status = case")) {
+      staleReconciliationSql = String(rawSql);
+      return resultRows([{ id: 77, status: 'Offline' }]);
     }
     if (sql.startsWith('select ps.id')) {
       playtimeSelectSql = String(rawSql);
@@ -1259,6 +1264,9 @@ test('screen time projects stale open sessions as Offline with a heartbeat cutof
   });
 
   assert.equal(response.status, 200);
+  assert.match(staleReconciliationSql, /end_time\s*=\s*least/i);
+  assert.match(staleReconciliationSql, /total_playtime_seconds/i);
+  assert.match(staleReconciliationSql, /heartbeat_stale|last_heartbeat_at/i);
   assert.match(playtimeSelectSql, /last_heartbeat_at/i);
   assert.match(playtimeSelectSql, /interval '45 seconds'/i);
   assert.equal(response.body.data[0].status, 'Offline');

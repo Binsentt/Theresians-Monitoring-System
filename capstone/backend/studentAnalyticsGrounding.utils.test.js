@@ -158,6 +158,63 @@ test('selected weakness deterministically enables its matching recommendation', 
   ]);
 });
 
+test('one recorded miss at 75% exposes only a cautious grounded improvement area and recommendation', () => {
+  const catalog = buildGroundedClaimCatalog({
+    ...input,
+    results_recorded: 4,
+    correct_answers: 3,
+    incorrect_answers: 1,
+    total_questions: 4,
+    accuracy: 75,
+    difficulty_accuracy: { easy: 75, medium: null, hard: null },
+    topic_performance: [],
+  });
+
+  assert.ok(catalog.permittedClaimIds.strength.includes('overall_accuracy_strength'));
+  assert.ok(catalog.permittedClaimIds.weakness.includes('overall_consistency_improvement'));
+  const insight = renderValidatedClaimSelection(selection({
+    performance_claim_ids: ['answer_counts', 'overall_accuracy'],
+    strength_claim_ids: ['overall_accuracy_strength'],
+    weakness_claim_ids: ['overall_consistency_improvement'],
+  }), catalog);
+
+  assert.match(insight.weaknesses[0], /one incorrect response/i);
+  assert.match(insight.weaknesses[0], /positive/i);
+  assert.match(insight.recommendations[0], /missed question|similar easy problems/i);
+});
+
+test('duration evidence alone never creates a weakness or recommendation', () => {
+  const catalog = buildGroundedClaimCatalog({
+    ...input,
+    results_recorded: 0,
+    correct_answers: 0,
+    incorrect_answers: 0,
+    total_questions: 0,
+    accuracy: null,
+    difficulty_accuracy: { easy: null, medium: null, hard: null },
+    topic_performance: [],
+    playtime_minutes: 180,
+  });
+  assert.equal(catalog.weakness.length, 0);
+  assert.equal(catalog.recommendation.some((claim) => /duration|playtime/i.test(claim.text)), false);
+});
+
+test('an isolated miss above the cautious 75% threshold is not automatically labeled a weakness', () => {
+  const catalog = buildGroundedClaimCatalog({
+    ...input,
+    results_recorded: 5,
+    correct_answers: 4,
+    incorrect_answers: 1,
+    total_questions: 5,
+    accuracy: 80,
+    difficulty_accuracy: { easy: 80, medium: null, hard: null },
+    topic_performance: [],
+  });
+
+  assert.equal(catalog.permittedClaimIds.weakness.includes('overall_consistency_improvement'), false);
+  assert.equal(catalog.permittedClaimIds.recommendation.includes('review_recorded_misses'), false);
+});
+
 test('unselected weakness does not derive its recommendation', () => {
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(selection({

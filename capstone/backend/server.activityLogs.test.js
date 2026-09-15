@@ -227,6 +227,43 @@ test('activity log API accepts Godot session aliases and scoped child filters', 
     assert.equal(countParams.includes('%2%'), false);
   });
 
+  await t.test('a bare digit searches only displayed values and never hidden duration or timestamp data', async () => {
+    let mainQuery = '';
+    let countQuery = '';
+    let mainParams = [];
+    let countParams = [];
+    setQueryHandler(async (sql, params) => {
+      if (sql.startsWith('select al.id')) {
+        mainQuery = sql;
+        mainParams = params;
+        return resultRows([]);
+      }
+      if (sql.startsWith('select count(*) as total')) {
+        countQuery = sql;
+        countParams = params;
+        return resultRows([{ total: 0 }]);
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/activity-logs?search=2&limit=10', {
+      headers: { Authorization: 'Bearer admin-token' },
+    });
+
+    assert.equal(response.status, 200);
+    for (const sql of [mainQuery, countQuery]) {
+      assert.match(sql, /account\.game_student_id/);
+      assert.match(sql, /to_char\(coalesce\(al\.started_at, al\.activity_timestamp, al\.last_played, al\.created_at\), 'hh12:mi am'\)/);
+      assert.doesNotMatch(sql, /coalesce\(al\.section/);
+      assert.doesNotMatch(sql, /cast\(al\.activity_timestamp as text\)/);
+      assert.doesNotMatch(sql, /cast\(al\.started_at as text\)/);
+      assert.doesNotMatch(sql, /cast\(al\.duration_seconds as text\)/);
+      assert.doesNotMatch(sql, /cast\(al\.total_play_time as text\)/);
+    }
+    assert.ok(mainParams.includes('%2%'));
+    assert.ok(countParams.includes('%2%'));
+  });
+
   await t.test('uses the same canonical Student Quest Activity predicate for data and count queries', async () => {
     let mainQuery = '';
     let countQuery = '';
