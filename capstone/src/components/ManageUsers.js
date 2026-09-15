@@ -842,7 +842,7 @@ export default function ManageUsers() {
                   <input
                     type="search"
                     aria-label="Search Manage Users"
-                    placeholder="Search name, email, role, ID, status, phone, or address"
+                    placeholder="Search name, email, role, Parent ID, phone, or birthday"
                     className="sts-search-input"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}

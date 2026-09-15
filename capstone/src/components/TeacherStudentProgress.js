@@ -204,7 +204,7 @@ export default function TeacherStudentProgress() {
                     <input
                       type="search"
                       aria-label="Search Teacher Student Progress"
-                      placeholder="Name, Student ID, Grade, Section, Quest, Difficulty, or Location"
+                      placeholder="Name, Student ID, Grade, Section, Quest, Game Score, or Difficulty"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />

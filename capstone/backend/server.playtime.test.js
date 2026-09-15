@@ -1309,6 +1309,50 @@ test('screen time summary covers the complete filtered authorized dataset, not t
   assert.match(summarySql, /COALESCE\(NULLIF\(ps\.total_playtime_seconds, 0\), ps\.total_playtime_minutes \* 60, 0\)/i);
 });
 
+test('screen time treats Grade 2 as an exact Grade predicate across count and visible rows', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let countSql = '';
+  let listSql = '';
+  let countParams = [];
+  let listParams = [];
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, params, rawSql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
+    }
+    if (sql.startsWith('select count(*)::integer as total') && sql.includes('from public.playtime_sessions ps')) {
+      countSql = String(rawSql);
+      countParams = params;
+      return resultRows([{ total: 0, total_playtime_seconds: 0, playing_count: 0 }]);
+    }
+    if (sql.startsWith('select ps.id')) {
+      listSql = String(rawSql);
+      listParams = params;
+      return resultRows([]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime?search=Grade%202', {
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+
+  assert.equal(response.status, 200);
+  for (const sql of [countSql, listSql]) {
+    assert.match(sql, /lower\(regexp_replace\(btrim\(coalesce\(ps\.grade_level, ''\)\), '\\s\+', ' ', 'g'\)\) =/i);
+  }
+  assert.ok(countParams.includes('grade 2'));
+  assert.ok(listParams.includes('grade 2'));
+  assert.equal(countParams.includes('%2%'), false);
+  assert.equal(listParams.includes('%2%'), false);
+});
+
 test('screen time Offline filtering uses authoritative presence instead of a stale raw Playing status', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -1405,11 +1449,10 @@ test('all-student playtime rejects parent sessions and allows admin scoped filte
   assert.equal(adminResponse.status, 200);
   assert.equal(adminResponse.body.data.length, 1);
   assert.match(allSessionsSql, /order by ps\.total_playtime_minutes asc/);
-  assert.match(allSessionsSql, /lower\(coalesce\(ps\.grade_level, ''\)\) like/);
-  assert.match(allSessionsSql, /game_student_id =/);
-  assert.deepEqual(allSessionsParams.slice(0, 12), [
-    '%grade%', 'grade', '%3%', '3', '%section%', 'section', '%a%', 'a',
-    '%001234%', '001234', '%completed%', 'completed',
+  assert.match(allSessionsSql, /lower\(regexp_replace\(btrim\(coalesce\(ps\.grade_level, ''\)\), '\\s\+', ' ', 'g'\)\) =/);
+  assert.match(allSessionsSql, /replace\(coalesce\(search_student\.game_student_id, ''\), '-', ''\) =/);
+  assert.deepEqual(allSessionsParams.slice(0, 5), [
+    'grade 3', '%section%', '%a%', '001234', '%completed%',
   ]);
 });
 

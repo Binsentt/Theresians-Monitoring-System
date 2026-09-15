@@ -184,6 +184,25 @@ describe('student progress helpers', () => {
     expect(filterStudentProgress(students, { searchQuery: 'Ana 1234' })).toEqual([]);
   });
 
+  test('searches the visible Game Score but not hidden analysis-only metrics', () => {
+    const student = {
+      student_id: 1,
+      student_name: 'Ana Reyes',
+      game_student_id: '001234',
+      grade_level: 'Grade 1',
+      section: 'Amethyst',
+      current_quest: 'Oakleaf Bandits',
+      difficulty_level: 'Easy',
+      game_score: 42,
+      current_location: 'Hidden Match Village',
+      correct_answers: 17,
+    };
+
+    expect(filterStudentProgress([student], { searchQuery: '42' })).toEqual([student]);
+    expect(filterStudentProgress([student], { searchQuery: 'Hidden Match Village' })).toEqual([]);
+    expect(filterStudentProgress([student], { searchQuery: '17' })).toEqual([]);
+  });
+
   test('does not invent section filters when section data has not been synced', () => {
     expect(getStudentProgressSectionOptions([
       { student_id: 3, grade_level: 'Grade 2', section: null },

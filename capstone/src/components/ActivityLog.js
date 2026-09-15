@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ModalPortal from './ModalPortal';
 import '../styles/activitylog.css';
 import {
@@ -35,6 +35,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
   const [resetConfirmation, setResetConfirmation] = useState('');
   const [resettingActivity, setResettingActivity] = useState(false);
   const [resetActivityError, setResetActivityError] = useState('');
+  const activityRequestRevision = useRef(0);
   const { preparedRows, hasPreparedReport, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
   const requiresScopedUser = role === 'teacher' || role === 'parent';
   const scopedUserReady = !requiresScopedUser || Boolean(userId);
@@ -100,6 +101,10 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
   }, [isParentView, userId]);
 
   useEffect(() => {
+    const requestRevision = activityRequestRevision.current + 1;
+    activityRequestRevision.current = requestRevision;
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let cancelled = false;
     const fetchActivityLogs = async () => {
       if (!scopedUserReady || !childrenLoaded) {
         return;
@@ -127,24 +132,31 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
 
         const response = await fetch(buildScopedApiUrl(`/api/activity-logs?${queryParams.toString()}`, role), {
           headers: buildAuthHeaders(),
+          ...(controller ? { signal: controller.signal } : {}),
         });
         if (!response.ok) throw new Error('Failed to load activity logs');
 
         const payload = await response.json();
+        if (cancelled || requestRevision !== activityRequestRevision.current) return;
         const normalized = normalizeActivityLogPayload(payload);
         setActivities(normalized.records);
         setPagination(normalized.pagination);
       } catch (err) {
+        if (cancelled || controller?.signal.aborted || requestRevision !== activityRequestRevision.current) return;
         console.error('Error fetching activity logs:', err);
         setActivities([]);
         setPagination({ total: 0, pages: 1, current_page: 1 });
         setError('Unable to load activity logs right now.');
       } finally {
-        setLoading(false);
+        if (!cancelled && requestRevision === activityRequestRevision.current) setLoading(false);
       }
     };
 
     fetchActivityLogs();
+    return () => {
+      cancelled = true;
+      controller?.abort();
+    };
   }, [activityRevision, childrenLoaded, currentPage, debouncedSearch, isParentView, limit, role, scopedUserReady, selectedChildId, userId]);
 
   const closeResetDialog = () => {
@@ -187,12 +199,15 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
   };
 
   const totalPages = Math.max(1, pagination.pages || 1);
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
   const latestActivity = activities[0] || null;
   const reportRows = hasPreparedReport ? preparedRows : activities;
   const reportScope = debouncedSearch
     ? `Search: ${debouncedSearch}`
     : (isParentView ? 'Selected child' : 'All authorised activity records');
-  const reportLabel = isParentView || /^(?:\d{6}|\d{8})$/.test(debouncedSearch)
+  const reportLabel = isParentView || /^(?:\d{6}|\d{8}|\d{2}-\d{6})$/.test(debouncedSearch)
     ? 'Print Student Activity'
     : 'Print Filtered Activity Log';
   const reportColumns = [
@@ -252,7 +267,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
     },
   ]), [activities.length, currentPage, latestActivity, pagination.total, totalPages]);
 
-  if (loading) {
+  if (loading && activities.length === 0 && !debouncedSearch) {
     return <div className="al-loading">Loading activity log...</div>;
   }
 

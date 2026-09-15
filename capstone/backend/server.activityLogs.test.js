@@ -186,12 +186,45 @@ test('activity log API accepts Godot session aliases and scoped child filters', 
     });
 
     assert.equal(response.status, 200);
-    assert.match(mainQuery, /lower\(coalesce\(account\.game_student_id, ''\)\) = lower/);
-    assert.match(mainQuery, /lower\(coalesce\(al\.grade_level, ''\)\) like/);
+    assert.match(mainQuery, /replace\(coalesce\(account\.game_student_id, ''\), '-', ''\) =/);
+    assert.match(mainQuery, /lower\(regexp_replace\(btrim\(coalesce\(al\.grade_level, ''\)\), '\\s\+', ' ', 'g'\)\) =/);
     assert.match(mainQuery, /lower\(coalesce\(al\.current_quest, ''\)\) like/);
-    assert.equal((mainQuery.match(/ and \(/g) || []).length >= 3, true);
+    assert.equal((mainQuery.match(/ and /g) || []).length >= 3, true);
     assert.match(countQuery, /left join public\.accounts account on account\.id = al\.student_id/);
     assert.match(mainQuery, /al\.student_id in \(/);
+  });
+
+  await t.test('treats Grade 2 as an exact visible Grade predicate instead of matching an unrelated digit', async () => {
+    let mainQuery = '';
+    let countQuery = '';
+    let mainParams = [];
+    let countParams = [];
+    setQueryHandler(async (sql, params) => {
+      if (sql.startsWith('select al.id')) {
+        mainQuery = sql;
+        mainParams = params;
+        return resultRows([]);
+      }
+      if (sql.startsWith('select count(*) as total')) {
+        countQuery = sql;
+        countParams = params;
+        return resultRows([{ total: 0 }]);
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/activity-logs?search=Grade%202&limit=10', {
+      headers: { Authorization: 'Bearer admin-token' },
+    });
+
+    assert.equal(response.status, 200);
+    for (const sql of [mainQuery, countQuery]) {
+      assert.match(sql, /lower\(regexp_replace\(btrim\(coalesce\(al\.grade_level, ''\)\), '\\s\+', ' ', 'g'\)\) =/);
+    }
+    assert.ok(mainParams.includes('grade 2'));
+    assert.ok(countParams.includes('grade 2'));
+    assert.equal(mainParams.includes('%2%'), false);
+    assert.equal(countParams.includes('%2%'), false);
   });
 
   await t.test('uses the same canonical Student Quest Activity predicate for data and count queries', async () => {

@@ -102,11 +102,11 @@ export default function AdminDashboard() {
   }, [loadPresence]);
 
   const filteredRecentUsers = useMemo(() => users
-    .slice()
-    .sort((left, right) => Number(right.id || 0) - Number(left.id || 0))
     .filter((account) => matchesTableSearch(account, userSearch, [
       'name', 'email', 'role', 'employee_id', 'parent_id',
-    ])), [userSearch, users]);
+    ]))
+    .slice()
+    .sort((left, right) => Number(right.id || 0) - Number(left.id || 0)), [userSearch, users]);
   const paginatedRecentUsers = paginateTableRows(filteredRecentUsers, userPage, 5);
 
   useEffect(() => {

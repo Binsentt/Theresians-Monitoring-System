@@ -73,7 +73,7 @@ describe('manageUsers role helpers', () => {
     ]);
   });
 
-  test('filterUsers matches normalized multi-term queries across role, ID, status, name, and email', () => {
+  test('filterUsers matches normalized multi-term queries across the visible role, ID, name, and email fields', () => {
     const searchableUser = {
       id: 7,
       name: 'Paula Santos',
@@ -84,8 +84,22 @@ describe('manageUsers role helpers', () => {
       is_archived: false,
     };
 
-    expect(filterUsers([searchableUser], 'paula parent/teacher 001234 online')).toEqual([searchableUser]);
+    expect(filterUsers([searchableUser], 'paula parent/teacher 001234')).toEqual([searchableUser]);
+    expect(filterUsers([searchableUser], 'online')).toEqual([]);
     expect(filterUsers([searchableUser], 'paula 1234')).toEqual([]);
+  });
+
+  test('filterUsers does not match hidden address metadata that is absent from the table', () => {
+    const searchableUser = {
+      id: 7,
+      name: 'Paula Santos',
+      email: 'paula@example.com',
+      role: 'parent',
+      parent_id: '001234',
+      address: 'Hidden Match Village',
+    };
+
+    expect(filterUsers([searchableUser], 'Hidden Match Village')).toEqual([]);
   });
 
   test('paginateItems slices a filtered list and reports pagination metadata', () => {

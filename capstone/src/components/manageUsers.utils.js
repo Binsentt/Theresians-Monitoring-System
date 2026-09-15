@@ -46,8 +46,7 @@ export const filterUsers = (users, searchTerm, roleFilter) => {
       role_label: roleLabel,
       account_status: user.is_archived ? 'Archived' : (user.status || 'Active'),
     }, searchTerm, [
-      'name', 'email', 'role_label', 'account_status', 'parent_id', 'employee_id',
-      'mobile_number', 'birthday', 'address',
+      'name', 'email', 'role_label', 'parent_id', 'mobile_number', 'birthday',
     ]);
 
     const matchesRole =

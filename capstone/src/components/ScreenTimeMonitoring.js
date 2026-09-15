@@ -125,6 +125,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [filters, setFilters] = useState(initialFilters);
+  const [debouncedSearch, setDebouncedSearch] = useState(initialFilters.search);
   const [records, setRecords] = useState([]);
   const [pagination, setPagination] = useState({ total: 0, pages: 1, page: 1 });
   const [summary, setSummary] = useState({ total_records: 0, total_playtime_seconds: 0, playing_count: 0 });
@@ -150,6 +151,16 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     end: records.length ? (page - 1) * pageSize + records.length : 0,
   };
   const reportRows = hasPreparedReport ? preparedRows : records;
+  const queryFilters = useMemo(() => ({
+    search: debouncedSearch,
+    lifecycle: filters.lifecycle,
+    sort_by: filters.sort_by,
+  }), [debouncedSearch, filters.lifecycle, filters.sort_by]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(filters.search.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [filters.search]);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') || 'light';
@@ -172,19 +183,21 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     if (!authReady || !user) return;
 
     let cancelled = false;
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
     const endpoint = isChildView ? '/api/playtime/my-children' : '/api/playtime';
 
     const loadSessions = async () => {
       setLoading(true);
       setError('');
       try {
-        const response = await fetch(apiUrl(`${endpoint}?${buildQueryString(filters, mode, page, pageSize)}`), {
+        const response = await fetch(apiUrl(`${endpoint}?${buildQueryString(queryFilters, mode, page, pageSize)}`), {
           headers: buildAuthHeaders(),
+          ...(controller ? { signal: controller.signal } : {}),
         });
         if (!response.ok) throw new Error('Failed to load playtime sessions');
         const payload = await response.json();
         if (cancelled) return;
-        const nextRecords = normalizePlaytimeRecords(payload.data, filters);
+        const nextRecords = normalizePlaytimeRecords(payload.data, queryFilters);
         const nextPagination = payload.pagination || { total: 0, pages: 1, page: 1 };
         const hasCompleteSummary = payload.summary
           && Number.isFinite(Number(payload.summary.total_playtime_seconds))
@@ -206,6 +219,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
             : null,
         });
       } catch (err) {
+        if (cancelled || controller?.signal.aborted) return;
         console.error('Screen time load failed:', err);
         if (!cancelled) {
           setRecords([]);
@@ -221,8 +235,14 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     loadSessions();
     return () => {
       cancelled = true;
+      controller?.abort();
     };
-  }, [authReady, filters, isChildView, mode, page, pageSize, refreshToken, user]);
+  }, [authReady, isChildView, mode, page, pageSize, queryFilters, refreshToken, user]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Number(pagination.pages) || 1);
+    if (page > totalPages) setPage(totalPages);
+  }, [page, pagination.pages]);
 
   const title = isChildView ? 'My Child Screen Time' : 'Screen Time Monitoring';
   const portalLabel = isChildView ? 'Parent Portal' : normalizeRole(user?.role) === 'admin' ? 'Admin Portal' : 'Teacher Portal';
@@ -288,7 +308,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     setDeletionError('');
     setDeleting(true);
     try {
-      const response = await fetch(apiUrl(`/api/playtime/deletion-summary?${buildQueryString(filters, mode, 1, 200)}&completed_only=true`), { headers: buildAuthHeaders() });
+      const response = await fetch(apiUrl(`/api/playtime/deletion-summary?${buildQueryString(queryFilters, mode, 1, 200)}&completed_only=true`), { headers: buildAuthHeaders() });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || 'Unable to prepare completed Screen Time history archive.');
       setDeletionTarget(payload);
@@ -359,13 +379,13 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
       pageSize: 200,
       loadPage: async ({ page: reportPage, limit }) => {
         const endpoint = isChildView ? '/api/playtime/my-children' : '/api/playtime';
-        const response = await fetch(apiUrl(`${endpoint}?${buildQueryString(filters, mode, reportPage, limit)}`), {
+        const response = await fetch(apiUrl(`${endpoint}?${buildQueryString(queryFilters, mode, reportPage, limit)}`), {
           headers: buildAuthHeaders(),
         });
         if (!response.ok) throw new Error('Unable to load filtered screen time records');
         const payload = await response.json();
         return {
-          rows: normalizePlaytimeRecords(payload.data, filters),
+          rows: normalizePlaytimeRecords(payload.data, queryFilters),
           pagination: payload.pagination,
         };
       },

@@ -474,9 +474,11 @@ export default function LessonQuestionManager() {
   useEffect(() => {
     if (page !== paginatedFiles.currentPage) setPage(paginatedFiles.currentPage);
   }, [page, paginatedFiles.currentPage]);
-  const tableEmptyMessage = selectedFolder.grade_level
-    ? `No files available in ${selectedFolder.grade_level}${selectedFolder.difficulty ? ` - ${selectedFolder.difficulty}` : ''}.`
-    : 'No question files available yet.';
+  const tableEmptyMessage = filters.search
+    ? 'No records match the current filters.'
+    : selectedFolder.grade_level
+      ? `No files available in ${selectedFolder.grade_level}${selectedFolder.difficulty ? ` - ${selectedFolder.difficulty}` : ''}.`
+      : 'No question files available yet.';
   const managedStorageBytes = Number(storageSummary?.used_bytes) || 0;
   const largestFiles = useMemo(() => getLargestLearningFiles(files), [files]);
   const trashRows = useMemo(() => [
@@ -485,10 +487,10 @@ export default function LessonQuestionManager() {
       trashType: 'File',
       trashName: file.title,
     })),
-  ].sort((left, right) => new Date(right.deleted_at || 0) - new Date(left.deleted_at || 0))
-    .filter((row) => matchesTableSearch(row, trashSearch, [
+  ].filter((row) => matchesTableSearch(row, trashSearch, [
       'trashName', 'title', 'file_name', 'grade_level', 'difficulty', 'math_topic', 'file_type', 'deleted_at',
-    ])), [trashFiles, trashSearch]);
+    ]))
+    .sort((left, right) => new Date(right.deleted_at || 0) - new Date(left.deleted_at || 0)), [trashFiles, trashSearch]);
   const paginatedTrashRows = paginateTableRows(trashRows, trashPage, pageSize);
 
   useEffect(() => {
@@ -1742,7 +1744,7 @@ export default function LessonQuestionManager() {
                         showPrintHeading={false}
                       />
                     </div>
-                    <DataTable columns={trashColumns} data={paginatedTrashRows.rows} emptyMessage="Trash is empty." className="drive-table" />
+                    <DataTable columns={trashColumns} data={paginatedTrashRows.rows} emptyMessage={trashSearch ? 'No records match the current filters.' : 'Trash is empty.'} className="drive-table" />
                     <div className="pagination-row no-print">
                       <span>{formatTableRange(paginatedTrashRows)}</span>
                       <button type="button" onClick={() => setTrashPage((current) => Math.max(1, current - 1))} disabled={paginatedTrashRows.currentPage === 1}>Previous</button>

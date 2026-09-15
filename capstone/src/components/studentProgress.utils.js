@@ -189,8 +189,7 @@ export const filterStudentProgress = (
     const matchesSection = selectedSection ? student.section === selectedSection : true;
     const matchesSearch = matchesTableSearch(student, searchQuery, [
       'student_name', 'game_student_id', 'grade_level', 'section', 'current_quest',
-      'difficulty_level', 'difficulty', 'current_location', 'correct_answers',
-      'incorrect_answers', 'performance_percentage',
+      'game_score', 'score', 'difficulty_level', 'difficulty',
     ]);
 
     return matchesGrade && matchesSection && matchesSearch;

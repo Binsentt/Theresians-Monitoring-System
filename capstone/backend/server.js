@@ -9089,6 +9089,61 @@ const STUDENT_QUEST_ACTIVITY_SQL = [
   ')',
 ].join(' ');
 
+const normalizeVisibleSearchText = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+const parseVisibleTableSearch = (value) => {
+  let remaining = normalizeVisibleSearchText(value);
+  let grade = null;
+  let difficulty = null;
+
+  const gradeMatch = remaining.match(/\bgrade\s*(\d{1,2})\b|\b(\d{1,2})(?:st|nd|rd|th)\s+grade\b/);
+  if (gradeMatch) {
+    grade = normalizeVisibleSearchText(normalizeGradeLevel(`Grade ${Number(gradeMatch[1] || gradeMatch[2])}`) || gradeMatch[0]);
+    remaining = normalizeVisibleSearchText(`${remaining.slice(0, gradeMatch.index)} ${remaining.slice(gradeMatch.index + gradeMatch[0].length)}`);
+  }
+
+  const difficultyMatch = remaining.match(/\bdifficulty\s*(easy|normal|difficult|hard)\b/);
+  if (difficultyMatch) {
+    difficulty = normalizeVisibleSearchText(normalizeDifficultyValue(difficultyMatch[1]) || difficultyMatch[1]);
+    remaining = normalizeVisibleSearchText(`${remaining.slice(0, difficultyMatch.index)} ${remaining.slice(difficultyMatch.index + difficultyMatch[0].length)}`);
+  }
+
+  return { grade, difficulty, terms: remaining.split(' ').filter(Boolean) };
+};
+
+const escapeVisibleLikeTerm = (value) => String(value || '').replace(/[\\%_]/g, '\\$&');
+
+const buildVisibleTableSearchClauses = ({
+  search,
+  addParam,
+  gradeColumn,
+  difficultyColumn,
+  studentIdPredicate,
+  textExpressions = [],
+}) => {
+  const parsed = parseVisibleTableSearch(search);
+  const clauses = [];
+
+  if (parsed.grade && gradeColumn) {
+    clauses.push(`LOWER(REGEXP_REPLACE(BTRIM(COALESCE(${gradeColumn}, '')), '\\s+', ' ', 'g')) = ${addParam(parsed.grade)}`);
+  }
+  if (parsed.difficulty && difficultyColumn) {
+    clauses.push(`LOWER(REGEXP_REPLACE(BTRIM(COALESCE(${difficultyColumn}, '')), '\\s+', ' ', 'g')) = ${addParam(parsed.difficulty)}`);
+  }
+
+  for (const term of parsed.terms) {
+    const studentCode = normalizeExistingStudentCode(term);
+    if (studentCode && typeof studentIdPredicate === 'function') {
+      clauses.push(studentIdPredicate(addParam(studentCode)));
+      continue;
+    }
+    const placeholder = addParam(`%${escapeVisibleLikeTerm(term)}%`);
+    clauses.push(`(${textExpressions.map((expression) => `${expression} LIKE ${placeholder} ESCAPE '\\'`).join('\n OR ')})`);
+  }
+
+  return clauses;
+};
+
 // --- ENHANCED: Get Recent Activity Logs with Filtering & Role-Based Access ---
 app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
   try {
@@ -9106,7 +9161,6 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
     // Validate and sanitize parameters
     const queryLimit = Math.min(parseInt(limit) || 50, 500);
     const queryOffset = Math.max(parseInt(offset) || 0, 0);
-    const searchTerms = String(search || '').trim().toLowerCase().replace(/\s+/g, ' ').split(' ').filter(Boolean);
     const scope = resolveAnalyticsScope(req);
     const selectedStudentId = resolveScopeId(student_id);
     if (Number.isNaN(selectedStudentId)) return res.status(400).json({ error: 'Invalid student ID' });
@@ -9172,23 +9226,31 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
       paramIndex++;
     }
 
-    // Search visible student identity fields without changing the authenticated scope.
-    for (const term of searchTerms) {
-      const textParam = paramIndex++;
-      const exactIdParam = paramIndex++;
-      query += ` AND (
-        LOWER(COALESCE(al.student_name, '')) LIKE $${textParam}
-        OR LOWER(COALESCE(al.grade_level, '')) LIKE $${textParam}
-        OR LOWER(COALESCE(al.section, '')) LIKE $${textParam}
-        OR LOWER(COALESCE(al.current_quest, '')) LIKE $${textParam}
-        OR LOWER(COALESCE(al.difficulty_level, '')) LIKE $${textParam}
-        OR LOWER(COALESCE(al.status, '')) LIKE $${textParam}
-        OR CAST(al.activity_timestamp AS TEXT) LIKE $${textParam}
-        OR CAST(al.total_play_time AS TEXT) LIKE $${textParam}
-        OR LOWER(COALESCE(account.game_student_id, '')) = LOWER($${exactIdParam})
-      )`;
-      params.push(`%${term}%`, term);
-    }
+    // Search only intentional user-facing fields. Structured Grade/Difficulty
+    // phrases and canonical Student IDs receive dedicated exact predicates.
+    const activitySearchClauses = buildVisibleTableSearchClauses({
+      search,
+      addParam: (value) => {
+        params.push(value);
+        return `$${params.length}`;
+      },
+      gradeColumn: 'al.grade_level',
+      difficultyColumn: 'al.difficulty_level',
+      studentIdPredicate: (placeholder) => `REPLACE(COALESCE(account.game_student_id, ''), '-', '') = ${placeholder}`,
+      textExpressions: [
+        "LOWER(COALESCE(al.student_name, ''))",
+        "LOWER(COALESCE(al.grade_level, ''))",
+        "LOWER(COALESCE(al.section, ''))",
+        "LOWER(COALESCE(al.current_quest, ''))",
+        "LOWER(COALESCE(al.difficulty_level, ''))",
+        'LOWER(CAST(al.activity_timestamp AS TEXT))',
+        'LOWER(CAST(al.started_at AS TEXT))',
+        'LOWER(CAST(al.duration_seconds AS TEXT))',
+        'LOWER(CAST(al.total_play_time AS TEXT))',
+      ],
+    });
+    query += activitySearchClauses.map((clause) => ` AND ${clause}`).join('');
+    paramIndex = params.length + 1;
 
     // Sorting
     const allowedSortFields = [
@@ -9241,22 +9303,29 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
       countParamIndex++;
     }
 
-    for (const term of searchTerms) {
-      const textParam = countParamIndex++;
-      const exactIdParam = countParamIndex++;
-      countQuery += ` AND (
-        LOWER(COALESCE(al.student_name, '')) LIKE $${textParam}
-        OR LOWER(COALESCE(al.grade_level, '')) LIKE $${textParam}
-        OR LOWER(COALESCE(al.section, '')) LIKE $${textParam}
-        OR LOWER(COALESCE(al.current_quest, '')) LIKE $${textParam}
-        OR LOWER(COALESCE(al.difficulty_level, '')) LIKE $${textParam}
-        OR LOWER(COALESCE(al.status, '')) LIKE $${textParam}
-        OR CAST(al.activity_timestamp AS TEXT) LIKE $${textParam}
-        OR CAST(al.total_play_time AS TEXT) LIKE $${textParam}
-        OR LOWER(COALESCE(account.game_student_id, '')) = LOWER($${exactIdParam})
-      )`;
-      countParams.push(`%${term}%`, term);
-    }
+    const activityCountSearchClauses = buildVisibleTableSearchClauses({
+      search,
+      addParam: (value) => {
+        countParams.push(value);
+        return `$${countParams.length}`;
+      },
+      gradeColumn: 'al.grade_level',
+      difficultyColumn: 'al.difficulty_level',
+      studentIdPredicate: (placeholder) => `REPLACE(COALESCE(account.game_student_id, ''), '-', '') = ${placeholder}`,
+      textExpressions: [
+        "LOWER(COALESCE(al.student_name, ''))",
+        "LOWER(COALESCE(al.grade_level, ''))",
+        "LOWER(COALESCE(al.section, ''))",
+        "LOWER(COALESCE(al.current_quest, ''))",
+        "LOWER(COALESCE(al.difficulty_level, ''))",
+        'LOWER(CAST(al.activity_timestamp AS TEXT))',
+        'LOWER(CAST(al.started_at AS TEXT))',
+        'LOWER(CAST(al.duration_seconds AS TEXT))',
+        'LOWER(CAST(al.total_play_time AS TEXT))',
+      ],
+    });
+    countQuery += activityCountSearchClauses.map((clause) => ` AND ${clause}`).join('');
+    countParamIndex = countParams.length + 1;
 
     const countResult = await pool.query(countQuery, countParams);
     const totalRecords = parseInt(countResult.rows[0].total);
@@ -9599,27 +9668,31 @@ const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
       : `ps.status = ${statusFilter}`);
   }
 
-  const searchTerms = String(req.query.search || '').trim().toLowerCase().replace(/\s+/g, ' ').split(' ').filter(Boolean);
-  for (const term of searchTerms) {
-    const searchPlaceholder = addParam(`%${term}%`);
-    const exactIdPlaceholder = addParam(term);
-    filters.push(`(
-      LOWER(COALESCE(ps.student_name, '')) LIKE ${searchPlaceholder}
-      OR LOWER(COALESCE(ps.parent_id, '')) LIKE ${searchPlaceholder}
-      OR LOWER(COALESCE(ps.grade_level, '')) LIKE ${searchPlaceholder}
-      OR LOWER(COALESCE(ps.section, '')) LIKE ${searchPlaceholder}
-      OR LOWER(COALESCE(ps.status, '')) LIKE ${searchPlaceholder}
-      OR CAST(ps.date_played AS TEXT) LIKE ${searchPlaceholder}
-      OR CAST(ps.start_time AS TEXT) LIKE ${searchPlaceholder}
-      OR CAST(ps.end_time AS TEXT) LIKE ${searchPlaceholder}
-      OR CAST(ps.total_playtime_minutes AS TEXT) LIKE ${searchPlaceholder}
-      OR ps.student_id IN (
+  filters.push(...buildVisibleTableSearchClauses({
+    search: req.query.search,
+    addParam,
+    gradeColumn: 'ps.grade_level',
+    studentIdPredicate: (placeholder) => `(
+      ps.student_id IN (
         SELECT search_student.id
         FROM public.accounts search_student
-        WHERE search_student.game_student_id = ${exactIdPlaceholder}
+        WHERE REPLACE(COALESCE(search_student.game_student_id, ''), '-', '') = ${placeholder}
       )
-    )`);
-  }
+      ${scope === 'all' ? `OR REPLACE(COALESCE(ps.parent_id, ''), '-', '') = ${placeholder}` : ''}
+    )`,
+    textExpressions: [
+      "LOWER(COALESCE(ps.student_name, ''))",
+      ...(scope === 'all' ? ["LOWER(COALESCE(ps.parent_id, ''))"] : []),
+      "LOWER(COALESCE(ps.grade_level, ''))",
+      "LOWER(COALESCE(ps.section, ''))",
+      "LOWER(COALESCE(ps.status, ''))",
+      'LOWER(CAST(ps.date_played AS TEXT))',
+      'LOWER(CAST(ps.start_time AS TEXT))',
+      'LOWER(CAST(ps.end_time AS TEXT))',
+      'LOWER(CAST(ps.total_playtime_minutes AS TEXT))',
+      'LOWER(CAST(ps.total_playtime_seconds AS TEXT))',
+    ],
+  }));
 
   return { whereSql: filters.length ? ` AND ${filters.join(' AND ')}` : '' };
 };

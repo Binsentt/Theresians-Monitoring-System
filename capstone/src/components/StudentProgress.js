@@ -185,7 +185,7 @@ export default function StudentProgress() {
                     <label>Search student</label>
                     <input
                       type="search"
-                      placeholder="Search by name or Student ID"
+                      placeholder="Name, Student ID, Grade, Section, Quest, Game Score, or Difficulty"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />

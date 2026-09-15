@@ -109,6 +109,58 @@ describe('ActivityLog table', () => {
     expect(container.querySelector('button[aria-label="Print Student Activity"]')).not.toBeNull();
   });
 
+  test('does not let an older debounced search response overwrite the latest filtered rows', async () => {
+    let resolveOlderSearch;
+    global.fetch = jest.fn((url) => {
+      const value = String(url);
+      if (value.includes('search=grade+2')) {
+        return jsonResponse({
+          data: [{ id: 2, student_name: 'Latest Grade Two', grade_level: 'Grade 2', current_quest: 'Tutorial' }],
+          pagination: { total: 1, pages: 1, current_page: 1 },
+        });
+      }
+      if (value.includes('search=grade')) {
+        return new Promise((resolve) => { resolveOlderSearch = resolve; });
+      }
+      return jsonResponse({ data: [], pagination: { total: 0, pages: 1, current_page: 1 } });
+    });
+
+    await act(async () => {
+      root.render(<ActivityLog role="admin" limit={10} />);
+    });
+    const search = container.querySelector('#search-input');
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    await act(async () => {
+      valueSetter.call(search, 'Grade');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      search.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
+    expect(resolveOlderSearch).toEqual(expect.any(Function));
+
+    await act(async () => {
+      valueSetter.call(search, 'Grade 2');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      search.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
+    await waitForActivityText(container, 'Latest Grade Two');
+
+    await act(async () => {
+      resolveOlderSearch({
+        ok: true,
+        json: async () => ({
+          data: [{ id: 1, student_name: 'Stale Grade One', grade_level: 'Grade 1', current_quest: 'Tutorial' }],
+          pagination: { total: 1, pages: 1, current_page: 1 },
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.textContent).toContain('Latest Grade Two');
+    expect(container.textContent).not.toContain('Stale Grade One');
+  });
+
   test('renders canonical quest payloads without exposing generic website activity descriptions', async () => {
     global.fetch = jest.fn(() => jsonResponse({
       data: [
