@@ -382,6 +382,23 @@ function renderValidatedClaimSelection(selection, catalog) {
       INSIGHT_VALIDATION_STAGES.RENDERED_OUTPUT_INVALID
     );
   }
+  const questInsights = (Array.isArray(catalog.providerEvidence?.quest_evidence)
+    ? catalog.providerEvidence.quest_evidence : []).map((quest) => {
+    const facts = [];
+    if (isFiniteNumber(quest.duration_seconds)) facts.push(`recorded duration ${formatNumber(quest.duration_seconds)} seconds`);
+    if (isNonNegativeInteger(quest.total_questions) && quest.total_questions > 0
+      && isNonNegativeInteger(quest.correct_answers) && isNonNegativeInteger(quest.incorrect_answers)
+      && isFiniteNumber(quest.accuracy)) {
+      facts.push(`${quest.correct_answers} correct and ${quest.incorrect_answers} incorrect (${formatPercentage(quest.accuracy)})`);
+    }
+    if (isFiniteNumber(quest.average_response_seconds)) facts.push(`average recorded response time ${formatNumber(quest.average_response_seconds)} seconds`);
+    return {
+      canonical_task_id: asSafeQuestLabel(quest.canonical_task_id),
+      label: asSafeQuestLabel(quest.label) || asSafeQuestLabel(quest.canonical_task_id),
+      map_id: asSafeQuestLabel(quest.map_id),
+      summary: facts.length ? `Recorded evidence: ${facts.join('; ')}.` : 'No graded or timing evidence is recorded for this task yet.',
+    };
+  }).filter((quest) => quest.canonical_task_id);
   return {
     performance_insight: performanceInsight,
     strengths: renderGroup(groups.strength_claim_ids, catalog, 'strength'),
@@ -391,6 +408,7 @@ function renderValidatedClaimSelection(selection, catalog) {
       catalog,
       'recommendation'
     ),
+    ...(questInsights.length ? { quest_insights: questInsights } : {}),
   };
 }
 

@@ -134,6 +134,7 @@ if (!isSafeDatabase(databaseUrl)) {
     const sessionId = Number(lease.body.session_id);
     const credential = lease.body.session_credential;
 
+    const responseTimes = [15, 18, 42, 38, 30];
     for (const [index, score] of [1, 1, 0, 0, 0].entries()) {
       const eventId = `qa-metrics-question-${index + 1}`;
       const result = await json(`${base}/api/game/result`, {
@@ -147,6 +148,9 @@ if (!isSafeDatabase(databaseUrl)) {
           session_id: sessionId, map_id: 'oakleaf_village', canonical_quest_id: 'oakleaf',
           canonical_task_id: 'first-bandit-math-challenge', canonical_battle_id: 'bandits',
           canonical_milestone_id: `oakleaf.bandits.question_${index + 1}`,
+          question_presented_at: new Date(Date.parse('2026-01-01T00:10:00.000Z') + (index * 10 * 1000)).toISOString(),
+          answer_submitted_at: new Date(Date.parse('2026-01-01T00:10:00.000Z') + ((index * 10 + responseTimes[index]) * 1000)).toISOString(),
+          response_time_seconds: responseTimes[index],
           ...(index === 0 ? { played_at: '2000-01-01T00:00:00.000Z' } : {}),
         }),
       });
@@ -184,10 +188,10 @@ if (!isSafeDatabase(databaseUrl)) {
       'an unchanged duplicate result leaves the evidence cache row untouched');
 
     for (const milestone of [
-      ['tutorial', 'tutorial.complete', "Go to the Teacher's House"],
-      ['go-to-teachers-house', 'oakleaf.go-to-teachers-house.complete', 'Talk to the Teacher'],
+      ['tutorial', 'tutorial.complete', "Go to the Teacher's House", 90],
+      ['go-to-teachers-house', 'oakleaf.go-to-teachers-house.complete', 'Talk to the Teacher', 60],
     ]) {
-      const [taskId, milestoneId, currentQuest] = milestone;
+      const [taskId, milestoneId, currentQuest, durationSeconds] = milestone;
       const activity = await json(`${base}/api/game/activity`, {
         method: 'POST',
         body: JSON.stringify({
@@ -198,21 +202,68 @@ if (!isSafeDatabase(databaseUrl)) {
            canonical_task_id: taskId, canonical_milestone_id: milestoneId,
           current_quest: currentQuest,
           map_id: 'oakleaf_village', is_player_facing: true,
-          started_at: '2026-01-01T00:00:00.000Z', completed_at: '2026-01-01T00:01:00.000Z',
-          duration_seconds: 60,
+          started_at: '2026-01-01T00:00:00.000Z',
+          completed_at: new Date(Date.parse('2026-01-01T00:00:00.000Z') + (durationSeconds * 1000)).toISOString(),
+          duration_seconds: durationSeconds,
         }),
       });
       assert.equal(activity.status, 201, taskId);
       assert.equal(activity.body.duplicate, false);
     }
+    const banditActivity = await json(`${base}/api/game/activity`, {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: sessionId, session_credential: credential, learning_cycle_version: 0,
+        event_type: 'task_completed', event_key: 'qa-metrics-bandit-duration',
+        activity_event_id: 'qa-metrics-bandit-duration', task_id: 'Bandit challenge',
+        canonical_activity_id: 'first-bandit-math-challenge', canonical_quest_id: 'oakleaf',
+        canonical_task_id: 'first-bandit-math-challenge', canonical_milestone_id: 'oakleaf.bandits.duration',
+        current_quest: 'Defeat All Bandits', map_id: 'oakleaf_village', is_player_facing: false,
+        started_at: '2026-01-01T00:10:00.000Z', completed_at: '2026-01-01T00:14:00.000Z',
+        duration_seconds: 240,
+      }),
+    });
+    assert.equal(banditActivity.status, 201);
 
     const progress = calculateWeightedCompletion(['tutorial', 'go-to-teachers-house']);
+    const leaderboard = await json(`${base}/api/game/leaderboard`, {
+      method: 'POST',
+      body: JSON.stringify({ session_id: sessionId, session_credential: credential, learning_cycle_version: 0 }),
+    });
+    assert.equal(leaderboard.status, 200);
+    assert.equal(leaderboard.body.entries.length, 1);
+    assert.equal(leaderboard.body.entries[0].display_name, studentName);
+    assertMetrics(leaderboard.body.entries[0], 'leaderboard', progress);
+    assert.equal(leaderboard.body.entries[0].quests_completed, 2);
+
+    await pool.query(
+      `UPDATE public.playtime_sessions
+          SET status = 'Offline', end_time = start_time + INTERVAL '53 minutes',
+              total_playtime_minutes = 53, total_playtime_seconds = 3180
+        WHERE id = $1`,
+      [sessionId],
+    );
+
     const stored = await pool.query(`SELECT COUNT(*)::INTEGER AS count,
       COUNT(DISTINCT result_event_id)::INTEGER AS events,
       COALESCE(SUM(score), 0)::INTEGER AS game_score,
       COALESCE(SUM(total_items), 0)::INTEGER AS total_questions
       FROM public.game_results WHERE resolved_student_id = $1`, [studentId]);
     assert.deepEqual(stored.rows[0], { count: 5, events: 5, game_score: 2, total_questions: 5 });
+    const timingEvidence = await pool.query(
+      `SELECT COUNT(response_time_seconds)::INTEGER AS timed_results,
+              ROUND(AVG(response_time_seconds), 1)::FLOAT AS average_response_seconds
+         FROM public.game_results WHERE resolved_student_id = $1`, [studentId],
+    );
+    assert.deepEqual(timingEvidence.rows[0], { timed_results: 5, average_response_seconds: 28.6 });
+    const activityEvidence = await pool.query(
+      `SELECT canonical_task_id, duration_seconds
+         FROM public.activity_logs WHERE student_id = $1
+         ORDER BY duration_seconds DESC`, [studentId],
+    );
+    assert.deepEqual(activityEvidence.rows.map((row) => [row.canonical_task_id, Number(row.duration_seconds)]), [
+      ['first-bandit-math-challenge', 240], ['tutorial', 90], ['go-to-teachers-house', 60],
+    ]);
 
     const list = await json(`${base}/api/students/progress?lifecycle=active`, { headers: adminHeaders });
     const listRow = list.body.find((row) => Number(row.student_id) === studentId);
@@ -235,15 +286,65 @@ if (!isSafeDatabase(databaseUrl)) {
     const topRow = top.body.find((row) => Number(row.student_id) === studentId);
     assert.equal(top.status, 200); assert.ok(topRow); assertMetrics(topRow, 'top', progress);
     assert.equal(topRow.total_quests_completed, 2);
+    assert.equal(Number(topRow.total_playtime_seconds), 3180, 'Top Achievers uses the same 53-minute session total');
 
-    const leaderboard = await json(`${base}/api/game/leaderboard`, {
-      method: 'POST',
-      body: JSON.stringify({ session_id: sessionId, session_credential: credential, learning_cycle_version: 0 }),
+    const screenTime = await json(`${base}/api/playtime?search=${encodeURIComponent(studentCode)}&limit=20`, { headers: adminHeaders });
+    assert.equal(screenTime.status, 200);
+    const screenTimeRow = screenTime.body.data.find((row) => Number(row.student_id) === studentId);
+    assert.ok(screenTimeRow, 'Screen Time exposes the same student session');
+    assert.equal(Number(screenTimeRow.total_playtime_minutes), 53);
+    assert.equal(Number(screenTime.body.summary.total_playtime_seconds), 3180);
+
+  });
+
+  test('Admin permanently deletes only the reviewed archived Screen Time row', async () => {
+    const base = `http://127.0.0.1:${appServer.address().port}`;
+    const adminHeaders = { Authorization: `Bearer ${token(adminId, 'admin')}` };
+    const inserted = await pool.query(
+      `INSERT INTO public.playtime_sessions
+         (student_id, student_name, parent_id, status, date_played, start_time, end_time,
+          total_playtime_minutes, total_playtime_seconds, deleted_at, deletion_operation_id)
+       VALUES ($1, $2, $3, 'Offline', CURRENT_DATE, NOW() - INTERVAL '10 minutes', NOW(),
+               10, 600, NOW(), gen_random_uuid())
+       RETURNING id`,
+      [studentId, studentName, parentCode],
+    );
+    const archivedId = Number(inserted.rows[0].id);
+    const beforeResults = Number((await pool.query(
+      'SELECT COUNT(*)::INTEGER AS count FROM public.game_results WHERE resolved_student_id = $1', [studentId],
+    )).rows[0].count);
+    const beforeActivities = Number((await pool.query(
+      'SELECT COUNT(*)::INTEGER AS count FROM public.activity_logs WHERE student_id = $1', [studentId],
+    )).rows[0].count);
+
+    const preview = await json(`${base}/api/playtime/${archivedId}/permanent-delete-preview`, { headers: adminHeaders });
+    assert.equal(preview.status, 200);
+    assert.equal(preview.body.record_id, archivedId);
+    assert.ok(preview.body.preview_token);
+    assert.ok(preview.body.target_fingerprint);
+
+    const mismatch = await json(`${base}/api/playtime/${archivedId}/permanent-delete`, {
+      method: 'POST', headers: adminHeaders,
+      body: JSON.stringify({
+        reason: 'Disposable local verification fixture', confirmation: 'DELETE',
+        preview_token: preview.body.preview_token, target_fingerprint: '0'.repeat(64),
+      }),
     });
-    assert.equal(leaderboard.status, 200);
-    assert.equal(leaderboard.body.entries.length, 1);
-    assert.equal(leaderboard.body.entries[0].display_name, studentName);
-    assertMetrics(leaderboard.body.entries[0], 'leaderboard', progress);
-    assert.equal(leaderboard.body.entries[0].quests_completed, 2);
+    assert.equal(mismatch.status, 409, 'target mismatch is rejected transaction-safely');
+    assert.equal(Number((await pool.query('SELECT COUNT(*)::INTEGER AS count FROM public.playtime_sessions WHERE id = $1', [archivedId])).rows[0].count), 1);
+
+    const removed = await json(`${base}/api/playtime/${archivedId}/permanent-delete`, {
+      method: 'POST', headers: adminHeaders,
+      body: JSON.stringify({
+        reason: 'Disposable local verification fixture', confirmation: 'DELETE',
+        preview_token: preview.body.preview_token, target_fingerprint: preview.body.target_fingerprint,
+      }),
+    });
+    assert.equal(removed.status, 200);
+    assert.equal(Number((await pool.query('SELECT COUNT(*)::INTEGER AS count FROM public.playtime_sessions WHERE id = $1', [archivedId])).rows[0].count), 0);
+    assert.equal(Number((await pool.query('SELECT COUNT(*)::INTEGER AS count FROM public.accounts WHERE id = $1', [studentId])).rows[0].count), 1);
+    assert.equal(Number((await pool.query('SELECT COUNT(*)::INTEGER AS count FROM public.game_results WHERE resolved_student_id = $1', [studentId])).rows[0].count), beforeResults);
+    assert.equal(Number((await pool.query('SELECT COUNT(*)::INTEGER AS count FROM public.activity_logs WHERE student_id = $1', [studentId])).rows[0].count), beforeActivities);
+    assert.equal(Number((await pool.query('SELECT COUNT(*)::INTEGER AS count FROM public.playtime_deletion_tombstones WHERE deleted_record_id = $1', [archivedId])).rows[0].count), 1);
   });
 }

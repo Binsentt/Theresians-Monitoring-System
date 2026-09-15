@@ -126,7 +126,7 @@ export default function TeacherDashboard() {
                 />
                 <MetricCard
                   label="Average Accuracy"
-                  value={formatPercent(overview?.averageAccuracy, 'Not available')}
+                  value={formatPercent(overview?.averageAccuracy, 'No attempts yet')}
                   footer="Recorded current-cycle results"
                 />
                 <MetricCard

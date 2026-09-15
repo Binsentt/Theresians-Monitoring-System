@@ -22,6 +22,19 @@ const toPercentage = (correctAnswers, totalQuestions) => {
   return Number(((correctAnswers / totalQuestions) * 100).toFixed(2));
 };
 
+const aggregateStudentAccuracy = (rows = []) => {
+  const totals = (Array.isArray(rows) ? rows : []).reduce((aggregate, row) => {
+    const metrics = row?.metrics || row || {};
+    const correctAnswers = toNonNegativeInteger(metrics.correctAnswers ?? metrics.correct_answers);
+    const totalQuestions = toNonNegativeInteger(metrics.totalQuestions ?? metrics.total_questions);
+    if (correctAnswers === null || totalQuestions === null || correctAnswers > totalQuestions) return aggregate;
+    aggregate.correctAnswers += correctAnswers;
+    aggregate.totalQuestions += totalQuestions;
+    return aggregate;
+  }, { correctAnswers: 0, totalQuestions: 0 });
+  return { ...totals, accuracy: toPercentage(totals.correctAnswers, totals.totalQuestions) };
+};
+
 const normalizeDifficulty = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'easy') return 'easy';
@@ -191,6 +204,7 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
 }
 
 module.exports = {
+  aggregateStudentAccuracy,
   buildStudentAnalyticsMetrics,
   normalizeDifficulty,
   normalizeResult,

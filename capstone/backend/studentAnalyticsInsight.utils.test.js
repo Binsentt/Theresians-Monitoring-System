@@ -73,6 +73,7 @@ test('uses only minimized deterministic facts and policy version in grounded ins
     difficulty_accuracy: { easy: 100, medium: 50, hard: null },
     topic_performance: [{ topic: 'Fractions', accuracy: 60, correct_answers: 3, total_questions: 5 }],
     playtime_minutes: 24,
+    quest_evidence: [],
   });
   assert.equal(JSON.stringify(input).includes('Do not include'), false);
   assert.equal(JSON.stringify(input).includes('44'), false);
@@ -90,6 +91,27 @@ test('uses a stable cache fingerprint and invalidates pre-policy and changed met
   assert.equal(buildInsightFingerprint(input), buildInsightFingerprint(input));
   assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(changed));
   assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(prePolicyInput));
+});
+
+test('includes deterministic per-quest timing and graded evidence in the provider input and fingerprint', () => {
+  const activityLogs = [
+    { canonical_task_id: 'tutorial', activity_description: 'Tutorial', map_id: 'oakleaf_village', duration_seconds: 90 },
+    { canonical_task_id: 'go-to-teachers-house', activity_description: 'Teacher House', map_id: 'oakleaf_village', duration_seconds: 60 },
+    { canonical_task_id: 'oakleaf-bandits', activity_description: 'Bandit Challenge', map_id: 'oakleaf_village', duration_seconds: 240 },
+  ];
+  const quizSessions = [1, 0, 0, 1, 0].map((score, index) => ({
+    canonical_task_id: 'oakleaf-bandits', score, total_items: 1,
+    response_time_seconds: [8, 11, 45, 9, 52][index],
+  }));
+  const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics, activityLogs, quizSessions });
+  assert.deepEqual(input.quest_evidence.map((row) => row.canonical_task_id), ['go-to-teachers-house', 'oakleaf-bandits', 'tutorial']);
+  assert.deepEqual(input.quest_evidence.find((row) => row.canonical_task_id === 'oakleaf-bandits'), {
+    canonical_task_id: 'oakleaf-bandits', label: 'Bandit Challenge', map_id: 'oakleaf_village',
+    duration_seconds: 240, correct_answers: 2, incorrect_answers: 3, total_questions: 5,
+    accuracy: 40, average_response_seconds: 25,
+  });
+  const changed = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics, activityLogs: activityLogs.map((row) => ({ ...row, duration_seconds: row.duration_seconds + 1 })), quizSessions });
+  assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(changed));
 });
 
 test('metrics semantics and current difficulty are fingerprinted without changing the grounding policy', () => {

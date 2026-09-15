@@ -1,7 +1,23 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildStudentAnalyticsMetrics } = require('./studentAnalyticsMetrics.utils');
+const { aggregateStudentAccuracy, buildStudentAnalyticsMetrics } = require('./studentAnalyticsMetrics.utils');
+
+test('aggregates cohort accuracy from authoritative answer totals instead of averaging student percentages', () => {
+  assert.deepEqual(aggregateStudentAccuracy([
+    { metrics: { correctAnswers: 8, totalQuestions: 10, accuracy: 80 } },
+    { metrics: { correctAnswers: 1, totalQuestions: 2, accuracy: 50 } },
+  ]), { correctAnswers: 9, totalQuestions: 12, accuracy: 75 });
+});
+
+test('keeps no attempts distinct from a real zero-percent cohort', () => {
+  assert.deepEqual(aggregateStudentAccuracy([{ metrics: { correctAnswers: 0, totalQuestions: 0, accuracy: null } }]), {
+    correctAnswers: 0,
+    totalQuestions: 0,
+    accuracy: null,
+  });
+  assert.equal(aggregateStudentAccuracy([{ metrics: { correctAnswers: 0, totalQuestions: 3, accuracy: 0 } }]).accuracy, 0);
+});
 
 test('calculates factual accuracy, difficulty, topic, and playtime from valid result history', () => {
   const metrics = buildStudentAnalyticsMetrics({

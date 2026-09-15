@@ -363,6 +363,37 @@ button.drive-folder-card {
 .drive-size-column { width: 96px; min-width: 96px; }
 .drive-actions-cell { width: 236px; min-width: 236px; }
 
+@media (min-width: 1100px) {
+  .drive-table .data-table {
+    min-width: 0;
+  }
+
+  .drive-name-column { width: 23%; min-width: 0; }
+  .drive-type-column { width: 11%; min-width: 0; }
+  .drive-count-column { width: 10%; min-width: 0; }
+  .drive-status-column { width: 13%; min-width: 0; }
+  .drive-date-column { width: 10%; min-width: 0; }
+  .drive-size-column { width: 7%; min-width: 0; }
+  .drive-actions-cell { width: 26%; min-width: 0; }
+
+  .drive-row-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .drive-action-button {
+    min-width: 0;
+    justify-content: center;
+    padding-inline: 7px;
+  }
+}
+
+@media (max-width: 1099px) {
+  .drive-table .data-table {
+    min-width: 980px;
+  }
+}
+
 .drive-file-name svg {
   flex: 0 0 auto;
   color: #0f766e;

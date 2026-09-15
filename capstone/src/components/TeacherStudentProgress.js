@@ -178,7 +178,7 @@ export default function TeacherStudentProgress() {
               </div>
               <div className="analytics-card">
                 <span>Average accuracy</span>
-                <strong>{overview?.averageAccuracy ?? '--'}%</strong>
+                <strong>{overview?.averageAccuracy === null || overview?.averageAccuracy === undefined ? 'No attempts yet' : `${overview.averageAccuracy}%`}</strong>
               </div>
               <div className="analytics-card">
                 <span>Average completion</span>

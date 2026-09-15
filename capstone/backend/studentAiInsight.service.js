@@ -78,6 +78,8 @@ async function resolveStudentAiInsight({
   studentId,
   gradeLevel,
   metrics = {},
+  activityLogs = [],
+  quizSessions = [],
   actorId = null,
   aiGenerationEnabled = isAiGenerationEnabled(),
   pool,
@@ -99,7 +101,7 @@ async function resolveStudentAiInsight({
     };
   }
 
-  const input = buildGroundedInsightInput({ gradeLevel, metrics });
+  const input = buildGroundedInsightInput({ gradeLevel, metrics, activityLogs, quizSessions });
   const inputFingerprint = buildInsightFingerprint(input);
   const initialCache = await readCachedInsight(pool, studentId);
   if (!aiGenerationEnabled) {

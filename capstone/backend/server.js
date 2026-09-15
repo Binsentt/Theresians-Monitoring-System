@@ -157,6 +157,7 @@ const {
   sortRowsByStudentName,
 } = require('./progressScene.utils');
 const {
+  aggregateStudentAccuracy,
   buildStudentAnalyticsMetrics,
 } = require('./studentAnalyticsMetrics.utils');
 const {
@@ -409,11 +410,24 @@ const ensureSchema = async () => {
     await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS canonical_task_id VARCHAR(160)');
     await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS canonical_battle_id VARCHAR(160)');
     await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS canonical_milestone_id VARCHAR(200)');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS question_presented_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS answer_submitted_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS response_time_seconds INTEGER');
     await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS game_results_student_result_event_unique ON public.game_results(resolved_student_id, result_event_id) WHERE resolved_student_id IS NOT NULL AND result_event_id IS NOT NULL');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_parent_id ON public.game_results(parent_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_resolved_student_id ON public.game_results(resolved_student_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_question_set_id ON public.game_results(question_set_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_playtime_session_id ON public.game_results(playtime_session_id)');
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.playtime_deletion_tombstones (
+      id BIGSERIAL PRIMARY KEY,
+      deleted_record_id INTEGER NOT NULL,
+      deleted_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL,
+      deletion_reason VARCHAR(1000) NOT NULL,
+      deletion_operation_id UUID NOT NULL,
+      target_fingerprint CHAR(64) NOT NULL,
+      deleted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );`);
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS playtime_deletion_tombstone_record_unique ON public.playtime_deletion_tombstones(deleted_record_id)');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.student_ai_insights (
       id SERIAL PRIMARY KEY,
       student_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
@@ -4013,7 +4027,7 @@ const buildGradeSummary = (rows) => {
         ? Math.round(available.reduce((sum, value) => sum + value, 0) / available.length)
         : null;
     };
-    const avgAccuracy = averageAvailable(items.map((item) => item.accuracy_rate));
+    const avgAccuracy = aggregateStudentAccuracy(items).accuracy;
     const avgProgress = averageAvailable(items.map((item) => item.progress_percentage));
     const easyAvg = averageAvailable(items.map((item) => item.analysis?.difficultyBreakdown?.easy));
     const mediumAvg = averageAvailable(items.map((item) => item.analysis?.difficultyBreakdown?.medium));
@@ -7738,6 +7752,15 @@ app.post('/api/game/result', async (req, res) => {
   const canonicalTaskId = String(req.body?.canonical_task_id || '').trim() || null;
   const canonicalBattleId = String(req.body?.canonical_battle_id || '').trim() || null;
   const canonicalMilestoneId = String(req.body?.canonical_milestone_id || '').trim() || null;
+  const normalizeOptionalGameTimestamp = (value) => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? false : parsed.toISOString();
+  };
+  const questionPresentedAt = normalizeOptionalGameTimestamp(req.body?.question_presented_at);
+  const answerSubmittedAt = normalizeOptionalGameTimestamp(req.body?.answer_submitted_at);
+  const responseTimeSeconds = req.body?.response_time_seconds === undefined || req.body?.response_time_seconds === null
+    ? null : Number(req.body.response_time_seconds);
   // A game question carries its own canonical difficulty.  Keep that value for
   // analytics, and only infer from the scene for older clients that do not
   // report a question difficulty yet.
@@ -7774,6 +7797,10 @@ app.post('/api/game/result', async (req, res) => {
   }
   if (hasSuppliedResultEventId && !resultEventId) {
     return res.status(400).json({ error: 'result_event_id must be a valid stable event ID.' });
+  }
+  if (questionPresentedAt === false || answerSubmittedAt === false
+    || (responseTimeSeconds !== null && (!Number.isInteger(responseTimeSeconds) || responseTimeSeconds < 0 || responseTimeSeconds > 86400))) {
+    return res.status(400).json({ error: 'Question timing fields must contain valid timestamps and a non-negative duration.' });
   }
 
   let resultClient = null;
@@ -7930,7 +7957,8 @@ app.post('/api/game/result', async (req, res) => {
          math_topic, score, total_items, percentage, played_at, question_set_id,
          playtime_session_id, is_unlinked, current_map, result_event_id,
          telemetry_contract_version, quest_graph_version, session_id, map_id,
-         canonical_quest_id, canonical_task_id, canonical_battle_id, canonical_milestone_id
+         canonical_quest_id, canonical_task_id, canonical_battle_id, canonical_milestone_id,
+         question_presented_at, answer_submitted_at, response_time_seconds
         ) VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9,
          GREATEST(
@@ -7942,7 +7970,7 @@ app.post('/api/game/result', async (req, res) => {
              '-infinity'::TIMESTAMPTZ
            )
          ), $11, $12, $13,
-         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26
         )
         ON CONFLICT (resolved_student_id, result_event_id)
         WHERE resolved_student_id IS NOT NULL AND result_event_id IS NOT NULL
@@ -7972,6 +8000,9 @@ app.post('/api/game/result', async (req, res) => {
         canonicalTaskId,
         canonicalBattleId,
         canonicalMilestoneId,
+        questionPresentedAt,
+        answerSubmittedAt,
+        responseTimeSeconds,
       ]
     );
     if (resolvedStudentId && persistedResult.rows.length) {
@@ -9045,9 +9076,7 @@ const handleTopAchieversRequest = async (req, res) => {
                  COUNT(*) > 0 AS has_playtime
           FROM public.playtime_sessions ps
           WHERE ps.student_id = p.student_id
-            AND COALESCE(ps.learning_cycle_version, 0) = COALESCE(a.current_learning_cycle_version, 0)
-            AND (a.current_learning_cycle_started_at IS NULL
-                 OR COALESCE(ps.end_time, ps.start_time) >= a.current_learning_cycle_started_at)
+            AND COALESCE(ps.server_started_at, ps.start_time) >= COALESCE(a.screen_time_reset_at, '-infinity'::timestamptz)
         ) canonical_playtime ON true
         WHERE 1=1
           AND COALESCE(a.is_archived, false) = false
@@ -9931,6 +9960,100 @@ app.post('/api/playtime/:id/archive', requireAccountManagementAdmin, handlePlayt
 // Keep the historical DELETE route as a compatibility alias for existing clients.
 app.delete('/api/playtime/:id', requireAccountManagementAdmin, handlePlaytimeArchive);
 
+const buildArchivedPlaytimeFingerprint = (row) => crypto.createHash('sha256').update(JSON.stringify({
+  id: Number(row.id),
+  deleted_at: row.deleted_at ? new Date(row.deleted_at).toISOString() : null,
+  deletion_operation_id: row.deletion_operation_id || null,
+})).digest('hex');
+
+app.get('/api/playtime/:id/permanent-delete-preview', requireAccountManagementAdmin, async (req, res) => {
+  const sessionId = resolvePositiveInteger(req.params.id);
+  if (!sessionId) return res.status(400).json({ error: 'A valid archived Screen Time record is required.' });
+  try {
+    const result = await pool.query(
+      `SELECT id, deleted_at, deletion_operation_id
+         FROM public.playtime_sessions
+        WHERE id = $1 AND deleted_at IS NOT NULL`,
+      [sessionId]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Archived Screen Time record not found.' });
+    const targetFingerprint = buildArchivedPlaytimeFingerprint(result.rows[0]);
+    const previewToken = jwt.sign({
+      purpose: 'playtime_permanent_delete',
+      record_id: sessionId,
+      target_fingerprint: targetFingerprint,
+    }, JWT_SECRET, { expiresIn: '10m' });
+    return res.json({ record_id: sessionId, target_fingerprint: targetFingerprint, preview_token: previewToken });
+  } catch (error) {
+    console.error('Prepare permanent Screen Time deletion failed:', error.message);
+    return res.status(500).json({ error: 'Unable to prepare permanent deletion.' });
+  }
+});
+
+app.post('/api/playtime/:id/permanent-delete', requireAccountManagementAdmin, async (req, res) => {
+  const sessionId = resolvePositiveInteger(req.params.id);
+  const reasonResult = resolveAccountRemovalReason(req.body?.reason);
+  const confirmation = String(req.body?.confirmation || '').trim();
+  const expectedFingerprint = String(req.body?.target_fingerprint || '').trim();
+  const previewToken = String(req.body?.preview_token || '').trim();
+  if (!sessionId || reasonResult.error || confirmation !== 'DELETE' || !expectedFingerprint || !previewToken) {
+    return res.status(400).json({ error: reasonResult.error || 'Reason, target preview, and typed DELETE confirmation are required.' });
+  }
+  let token;
+  try {
+    token = jwt.verify(previewToken, JWT_SECRET);
+  } catch {
+    return res.status(409).json({ error: 'The deletion preview expired. Review the archived record again.' });
+  }
+  if (token?.purpose !== 'playtime_permanent_delete' || Number(token.record_id) !== sessionId
+    || token.target_fingerprint !== expectedFingerprint) {
+    return res.status(409).json({ error: 'The permanent deletion target does not match the reviewed record.' });
+  }
+  const client = await pool.connect();
+  const operationId = crypto.randomUUID();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `SELECT id, student_id, student_name, date_played, deleted_at, deletion_operation_id
+         FROM public.playtime_sessions
+        WHERE id = $1 AND deleted_at IS NOT NULL
+        FOR UPDATE`,
+      [sessionId]
+    );
+    const target = result.rows[0];
+    if (!target) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Archived Screen Time record not found.' });
+    }
+    const actualFingerprint = buildArchivedPlaytimeFingerprint(target);
+    if (actualFingerprint !== expectedFingerprint) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'The archived record changed. Review and confirm again.' });
+    }
+    await client.query(
+      `INSERT INTO public.playtime_deletion_tombstones
+         (deleted_record_id, deleted_by, deletion_reason, deletion_operation_id, target_fingerprint)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [sessionId, req.authenticatedUser.id, reasonResult.reason, operationId, actualFingerprint]
+    );
+    await writeAdminAuditLog(req.authenticatedUser, 'Permanent Screen Time Delete', target, {
+      reason: reasonResult.reason,
+      operationType: 'playtime_permanent_delete',
+      beforeMetadata: { record_id: sessionId, archived: true, target_fingerprint: actualFingerprint },
+      afterMetadata: { permanently_deleted: true, deletion_operation_id: operationId },
+    }, client);
+    await client.query('DELETE FROM public.playtime_sessions WHERE id = $1 AND deleted_at IS NOT NULL', [sessionId]);
+    await client.query('COMMIT');
+    return res.json({ success: true, deleted_record_id: sessionId, deletion_operation_id: operationId });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Permanent Screen Time deletion failed:', error.message);
+    return res.status(500).json({ error: 'Unable to permanently delete this archived Screen Time record.' });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/playtime/:id/reset', requireAccountManagementAdmin, async (req, res) => {
   const sessionId = resolvePositiveInteger(req.params.id);
   const reasonResult = resolveAccountRemovalReason(req.body?.reason);
@@ -10635,7 +10758,7 @@ app.get('/api/analytics/overview', requireAnalyticsAccess, async (req, res) => {
       const available = values.filter((value) => Number.isFinite(value));
       return available.length ? Math.round(available.reduce((sum, value) => sum + value, 0) / available.length) : null;
     };
-    const averageAccuracy = averageOfAvailable(rows.map((item) => item.metrics.accuracy));
+    const averageAccuracy = aggregateStudentAccuracy(rows).accuracy;
     const averageProgress = averageOfAvailable(rows.map((item) => item.metrics.totalProgress));
     const studentCount = rows.length;
 
@@ -11133,11 +11256,13 @@ app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, 
       progressQuery, params: [studentId], normalizeProgress: normalizeStudentProgressRow,
     }, pool);
     if (!evidence) return res.status(404).json({ error: 'Student progress not found' });
-    const { progress, metrics } = evidence;
+    const { progress, metrics, activityLogs, quizSessions } = evidence;
     const aiInsight = await resolveStudentAiInsight({
       studentId,
       gradeLevel: progress.grade_level,
       metrics,
+      activityLogs,
+      quizSessions,
       actorId: req.authenticatedUser.id,
       pool,
     });
@@ -11183,6 +11308,8 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
       studentId,
       gradeLevel: progress.grade_level,
       metrics,
+      activityLogs: evidence.activityLogs,
+      quizSessions: evidence.quizSessions,
       actorId: req.authenticatedUser.id,
       pool,
     });

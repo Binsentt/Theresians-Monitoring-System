@@ -173,6 +173,49 @@ describe('ScreenTimeMonitoring', () => {
     expect(container.querySelector('[data-action="archive-all-completed-playtime"]')).toBeNull();
     expect(container.querySelector('[data-action="archive-playtime-record"]')).toBeNull();
     expect(container.querySelector('[data-action="reset-screen-time"]')).toBeNull();
+    expect(container.querySelector('[data-action="permanently-delete-playtime-record"]')).not.toBeNull();
+  });
+
+  test('admin permanently deletes exactly one archived Screen Time row with preview token, reason, and typed DELETE', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
+    localStorage.setItem('rememberToken', 'remember-token');
+    let permanentCalls = 0;
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).includes('/permanent-delete-preview')) {
+        return jsonResponse({ record_id: 5, target_fingerprint: 'row-fingerprint', preview_token: 'target-bound-token' });
+      }
+      if (String(url).includes('/permanent-delete')) {
+        permanentCalls += 1;
+        expect(options.method).toBe('POST');
+        expect(JSON.parse(options.body)).toEqual(expect.objectContaining({
+          reason: 'Expired local history', confirmation: 'DELETE',
+          target_fingerprint: 'row-fingerprint', preview_token: 'target-bound-token',
+        }));
+        return jsonResponse({ success: true, deleted_record_id: 5 });
+      }
+      return jsonResponse(playtimePayload);
+    });
+
+    act(() => root.render(<ScreenTimeMonitoring mode="all" />));
+    await waitForContent(container, 'Ava Santos');
+    const viewSelect = Array.from(container.querySelectorAll('select')).find((select) => select.textContent.includes('Archived History'));
+    await act(async () => {
+      viewSelect.value = 'archived';
+      viewSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitForContent(container, 'Ava Santos');
+    await act(async () => container.querySelector('[data-action="permanently-delete-playtime-record"]').click());
+    expect(document.body.textContent).toContain('Permanently Delete Archived Screen Time Record');
+    const reason = document.querySelector('#screen-time-deletion-reason');
+    const confirmation = document.querySelector('#screen-time-deletion-confirmation');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set.call(reason, 'Expired local history');
+      reason.dispatchEvent(new Event('input', { bubbles: true }));
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(confirmation, 'DELETE');
+      confirmation.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => document.querySelector('.screen-time-deletion-dialog').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    expect(permanentCalls).toBe(1);
   });
 
   test('paginates the authorised Screen Time records after server filtering', async () => {

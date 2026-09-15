@@ -29,7 +29,8 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
       `SELECT gr.resolved_student_id, gr.id, gr.math_topic, gr.difficulty, gr.current_map,
               gr.map_id, gr.canonical_quest_id, gr.canonical_task_id,
               gr.result_event_id, gr.session_id, gr.percentage, gr.score,
-              gr.total_items, gr.played_at, gr.question_set_id
+              gr.total_items, gr.played_at, gr.question_set_id,
+              gr.question_presented_at, gr.answer_submitted_at, gr.response_time_seconds
        FROM public.game_results gr
        JOIN public.accounts student ON student.id = gr.resolved_student_id
        WHERE gr.resolved_student_id = ANY($1::INTEGER[])
@@ -58,8 +59,21 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
        FROM public.student_quest_milestones
        WHERE student_id = ANY($1::INTEGER[])
        ORDER BY completed_at ASC, id ASC`,
-      [studentIds]
-    );
+    [studentIds]
+  );
+  const activities = await queryClient.query(
+    `SELECT al.student_id, al.activity_event_id, al.canonical_activity_id,
+            al.canonical_quest_id, al.canonical_task_id, al.canonical_milestone_id,
+            al.map_id, al.current_quest, al.activity_description,
+            al.started_at, al.completed_at, al.duration_seconds, al.activity_timestamp
+       FROM public.activity_logs al
+       JOIN public.accounts student ON student.id = al.student_id
+      WHERE al.student_id = ANY($1::INTEGER[])
+        AND (student.current_learning_cycle_started_at IS NULL
+             OR COALESCE(al.completed_at, al.started_at, al.activity_timestamp) >= student.current_learning_cycle_started_at)
+      ORDER BY COALESCE(al.completed_at, al.started_at, al.activity_timestamp) ASC NULLS LAST, al.id ASC`,
+    [studentIds]
+  );
   const cycleByStudent = new Map(rows.map((row) => [
     Number(row.student_id),
     Number(row.current_learning_cycle_version ?? row.learning_cycle_version ?? 0),
@@ -79,12 +93,14 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
   const resultsByStudent = groupByStudent(results.rows, 'resolved_student_id');
   const playtimeByStudent = groupByStudent(playtime.rows, 'student_id');
   const milestonesByStudent = groupByStudent(currentCycleMilestones, 'student_id');
+  const activitiesByStudent = groupByStudent(activities.rows, 'student_id');
   return rows.map((progress) => {
     const quizSessions = resultsByStudent.get(Number(progress.student_id)) || [];
     const playtimeSessions = playtimeByStudent.get(Number(progress.student_id)) || [];
     const completedMilestones = milestonesByStudent.get(Number(progress.student_id)) || [];
+    const activityLogs = activitiesByStudent.get(Number(progress.student_id)) || [];
     const metrics = buildStudentAnalyticsMetrics({ progress, quizSessions, playtimeSessions, completedMilestones });
-    return { progress, quizSessions, playtimeSessions, completedMilestones, metrics };
+    return { progress, quizSessions, playtimeSessions, completedMilestones, activityLogs, metrics };
   });
 }
 

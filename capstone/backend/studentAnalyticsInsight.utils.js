@@ -29,7 +29,69 @@ const INSIGHT_RESPONSE_EXTRACTION_STAGES = Object.freeze({
 });
 const asText = (value) => String(value || '').trim();
 
-function buildGroundedInsightInput({ gradeLevel, metrics = {} } = {}) {
+const buildQuestEvidence = ({ activityLogs = [], quizSessions = [] } = {}) => {
+  const groups = new Map();
+  const getGroup = (taskId) => {
+    const canonicalTaskId = asText(taskId).toLowerCase();
+    if (!canonicalTaskId) return null;
+    if (!groups.has(canonicalTaskId)) groups.set(canonicalTaskId, {
+      canonical_task_id: canonicalTaskId,
+      label: canonicalTaskId.replace(/[-_.]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()),
+      map_id: null,
+      duration_seconds: null,
+      correct_answers: 0,
+      incorrect_answers: 0,
+      total_questions: 0,
+      accuracy: null,
+      average_response_seconds: null,
+      _response_seconds_total: 0,
+      _response_seconds_count: 0,
+    });
+    return groups.get(canonicalTaskId);
+  };
+  (Array.isArray(activityLogs) ? activityLogs : []).forEach((row) => {
+    const group = getGroup(row?.canonical_task_id || row?.canonical_activity_id);
+    if (!group) return;
+    const label = asText(row?.activity_description || row?.current_quest);
+    if (label) group.label = label;
+    const mapId = asText(row?.map_id);
+    if (mapId) group.map_id = mapId;
+    const duration = Number(row?.duration_seconds);
+    if (Number.isInteger(duration) && duration >= 0) {
+      group.duration_seconds = Math.max(group.duration_seconds ?? 0, duration);
+    }
+  });
+  (Array.isArray(quizSessions) ? quizSessions : []).forEach((row) => {
+    const group = getGroup(row?.canonical_task_id);
+    const score = Number(row?.score);
+    const total = Number(row?.total_items ?? row?.totalItems);
+    if (!group || !Number.isInteger(score) || !Number.isInteger(total) || total <= 0 || score < 0 || score > total) return;
+    group.correct_answers += score;
+    group.incorrect_answers += total - score;
+    group.total_questions += total;
+    const responseSeconds = Number(row?.response_time_seconds);
+    if (Number.isInteger(responseSeconds) && responseSeconds >= 0) {
+      group._response_seconds_total += responseSeconds;
+      group._response_seconds_count += 1;
+    }
+  });
+  return [...groups.values()]
+    .map((group) => ({
+      canonical_task_id: group.canonical_task_id,
+      label: group.label,
+      map_id: group.map_id,
+      duration_seconds: group.duration_seconds,
+      correct_answers: group.correct_answers,
+      incorrect_answers: group.incorrect_answers,
+      total_questions: group.total_questions,
+      accuracy: group.total_questions > 0 ? Number(((group.correct_answers / group.total_questions) * 100).toFixed(2)) : null,
+      average_response_seconds: group._response_seconds_count > 0
+        ? Number((group._response_seconds_total / group._response_seconds_count).toFixed(2)) : null,
+    }))
+    .sort((left, right) => left.canonical_task_id.localeCompare(right.canonical_task_id));
+};
+
+function buildGroundedInsightInput({ gradeLevel, metrics = {}, activityLogs = [], quizSessions = [] } = {}) {
   const difficulty = metrics.difficultyBreakdown || {};
   return {
     grounding_policy_version: GROUNDING_POLICY_VERSION,
@@ -59,6 +121,7 @@ function buildGroundedInsightInput({ gradeLevel, metrics = {} } = {}) {
       total_questions: topic.totalQuestions ?? null,
     })),
     playtime_minutes: metrics.playtimeMinutes ?? null,
+    quest_evidence: buildQuestEvidence({ activityLogs, quizSessions }),
   };
 }
 
@@ -330,6 +393,7 @@ module.exports = {
   ANALYTICS_INSIGHT_MAX_OUTPUT_TOKENS,
   INSIGHT_RESPONSE_EXTRACTION_STAGES,
   buildGroundedInsightInput,
+  buildQuestEvidence,
   buildInsightFingerprint,
   createInsightDiagnostics,
   extractOutputTextWithDiagnostics,

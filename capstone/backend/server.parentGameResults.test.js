@@ -210,8 +210,9 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(insertedValues[10], null);
     assert.equal(insertedValues[11], GAME_RESULT_SESSION_ID);
     assert.equal(insertedValues[12], false);
-    assert.match(insertedSql, /\$23\s*\)/);
-    assert.equal(insertedValues.length, 23);
+    assert.match(insertedSql, /\$26\s*\)/);
+    assert.deepEqual(insertedValues.slice(23), [null, null, null]);
+    assert.equal(insertedValues.length, 26);
   });
 
   await t.test('rejects impossible graded totals before persisting leaderboard evidence', async () => {

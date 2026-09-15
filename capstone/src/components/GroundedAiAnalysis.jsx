@@ -28,6 +28,7 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
   const strengths = normalizeDisplayList(insight?.strengths);
   const weaknesses = normalizeDisplayList(insight?.weaknesses);
   const recommendations = normalizeDisplayList(insight?.recommendations);
+  const questInsights = Array.isArray(insight?.quest_insights) ? insight.quest_insights : [];
   const message = safeDisplayText(error || state.message, 'Grounded analysis is loading from recorded gameplay evidence.');
   const showRecovery = Boolean(onRefresh && !noData && !paused && (unavailable || stale || error));
   const generatedAt = state.generated_at ? new Date(state.generated_at) : null;
@@ -79,6 +80,17 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
           <InsightList title="Weaknesses" icon={AlertTriangle} tone="red" items={weaknesses} />
           <InsightList title="Recommendations" icon={MapPin} tone="orange" items={recommendations} />
         </>
+      )}
+      {questInsights.length > 0 && (
+        <div className="student-dashboard-card student-insight-list grounded-ai-quest-insights">
+          <div className="student-card-heading">
+            <span className="student-card-icon blue"><MapPin size={20} aria-hidden="true" /></span>
+            <div><h2>Per-Quest Evidence</h2><p>Structured facts from canonical task timing and graded results.</p></div>
+          </div>
+          <ul>{questInsights.map((quest) => (
+            <li key={quest.canonical_task_id}><strong>{safeDisplayText(quest.label, quest.canonical_task_id)}</strong>: {safeDisplayText(quest.summary, 'No recorded evidence.')}</li>
+          ))}</ul>
+        </div>
       )}
     </section>
   );

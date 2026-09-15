@@ -322,21 +322,41 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     }
   };
 
+  const openPermanentDeletion = async (record) => {
+    setDeletionError('');
+    setDeleting(true);
+    try {
+      const response = await fetch(apiUrl(`/api/playtime/${record.id}/permanent-delete-preview`), { headers: buildAuthHeaders() });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Unable to prepare permanent deletion.');
+      setDeletionTarget(payload);
+      setPendingDeletion({ kind: 'permanent', record });
+      setDeletionReason('');
+      setDeletionConfirmation('');
+    } catch (requestError) {
+      setDeletionError(requestError.message || 'Unable to prepare permanent deletion.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const confirmDeletion = async (event) => {
     event.preventDefault();
     if (!deletionReason.trim()) {
-      return setDeletionError(`Provide a reason for ${pendingDeletion?.kind === 'reset' ? 'reset' : 'archive'}.`);
+      return setDeletionError(`Provide a reason for ${pendingDeletion?.kind === 'reset' ? 'reset' : pendingDeletion?.kind === 'permanent' ? 'permanent deletion' : 'archive'}.`);
     }
     const isBulk = pendingDeletion?.kind === 'bulk';
     if (isBulk && Number(deletionTarget?.affected_count || 0) === 0) {
       return setDeletionError('No eligible completed Screen Time records can be archived.');
     }
     const isReset = pendingDeletion?.kind === 'reset';
-    if (deletionConfirmation !== (isReset ? 'RESET' : 'ARCHIVE')) return setDeletionError(`Type ${isReset ? 'RESET' : 'ARCHIVE'} to confirm.`);
+    const isPermanent = pendingDeletion?.kind === 'permanent';
+    const requiredConfirmation = isReset ? 'RESET' : isPermanent ? 'DELETE' : 'ARCHIVE';
+    if (deletionConfirmation !== requiredConfirmation) return setDeletionError(`Type ${requiredConfirmation} to confirm.`);
     setDeleting(true);
     setDeletionError('');
     try {
-       const endpoint = isBulk ? '/api/playtime/completed/bulk/archive' : `/api/playtime/${pendingDeletion.record.id}${isReset ? '/reset' : '/archive'}`;
+       const endpoint = isBulk ? '/api/playtime/completed/bulk/archive' : `/api/playtime/${pendingDeletion.record.id}${isReset ? '/reset' : isPermanent ? '/permanent-delete' : '/archive'}`;
        const response = await fetch(apiUrl(endpoint), {
          method: 'POST',
         headers: { ...buildAuthHeaders(), 'Content-Type': 'application/json' },
@@ -346,6 +366,11 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
           expected_count: Number(deletionTarget?.affected_count || 0),
           target_ids: Array.isArray(deletionTarget?.target_ids) ? deletionTarget.target_ids : [],
           target_fingerprint: deletionTarget?.target_fingerprint || '',
+         } : isPermanent ? {
+          reason: deletionReason.trim(),
+          confirmation: deletionConfirmation,
+          target_fingerprint: deletionTarget?.target_fingerprint || '',
+          preview_token: deletionTarget?.preview_token || '',
          } : { reason: deletionReason.trim(), confirmation: deletionConfirmation }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -526,8 +551,8 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                   <ModalPortal onClose={closeDeletionDialog}>
                     <div className="screen-time-deletion-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDeletionDialog(); }}>
                       <form className="screen-time-deletion-dialog" role="dialog" aria-modal="true" aria-labelledby="screen-time-deletion-title" onSubmit={confirmDeletion} onMouseDown={(event) => event.stopPropagation()}>
-                        <h2 id="screen-time-deletion-title">{pendingDeletion.kind === 'bulk' ? 'Archive Completed Screen Time Records' : pendingDeletion.kind === 'reset' ? 'Reset Screen Time' : 'Archive Screen Time Record'}</h2>
-                        {pendingDeletion.kind !== 'reset' && <p>This action archives the record from Screen Time history. Daily playtime usage accounting and the audit trail remain preserved.</p>}
+                        <h2 id="screen-time-deletion-title">{pendingDeletion.kind === 'bulk' ? 'Archive Completed Screen Time Records' : pendingDeletion.kind === 'reset' ? 'Reset Screen Time' : pendingDeletion.kind === 'permanent' ? 'Permanently Delete Archived Screen Time Record' : 'Archive Screen Time Record'}</h2>
+                        {pendingDeletion.kind === 'permanent' ? <p>This irreversible action deletes only this already archived Screen Time row. The account, game progress, activity history, and audit tombstone remain preserved.</p> : pendingDeletion.kind !== 'reset' && <p>This action archives the record from Screen Time history. Daily playtime usage accounting and the audit trail remain preserved.</p>}
                         {pendingDeletion.kind === 'bulk' ? (
                           <>
                             <p><strong>{deletionTarget?.visible_count ?? deletionTarget?.affected_count ?? 0} visible records match the current filters.</strong></p>
@@ -539,14 +564,14 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                           </>
                         ) : <p><strong>{pendingDeletion.record.student_name || pendingDeletion.record.game_student_id || 'Selected student'} · {formatDate(pendingDeletion.record.date_played)}</strong></p>}
                         {pendingDeletion.kind === 'reset' && <p>This resets the Screen Time baseline for the active student. Existing history and the active session are preserved.</p>}
-                        <label htmlFor="screen-time-deletion-reason">Reason for {pendingDeletion.kind === 'reset' ? 'reset' : 'archive'}</label>
+                        <label htmlFor="screen-time-deletion-reason">Reason for {pendingDeletion.kind === 'reset' ? 'reset' : pendingDeletion.kind === 'permanent' ? 'permanent deletion' : 'archive'}</label>
                         <textarea id="screen-time-deletion-reason" value={deletionReason} onChange={(event) => setDeletionReason(event.target.value.slice(0, 1000))} maxLength={1000} rows={4} disabled={deleting} />
-                        <label htmlFor="screen-time-deletion-confirmation">Type {pendingDeletion.kind === 'reset' ? 'RESET' : 'ARCHIVE'} to confirm</label>
+                        <label htmlFor="screen-time-deletion-confirmation">Type {pendingDeletion.kind === 'reset' ? 'RESET' : pendingDeletion.kind === 'permanent' ? 'DELETE' : 'ARCHIVE'} to confirm</label>
                         <input id="screen-time-deletion-confirmation" value={deletionConfirmation} onChange={(event) => setDeletionConfirmation(event.target.value)} autoComplete="off" disabled={deleting} />
                         {deletionError && <p className="screen-time-error" role="alert">{deletionError}</p>}
                         <div className="screen-time-deletion-actions">
                           <button type="button" className="screen-time-clear" onClick={closeDeletionDialog} disabled={deleting}>Cancel</button>
-                          <button type="submit" className="screen-time-danger-button" disabled={deleting || (pendingDeletion.kind === 'bulk' && Number(deletionTarget?.affected_count || 0) === 0)}>{deleting ? (pendingDeletion.kind === 'reset' ? 'Resetting…' : 'Archiving…') : pendingDeletion.kind === 'reset' ? 'Confirm Reset' : 'Confirm Archive'}</button>
+                          <button type="submit" className="screen-time-danger-button" disabled={deleting || (pendingDeletion.kind === 'bulk' && Number(deletionTarget?.affected_count || 0) === 0)}>{deleting ? (pendingDeletion.kind === 'reset' ? 'Resetting…' : pendingDeletion.kind === 'permanent' ? 'Deleting…' : 'Archiving…') : pendingDeletion.kind === 'reset' ? 'Confirm Reset' : pendingDeletion.kind === 'permanent' ? 'Permanently Delete' : 'Confirm Archive'}</button>
                         </div>
                       </form>
                     </div>
@@ -610,6 +635,11 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                             {isAdminAllView && filters.lifecycle !== 'archived' && String(record.status || '').toLowerCase() !== 'playing' && isHistoryDeletionEligible(record) && (
                               <button type="button" className="screen-time-danger-link" data-action="archive-playtime-record" onClick={() => openSingleDeletion(record)}>
                                 Archive
+                              </button>
+                            )}
+                            {isAdminAllView && filters.lifecycle === 'archived' && (
+                              <button type="button" className="screen-time-danger-link" data-action="permanently-delete-playtime-record" onClick={() => openPermanentDeletion(record)}>
+                                Permanently Delete
                               </button>
                             )}
                           </td>

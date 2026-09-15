@@ -66,12 +66,6 @@
   min-width: 0;
 }
 
-@media (min-width: 1200px) {
-  .student-progress-panel {
-    grid-template-columns: 1.5fr 1fr;
-  }
-}
-
 .student-progress-filters-card {
   padding: var(--spacing-lg, 24px);
   border: 1px solid var(--border-color, #e5e7eb);
@@ -199,6 +193,7 @@
   min-width: 0;
   container-type: inline-size;
   container-name: analytics-panel;
+  grid-column: 1 / -1;
 }
 
 .insights-header h2 {
@@ -1157,6 +1152,14 @@
 .student-progress-row-actions .table-reset-action {
   width: 100%;
   margin: 0;
+}
+
+.student-insight-copy,
+.student-insight-list li,
+.grounded-ai-quest-insights p {
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 @media (min-width: 1200px) {

@@ -179,6 +179,31 @@ describe('GroundedAiAnalysis', () => {
     expect(container.textContent).toContain('Current');
   });
 
+  test('renders deterministic per-quest evidence returned with the grounded insight', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis aiInsight={{
+        status: 'generated', data_level: 'sufficient_data', valid_result_count: 5,
+        insight: {
+          performance_insight: 'Recorded overall accuracy is 40%.',
+          strengths: [], weaknesses: ['Three of five recorded answers were incorrect.'],
+          recommendations: ['Review the recorded missed items.'],
+          quest_insights: [{
+            canonical_task_id: 'first-bandit-math-challenge', label: 'Bandit challenge',
+            map_id: 'oakleaf_village', duration_seconds: 240,
+            correct_answers: 2, incorrect_answers: 3, total_questions: 5,
+            accuracy: 40, average_response_time_seconds: 25,
+            summary: 'Bandit challenge: 2 correct and 3 incorrect across 5 graded answers (40% accuracy); 4m 0s recorded activity; 25s average response time.',
+          }],
+        },
+      }} />
+    ));
+
+    expect(container.textContent).toContain('Per-Quest Evidence');
+    expect(container.textContent).toContain('Bandit challenge');
+    expect(container.textContent).toContain('2 correct and 3 incorrect');
+    expect(container.textContent).toContain('25s average response time');
+  });
+
   test('renders the Student Insights selector with the dashboard styling hook', async () => {
     await act(async () => root.render(<StudentInsightsPanel
       students={[{ student_id: 11, student_name: 'Ana Reyes', game_student_id: '00000011' }]}

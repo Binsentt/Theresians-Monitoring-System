@@ -29,6 +29,16 @@ test('Top Achievers exposes the canonical integer Game Score while retaining acc
   assert.match(serverSource, /game_score: Number\.isFinite\(gameScore\)/);
 });
 
+test('Top Achievers uses the same Screen Time reset boundary and preserves archived history accounting', () => {
+  const handler = serverSource.slice(
+    serverSource.indexOf('const handleTopAchieversRequest'),
+    serverSource.indexOf("app.get('/api/top-achievers'")
+  );
+  assert.match(handler, /screen_time_reset_at/);
+  assert.match(handler, /COALESCE\(ps\.server_started_at, ps\.start_time\) >= COALESCE\(a\.screen_time_reset_at/);
+  assert.doesNotMatch(handler, /ps\.deleted_at IS NULL/);
+});
+
 test('Top Achievers and game leaderboard use only deduplicated current-cycle canonical milestones', () => {
   assert.match(serverSource, /LOWER\(BTRIM\(COALESCE\(sqm\.canonical_task_id, sqm\.milestone_id\)\)\) IN \(\$\{CANONICAL_CAMPAIGN_TASK_SQL\}\)/);
   assert.match(serverSource, /GROUP BY LOWER\(BTRIM\(COALESCE\(sqm\.canonical_task_id, sqm\.milestone_id\)\)\)/);
