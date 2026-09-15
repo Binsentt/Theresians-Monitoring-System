@@ -38,7 +38,6 @@ function StudentDirectoryTable({ rows }) {
             <th scope="col">Grade Level</th>
             <th scope="col">Section</th>
             <th scope="col">Parent (Relationship)</th>
-            <th scope="col">Account/Status</th>
             <th scope="col">Date Added</th>
           </tr>
         </thead>
@@ -50,7 +49,6 @@ function StudentDirectoryTable({ rows }) {
               <td>{row.grade_level || '—'}</td>
               <td>{row.section || '—'}</td>
               <td>{getParentDisplay(row)}</td>
-              <td>{formatDirectoryStatus(row)}</td>
               <td>{formatDirectoryDate(row.created_at)}</td>
             </tr>
           ))}
@@ -260,7 +258,7 @@ export default function AdminIdDirectory() {
                   <div className="id-directory-filters" aria-label="Student ID Directory controls">
                     <label className="id-directory-filter">
                       <span>Search students</span>
-                      <input aria-label="Search Student ID Directory" type="search" value={studentSearch} onChange={(event) => { setStudentSearch(event.target.value); setStudentPage(1); }} placeholder="Name, Student ID, Grade, Section, Parent, Status, or date" />
+                      <input aria-label="Search Student ID Directory" type="search" value={studentSearch} onChange={(event) => { setStudentSearch(event.target.value); setStudentPage(1); }} placeholder="Name, Student ID, Grade, Section, Parent, or date" />
                     </label>
                     <TablePrintButton reportTitle="Student ID Directory" reportContext={formatReportContext({ scope: studentSearch ? `Search: ${studentSearch}` : 'All active Student accounts', recordCount: filteredStudents.length })} label="Print Student Directory" showPrintHeading={false} />
                   </div>
@@ -279,7 +277,6 @@ export default function AdminIdDirectory() {
                     { header: 'Grade Level', value: (row) => row.grade_level || '—' },
                     { header: 'Section', value: (row) => row.section || '—' },
                     { header: 'Parent', value: getParentDisplay },
-                    { header: 'Status', value: formatDirectoryStatus },
                     { header: 'Date Added', value: (row) => formatDirectoryDate(row.created_at) },
                   ]}
                 />

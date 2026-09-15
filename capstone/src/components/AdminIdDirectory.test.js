@@ -100,6 +100,22 @@ describe('Admin ID Directory', () => {
     expect(container.querySelector('table[aria-label="Teacher ID Directory"]')).not.toBeNull();
   });
 
+  test('does not present website Account Status for Student identities while preserving Teacher status', async () => {
+    await act(async () => root.render(<AdminIdDirectory />));
+
+    const studentHeaders = Array.from(container.querySelectorAll('table[aria-label="Student ID Directory"] th'))
+      .map((header) => header.textContent.trim());
+    expect(studentHeaders).not.toContain('Account/Status');
+    expect(studentHeaders).not.toContain('Status');
+    expect(container.querySelector('[aria-label="Search Student ID Directory"]').placeholder).not.toMatch(/status/i);
+
+    const teacherTab = Array.from(container.querySelectorAll('[role="tab"]')).find((tab) => tab.textContent === 'Teachers');
+    await act(async () => teacherTab.click());
+    const teacherHeaders = Array.from(container.querySelectorAll('table[aria-label="Teacher ID Directory"] th'))
+      .map((header) => header.textContent.trim());
+    expect(teacherHeaders).toContain('Status');
+  });
+
   test('filters rows immediately without changing the source records', async () => {
     await act(async () => root.render(<AdminIdDirectory />));
     const idFilter = container.querySelector('[aria-label="Search Student ID Directory"]');

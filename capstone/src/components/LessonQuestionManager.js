@@ -247,10 +247,9 @@ export default function LessonQuestionManager() {
   const [previewQuestions, setPreviewQuestions] = useState([]);
   const [previewValidation, setPreviewValidation] = useState(null);
   const [previewQuestionsLoading, setPreviewQuestionsLoading] = useState(false);
-  const [editingPreviewQuestionId, setEditingPreviewQuestionId] = useState(null);
-  const [addingPreviewQuestion, setAddingPreviewQuestion] = useState(false);
-  const [previewQuestionDraft, setPreviewQuestionDraft] = useState(null);
-  const [previewQuestionErrors, setPreviewQuestionErrors] = useState([]);
+  const [previewEditMode, setPreviewEditMode] = useState(false);
+  const [previewQuestionDrafts, setPreviewQuestionDrafts] = useState([]);
+  const [previewQuestionErrors, setPreviewQuestionErrors] = useState({});
   const [previewQuestionSaving, setPreviewQuestionSaving] = useState(false);
   const [previewQuestionDirty, setPreviewQuestionDirty] = useState(false);
   const [approvingPreview, setApprovingPreview] = useState(false);
@@ -452,6 +451,8 @@ export default function LessonQuestionManager() {
   const previewPublicationEligibility = getPublicationEligibility(previewFile || {});
   const previewReviewEligibility = getReviewEligibility(previewFile || {});
   const previewApprovalRequired = previewFile?.approval_status === 'review_required';
+  const previewIsActive = Boolean(previewFile?.published || previewFile?.publish_status === 'active');
+  const displayedPreviewQuestionCount = previewEditMode ? previewQuestionDrafts.length : previewQuestions.length;
   const previewCanShowApprove = ['admin', 'teacher', 'parent_teacher'].includes(normalizeRole(user?.role))
     && previewApprovalRequired;
   const previewCanApprove = previewCanShowApprove
@@ -871,6 +872,7 @@ export default function LessonQuestionManager() {
         data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Unable to delete this question.');
         setPreviewQuestions((current) => current.filter((item) => item.id !== pendingDeletion.question.id));
+        setPreviewQuestionDrafts((current) => current.filter((item) => item.id !== pendingDeletion.question.id));
         if (data.file) setQuestionPreviewDetails(normalizeManagedLearningFile(data.file));
         if (data.validation) setPreviewValidation(data.validation);
         if (data.review_fingerprint) setReviewSnapshotKey(String(data.review_fingerprint));
@@ -993,10 +995,9 @@ export default function LessonQuestionManager() {
     setApprovingPreview(false);
     setReviewComplete(false);
     setReviewSnapshotKey('');
-    setEditingPreviewQuestionId(null);
-    setAddingPreviewQuestion(false);
-    setPreviewQuestionDraft(null);
-    setPreviewQuestionErrors([]);
+    setPreviewEditMode(false);
+    setPreviewQuestionDrafts([]);
+    setPreviewQuestionErrors({});
     setPreviewQuestionSaving(false);
     setPreviewQuestionDirty(false);
   };
@@ -1012,10 +1013,9 @@ export default function LessonQuestionManager() {
     setApprovingPreview(false);
     setReviewComplete(false);
     setReviewSnapshotKey('');
-    setEditingPreviewQuestionId(null);
-    setAddingPreviewQuestion(false);
-    setPreviewQuestionDraft(null);
-    setPreviewQuestionErrors([]);
+    setPreviewEditMode(false);
+    setPreviewQuestionDrafts([]);
+    setPreviewQuestionErrors({});
     setPreviewQuestionDirty(false);
     try {
       const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${file.id}/questions`));
@@ -1035,103 +1035,141 @@ export default function LessonQuestionManager() {
     }
   };
 
-  const beginPreviewQuestionEdit = (question) => {
-    const options = Array.isArray(question.options) ? question.options.slice(0, 4) : [];
+  const toPreviewQuestionDraft = (question, index) => {
+    const options = Array.isArray(question?.options) ? question.options.slice(0, 4) : [];
     while (options.length < 4) options.push('');
-    setEditingPreviewQuestionId(question.id);
-    setAddingPreviewQuestion(false);
-    setPreviewQuestionDraft({
-      question: String(question.question || ''),
+    return {
+      id: question?.id || null,
+      client_id: question?.id ? `question-${question.id}` : `new-question-${Date.now()}-${index}`,
+      question: String(question?.question || ''),
       options,
-      correct_answer: String(question.correct_answer || ''),
-      math_topic: String(question.math_topic || previewFile?.math_topic || ''),
-      topic_id: question.topic_id || previewFile?.topic_id || null,
-    });
-    setPreviewQuestionErrors([]);
-    setPreviewQuestionDirty(false);
+      correct_answer: String(question?.correct_answer || ''),
+      math_topic: String(question?.math_topic || previewFile?.math_topic || ''),
+      topic_id: question?.topic_id || previewFile?.topic_id || null,
+      is_new: !question?.id,
+    };
   };
 
-  const beginPreviewQuestionAdd = () => {
+  const beginPreviewQuestionEditAll = () => {
     if (!previewFile || previewQuestionsLoading || previewGenerationStatus.inProgress || previewFile.published || previewFile.publish_status === 'active') return;
-    setEditingPreviewQuestionId(null);
-    setAddingPreviewQuestion(true);
-    setPreviewQuestionDraft({
-      question: '',
-      options: ['', '', '', ''],
-      correct_answer: '',
-      math_topic: String(previewFile.math_topic || ''),
-      topic_id: previewFile.topic_id || null,
-    });
-    setPreviewQuestionErrors([]);
+    setPreviewQuestionDrafts(previewQuestions.map(toPreviewQuestionDraft));
+    setPreviewEditMode(true);
+    setPreviewQuestionErrors({});
     setPreviewQuestionDirty(false);
   };
 
-  const updatePreviewQuestionDraft = (field, value) => {
-    setPreviewQuestionDraft((current) => ({ ...current, [field]: value }));
-    setPreviewQuestionDirty(true);
-    setPreviewQuestionErrors([]);
+  const cancelPreviewQuestionEditing = () => {
+    if (previewQuestionDirty && !window.confirm('Discard unsaved question changes?')) return;
+    setPreviewEditMode(false);
+    setPreviewQuestionDrafts([]);
+    setPreviewQuestionErrors({});
+    setPreviewQuestionDirty(false);
   };
 
-  const updatePreviewQuestionOption = (optionIndex, value) => {
-    setPreviewQuestionDraft((current) => {
-      const options = [...current.options];
+  const addPreviewQuestionDraft = () => {
+    setPreviewQuestionDrafts((current) => [...current, toPreviewQuestionDraft(null, current.length)]);
+    setPreviewQuestionDirty(true);
+    setPreviewQuestionErrors({});
+  };
+
+  const updatePreviewQuestionDraft = (draftIndex, field, value) => {
+    setPreviewQuestionDrafts((current) => current.map((draft, index) => (
+      index === draftIndex ? { ...draft, [field]: value } : draft
+    )));
+    setPreviewQuestionDirty(true);
+    setPreviewQuestionErrors((current) => ({ ...current, [draftIndex]: [] }));
+  };
+
+  const updatePreviewQuestionOption = (draftIndex, optionIndex, value) => {
+    setPreviewQuestionDrafts((current) => current.map((draft, index) => {
+      if (index !== draftIndex) return draft;
+      const options = [...draft.options];
       const priorValue = options[optionIndex];
       options[optionIndex] = value;
       return {
-        ...current,
+        ...draft,
         options,
-        correct_answer: current.correct_answer === priorValue ? value : current.correct_answer,
+        correct_answer: draft.correct_answer === priorValue ? value : draft.correct_answer,
       };
-    });
+    }));
     setPreviewQuestionDirty(true);
-    setPreviewQuestionErrors([]);
+    setPreviewQuestionErrors((current) => ({ ...current, [draftIndex]: [] }));
   };
 
-  const validatePreviewQuestionDraft = (draft) => validateManualQuestionDraft(draft);
+  const previewQuestionPayload = (draft) => ({
+    question: draft.question.trim(),
+    options: draft.options.map((option) => option.trim()),
+    correct_answer: draft.correct_answer.trim(),
+    math_topic: draft.math_topic.trim() || null,
+    topic_id: draft.topic_id || null,
+  });
 
-  const savePreviewQuestion = async () => {
-    if (!previewFile || (!editingPreviewQuestionId && !addingPreviewQuestion) || previewQuestionSaving) return;
-    const errors = validatePreviewQuestionDraft(previewQuestionDraft);
-    if (errors.length > 0) {
-      setPreviewQuestionErrors(errors);
+  const previewQuestionChanged = (draft) => {
+    if (draft.is_new) return true;
+    const original = previewQuestions.find((question) => question.id === draft.id);
+    if (!original) return true;
+    return JSON.stringify(previewQuestionPayload(draft)) !== JSON.stringify(previewQuestionPayload(toPreviewQuestionDraft(original, 0)));
+  };
+
+  const savePreviewQuestionChanges = async () => {
+    if (!previewFile || !previewEditMode || previewQuestionSaving) return;
+    const validationErrors = Object.fromEntries(previewQuestionDrafts
+      .map((draft, index) => [index, validateManualQuestionDraft(draft)])
+      .filter(([, errors]) => errors.length > 0));
+    if (Object.keys(validationErrors).length > 0) {
+      setPreviewQuestionErrors(validationErrors);
       return;
     }
     setPreviewQuestionSaving(true);
     try {
-      const payload = {
-        question: previewQuestionDraft.question.trim(),
-        options: previewQuestionDraft.options.map((option) => option.trim()),
-        correct_answer: previewQuestionDraft.correct_answer.trim(),
-        math_topic: previewQuestionDraft.math_topic.trim() || null,
-        topic_id: previewQuestionDraft.topic_id || null,
-      };
-      const endpoint = editingPreviewQuestionId
-        ? `/api/learning-files/${previewFile.id}/questions/${editingPreviewQuestionId}`
-        : `/api/learning-files/${previewFile.id}/questions`;
-      const response = await fetchLessonManagerApi(lessonManagerApiUrl(endpoint), {
-        method: editingPreviewQuestionId ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Unable to save this question.');
-      setPreviewQuestions((current) => editingPreviewQuestionId
-        ? current.map((question) => (question.id === editingPreviewQuestionId ? { ...question, ...data.question } : question))
-        : [...current, data.question]);
-      if (data.file) setQuestionPreviewDetails(normalizeManagedLearningFile(data.file));
-      if (data.validation) setPreviewValidation(data.validation);
-      if (data.review_fingerprint) setReviewSnapshotKey(String(data.review_fingerprint));
+      let nextQuestions = [...previewQuestions];
+      let lastResponse = null;
+      let updatedCount = 0;
+      let addedCount = 0;
+      for (const draft of previewQuestionDrafts.filter(previewQuestionChanged)) {
+        const endpoint = draft.is_new
+          ? `/api/learning-files/${previewFile.id}/questions`
+          : `/api/learning-files/${previewFile.id}/questions/${draft.id}`;
+        const response = await fetchLessonManagerApi(lessonManagerApiUrl(endpoint), {
+          method: draft.is_new ? 'POST' : 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(previewQuestionPayload(draft)),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Unable to save these question changes.');
+        lastResponse = data;
+        if (draft.is_new) {
+          nextQuestions.push(data.question);
+          addedCount += 1;
+        } else {
+          nextQuestions = nextQuestions.map((question) => (question.id === draft.id ? { ...question, ...data.question } : question));
+          updatedCount += 1;
+        }
+      }
+      setPreviewQuestions(nextQuestions);
+      if (lastResponse?.file) setQuestionPreviewDetails(normalizeManagedLearningFile(lastResponse.file));
+      if (lastResponse?.validation) setPreviewValidation(lastResponse.validation);
+      if (lastResponse?.review_fingerprint) setReviewSnapshotKey(String(lastResponse.review_fingerprint));
       setReviewComplete(false);
-      setEditingPreviewQuestionId(null);
-      setAddingPreviewQuestion(false);
-      setPreviewQuestionDraft(null);
+      setPreviewEditMode(false);
+      setPreviewQuestionDrafts([]);
+      setPreviewQuestionErrors({});
       setPreviewQuestionDirty(false);
-      showNotification(`${editingPreviewQuestionId ? 'Question saved' : 'Question added'}. Review approval is required again before Push to Game.`);
+      const changeLabel = addedCount > 0
+        ? `${addedCount === 1 ? 'Question added' : `${addedCount} questions added`}${updatedCount > 0 ? ` and ${updatedCount} updated` : ''}`
+        : `${updatedCount || 'No'} question${updatedCount === 1 ? '' : 's'} updated`;
+      showNotification(`${changeLabel}. Review approval is required again before Push to Game.`);
     } catch (error) {
-      setPreviewQuestionErrors([error.message || 'Unable to save this question.']);
+      setPreviewQuestionErrors({ form: [error.message || 'Unable to save these question changes.'] });
     } finally {
       setPreviewQuestionSaving(false);
     }
+  };
+
+  const removeNewPreviewQuestionDraft = (draftIndex) => {
+    setPreviewQuestionDrafts((current) => current.filter((_, index) => index !== draftIndex));
+    setPreviewQuestionErrors({});
+    setPreviewQuestionDirty(true);
   };
 
   const deletePreviewQuestion = (question, index) => {
@@ -1966,43 +2004,20 @@ export default function LessonQuestionManager() {
                   </div>
                   <div className="generated-questions-preview-body" ref={previewBodyRef} tabIndex={0} role="region" aria-label="Questions to review">
                     <div className="generated-questions-list">
-                    {!previewQuestionsLoading && !previewGenerationStatus.inProgress && !previewGenerationStatus.failed && !(previewFile.published || previewFile.publish_status === 'active') && (
+                    {!previewQuestionsLoading && !previewGenerationStatus.inProgress && !previewGenerationStatus.failed && (
                       <div className="question-review-toolbar">
-                        <button type="button" className={getQuestionReviewActionClass('add')} onClick={beginPreviewQuestionAdd} disabled={previewQuestionSaving}>
-                          <Plus size={16} /> Add Question
-                        </button>
-                      </div>
-                    )}
-                    {addingPreviewQuestion && previewQuestionDraft && (
-                      <div className="question-preview-editor question-preview-add-editor" aria-label="Add question form">
-                        <h3>Add Question</h3>
-                        <p className="question-review-metadata">Grade: {previewFile.grade_level} · Difficulty: {previewFile.difficulty}</p>
-                        <p className="question-review-metadata">Destination: {getQuestionFolderPath(previewFile.grade_level, previewFile.difficulty)} · Parent set: {previewFile.source_learning_file_id ? `Source set #${previewFile.source_learning_file_id}` : (previewFile.title || previewFile.file_name)}</p>
-                        <p className="question-review-metadata">Topic: {previewFile.math_topic || 'Inherited from question set'}</p>
-                        <label className="question-editor-field question-editor-question-field">
-                          Question text
-                          <textarea className="question-editor-textarea" aria-label="New question text" value={previewQuestionDraft.question} onChange={(event) => updatePreviewQuestionDraft('question', event.target.value)} />
-                        </label>
-                        <div className="question-editor-choice-grid" aria-label="New answer choices">
-                          {previewQuestionDraft.options.map((option, optionIndex) => (
-                            <label key={optionIndex} className="question-editor-field">
-                              <span>Choice {String.fromCharCode(65 + optionIndex)}</span>
-                              <input aria-label={`New question choice ${String.fromCharCode(65 + optionIndex)}`} value={option} onChange={(event) => updatePreviewQuestionOption(optionIndex, event.target.value)} />
-                            </label>
-                          ))}
-                        </div>
-                        <label className="question-editor-field question-editor-correct-field">
-                          Correct answer
-                          <select aria-label="New question correct answer" value={previewQuestionDraft.correct_answer} onChange={(event) => updatePreviewQuestionDraft('correct_answer', event.target.value)}>
-                            <option value="">Select the correct answer</option>
-                            {previewQuestionDraft.options.map((option, optionIndex) => <option key={optionIndex} value={option}>{option || `Choice ${String.fromCharCode(65 + optionIndex)}`}</option>)}
-                          </select>
-                        </label>
-                        {previewQuestionErrors.map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
-                        <div className="edit-actions">
-                          <button type="button" className={getQuestionReviewActionClass('add')} onClick={savePreviewQuestion} disabled={previewQuestionSaving}>{previewQuestionSaving ? 'Adding...' : 'Add Question'}</button>
-                          <button type="button" className={getQuestionReviewActionClass('close')} onClick={() => { setAddingPreviewQuestion(false); setPreviewQuestionDraft(null); setPreviewQuestionErrors([]); setPreviewQuestionDirty(false); }} disabled={previewQuestionSaving}>Cancel</button>
-                        </div>
+                        {previewEditMode ? (
+                          <button type="button" className={getQuestionReviewActionClass('add')} onClick={addPreviewQuestionDraft} disabled={previewQuestionSaving}>
+                            <Plus size={16} /> Add Question
+                          </button>
+                        ) : (
+                          <button type="button" className={getQuestionReviewActionClass('edit')} onClick={beginPreviewQuestionEditAll} disabled={previewIsActive || previewQuestionSaving}>
+                            Edit Questions
+                          </button>
+                        )}
+                        {previewIsActive && (
+                          <p className="question-review-lock-message" role="status">This question set is currently active in the game. Remove it from the game before editing.</p>
+                        )}
                       </div>
                     )}
                     {previewQuestionsLoading ? (
@@ -2047,45 +2062,55 @@ export default function LessonQuestionManager() {
                             {previewGenerationStatus.failed && <button type="button" className="btn btn-secondary" onClick={previewGenerationStatus.partial ? retryPartialGeneration : () => { closeQuestionPreview(); setSelectedLessonSourceId(String(previewFile.source_learning_file_id || previewFile.id || '')); setShowUploadForm(true); }}>{previewGenerationStatus.partial ? 'Retry remaining questions' : 'Retry'}</button>}
                           </section>
                         )}
-                        <p className="question-review-metadata">Requested: {previewFile.requested_question_count ?? 'Not specified'} · Available: {previewQuestions.length}</p>
+                        <p className="question-review-metadata">Requested: {previewFile.requested_question_count ?? 'Not specified'} · Available: {displayedPreviewQuestionCount}</p>
                         {previewValidation?.is_valid === false && <p className="manager-inline-error" role="alert">Needs Correction — every question must have four distinct choices and a mapped correct answer.</p>}
                         {previewValidation?.is_valid !== false && previewIsReadyForGame && <p className="question-validation-valid">Valid — this question set is ready for manual Push to Game.</p>}
                         {previewValidation?.is_valid !== false && previewApprovalRequired && <p className="question-review-metadata">Approve this structurally valid set before Push to Game.</p>}
-                        {previewQuestions.map((question, index) => {
+                        {(previewEditMode ? previewQuestionDrafts : previewQuestions).map((question, index, visibleQuestions) => {
                           const questionErrors = getPreviewQuestionValidationErrors(question);
                           const questionIsValid = question.is_valid !== false && questionErrors.length === 0;
+                          const editorErrors = previewQuestionErrors[index] || [];
+                          const isNewQuestion = previewEditMode && question.is_new;
                           return (
-                            <React.Fragment key={question.id || `${question.question}-${index}`}>
+                            <React.Fragment key={question.client_id || question.id || `${question.question}-${index}`}>
                               <article
-                                ref={index === previewQuestions.length - 1 ? finalQuestionCardRef : null}
+                                ref={index === visibleQuestions.length - 1 ? finalQuestionCardRef : null}
                                 className={`generated-question-card ${questionIsValid ? 'valid' : 'invalid'}`}
                               >
-                                {editingPreviewQuestionId === question.id ? (
-                                  <div className="question-preview-editor" aria-label={`Edit question ${index + 1} form`}>
+                                {previewEditMode ? (
+                                  <div className={`question-preview-editor${isNewQuestion ? ' question-preview-add-editor' : ''}`} aria-label={isNewQuestion ? 'Add question form' : `Edit question ${index + 1} form`}>
+                                    <div className="question-editor-card-heading">
+                                      <h3>{isNewQuestion ? `New Question ${index + 1}` : `Question ${index + 1}`}</h3>
+                                      <button
+                                        type="button"
+                                        className={getQuestionReviewActionClass('delete')}
+                                        aria-label={`Delete question ${index + 1}`}
+                                        onClick={() => (isNewQuestion ? removeNewPreviewQuestionDraft(index) : deletePreviewQuestion(question, index))}
+                                        disabled={previewQuestionSaving}
+                                      >
+                                        Delete Question
+                                      </button>
+                                    </div>
                                     <label className="question-editor-field question-editor-question-field">
                                       Question text
-                                      <textarea className="question-editor-textarea" aria-label={`Question ${index + 1} text`} value={previewQuestionDraft.question} onChange={(event) => updatePreviewQuestionDraft('question', event.target.value)} />
+                                      <textarea className="question-editor-textarea" aria-label={isNewQuestion ? 'New question text' : `Question ${index + 1} text`} value={question.question} onChange={(event) => updatePreviewQuestionDraft(index, 'question', event.target.value)} />
                                     </label>
-                                    <div className="question-editor-choice-grid" aria-label="Answer choices">
-                                      {previewQuestionDraft.options.map((option, optionIndex) => (
+                                    <div className="question-editor-choice-grid" aria-label={isNewQuestion ? 'New answer choices' : `Question ${index + 1} answer choices`}>
+                                      {question.options.map((option, optionIndex) => (
                                         <label key={optionIndex} className="question-editor-field">
                                           <span>Choice {String.fromCharCode(65 + optionIndex)}</span>
-                                          <input aria-label={`Question ${index + 1} choice ${String.fromCharCode(65 + optionIndex)}`} value={option} onChange={(event) => updatePreviewQuestionOption(optionIndex, event.target.value)} />
+                                          <input aria-label={isNewQuestion ? `New question choice ${String.fromCharCode(65 + optionIndex)}` : `Question ${index + 1} choice ${String.fromCharCode(65 + optionIndex)}`} value={option} onChange={(event) => updatePreviewQuestionOption(index, optionIndex, event.target.value)} />
                                         </label>
                                       ))}
                                     </div>
                                     <label className="question-editor-field question-editor-correct-field">
                                       Correct answer
-                                      <select aria-label={`Question ${index + 1} correct answer`} value={previewQuestionDraft.correct_answer} onChange={(event) => updatePreviewQuestionDraft('correct_answer', event.target.value)}>
+                                      <select aria-label={isNewQuestion ? 'New question correct answer' : `Question ${index + 1} correct answer`} value={question.correct_answer} onChange={(event) => updatePreviewQuestionDraft(index, 'correct_answer', event.target.value)}>
                                         <option value="">Select the correct answer</option>
-                                        {previewQuestionDraft.options.map((option, optionIndex) => <option key={optionIndex} value={option}>{option || `Choice ${String.fromCharCode(65 + optionIndex)}`}</option>)}
+                                        {question.options.map((option, optionIndex) => <option key={optionIndex} value={option}>{option || `Choice ${String.fromCharCode(65 + optionIndex)}`}</option>)}
                                       </select>
                                     </label>
-                                    {previewQuestionErrors.map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
-                                    <div className="edit-actions">
-                                      <button type="button" className="btn btn-primary" aria-label={`Save question ${index + 1}`} onClick={savePreviewQuestion} disabled={previewQuestionSaving}>{previewQuestionSaving ? 'Saving...' : 'Save'}</button>
-                                      <button type="button" className="btn btn-secondary" onClick={() => { setEditingPreviewQuestionId(null); setPreviewQuestionDraft(null); setPreviewQuestionErrors([]); setPreviewQuestionDirty(false); }} disabled={previewQuestionSaving}>Cancel</button>
-                                    </div>
+                                    {editorErrors.map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
                                   </div>
                                 ) : (
                                   <>
@@ -2099,18 +2124,13 @@ export default function LessonQuestionManager() {
                                     </ol>
                                     <p className="question-review-metadata">{formatQuestionGradeLabel(question.grade_level || previewFile.grade_level)} · {question.difficulty || previewFile.difficulty}</p>
                                     {questionIsValid ? <p className="question-validation-valid">Valid</p> : questionErrors.map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
-                                    {!(previewFile.published || previewFile.publish_status === 'active') && (
-                                      <div className="edit-actions">
-                                        <button type="button" className={getQuestionReviewActionClass('edit')} aria-label={`Edit question ${index + 1}`} onClick={() => beginPreviewQuestionEdit(question)}>Edit</button>
-                                        <button type="button" className={getQuestionReviewActionClass('delete')} aria-label={`Delete question ${index + 1}`} onClick={() => deletePreviewQuestion(question, index)}>Delete Question</button>
-                                      </div>
-                                    )}
                                   </>
                                 )}
                               </article>
                             </React.Fragment>
                           );
                         })}
+                        {(previewQuestionErrors.form || []).map((error) => <p key={error} className="manager-inline-error" role="alert">{error}</p>)}
                       </>
                     )}
                     </div>
@@ -2119,7 +2139,16 @@ export default function LessonQuestionManager() {
                     <button type="button" className={getQuestionReviewActionClass('download')} onClick={() => downloadFile(previewFile)} disabled={!previewFile.file_url}>
                       <Download size={16} />Download Source
                     </button>
-                    {previewCanShowApprove && (
+                    {previewEditMode ? (
+                      <>
+                        <button type="button" className={getQuestionReviewActionClass('approve')} onClick={savePreviewQuestionChanges} disabled={previewQuestionSaving}>
+                          {previewQuestionSaving ? 'Saving...' : 'Save Changes'}
+                        </button>
+                        <button type="button" className={getQuestionReviewActionClass('close')} onClick={cancelPreviewQuestionEditing} disabled={previewQuestionSaving}>
+                          Cancel Editing
+                        </button>
+                      </>
+                    ) : previewCanShowApprove && (
                       <button type="button" className={getQuestionReviewActionClass('approve')} onClick={approvePreviewQuestionSet} disabled={!previewCanApprove}>
                         Approve
                       </button>

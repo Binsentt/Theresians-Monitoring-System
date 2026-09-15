@@ -460,14 +460,21 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).not.toContain('Generating questions');
     expect(document.body.textContent).toContain('Grade 1 · Easy');
     expect(document.body.textContent).not.toContain('Grade Grade 1');
-    expect(document.body.querySelector('button[aria-label="Edit question 1"]')).not.toBeNull();
+    expect(document.body.querySelector('button[aria-label="Edit question 1"]')).toBeNull();
+    expect(Array.from(document.body.querySelectorAll('button')).filter((button) => button.textContent.includes('Edit Questions'))).toHaveLength(1);
   });
 
-  test('edits a staged preview question, preserves correct-choice mapping, and persists through the scoped backend route', async () => {
+  test('edits every staged question in one workspace, preserves correct-choice mapping, and saves through scoped backend routes', async () => {
     fixtures.files = [buildReviewRequiredFile({ id: 77, title: 'editable.docx', file_name: 'editable.docx' })];
     await act(async () => root.render(<LessonQuestionManager />));
     await act(async () => clickByText(container, 'Preview'));
-    await act(async () => document.body.querySelector('button[aria-label="Edit question 1"]').click());
+    await act(async () => clickByText(document.body, 'Edit Questions'));
+
+    expect(document.body.querySelectorAll('.question-preview-editor')).toHaveLength(5);
+    expect(document.body.querySelectorAll('textarea[aria-label^="Question "][aria-label$=" text"]')).toHaveLength(5);
+    expect(document.body.querySelectorAll('button[aria-label^="Delete question "]')).toHaveLength(5);
+    expect(document.body.textContent).toContain('Save Changes');
+    expect(document.body.textContent).toContain('Cancel Editing');
 
     const questionText = document.body.querySelector('textarea[aria-label="Question 1 text"]');
     const secondChoice = document.body.querySelector('input[aria-label="Question 1 choice B"]');
@@ -478,7 +485,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
     expect(correctChoice.value).toBe('Five');
 
-    await act(async () => document.body.querySelector('button[aria-label="Save question 1"]').click());
+    await act(async () => clickByText(document.body, 'Save Changes'));
     const update = global.fetch.mock.calls.find(([url, options]) => String(url).includes('/questions/770') && options?.method === 'PUT');
     expect(update[0]).toBe('/api/learning-files/77/questions/770');
     expect(JSON.parse(update[1].body)).toEqual(expect.objectContaining({
@@ -487,12 +494,14 @@ describe('LessonQuestionManager upload and trash controls', () => {
       correct_answer: 'Five',
     }));
     expect(document.body.textContent).toContain('Five (Correct)');
+    expect(document.body.querySelectorAll('.question-preview-editor')).toHaveLength(0);
   });
 
   test('shows Add Question for a pending preview and persists a valid manual question', async () => {
     fixtures.files = [buildReviewRequiredFile({ id: 77, title: 'manual-add.docx', file_name: 'manual-add.docx' })];
     await act(async () => root.render(<LessonQuestionManager />));
     await act(async () => clickByText(container, 'Preview'));
+    await act(async () => clickByText(document.body, 'Edit Questions'));
     const addButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.includes('Add Question'));
     expect(addButton).toBeTruthy();
     await act(async () => addButton.click());
@@ -503,10 +512,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     await act(async () => setFieldValue(document.body.querySelector('input[aria-label="New question choice C"]'), '6'));
     await act(async () => setFieldValue(document.body.querySelector('input[aria-label="New question choice D"]'), '7'));
     await act(async () => setSelectValue(document.body.querySelector('select[aria-label="New question correct answer"]'), '5'));
-    await act(async () => {
-      const editor = document.body.querySelector('[aria-label="Add question form"]');
-      Array.from(editor.querySelectorAll('button')).find((button) => button.textContent.includes('Add Question')).click();
-    });
+    await act(async () => clickByText(document.body, 'Save Changes'));
     const request = global.fetch.mock.calls.find(([url, options]) => String(url).endsWith('/api/learning-files/77/questions') && options?.method === 'POST');
     expect(request).toBeTruthy();
     expect(JSON.parse(request[1].body)).toEqual(expect.objectContaining({
@@ -521,7 +527,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     fixtures.files = [buildReviewRequiredFile({ id: 77, title: 'responsive-editor.docx', file_name: 'responsive-editor.docx' })];
     await act(async () => root.render(<LessonQuestionManager />));
     await act(async () => clickByText(container, 'Preview'));
-    await act(async () => document.body.querySelector('button[aria-label="Edit question 1"]').click());
+    await act(async () => clickByText(document.body, 'Edit Questions'));
     expect(document.body.querySelector('.question-preview-editor')).not.toBeNull();
     expect(document.body.querySelector('.question-preview-editor textarea').classList).toContain('question-editor-textarea');
     expect(document.body.querySelector('.question-editor-choice-grid')).not.toBeNull();
@@ -534,7 +540,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     window.confirm = jest.fn(() => false);
     await act(async () => root.render(<LessonQuestionManager />));
     await act(async () => clickByText(container, 'Preview'));
-    await act(async () => document.body.querySelector('button[aria-label="Edit question 1"]').click());
+    await act(async () => clickByText(document.body, 'Edit Questions'));
     await act(async () => setFieldValue(document.body.querySelector('textarea[aria-label="Question 1 text"]'), 'Unsaved revision'));
     await act(async () => clickByText(document.body, 'Close'));
     expect(window.confirm).toHaveBeenCalled();
@@ -545,6 +551,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     fixtures.files = [buildReviewRequiredFile({ id: 77 })];
     await act(async () => root.render(<LessonQuestionManager />));
     await act(async () => clickByText(container, 'Preview'));
+    await act(async () => clickByText(document.body, 'Edit Questions'));
     await act(async () => document.body.querySelector('button[aria-label="Delete question 1"]').click());
     expect(global.fetch.mock.calls.some(([url, options]) => String(url).includes('/questions/770') && options?.method === 'DELETE')).toBe(false);
     const dialog = document.body.querySelector('[role="dialog"][aria-labelledby="question-manager-deletion-title"]');
@@ -1033,6 +1040,28 @@ describe('LessonQuestionManager upload and trash controls', () => {
     const deleteButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Delete'));
     expect(deleteButton.disabled).toBe(true);
     expect(deleteButton.title).toContain('Remove from Game before deleting this question set');
+  });
+
+  test('keeps an active question set view-only until it is removed from the game', async () => {
+    fixtures.files = [buildReviewRequiredFile({
+      id: 77,
+      title: 'active-review-set.docx',
+      file_name: 'active-review-set.docx',
+      published: true,
+      publish_status: 'active',
+      approval_status: 'approved',
+    })];
+
+    await act(async () => root.render(<LessonQuestionManager />));
+    await act(async () => clickByText(container, 'Preview'));
+
+    const editQuestions = Array.from(document.body.querySelectorAll('button'))
+      .find((button) => button.textContent.includes('Edit Questions'));
+    expect(editQuestions).toBeTruthy();
+    expect(editQuestions.disabled).toBe(true);
+    expect(document.body.textContent).toContain('This question set is currently active in the game. Remove it from the game before editing.');
+    expect(document.body.textContent).not.toContain('Add Question');
+    expect(document.body.querySelectorAll('button[aria-label^="Delete question "]')).toHaveLength(0);
   });
 
   test('an active set can be removed from Game only through an explicit confirmation', async () => {
@@ -2087,7 +2116,10 @@ describe('LessonQuestionManager upload and trash controls', () => {
       });
 
       const approveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Approve');
+      const editQuestionsButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Edit Questions');
       expect(approveButton).toBeTruthy();
+      expect(editQuestionsButton).toBeTruthy();
+      expect(editQuestionsButton.disabled).toBe(false);
       expect(approveButton.disabled).toBe(true);
       await markPreviewAsReviewed();
       expect(approveButton.disabled).toBe(false);
