@@ -202,6 +202,33 @@ describe('GroundedAiAnalysis', () => {
     expect(container.textContent).toContain('Bandit challenge');
     expect(container.textContent).toContain('2 correct and 3 incorrect');
     expect(container.textContent).toContain('25s average response time');
+    expect(container.textContent).not.toContain('4m 0s recorded activity');
+    expect(container.textContent).not.toContain('canonical task timing');
+  });
+
+  test('hides canonical quest duration from presentation without mutating graded or response-time evidence', async () => {
+    const questInsight = {
+      canonical_task_id: 'oakleaf-bandits',
+      label: 'Defeat All Bandits',
+      summary: 'Recorded evidence: recorded duration 240 seconds; 2 correct and 3 incorrect (40%); average recorded response time 25 seconds.',
+    };
+
+    await act(async () => root.render(
+      <GroundedAiAnalysis aiInsight={{
+        status: 'generated', data_level: 'sufficient_data', valid_result_count: 5,
+        insight: {
+          performance_insight: 'Recorded overall accuracy is 40%.',
+          strengths: [], weaknesses: [], recommendations: [],
+          quest_insights: [questInsight],
+        },
+      }} />
+    ));
+
+    expect(container.textContent).toContain('2 correct and 3 incorrect (40%)');
+    expect(container.textContent).toContain('average recorded response time 25 seconds');
+    expect(container.textContent).not.toContain('recorded duration');
+    expect(container.textContent).not.toContain('240 seconds');
+    expect(questInsight.summary).toContain('recorded duration 240 seconds');
   });
 
   test('renders the Student Insights selector with the dashboard styling hook', async () => {

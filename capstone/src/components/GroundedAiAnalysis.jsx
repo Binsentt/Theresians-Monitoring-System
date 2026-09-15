@@ -16,6 +16,17 @@ const InsightList = ({ title, icon: Icon, tone, items }) => (
   </div>
 );
 
+const withoutVisibleQuestDuration = (value) => {
+  const summary = safeDisplayText(value, '');
+  if (!summary) return 'No recorded evidence.';
+  const visibleClauses = summary.split(/\s*;\s*/).filter((clause) => {
+    const normalizedClause = clause.replace(/^Recorded evidence:\s*/i, '').trim();
+    return !/^(?:recorded\s+)?duration\b/i.test(normalizedClause)
+      && !/\brecorded activity\b/i.test(normalizedClause);
+  });
+  return visibleClauses.join('; ').trim() || 'No graded evidence is recorded for this task yet.';
+};
+
 export default function GroundedAiAnalysis({ aiInsight, error = '', loading = false, onRefresh }) {
   const state = aiInsight && typeof aiInsight === 'object' ? aiInsight : {};
   const insight = state.insight && typeof state.insight === 'object' ? state.insight : null;
@@ -85,10 +96,10 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
         <div className="student-dashboard-card student-insight-list grounded-ai-quest-insights">
           <div className="student-card-heading">
             <span className="student-card-icon blue"><MapPin size={20} aria-hidden="true" /></span>
-            <div><h2>Per-Quest Evidence</h2><p>Structured facts from canonical task timing and graded results.</p></div>
+            <div><h2>Per-Quest Evidence</h2><p>Structured facts from canonical quest records and graded results.</p></div>
           </div>
           <ul>{questInsights.map((quest) => (
-            <li key={quest.canonical_task_id}><strong>{safeDisplayText(quest.label, quest.canonical_task_id)}</strong>: {safeDisplayText(quest.summary, 'No recorded evidence.')}</li>
+            <li key={quest.canonical_task_id}><strong>{safeDisplayText(quest.label, quest.canonical_task_id)}</strong>: {withoutVisibleQuestDuration(quest.summary)}</li>
           ))}</ul>
         </div>
       )}
