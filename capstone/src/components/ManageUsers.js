@@ -305,6 +305,7 @@ export default function ManageUsers() {
       ? validateAdminParentChildren(parentChildren, sectionRegistry)
       : { isValid: true, formError: '', errors: [] };
     setAddTouched({ firstName: true, middleName: true, lastName: true, email: true, mobile_number: true, birthday: true, gender: true, employee_id: true });
+    setAddErrors((current) => ({ ...current, gender: validateUserField('gender', newUser.gender, selectedRole) }));
     setAddErrors(errors);
     setParentChildErrors(childValidation.errors);
     setParentChildFormError(childValidation.formError);
