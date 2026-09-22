@@ -335,3 +335,39 @@ describe('SettingsScreen dashboard layout', () => {
     expect(payload).not.toHaveProperty('mobile_number');
   });
 });
+
+
+test('wrong current password stays on settings and shows inline validation', async () => {
+  const fetchMock = jest.fn()
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: 1, name: 'Test User', email: 'test@gmail.com', role: 'parent' }),
+    })
+    .mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: async () => ({ code: 'CURRENT_PASSWORD_INCORRECT', error: 'Current password is incorrect.' }),
+    });
+  global.fetch = fetchMock;
+
+  await act(async () => root.render(<SettingsScreen />));
+  const changeButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Change Password'));
+  await act(async () => changeButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+  const inputs = container.querySelectorAll('input[type="password"]');
+  await act(async () => {
+    inputs[0].value = 'wrong-current';
+    inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+    inputs[1].value = 'StrongPass123!';
+    inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
+    inputs[2].value = 'StrongPass123!';
+    inputs[2].dispatchEvent(new Event('input', { bubbles: true }));
+    const submit = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Change Password'));
+    submit.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await Promise.resolve();
+  });
+
+  expect(container.textContent).toContain('Current password is incorrect.');
+  expect(container.textContent).not.toContain('Session expired. Please log in again.');
+  expect(mockNavigate).not.toHaveBeenCalledWith('/login', expect.anything());
+});
