@@ -132,6 +132,305 @@ const deleteStudentOwnedRecords = async (client, { studentIds, parentCode = null
   return deleted.rows;
 };
 
+const clearStudentLearningData = async (client, studentIds) => {
+  const ids = Array.from(new Set((studentIds || []).map((value) => normalizeId(value, 'Student account ID'))));
+  if (ids.length === 0) return;
+
+  await client.query('DELETE FROM public.game_results WHERE resolved_student_id = ANY($1::INTEGER[])', [ids]);
+  await client.query('DELETE FROM public.playtime_sessions WHERE student_id = ANY($1::INTEGER[])', [ids]);
+  await client.query('DELETE FROM public.student_game_progress WHERE student_id = ANY($1::INTEGER[])', [ids]);
+  await client.query('DELETE FROM public.student_quest_milestones WHERE student_id = ANY($1::INTEGER[])', [ids]);
+  await client.query('DELETE FROM public.student_ai_insights WHERE student_id = ANY($1::INTEGER[])', [ids]);
+};
+
+const archiveParentFamily = async (pool, parentId) => withFamilyTransaction(pool, async (client) => {
+  const parent = await lockParentAccount(client, parentId);
+  const children = await readManagedChildrenForUpdate(client, parent.id);
+  const studentIds = children.map((child) => Number(child.student_id)).filter(Number.isInteger);
+
+  if (studentIds.length > 0) {
+    await clearStudentLearningData(client, studentIds);
+    await client.query(
+      `UPDATE public.accounts
+      SET is_archived = true,
+          status = 'Offline',
+          progress_archived_at = NULL,
+          progress_archived_by = NULL,
+          progress_archive_reason = NULL,
+          otp_code = NULL,
+          otp_code_hash = NULL,
+          otp_purpose = NULL,
+          otp_attempts = 0,
+          otp_sent_at = NULL,
+          otp_challenge_id = NULL,
+          otp_expires_at = NULL,
+          session_version = COALESCE(session_version, 0) + 1
+       WHERE id = ANY($1::INTEGER[])
+         AND LOWER(role) = 'student'` ,
+      [studentIds]
+    );
+  }
+
+  const parentResult = await client.query(
+    `UPDATE public.accounts
+     SET is_archived = true,
+         status = 'Offline',
+         otp_code = NULL,
+         otp_code_hash = NULL,
+         otp_purpose = NULL,
+         otp_attempts = 0,
+         otp_sent_at = NULL,
+         otp_challenge_id = NULL,
+         otp_expires_at = NULL,
+         session_version = COALESCE(session_version, 0) + 1
+     WHERE id = $1
+     RETURNING *`,
+    [parent.id]
+  );
+  if (!parentResult.rows[0]) throw createFamilyError('Parent account could not be archived.', 409);
+
+  return {
+    archivedParent: parentResult.rows[0],
+    archivedChildren: children,
+    archivedStudentIds: studentIds,
+  };
+});
+
+const restoreParentFamily = async (pool, parentId) => withFamilyTransaction(pool, async (client) => {
+  const parent = await lockParentAccount(client, parentId, { requireArchived: true });
+  const children = await readManagedChildrenForUpdate(client, parent.id);
+  const studentIds = children.map((child) => Number(child.student_id)).filter(Number.isInteger);
+
+  const parentResult = await client.query(
+    `UPDATE public.accounts
+     SET is_archived = false,
+         status = CASE WHEN LOWER(COALESCE(status, '')) = 'offline' THEN 'Offline' ELSE status END,
+         session_version = COALESCE(session_version, 0) + 1
+     WHERE id = $1
+     RETURNING *`,
+    [parent.id]
+  );
+  if (!parentResult.rows[0]) throw createFamilyError('Parent account could not be restored.', 409);
+
+  if (studentIds.length > 0) {
+    await client.query(
+      `UPDATE public.accounts
+       SET is_archived = false,
+           status = 'Offline',
+           session_version = COALESCE(session_version, 0) + 1
+       WHERE id = ANY($1::INTEGER[])
+         AND LOWER(role) = 'student'`,
+      [studentIds]
+    );
+  }
+
+  return {
+    restoredParent: parentResult.rows[0],
+    restoredStudentIds: studentIds,
+  };
+});
+
+const permanentlyDeleteLegacySixDigitStudents = async (pool) => withFamilyTransaction(pool, async (client) => {
+  const result = await client.query(
+    `SELECT id, game_student_id
+     FROM public.accounts
+     WHERE LOWER(role) = 'student'
+       AND BTRIM(COALESCE(game_student_id, '')) ~ '^\d{6}
+  const parent = await lockParentAccount(client, parentId, { requireArchived: true });
+  const children = await readManagedChildrenForUpdate(client, parent.id);
+  const studentIds = children.map((child) => Number(child.student_id));
+  await assertExclusiveParentOwnership(client, parent.id, studentIds);
+  const deletedStudents = await deleteStudentOwnedRecords(client, {
+    studentIds,
+    parentCode: parent.parent_id || null,
+  });
+  const parentResult = await client.query(
+    `DELETE FROM public.accounts
+     WHERE id = $1
+     RETURNING id, name, email, role, parent_id`,
+    [parent.id]
+  );
+  if (!parentResult.rows[0]) throw createFamilyError('Parent account could not be permanently deleted.', 409);
+  return {
+    deletedParent: parentResult.rows[0],
+    deletedStudents,
+    deletedStudentIds: studentIds,
+  };
+});
+
+const unlinkManagedChild = async (pool, parentId, studentId, options = {}) => withFamilyTransaction(pool, async (client) => {
+  const parent = await lockParentAccount(client, parentId);
+  const result = await client.query(
+    `DELETE FROM public.teacher_student_relationships
+     WHERE teacher_id = $1
+       AND student_id = $2
+       AND LOWER(relationship_type) = 'parent'
+     RETURNING id, teacher_id, student_id, relationship_type`,
+    [parent.id, normalizeId(studentId, 'Student account ID')]
+  );
+  if (!result.rows[0]) throw createFamilyError('Parent-child relationship not found.', 404);
+  const relationship = result.rows[0];
+  const student = { id: Number(relationship.student_id) };
+  if (typeof options.afterMutation === 'function') {
+    await options.afterMutation(client, { parent, student, relationship });
+  }
+  return { parent, student, relationship };
+});
+
+const permanentlyDeleteManagedStudent = async (pool, parentId, studentId, options = {}) => withFamilyTransaction(pool, async (client) => {
+  const normalizedParentId = normalizeId(parentId, 'Parent account ID');
+  const normalizedStudentId = normalizeId(studentId, 'Student account ID');
+  const result = await client.query(
+    `SELECT parent.id AS parent_id,
+            parent.parent_id AS parent_code,
+            parent.role AS parent_role,
+            parent.is_archived AS parent_is_archived,
+            student.id AS student_id,
+            student.name AS student_name,
+            student.game_student_id
+     FROM public.accounts parent
+     JOIN public.teacher_student_relationships relationship
+       ON relationship.teacher_id = parent.id
+      AND LOWER(relationship.relationship_type) = 'parent'
+     JOIN public.accounts student
+       ON student.id = relationship.student_id
+      AND LOWER(student.role) = 'student'
+     WHERE parent.id = $1
+       AND student.id = $2
+     FOR UPDATE OF parent, relationship, student`,
+    [normalizedParentId, normalizedStudentId]
+  );
+  const managed = result.rows[0];
+  if (!managed) throw createFamilyError('Managed child account not found.', 404);
+  assertParentAccount({ role: managed.parent_role, is_archived: managed.parent_is_archived });
+  await assertExclusiveParentOwnership(client, normalizedParentId, [normalizedStudentId]);
+  const deletedStudents = await deleteStudentOwnedRecords(client, {
+    studentIds: [normalizedStudentId],
+    parentCode: null,
+  });
+  if (typeof options.afterMutation === 'function') {
+    await options.afterMutation(client, { managed, deletedStudent: deletedStudents[0] });
+  }
+  return { managed, deletedStudent: deletedStudents[0] };
+});
+
+module.exports = {
+  assertExclusiveParentOwnership,
+  deleteStudentOwnedRecords,
+  archiveParentFamily,
+  restoreParentFamily,
+  permanentlyDeleteLegacySixDigitStudents,
+  permanentlyDeleteManagedStudent,
+  permanentlyDeleteParentFamily,
+  readManagedChildrenForUpdate,
+  unlinkManagedChild,
+};
+
+     FOR UPDATE`
+  );
+  const studentIds = result.rows.map((row) => Number(row.id)).filter(Number.isInteger);
+  if (studentIds.length === 0) return { deletedStudents: [] };
+
+  await clearStudentLearningData(client, studentIds);
+  const deletedResult = await client.query(
+    `DELETE FROM public.accounts
+     WHERE id = ANY($1::INTEGER[])
+       AND LOWER(role) = 'student'
+       AND BTRIM(COALESCE(game_student_id, '')) ~ '^\d{6}
+  const parent = await lockParentAccount(client, parentId, { requireArchived: true });
+  const children = await readManagedChildrenForUpdate(client, parent.id);
+  const studentIds = children.map((child) => Number(child.student_id));
+  await assertExclusiveParentOwnership(client, parent.id, studentIds);
+  const deletedStudents = await deleteStudentOwnedRecords(client, {
+    studentIds,
+    parentCode: parent.parent_id || null,
+  });
+  const parentResult = await client.query(
+    `DELETE FROM public.accounts
+     WHERE id = $1
+     RETURNING id, name, email, role, parent_id`,
+    [parent.id]
+  );
+  if (!parentResult.rows[0]) throw createFamilyError('Parent account could not be permanently deleted.', 409);
+  return {
+    deletedParent: parentResult.rows[0],
+    deletedStudents,
+    deletedStudentIds: studentIds,
+  };
+});
+
+const unlinkManagedChild = async (pool, parentId, studentId, options = {}) => withFamilyTransaction(pool, async (client) => {
+  const parent = await lockParentAccount(client, parentId);
+  const result = await client.query(
+    `DELETE FROM public.teacher_student_relationships
+     WHERE teacher_id = $1
+       AND student_id = $2
+       AND LOWER(relationship_type) = 'parent'
+     RETURNING id, teacher_id, student_id, relationship_type`,
+    [parent.id, normalizeId(studentId, 'Student account ID')]
+  );
+  if (!result.rows[0]) throw createFamilyError('Parent-child relationship not found.', 404);
+  const relationship = result.rows[0];
+  const student = { id: Number(relationship.student_id) };
+  if (typeof options.afterMutation === 'function') {
+    await options.afterMutation(client, { parent, student, relationship });
+  }
+  return { parent, student, relationship };
+});
+
+const permanentlyDeleteManagedStudent = async (pool, parentId, studentId, options = {}) => withFamilyTransaction(pool, async (client) => {
+  const normalizedParentId = normalizeId(parentId, 'Parent account ID');
+  const normalizedStudentId = normalizeId(studentId, 'Student account ID');
+  const result = await client.query(
+    `SELECT parent.id AS parent_id,
+            parent.parent_id AS parent_code,
+            parent.role AS parent_role,
+            parent.is_archived AS parent_is_archived,
+            student.id AS student_id,
+            student.name AS student_name,
+            student.game_student_id
+     FROM public.accounts parent
+     JOIN public.teacher_student_relationships relationship
+       ON relationship.teacher_id = parent.id
+      AND LOWER(relationship.relationship_type) = 'parent'
+     JOIN public.accounts student
+       ON student.id = relationship.student_id
+      AND LOWER(student.role) = 'student'
+     WHERE parent.id = $1
+       AND student.id = $2
+     FOR UPDATE OF parent, relationship, student`,
+    [normalizedParentId, normalizedStudentId]
+  );
+  const managed = result.rows[0];
+  if (!managed) throw createFamilyError('Managed child account not found.', 404);
+  assertParentAccount({ role: managed.parent_role, is_archived: managed.parent_is_archived });
+  await assertExclusiveParentOwnership(client, normalizedParentId, [normalizedStudentId]);
+  const deletedStudents = await deleteStudentOwnedRecords(client, {
+    studentIds: [normalizedStudentId],
+    parentCode: null,
+  });
+  if (typeof options.afterMutation === 'function') {
+    await options.afterMutation(client, { managed, deletedStudent: deletedStudents[0] });
+  }
+  return { managed, deletedStudent: deletedStudents[0] };
+});
+
+module.exports = {
+  assertExclusiveParentOwnership,
+  deleteStudentOwnedRecords,
+  permanentlyDeleteManagedStudent,
+  permanentlyDeleteParentFamily,
+  readManagedChildrenForUpdate,
+  unlinkManagedChild,
+};
+
+     RETURNING id, game_student_id`,
+    [studentIds]
+  );
+
+  return { deletedStudents: deletedResult.rows };
+});
+
 const permanentlyDeleteParentFamily = async (pool, parentId) => withFamilyTransaction(pool, async (client) => {
   const parent = await lockParentAccount(client, parentId, { requireArchived: true });
   const children = await readManagedChildrenForUpdate(client, parent.id);
