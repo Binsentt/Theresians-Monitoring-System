@@ -371,3 +371,8 @@ test('wrong current password stays on settings and shows inline validation', asy
   expect(container.textContent).not.toContain('Session expired. Please log in again.');
   expect(mockNavigate).not.toHaveBeenCalledWith('/login', expect.anything());
 });
+
+
+test('password success uses the centered success modal instead of a top-right notification', () => {
+  expect(SettingsScreen.toString()).toContain('passwordSuccessModal');
+});
