@@ -67,6 +67,7 @@ const {
   createOtpChallenge,
   getOtpMaxAttempts,
   getOtpResendCooldownMs,
+  getOtpAttemptCooldownMs,
   hashOtpCode,
   isOtpCodeFormatValid,
   isOtpExpired,
@@ -1939,6 +1940,7 @@ const validateWebsitePassword = (value) => {
 const PUBLIC_RECOVERY_MESSAGE = 'If an eligible account matches this email, recovery instructions will be sent.';
 const OTP_MAX_ATTEMPTS = getOtpMaxAttempts(process.env);
 const OTP_RESEND_COOLDOWN_MS = getOtpResendCooldownMs(process.env);
+const OTP_ATTEMPT_COOLDOWN_MS = getOtpAttemptCooldownMs(process.env);
 
 const clearOtpChallenge = async (queryClient, accountId, { purpose = null, challengeId = null } = {}) => {
   const conditions = ['id = $1'];
@@ -4290,7 +4292,8 @@ app.post('/api/login', async (req, res) => {
 
     if (!emailSent) await clearOtpChallenge(pool, user.id, { purpose: 'login', challengeId: challenge.challengeId });
 
-    return res.json(buildLoginOtpResponse({ user, expiresAt: challenge.expiresAt, challengeId: challenge.challengeId, emailSent }));
+    return res.json(buildLoginOtpResponse({ user, expiresAt: challenge.expiresAt, challengeId: challenge.challengeId,
+    resendAvailableAt: new Date(Date.now() + OTP_RESEND_COOLDOWN_MS), emailSent }));
   } catch (err) {
     console.error('Login failed:', err.message);
     return res.status(500).json({ error: 'Login failed' });
@@ -4320,6 +4323,19 @@ app.post('/api/login/resend-otp', async (req, res) => {
     if (query.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     const user = query.rows[0];
     if (user.is_archived) return res.status(403).json({ error: 'Account archived' });
+    const now = new Date();
+    if (Number(user.otp_attempts || 0) >= OTP_MAX_ATTEMPTS
+      && isOtpResendCoolingDown(user.otp_sent_at, now, OTP_ATTEMPT_COOLDOWN_MS)) {
+      const retryAfterSeconds = Math.max(1, Math.ceil(
+        (new Date(user.otp_sent_at).getTime() + OTP_ATTEMPT_COOLDOWN_MS - now.getTime()) / 1000
+      ));
+      return res.status(429).json({
+        error: 'Too many incorrect OTP attempts. Please wait before requesting a new code.',
+        retryAfterSeconds,
+        code: 'OTP_ATTEMPT_COOLDOWN',
+      });
+    }
+
     if (isOtpResendCoolingDown(user.otp_sent_at, new Date(), OTP_RESEND_COOLDOWN_MS)) {
       const retryAfterSeconds = Math.max(1, Math.ceil((new Date(user.otp_sent_at).getTime() + OTP_RESEND_COOLDOWN_MS - Date.now()) / 1000));
       return res.status(429).json({ error: 'Please wait before requesting another verification code.', retryAfterSeconds });
@@ -4333,7 +4349,12 @@ app.post('/api/login/resend-otp', async (req, res) => {
     );
     if (!emailSent) await clearOtpChallenge(pool, user.id, { purpose: 'login', challengeId: challenge.challengeId });
 
-    return res.json(buildResendOtpResponse({ expiresAt: challenge.expiresAt, challengeId: challenge.challengeId, emailSent }));
+    return res.json(buildResendOtpResponse({
+      expiresAt: challenge.expiresAt,
+      challengeId: challenge.challengeId,
+      emailSent,
+      resendAvailableAt: new Date(Date.now() + OTP_RESEND_COOLDOWN_MS),
+    }));
   } catch (err) {
     console.error('Resend OTP failed:', err.message);
     return res.status(500).json({ error: 'Failed to resend OTP' });
@@ -4371,15 +4392,29 @@ app.post('/api/login/verify-otp', async (req, res) => {
             return res.status(401).json({ error: 'OTP expired' });
           }
           if (verification.reason === 'attempt_limit') {
-            await clearOtpChallenge(client, user.id, { purpose: 'login', challengeId: String(challengeId).trim() });
+            await client.query(
+              'UPDATE public.accounts SET otp_attempts = $1, otp_sent_at = $2 WHERE id = $3 AND otp_challenge_id = $4',
+              [OTP_MAX_ATTEMPTS, new Date(), user.id, String(challengeId).trim()]
+            );
             await client.query('COMMIT');
-            return res.status(429).json({ error: 'OTP attempt limit reached. Request a new code.' });
+            return res.status(429).json({
+              error: 'Too many incorrect OTP attempts. Please wait before requesting a new code.',
+              retryAfterSeconds: Math.floor(OTP_ATTEMPT_COOLDOWN_MS / 1000),
+              code: 'OTP_ATTEMPT_COOLDOWN',
+            });
           }
           const nextAttempts = Number(user.otp_attempts || 0) + 1;
           if (nextAttempts >= OTP_MAX_ATTEMPTS) {
-            await clearOtpChallenge(client, user.id, { purpose: 'login', challengeId: String(challengeId).trim() });
+            await client.query(
+              'UPDATE public.accounts SET otp_attempts = $1, otp_sent_at = $2 WHERE id = $3 AND otp_challenge_id = $4',
+              [OTP_MAX_ATTEMPTS, new Date(), user.id, String(challengeId).trim()]
+            );
             await client.query('COMMIT');
-            return res.status(429).json({ error: 'OTP attempt limit reached. Request a new code.' });
+            return res.status(429).json({
+              error: 'Too many incorrect OTP attempts. Please wait before requesting a new code.',
+              retryAfterSeconds: Math.floor(OTP_ATTEMPT_COOLDOWN_MS / 1000),
+              code: 'OTP_ATTEMPT_COOLDOWN',
+            });
           }
           await client.query('UPDATE public.accounts SET otp_attempts = $1 WHERE id = $2 AND otp_challenge_id = $3', [nextAttempts, user.id, String(challengeId).trim()]);
           await client.query('COMMIT');
