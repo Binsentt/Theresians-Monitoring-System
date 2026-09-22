@@ -384,8 +384,15 @@ export default function SettingsScreen() {
       error = 'Please fill out this field.';
     } else if (field === 'newPassword') {
       error = validateNewPassword(value);
+      if (!error && String(value) === String(nextForm.currentPassword)) {
+        error = 'New password must be different from your current password.';
+      }
     } else if (field === 'confirmPassword') {
-      error = value !== nextForm.newPassword ? 'Passwords do not match' : '';
+      if (value !== nextForm.newPassword) {
+        error = 'Passwords do not match';
+      } else if (String(value) === String(nextForm.currentPassword)) {
+        error = 'New password must be different from your current password.';
+      }
     }
 
     setPasswordErrors({ ...passwordErrors, [field]: error });
@@ -397,8 +404,14 @@ export default function SettingsScreen() {
     if (!String(passwordForm.newPassword || '').trim()) errors.newPassword = 'Please fill out this field.';
     const pwError = validateNewPassword(passwordForm.newPassword);
     if (pwError) errors.newPassword = pwError;
+    else if (String(passwordForm.newPassword) === String(passwordForm.currentPassword)) {
+      errors.newPassword = 'New password must be different from your current password.';
+    }
     if (!String(passwordForm.confirmPassword || '').trim()) errors.confirmPassword = 'Please fill out this field.';
     else if (passwordForm.newPassword !== passwordForm.confirmPassword) errors.confirmPassword = 'Passwords do not match';
+    else if (String(passwordForm.confirmPassword) === String(passwordForm.currentPassword)) {
+      errors.confirmPassword = 'New password must be different from your current password.';
+    }
 
     if (Object.keys(errors).length > 0) {
       setPasswordErrors(errors);
