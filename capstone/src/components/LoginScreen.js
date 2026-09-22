@@ -4,7 +4,7 @@ import logoImage from '../assets/images/STS_Logo.png';
 import { apiUrl } from '../api';
 import { getDefaultDashboardRoute, normalizeRole } from './manageUsers.utils';
 import { getOrCreateLoginDeviceId } from './session.utils';
-import { validateEmail, validatePassword, validateOtp } from '../utils/validation.utils';
+import { validateEmail, validatePassword, validateOtp, WEBSITE_PASSWORD_MIN_LENGTH } from '../utils/validation.utils';
 
 const SESSION_EXPIRED_MESSAGE = 'Your session has expired. Please login and verify OTP again.';
 
@@ -50,8 +50,18 @@ export default function LoginScreen() {
 
   const validatePasswordField = (passwordValue) => {
     const validation = validatePassword(passwordValue);
-    setPasswordError(validation.error || '');
-    return validation.isValid;
+    if (!validation.isValid) {
+      setPasswordError(validation.error || '');
+      return false;
+    }
+
+    if (passwordValue.length < WEBSITE_PASSWORD_MIN_LENGTH) {
+      setPasswordError(`Password must be at least ${WEBSITE_PASSWORD_MIN_LENGTH} characters.`);
+      return false;
+    }
+
+    setPasswordError('');
+    return true;
   };
 
   const validateOtpField = (otpValue) => {
@@ -63,8 +73,9 @@ export default function LoginScreen() {
   const handleEmailChange = (e) => {
     const value = e.target.value;
     setEmail(value);
-    // Validate in real-time after field has been touched or if error exists
-    if (emailTouched || emailError) {
+    // Keep validation inline and responsive while the user types.
+    // Empty initial state stays quiet until touched, but any non-empty value is validated immediately.
+    if (emailTouched || emailError || value.length > 0) {
       validateEmailField(value);
     }
   };
@@ -77,8 +88,9 @@ export default function LoginScreen() {
   const handlePasswordChange = (e) => {
     const value = e.target.value;
     setPassword(value);
-    // Validate in real-time after field has been touched or if error exists
-    if (passwordTouched || passwordError) {
+    // Keep validation inline and responsive while the user types.
+    // Empty initial state stays quiet until touched, but any non-empty value is validated immediately.
+    if (passwordTouched || passwordError || value.length > 0) {
       validatePasswordField(value);
     }
   };
@@ -92,8 +104,15 @@ export default function LoginScreen() {
     const value = e.target.value.replace(/[^0-9]/g, ''); // Only allow digits
     setOtp(value);
     setErrorMessage('');
-    // Validate in real-time after field has been touched or if error exists
-    if (otpTouched || otpError) {
+
+    // Keep an expired OTP error visible until a new code is issued.
+    if (otpExpiresAt && countdown <= 0) {
+      setOtpError('OTP expired. Please resend a new verification code.');
+      return;
+    }
+
+    // Validate format immediately after the field is active or once an error is present.
+    if (otpTouched || otpError || value.length > 0) {
       validateOtpField(value);
     }
   };
@@ -129,6 +148,10 @@ export default function LoginScreen() {
       const expires = new Date(otpExpiresAt).getTime();
       const remaining = Math.max(0, Math.round((expires - now) / 1000));
       setCountdown(remaining);
+
+      if (remaining <= 0) {
+        setOtpError('OTP expired. Please resend a new verification code.');
+      }
     };
 
     updateCountdown();
@@ -196,7 +219,34 @@ export default function LoginScreen() {
 
       const data = await response.json();
       if (!response.ok) {
-        setErrorMessage(data.error || 'Invalid email or password.');
+        const backendError = data.error || 'Invalid email or password.';
+        const normalizedError = String(backendError).toLowerCase();
+
+        if (response.status === 401 && normalizedError.includes('incorrect password')) {
+          setPasswordTouched(true);
+          setPasswordError('Incorrect password.');
+          setErrorMessage('');
+          if (passwordInputRef.current) passwordInputRef.current.focus();
+          return;
+        }
+
+        if (response.status === 404 && normalizedError.includes('email not found')) {
+          setEmailTouched(true);
+          setEmailError('Email not found.');
+          setErrorMessage('');
+          if (emailInputRef.current) emailInputRef.current.focus();
+          return;
+        }
+
+        if (normalizedError.includes('temporary password expired')) {
+          setPasswordTouched(true);
+          setPasswordError(backendError);
+          setErrorMessage('');
+          if (passwordInputRef.current) passwordInputRef.current.focus();
+          return;
+        }
+
+        setErrorMessage(backendError);
         return;
       }
 
@@ -232,6 +282,16 @@ export default function LoginScreen() {
     // Mark OTP field as touched
     setOtpTouched(true);
 
+    // Expired OTP is a field validation error and should block verification before the API call.
+    if (otpExpiresAt && countdown <= 0) {
+      setOtpError('OTP expired. Please resend a new verification code.');
+      if (otpInputRef.current) {
+        otpInputRef.current.focus();
+      }
+      setErrorMessage('');
+      return;
+    }
+
     // Validate OTP
     const isOtpValid = validateOtpField(otp);
 
@@ -262,7 +322,37 @@ export default function LoginScreen() {
       });
       const result = await res.json();
       if (!res.ok) {
-        setErrorMessage(result.error || 'Invalid OTP.');
+        const backendError = result.error || 'Invalid OTP.';
+        const normalizedError = String(backendError).toLowerCase();
+
+        setOtpTouched(true);
+
+        if (normalizedError.includes('expired')) {
+          setOtpError('OTP expired. Please resend a new verification code.');
+          setErrorMessage('');
+          if (otpInputRef.current) otpInputRef.current.focus();
+          return;
+        }
+
+        if (
+          normalizedError.includes('incorrect otp')
+          || normalizedError === 'invalid otp'
+          || normalizedError.includes('invalid or expired otp')
+        ) {
+          setOtpError('Incorrect OTP. Please enter the latest verification code.');
+          setErrorMessage('');
+          if (otpInputRef.current) otpInputRef.current.focus();
+          return;
+        }
+
+        if (normalizedError.includes('attempt limit')) {
+          setOtpError(backendError);
+          setErrorMessage('');
+          if (otpInputRef.current) otpInputRef.current.focus();
+          return;
+        }
+
+        setErrorMessage(backendError);
         return;
       }
       if (result.success && result.user) {
