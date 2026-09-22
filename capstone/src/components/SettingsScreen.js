@@ -424,7 +424,19 @@ export default function SettingsScreen() {
 
       const data = await response.json();
       if (!response.ok) {
+        const isCurrentPasswordError = data?.code === 'CURRENT_PASSWORD_INCORRECT'
+          || data?.error === 'Current password is incorrect.';
+        if (isCurrentPasswordError) {
+          setPasswordErrors((current) => ({
+            ...current,
+            currentPassword: 'Current password is incorrect.',
+          }));
+          setErrorMessage('');
+          return;
+        }
+
         setErrorMessage(data.error || 'Unable to change password.');
+        // Only an actual authentication/session failure should log the user out.
         if (response.status === 401 || response.status === 403) {
           clearStoredSession();
           navigate('/login', { replace: true, state: { sessionExpired: true } });
@@ -437,7 +449,13 @@ export default function SettingsScreen() {
         window.dispatchEvent(new Event('session-user-updated'));
         setUser(data.user);
       }
-      if (data.rememberToken) localStorage.setItem('rememberToken', data.rememberToken);
+      // The password endpoint issues a replacement website session because
+      // changing the password revokes the previous session. Persist it before
+      // doing anything else so the user stays signed in.
+      if (data.rememberToken) {
+        localStorage.setItem('rememberToken', data.rememberToken);
+        localStorage.removeItem('token');
+      }
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
       setPasswordErrors({});
       setErrorMessage('Password changed successfully!');
