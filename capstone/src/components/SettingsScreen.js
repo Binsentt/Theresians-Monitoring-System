@@ -376,27 +376,29 @@ export default function SettingsScreen() {
   };
 
   const handlePasswordFormChange = (field, value) => {
-    setPasswordForm({ ...passwordForm, [field]: value });
+    const nextForm = { ...passwordForm, [field]: value };
+    setPasswordForm(nextForm);
 
     let error = '';
-    if (field === 'currentPassword') {
-      error = !value ? 'Current password is required' : '';
+    if (!String(value || '').trim()) {
+      error = 'Please fill out this field.';
     } else if (field === 'newPassword') {
-      error = !value ? 'New password is required' : validateNewPassword(value);
+      error = validateNewPassword(value);
     } else if (field === 'confirmPassword') {
-      error = value !== passwordForm.newPassword ? 'Passwords do not match' : '';
+      error = value !== nextForm.newPassword ? 'Passwords do not match' : '';
     }
-    
+
     setPasswordErrors({ ...passwordErrors, [field]: error });
   };
 
   const validatePasswordChange = (requiresInitialPassword) => {
     const errors = {};
-    if (!requiresInitialPassword && !passwordForm.currentPassword) errors.currentPassword = 'Current password is required';
-    if (!passwordForm.newPassword) errors.newPassword = 'New password is required';
+    if (!requiresInitialPassword && !String(passwordForm.currentPassword || '').trim()) errors.currentPassword = 'Please fill out this field.';
+    if (!String(passwordForm.newPassword || '').trim()) errors.newPassword = 'Please fill out this field.';
     const pwError = validateNewPassword(passwordForm.newPassword);
     if (pwError) errors.newPassword = pwError;
-    if (passwordForm.newPassword !== passwordForm.confirmPassword) errors.confirmPassword = 'Passwords do not match';
+    if (!String(passwordForm.confirmPassword || '').trim()) errors.confirmPassword = 'Please fill out this field.';
+    else if (passwordForm.newPassword !== passwordForm.confirmPassword) errors.confirmPassword = 'Passwords do not match';
 
     if (Object.keys(errors).length > 0) {
       setPasswordErrors(errors);
