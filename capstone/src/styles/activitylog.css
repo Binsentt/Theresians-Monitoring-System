@@ -518,3 +518,15 @@
     font-size: 1.2rem;
   }
 }
+
+
+.activity-log-reset-input.error {
+  border-color: #dc2626 !important;
+  color: #991b1b;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+}
+
+.activity-log-reset-input.error:focus {
+  border-color: #dc2626 !important;
+  box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.14);
+}
