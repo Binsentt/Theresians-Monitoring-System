@@ -145,13 +145,13 @@ export default function ManageUsers() {
   };
 
   const validateNameField = (name, { required = true } = {}) => {
-    if (!String(name || '').trim()) return required ? 'This field is required.' : '';
+    if (!String(name || '').trim()) return required ? 'Please fill out this field.' : '';
     if (/[0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(name)) return 'No numbers or symbols allowed';
     return '';
   };
 
   const validateEmail = (email) => {
-    return validateEmailFormat(email).error || '';
+    return !String(email || '').trim() ? 'Please fill out this field.' : (validateEmailFormat(email).error || '');
   };
 
   const validatePhone = (phone, originalPhone) => {
@@ -178,12 +178,16 @@ export default function ManageUsers() {
     if (field === 'email') return validateEmail(value);
     if (field === 'mobile_number') return validatePhone(value, originalMobileNumber);
     if (field === 'birthday') return validateBirthday(value);
-    if (field === 'employee_id') return validateEmployeeId(value, { required: isTeacherRole(role) });
+    if (field === 'employee_id') {
+      const error = validateEmployeeId(value, { required: isTeacherRole(role) });
+      return isTeacherRole(role) && !String(value || '').trim() ? 'Please fill out this field.' : error;
+    }
+    if (field === 'gender') return String(value || '').trim() ? '' : 'Please fill out this field.';
     return '';
   };
 
   const validateUserForm = (form, role) => {
-    const fields = ['firstName', 'middleName', 'lastName', 'email', 'mobile_number', 'birthday', 'employee_id'];
+    const fields = ['firstName', 'middleName', 'lastName', 'email', 'mobile_number', 'birthday', 'gender', 'employee_id'];
     return fields.reduce((errors, field) => {
       const error = validateUserField(field, form[field], role);
       if (error) errors[field] = error;
@@ -300,7 +304,7 @@ export default function ManageUsers() {
     const childValidation = isParentRole(selectedRoleValue)
       ? validateAdminParentChildren(parentChildren, sectionRegistry)
       : { isValid: true, formError: '', errors: [] };
-    setAddTouched({ firstName: true, middleName: true, lastName: true, email: true, mobile_number: true, birthday: true, employee_id: true });
+    setAddTouched({ firstName: true, middleName: true, lastName: true, email: true, mobile_number: true, birthday: true, gender: true, employee_id: true });
     setAddErrors(errors);
     setParentChildErrors(childValidation.errors);
     setParentChildFormError(childValidation.formError);
