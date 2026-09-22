@@ -169,6 +169,9 @@ const {
 const { loadStudentAnalyticsEvidence, withStudentAnalyticsAliases } = require('./studentAnalyticsEvidence.service');
 const { resolveStudentAiInsight } = require('./studentAiInsight.service');
 const {
+  archiveParentFamily,
+  restoreParentFamily,
+  permanentlyDeleteLegacySixDigitStudents,
   permanentlyDeleteManagedStudent,
   permanentlyDeleteParentFamily,
   unlinkManagedChild,
@@ -701,6 +704,15 @@ const ensureSchema = async () => {
 };
 
 const schemaReady = ensureSchema();
+const legacySixDigitStudentCleanupReady = schemaReady.then(() => (
+  permanentlyDeleteLegacySixDigitStudents(pool)
+    .then((result) => {
+      if (result.deletedStudents.length > 0) {
+        console.log('Legacy 6-digit Student cleanup completed:', result.deletedStudents.length);
+      }
+      return result;
+    })
+));
 
 const generateRandomPassword = () => createTemporaryPassword();
 
@@ -4188,6 +4200,7 @@ const markStudentInsightStale = async (queryClient, studentId) => {
 app.use('/api', async (req, res, next) => {
   try {
     await schemaReady;
+    await legacySixDigitStudentCleanupReady;
     next();
   } catch (error) {
     res.status(503).json({ error: 'Database schema is not ready.' });
@@ -8470,6 +8483,28 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
       operationType: permanent ? 'permanent_delete' : 'archive',
     };
 
+    if (!permanent && accountHasParentAccess(accountRole)) {
+      const familyResult = await archiveParentFamily(pool, id);
+      await writeAdminAuditLog(req.authenticatedUser, 'Archive Account', targetAccount, {
+        ...auditOptions,
+        beforeMetadata: {
+          archived_family: true,
+          archived_child_count: familyResult.archivedStudentIds.length,
+          archived_student_ids: familyResult.archivedStudentIds,
+        },
+        afterMetadata: {
+          parent_archived: true,
+          children_archived: true,
+          student_progress_cleared: true,
+        },
+      });
+      return res.json({
+        success: true,
+        message: 'Parent account and linked children archived',
+        archived_child_count: familyResult.archivedStudentIds.length,
+      });
+    }
+
     if (permanent) {
       if (accountHasParentAccess(accountRole)) {
         const familyResult = await permanentlyDeleteParentFamily(pool, id);
@@ -8727,10 +8762,28 @@ app.delete('/api/learning-files/:id/questions/:questionId', requireLessonQuestio
 app.post('/api/accounts/:id/restore', requireAccountManagementAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const accountResult = await pool.query('SELECT id, role FROM public.accounts WHERE id = $1', [id]);
+    const accountResult = await pool.query('SELECT id, role, is_archived FROM public.accounts WHERE id = $1', [id]);
     if (accountResult.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
     if (!isWebsiteManagedAccountRole(accountResult.rows[0].role)) {
       return res.status(403).json({ error: 'Manage Users can only restore website accounts.' });
+    }
+
+    if (accountHasParentAccess(accountResult.rows[0].role)) {
+      const familyResult = await restoreParentFamily(pool, id);
+      await writeAdminAuditLog(req.authenticatedUser, 'Restore Account', familyResult.restoredParent, {
+        operationType: 'restore',
+        afterMetadata: {
+          parent_restored: true,
+          children_restored: true,
+          restored_child_count: familyResult.restoredStudentIds.length,
+        },
+      });
+      return res.json({
+        success: true,
+        message: 'Parent account and linked children restored',
+        user: serializeUser(familyResult.restoredParent),
+        restored_child_count: familyResult.restoredStudentIds.length,
+      });
     }
 
     const result = await pool.query('UPDATE public.accounts SET is_archived = false WHERE id = $1 RETURNING *', [id]);
@@ -8739,7 +8792,7 @@ app.post('/api/accounts/:id/restore', requireAccountManagementAdmin, async (req,
     res.json({ success: true, message: 'Account restored', user: serializeUser(result.rows[0]) });
   } catch (err) {
     console.error('Restore failed:', err.message);
-    res.status(500).json({ error: 'Restore failed' });
+    res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Restore failed' });
   }
 });
 
