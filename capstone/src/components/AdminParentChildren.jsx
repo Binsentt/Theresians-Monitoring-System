@@ -43,9 +43,7 @@ export default function AdminParentChildren({
       const studentId = String(child.studentId || '').trim();
       const error = localIdError(operation, studentId);
       if (operation === 'create') initial[key] = { status: 'idle', error: '' };
-      else if (!studentId) initial[key] = { status: 'error', error: operation === 'existing'
-        ? 'Student ID must be 8 digits (for example, 17000087 or 17-000087).'
-        : 'Student ID is required.' };
+      else if (!studentId) initial[key] = { status: 'error', error: 'Please fill out this field.' };
       else if (error) initial[key] = { status: 'error', error };
       else {
         initial[key] = { status: 'pending', error: '' };
