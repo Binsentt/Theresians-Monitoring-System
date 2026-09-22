@@ -1074,7 +1074,7 @@ export default function ManageUsers() {
 
                   <button
                     type="submit"
-                    disabled={adding || (isParentRole(selectedRole) && (parentChildAvailability.pending || !parentChildAvailability.isValid))}
+                    disabled={adding}
                     className="sts-submit-btn"
                   >
                     {adding ? `Adding ${selectedRole}...` : `Add ${selectedRole}`}
