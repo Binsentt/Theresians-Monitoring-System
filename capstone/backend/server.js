@@ -704,15 +704,22 @@ const ensureSchema = async () => {
 };
 
 const schemaReady = ensureSchema();
-const legacySixDigitStudentCleanupReady = schemaReady.then(() => (
-  permanentlyDeleteLegacySixDigitStudents(pool)
-    .then((result) => {
-      if (result.deletedStudents.length > 0) {
-        console.log('Legacy 6-digit Student cleanup completed:', result.deletedStudents.length);
-      }
-      return result;
-    })
-));
+
+// Legacy Student cleanup is deliberately decoupled from request startup.
+// A cleanup failure must never take the API process down or make every request
+// wait on an optional data-maintenance operation.
+const legacySixDigitStudentCleanupReady = schemaReady
+  .then(() => permanentlyDeleteLegacySixDigitStudents(pool))
+  .then((result) => {
+    if (result.deletedStudents.length > 0) {
+      console.log('Legacy 6-digit Student cleanup completed:', result.deletedStudents.length);
+    }
+    return result;
+  })
+  .catch((error) => {
+    console.error('Legacy 6-digit Student cleanup skipped:', error.message);
+    return { deletedStudents: [], skipped: true };
+  });
 
 const generateRandomPassword = () => createTemporaryPassword();
 
@@ -4200,7 +4207,8 @@ const markStudentInsightStale = async (queryClient, studentId) => {
 app.use('/api', async (req, res, next) => {
   try {
     await schemaReady;
-    await legacySixDigitStudentCleanupReady;
+    // Do not block API requests on the maintenance cleanup.
+    void legacySixDigitStudentCleanupReady;
     next();
   } catch (error) {
     res.status(503).json({ error: 'Database schema is not ready.' });
