@@ -46,12 +46,19 @@ export default function LoginScreen() {
   // Validation handlers
   const validateEmailField = (emailValue) => {
     const validation = validateEmail(emailValue);
-    setEmailError(validation.error || '');
+    const error = !String(emailValue || '').trim()
+      ? 'Please fill out this field.'
+      : (validation.error || '');
+    setEmailError(error);
     return validation.isValid;
   };
 
   const validatePasswordField = (passwordValue) => {
     const validation = validatePassword(passwordValue);
+    if (!String(passwordValue || '').trim()) {
+      setPasswordError('Please fill out this field.');
+      return false;
+    }
     if (!validation.isValid) {
       setPasswordError(validation.error || '');
       return false;
@@ -68,7 +75,10 @@ export default function LoginScreen() {
 
   const validateOtpField = (otpValue) => {
     const validation = validateOtp(otpValue);
-    setOtpError(validation.error || '');
+    const error = !String(otpValue || '').trim()
+      ? 'Please fill out this field.'
+      : (validation.error || '');
+    setOtpError(error);
     return validation.isValid;
   };
 
