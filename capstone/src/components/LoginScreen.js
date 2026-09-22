@@ -18,6 +18,8 @@ export default function LoginScreen() {
   const [pendingChallengeId, setPendingChallengeId] = useState(null);
   const [otpExpiresAt, setOtpExpiresAt] = useState(null);
   const [countdown, setCountdown] = useState(0);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [otpNotice, setOtpNotice] = useState('');
   const [rememberToken, setRememberToken] = useState('');
   const [deviceId, setDeviceId] = useState('');
   const [skipOtpFor30Days, setSkipOtpFor30Days] = useState(false);
@@ -159,6 +161,14 @@ export default function LoginScreen() {
     return () => clearInterval(interval);
   }, [otpExpiresAt]);
 
+  useEffect(() => {
+    if (resendCooldown <= 0) return undefined;
+    const interval = setInterval(() => {
+      setResendCooldown((previous) => Math.max(0, previous - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [resendCooldown]);
+
   const persistSuccessfulLogin = (payload) => {
     const requiresInitialPasswordSetup = payload?.requiresInitialPasswordSetup === true
       || payload?.user?.requiresInitialPasswordSetup === true;
@@ -259,6 +269,8 @@ export default function LoginScreen() {
         setPendingUserId(data.userId);
         setPendingChallengeId(data.challengeId || null);
         setOtpExpiresAt(data.otpExpiresAt);
+        setResendCooldown(Math.max(0, Math.ceil((new Date(data.resendAvailableAt || Date.now()).getTime() - Date.now()) / 1000)));
+        setOtpNotice('');
         setStep(2);
         // Clear field errors when transitioning to OTP step
         setOtpError('');
@@ -327,7 +339,17 @@ export default function LoginScreen() {
 
         setOtpTouched(true);
 
-        if (normalizedError.includes('expired')) {
+        if (normalizedError.includes('attempt limit') || normalizedError.includes('too many incorrect otp')) {
+          const waitSeconds = Number(result.retryAfterSeconds) || 180;
+          setOtpError('Too many incorrect OTP attempts. Please wait before requesting a new code.');
+          setResendCooldown(waitSeconds);
+          setOtpNotice('Too many incorrect OTP attempts. Please wait 3 minutes before requesting a new code.');
+          setErrorMessage('');
+          if (otpInputRef.current) otpInputRef.current.focus();
+          return;
+        }
+
+        if (normalizedError === 'otp expired') {
           setOtpError('OTP expired. Please resend a new verification code.');
           setErrorMessage('');
           if (otpInputRef.current) otpInputRef.current.focus();
@@ -340,13 +362,6 @@ export default function LoginScreen() {
           || normalizedError.includes('invalid or expired otp')
         ) {
           setOtpError('Incorrect OTP. Please enter the latest verification code.');
-          setErrorMessage('');
-          if (otpInputRef.current) otpInputRef.current.focus();
-          return;
-        }
-
-        if (normalizedError.includes('attempt limit')) {
-          setOtpError(backendError);
           setErrorMessage('');
           if (otpInputRef.current) otpInputRef.current.focus();
           return;
@@ -372,8 +387,13 @@ export default function LoginScreen() {
       setErrorMessage('Cannot resend OTP without a login attempt.');
       return;
     }
+    if (resendCooldown > 0) {
+      setOtpNotice(`Please wait ${resendCooldown}s before requesting another verification code.`);
+      return;
+    }
     authRequestInFlightRef.current = true;
     setErrorMessage('');
+    setOtpNotice('');
     setLoading(true);
     try {
       const res = await fetch(apiUrl('/api/login/resend-otp'), {
@@ -383,6 +403,21 @@ export default function LoginScreen() {
       });
       const data = await res.json();
       if (!res.ok) {
+        if (data.code === 'OTP_ATTEMPT_COOLDOWN' || String(data.error || '').toLowerCase().includes('too many incorrect otp')) {
+          const waitSeconds = Number(data.retryAfterSeconds) || 180;
+          setResendCooldown(waitSeconds);
+          setOtpNotice(`Too many incorrect OTP attempts. Please wait ${Math.ceil(waitSeconds / 60)} minutes before requesting a new code.`);
+          setErrorMessage('');
+          return;
+        }
+
+        if (Number(data.retryAfterSeconds) > 0) {
+          setResendCooldown(Number(data.retryAfterSeconds));
+          setOtpNotice(`Please wait ${data.retryAfterSeconds}s before requesting another verification code.`);
+          setErrorMessage('');
+          return;
+        }
+
         setErrorMessage(data.error || 'Failed to resend OTP.');
         return;
       }
@@ -391,7 +426,8 @@ export default function LoginScreen() {
       setOtpTouched(false);
       setOtpError('');
       setOtpExpiresAt(data.otpExpiresAt);
-      setErrorMessage(data.warning || 'A new code was sent to your email.');
+      setResendCooldown(Math.max(0, Math.ceil((new Date(data.resendAvailableAt || Date.now()).getTime() - Date.now()) / 1000)));
+      setOtpNotice(data.warning || 'A new verification code was sent to your email.');
     } catch (err) {
       setErrorMessage('Network error while resending OTP.');
     } finally {
@@ -526,18 +562,43 @@ export default function LoginScreen() {
                 />
                 <span>Trust this device for 30 days</span>
               </label>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                <small style={{ color: '#555' }}>
-                  {countdown > 0 ? `Code expires in ${countdown}s` : 'Code expired. Please resend.'}
-                </small>
+              {otpNotice && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    marginBottom: '12px',
+                    padding: '10px 14px',
+                    borderRadius: '6px',
+                    textAlign: 'center',
+                    backgroundColor: document.documentElement.getAttribute('data-theme') === 'dark' ? '#1f3b2b' : '#e8f5e9',
+                    color: document.documentElement.getAttribute('data-theme') === 'dark' ? '#b7f0c2' : '#1b5e20',
+                    border: document.documentElement.getAttribute('data-theme') === 'dark' ? '1px solid #356348' : '1px solid #b7dfba'
+                  }}
+                >
+                  {otpNotice}
+                </div>
+              )}
+
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                  <small style={{ color: '#555' }}>
+                    {countdown > 0 ? `Code expires in ${countdown}s` : 'Code expired.'}
+                  </small>
+                  <small style={{ color: '#555' }}>
+                    {resendCooldown > 0 ? `Resend available in ${resendCooldown}s` : 'You can request a new code'}
+                  </small>
+                </div>
                 <button
                   className="resend-otp-button"
                   type="button"
                   onClick={handleResendOtp}
-                  disabled={loading || countdown > 0}
-                  style={{ padding: '8px 16px', borderRadius: '6px', cursor: loading ? 'not-allowed' : 'pointer' }}
+                  disabled={loading || resendCooldown > 0}
+                  style={{ padding: '8px 16px', borderRadius: '6px', cursor: loading || resendCooldown > 0 ? 'not-allowed' : 'pointer', width: '100%' }}
                 >
-                  RESEND CODE
+                  {resendCooldown > 0 ? `RESEND CODE (${resendCooldown}s)` : 'RESEND CODE'}
                 </button>
               </div>
               <button className="sts-login-button" onClick={handleVerifyOtp} disabled={loading}>
@@ -550,6 +611,8 @@ export default function LoginScreen() {
                   setPendingChallengeId(null);
                   setOtp('');
                   setOtpExpiresAt(null);
+                  setResendCooldown(0);
+                  setOtpNotice('');
                   setSkipOtpFor30Days(false);
                   setErrorMessage('');
                   // Clear field errors

@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const OTP_LENGTH = 6;
 const DEFAULT_OTP_MAX_ATTEMPTS = 5;
 const DEFAULT_OTP_RESEND_COOLDOWN_MS = 30 * 1000;
+const DEFAULT_OTP_ATTEMPT_COOLDOWN_MS = 3 * 60 * 1000;
 const LOGIN_OTP_TTL_MS = 3 * 60 * 1000;
 const RECOVERY_OTP_TTL_MS = 10 * 60 * 1000;
 
@@ -13,6 +14,7 @@ const parsePositiveInt = (value, fallback) => {
 
 const getOtpMaxAttempts = (env = process.env) => parsePositiveInt(env.OTP_MAX_ATTEMPTS, DEFAULT_OTP_MAX_ATTEMPTS);
 const getOtpResendCooldownMs = (env = process.env) => parsePositiveInt(env.OTP_RESEND_COOLDOWN_MS, DEFAULT_OTP_RESEND_COOLDOWN_MS);
+const getOtpAttemptCooldownMs = (env = process.env) => parsePositiveInt(env.OTP_ATTEMPT_COOLDOWN_MS, DEFAULT_OTP_ATTEMPT_COOLDOWN_MS);
 
 const normalizeOtpCode = (value) => String(value ?? '').trim();
 const isOtpCodeFormatValid = (value) => /^\d{6}$/.test(normalizeOtpCode(value));
@@ -54,12 +56,14 @@ const isOtpResendCoolingDown = (sentAt, now = new Date(), cooldownMs = DEFAULT_O
 module.exports = {
   DEFAULT_OTP_MAX_ATTEMPTS,
   DEFAULT_OTP_RESEND_COOLDOWN_MS,
+  DEFAULT_OTP_ATTEMPT_COOLDOWN_MS,
   LOGIN_OTP_TTL_MS,
   RECOVERY_OTP_TTL_MS,
   createOtpChallenge,
   generateOtpCode,
   getOtpMaxAttempts,
   getOtpResendCooldownMs,
+  getOtpAttemptCooldownMs,
   hashOtpCode,
   isOtpCodeFormatValid,
   isOtpExpired,
