@@ -448,6 +448,16 @@ export default function SettingsScreen() {
           return;
         }
 
+        if (data?.code === 'PASSWORD_SAME_AS_CURRENT') {
+          setPasswordErrors((current) => ({
+            ...current,
+            newPassword: 'New password must be different from your current password.',
+            confirmPassword: 'New password must be different from your current password.',
+          }));
+          setErrorMessage('');
+          return;
+        }
+
         setErrorMessage(data.error || 'Unable to change password.');
         // Only an actual authentication/session failure should log the user out.
         if (response.status === 401 || response.status === 403) {
