@@ -4570,7 +4570,9 @@ app.put('/api/account/password', requireWebsiteManagedAccount, async (req, res) 
   try {
     const { currentPassword, newPassword } = req.body || {};
     if (!await comparePassword(currentPassword, req.authenticatedUser.password)) {
-      return res.status(401).json({ error: 'Current password is incorrect.' });
+      // A wrong current password is a form validation error, not an expired
+      // authenticated session. Keep the existing session alive.
+      return res.status(400).json({ error: 'Current password is incorrect.', code: 'CURRENT_PASSWORD_INCORRECT' });
     }
     const updatedAccount = await replaceAccountPassword({
       account: req.authenticatedUser,
