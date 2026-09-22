@@ -617,3 +617,100 @@ describe('LoginScreen real-time form validation', () => {
     await act(async () => { resolveVerify({ ok: false, json: async () => ({ error: 'Invalid or expired OTP' }) }); });
   });
 });
+
+
+describe('LoginScreen backend authentication errors stay inline', () => {
+  let container;
+  let root;
+
+  beforeEach(() => {
+    global.IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    mockNavigate.mockReset();
+    mockLocation = { state: null };
+    localStorage.clear();
+    localStorage.setItem('loginDeviceId', 'browser-device-123');
+    global.alert = jest.fn();
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    delete global.fetch;
+    delete global.alert;
+  });
+
+  test('shows incorrect password beside the password field instead of a top-right notification', async () => {
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: 'Incorrect password' }),
+    }));
+
+    await act(async () => {
+      root.render(<LoginScreen />);
+    });
+
+    const inputs = container.querySelectorAll('input');
+    await act(async () => {
+      setInputValue(inputs[0], 'admin@example.com');
+      setInputValue(inputs[1], 'ValidPassword123!');
+      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'LOGIN')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Incorrect password.');
+    expect(container.querySelector('#password-error')).toBeTruthy();
+    expect(container.querySelector('[style*="position: fixed"]')).toBeNull();
+  });
+
+  test('shows incorrect OTP beside the OTP field instead of a top-right notification', async () => {
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/login/verify-otp')) {
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          json: async () => ({ error: 'Invalid or expired OTP' }),
+        });
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          success: true,
+          step: 2,
+          userId: 18,
+          challengeId: 'login-challenge-1',
+          otpExpiresAt: new Date(Date.now() + 60000).toISOString(),
+        }),
+      });
+    });
+
+    await act(async () => {
+      root.render(<LoginScreen />);
+    });
+
+    const inputs = container.querySelectorAll('input');
+    await act(async () => {
+      setInputValue(inputs[0], 'admin@example.com');
+      setInputValue(inputs[1], 'ValidPassword123!');
+      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'LOGIN')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const otpInput = container.querySelector('.otp-input');
+    await act(async () => {
+      setInputValue(otpInput, '123456');
+      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'VERIFY CODE')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Incorrect OTP. Please enter the latest verification code.');
+    expect(container.querySelector('#otp-error')).toBeTruthy();
+    expect(container.querySelector('[style*="position: fixed"]')).toBeNull();
+  });
+});
