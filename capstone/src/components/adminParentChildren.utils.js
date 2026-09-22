@@ -32,7 +32,8 @@ export const validateAdminParentChildren = (children, sectionRegistry) => {
 
     if (operation === 'link') {
       const idResult = validateGameStudentId(studentId);
-      if (!idResult.isValid) rowErrors.studentId = idResult.error;
+      if (!studentId) rowErrors.studentId = 'Please fill out this field.';
+      else if (!idResult.isValid) rowErrors.studentId = idResult.error;
       else canonicalStudentId = idResult.value;
     } else if (operation === 'existing') {
       const idResult = validateSchoolStudentId(studentId);
@@ -44,6 +45,9 @@ export const validateAdminParentChildren = (children, sectionRegistry) => {
         sectionOptions: getSectionsForGrade(sectionRegistry, child?.gradeLevel),
         requireStudentId: false,
       }));
+      ['firstName', 'lastName', 'gradeLevel', 'section'].forEach((field) => {
+        if (!String(child?.[field] || '').trim()) rowErrors[field] = 'Please fill out this field.';
+      });
       if (studentId) rowErrors.studentId = 'Student IDs are generated automatically for new Students.';
     } else {
       rowErrors.operation = 'Choose Create New Student, Existing Student, or Link Existing System Student.';
