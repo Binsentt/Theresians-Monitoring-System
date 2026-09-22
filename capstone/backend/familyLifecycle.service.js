@@ -235,7 +235,27 @@ const permanentlyDeleteLegacySixDigitStudents = async (pool) => withFamilyTransa
     `SELECT id, game_student_id
      FROM public.accounts
      WHERE LOWER(role) = 'student'
-       AND BTRIM(COALESCE(game_student_id, '')) ~ '^\d{6}
+       AND BTRIM(COALESCE(game_student_id, '')) ~ '^\\d{6}$'
+     FOR UPDATE`
+  );
+  const studentIds = result.rows.map((row) => Number(row.id)).filter(Number.isInteger);
+
+  if (studentIds.length === 0) return { deletedStudents: [] };
+
+  await clearStudentLearningData(client, studentIds);
+  const deletedResult = await client.query(
+    `DELETE FROM public.accounts
+     WHERE id = ANY($1::INTEGER[])
+       AND LOWER(role) = 'student'
+       AND BTRIM(COALESCE(game_student_id, '')) ~ '^\\d{6}$'
+     RETURNING id, game_student_id`,
+    [studentIds]
+  );
+
+  return { deletedStudents: deletedResult.rows };
+});
+
+const permanentlyDeleteParentFamily = async (pool, parentId) => withFamilyTransaction(pool, async (client) => {
   const parent = await lockParentAccount(client, parentId, { requireArchived: true });
   const children = await readManagedChildrenForUpdate(client, parent.id);
   const studentIds = children.map((child) => Number(child.student_id));
@@ -257,7 +277,6 @@ const permanentlyDeleteLegacySixDigitStudents = async (pool) => withFamilyTransa
     deletedStudentIds: studentIds,
   };
 });
-
 const unlinkManagedChild = async (pool, parentId, studentId, options = {}) => withFamilyTransaction(pool, async (client) => {
   const parent = await lockParentAccount(client, parentId);
   const result = await client.query(
