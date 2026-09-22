@@ -45,6 +45,7 @@ export default function SettingsScreen() {
   const [profileErrors, setProfileErrors] = useState({});
   const [profileUpdating, setProfileUpdating] = useState(false);
   const [profileSuccessModal, setProfileSuccessModal] = useState(false);
+  const [passwordSuccessModal, setPasswordSuccessModal] = useState(false);
   const [originalMobileNumber, setOriginalMobileNumber] = useState('');
 
   // Change Password States
@@ -481,9 +482,10 @@ export default function SettingsScreen() {
       }
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
       setPasswordErrors({});
-      setErrorMessage('Password changed successfully!');
+      setErrorMessage('');
       setShowChangePassword(false);
       setShowInitialPasswordConfirmation(false);
+      setPasswordSuccessModal(true);
     } catch (err) {
       setErrorMessage('Cannot connect to server.');
     } finally {
@@ -964,6 +966,35 @@ export default function SettingsScreen() {
           )}
         </main>
       </div>
+
+      {passwordSuccessModal && (
+        <ModalPortal onClose={() => setPasswordSuccessModal(false)}>
+          <div className="settings-success-overlay" role="presentation" onClick={() => setPasswordSuccessModal(false)}>
+            <section
+              className="settings-success-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="password-success-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="settings-success-check" aria-hidden="true">
+                <svg viewBox="0 0 52 52" role="img">
+                  <path d="M14 27.5 22.5 36 39 18" fill="none" stroke="currentColor" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <h2 id="password-success-title">Password Changed Successfully</h2>
+              <p>Your new password has been saved. Your account session remains active.</p>
+              <button
+                type="button"
+                className="btn btn-primary settings-success-button"
+                onClick={() => setPasswordSuccessModal(false)}
+              >
+                Continue
+              </button>
+            </section>
+          </div>
+        </ModalPortal>
+      )}
 
       {profileSuccessModal && (
         <ModalPortal onClose={() => setProfileSuccessModal(false)}>
