@@ -44,6 +44,7 @@ export default function SettingsScreen() {
   });
   const [profileErrors, setProfileErrors] = useState({});
   const [profileUpdating, setProfileUpdating] = useState(false);
+  const [profileSuccessModal, setProfileSuccessModal] = useState(false);
   const [originalMobileNumber, setOriginalMobileNumber] = useState('');
 
   // Change Password States
@@ -350,10 +351,7 @@ export default function SettingsScreen() {
         localStorage.setItem('loggedInUser', JSON.stringify(updatedUserData));
         setUser(updatedUserData);
         setShowEditProfile(false);
-        setErrorMessage('✅ Profile updated successfully! All changes have been saved.');
-        
-        // Clear success message after 3 seconds
-        setTimeout(() => setErrorMessage(''), 3000);
+        setProfileSuccessModal(true);
       } else {
         setErrorMessage(responseData.error || 'Failed to update profile. Please try again.');
         console.error('❌ Backend error:', responseData);
@@ -923,6 +921,35 @@ export default function SettingsScreen() {
           )}
         </main>
       </div>
+
+      {profileSuccessModal && (
+        <ModalPortal onClose={() => setProfileSuccessModal(false)}>
+          <div className="settings-success-overlay" role="presentation" onClick={() => setProfileSuccessModal(false)}>
+            <section
+              className="settings-success-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="profile-success-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="settings-success-check" aria-hidden="true">
+                <svg viewBox="0 0 52 52" role="img">
+                  <path d="M14 27.5 22.5 36 39 18" fill="none" stroke="currentColor" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <h2 id="profile-success-title">Profile Updated Successfully</h2>
+              <p>Your profile changes have been saved successfully.</p>
+              <button
+                type="button"
+                className="btn btn-primary settings-success-button"
+                onClick={() => setProfileSuccessModal(false)}
+              >
+                Continue
+              </button>
+            </section>
+          </div>
+        </ModalPortal>
+      )}
 
       {/* Inline error message */}
       {errorMessage && (

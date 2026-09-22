@@ -34,6 +34,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
   const [resetConfirmation, setResetConfirmation] = useState('');
   const [resettingActivity, setResettingActivity] = useState(false);
   const [resetActivityError, setResetActivityError] = useState('');
+  const [resetConfirmationTouched, setResetConfirmationTouched] = useState(false);
   const activityRequestRevision = useRef(0);
   const { preparedRows, hasPreparedReport, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
   const requiresScopedUser = role === 'teacher' || role === 'parent';
@@ -162,13 +163,23 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
     if (resettingActivity) return;
     setResetDialogOpen(false);
     setResetConfirmation('');
+    setResetConfirmationTouched(false);
     setResetActivityError('');
+  };
+
+  const validateResetConfirmation = (value) => {
+    const normalized = String(value || '').trim();
+    if (!normalized) return 'Please fill out this field.';
+    if (normalized !== 'RESET') return 'Type RESET to confirm this action.';
+    return '';
   };
 
   const submitActivityReset = async (event) => {
     event.preventDefault();
-    if (resetConfirmation !== 'RESET') {
-      setResetActivityError('Type RESET to confirm this action.');
+    setResetConfirmationTouched(true);
+    const validationError = validateResetConfirmation(resetConfirmation);
+    if (validationError) {
+      setResetActivityError(validationError);
       return;
     }
 
@@ -366,6 +377,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
               className="btn-reset activity-log-reset-button"
               onClick={() => {
                 setResetActivityError('');
+                setResetConfirmationTouched(false);
                 setResetDialogOpen(true);
               }}
             >
@@ -466,17 +478,31 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
               id="activity-log-reset-confirmation"
               name="activity-log-reset-confirmation"
               value={resetConfirmation}
+              className={resetActivityError && resetConfirmationTouched ? 'activity-log-reset-input error' : 'activity-log-reset-input'}
               onChange={(event) => {
-                setResetConfirmation(event.target.value);
-                setResetActivityError('');
+                const value = event.target.value;
+                setResetConfirmation(value);
+                if (resetConfirmationTouched) {
+                  setResetActivityError(validateResetConfirmation(value));
+                } else {
+                  setResetActivityError('');
+                }
+              }}
+              onBlur={() => {
+                setResetConfirmationTouched(true);
+                setResetActivityError(validateResetConfirmation(resetConfirmation));
               }}
               disabled={resettingActivity}
               autoComplete="off"
+              aria-invalid={Boolean(resetActivityError && resetConfirmationTouched)}
+              aria-describedby={resetActivityError && resetConfirmationTouched ? 'activity-log-reset-confirmation-error' : undefined}
             />
-            {resetActivityError && <p className="activity-log-reset-error" role="alert">{resetActivityError}</p>}
+            {resetActivityError && resetConfirmationTouched && (
+              <p id="activity-log-reset-confirmation-error" className="activity-log-reset-error" role="alert">{resetActivityError}</p>
+            )}
             <div className="activity-log-reset-actions">
               <button type="button" className="btn-reset" onClick={closeResetDialog} disabled={resettingActivity}>Cancel</button>
-              <button type="submit" className="btn-reset activity-log-reset-confirm" disabled={resettingActivity || resetConfirmation !== 'RESET'}>Reset Activity Log</button>
+              <button type="submit" className="btn-reset activity-log-reset-confirm" disabled={resettingActivity}>Reset Activity Log</button>
             </div>
           </form>
         </div>

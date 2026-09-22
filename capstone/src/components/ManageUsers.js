@@ -106,6 +106,9 @@ export default function ManageUsers() {
   const [deleteOperation, setDeleteOperation] = useState('archive');
   const [deletionReason, setDeletionReason] = useState('');
   const [deletionReasonError, setDeletionReasonError] = useState('');
+  const [deletionReasonTouched, setDeletionReasonTouched] = useState(false);
+  const [permanentDeleteConfirmationError, setPermanentDeleteConfirmationError] = useState('');
+  const [permanentDeleteConfirmationTouched, setPermanentDeleteConfirmationTouched] = useState(false);
   const [permanentDeleteConfirmation, setPermanentDeleteConfirmation] = useState('');
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [regeneratingUserId, setRegeneratingUserId] = useState(null);
@@ -631,7 +634,10 @@ export default function ManageUsers() {
     setDeleteOperation(operation);
     setDeletionReason('');
     setDeletionReasonError('');
+    setDeletionReasonTouched(false);
     setPermanentDeleteConfirmation('');
+    setPermanentDeleteConfirmationError('');
+    setPermanentDeleteConfirmationTouched(false);
     setShowDeleteConfirmation(false);
   };
 
@@ -649,17 +655,23 @@ export default function ManageUsers() {
     resetDeleteDialog();
   };
 
+  const validateDeletionReason = (value) => (
+    String(value || '').trim()
+      ? ''
+      : 'Please fill out this field.'
+  );
+
+  const validatePermanentDeleteConfirmation = (value) => (
+    String(value || '').trim() === 'DELETE'
+      ? ''
+      : (!String(value || '').trim() ? 'Please fill out this field.' : 'Type DELETE to confirm permanent deletion.')
+  );
+
   const continueDeleteDialog = () => {
-    const reason = deletionReason.trim();
-    if (!reason) {
-      setDeletionReasonError(
-        deleteOperation === 'permanent'
-          ? 'Reason for permanent deletion is required.'
-          : 'Reason for archiving is required.'
-      );
-      return;
-    }
-    setDeletionReasonError('');
+    setDeletionReasonTouched(true);
+    const reasonError = validateDeletionReason(deletionReason);
+    setDeletionReasonError(reasonError);
+    if (reasonError) return;
     setShowDeleteConfirmation(true);
   };
 
@@ -672,8 +684,11 @@ export default function ManageUsers() {
     }
 
     const permanent = deleteOperation === 'permanent';
-    if (permanent && permanentDeleteConfirmation !== 'DELETE') {
-      return;
+    if (permanent) {
+      setPermanentDeleteConfirmationTouched(true);
+      const confirmationError = validatePermanentDeleteConfirmation(permanentDeleteConfirmation);
+      setPermanentDeleteConfirmationError(confirmationError);
+      if (confirmationError) return;
     }
 
     setDeleting(true);
@@ -1235,14 +1250,24 @@ export default function ManageUsers() {
                         className={deletionReasonError ? 'deletion-reason-textarea error' : 'deletion-reason-textarea'}
                         value={deletionReason}
                         onChange={(event) => {
-                          setDeletionReason(event.target.value.slice(0, 1000));
-                          if (deletionReasonError) setDeletionReasonError('');
+                          const value = event.target.value.slice(0, 1000);
+                          setDeletionReason(value);
+                          if (deletionReasonTouched) {
+                            setDeletionReasonError(validateDeletionReason(value));
+                          } else {
+                            setDeletionReasonError('');
+                          }
+                        }}
+                        onBlur={() => {
+                          setDeletionReasonTouched(true);
+                          setDeletionReasonError(validateDeletionReason(deletionReason));
                         }}
                         maxLength={1000}
                         rows={4}
-                        aria-invalid={Boolean(deletionReasonError)}
+                        aria-invalid={Boolean(deletionReasonError && deletionReasonTouched)}
+                        aria-describedby={deletionReasonError && deletionReasonTouched ? 'deletion-reason-error' : undefined}
                       />
-                      {deletionReasonError && <p className="error-text" role="alert">{deletionReasonError}</p>}
+                      {deletionReasonError && deletionReasonTouched && <p id="deletion-reason-error" className="error-text" role="alert">{deletionReasonError}</p>}
                       <div className="modal-actions">
                         <button type="button" className="cancel-btn" onClick={closeDeleteDialog} disabled={deleting}>Cancel</button>
                         <button type="button" className="confirm-delete-btn" onClick={continueDeleteDialog} disabled={deleting}>Continue</button>
@@ -1260,9 +1285,25 @@ export default function ManageUsers() {
                             name="permanent-delete-confirmation"
                             type="text"
                             value={permanentDeleteConfirmation}
-                            onChange={(event) => setPermanentDeleteConfirmation(event.target.value)}
+                            className={permanentDeleteConfirmationError && permanentDeleteConfirmationTouched ? 'delete-confirmation-input error' : 'delete-confirmation-input'}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setPermanentDeleteConfirmation(value);
+                              if (permanentDeleteConfirmationTouched) {
+                                setPermanentDeleteConfirmationError(validatePermanentDeleteConfirmation(value));
+                              }
+                            }}
+                            onBlur={() => {
+                              setPermanentDeleteConfirmationTouched(true);
+                              setPermanentDeleteConfirmationError(validatePermanentDeleteConfirmation(permanentDeleteConfirmation));
+                            }}
                             autoComplete="off"
+                            aria-invalid={Boolean(permanentDeleteConfirmationError && permanentDeleteConfirmationTouched)}
+                            aria-describedby={permanentDeleteConfirmationError && permanentDeleteConfirmationTouched ? 'delete-confirmation-error' : undefined}
                           />
+                          {permanentDeleteConfirmationError && permanentDeleteConfirmationTouched && (
+                            <p id="delete-confirmation-error" className="error-text" role="alert">{permanentDeleteConfirmationError}</p>
+                          )}
                         </label>
                       )}
                       <div className="modal-actions">
@@ -1271,7 +1312,7 @@ export default function ManageUsers() {
                           type="button"
                           className="confirm-delete-btn"
                           onClick={handleDeleteUser}
-                          disabled={deleting || (deleteOperation === 'permanent' && permanentDeleteConfirmation !== 'DELETE')}
+                          disabled={deleting}
                         >
                           {deleting ? 'Deleting...' : (deleteOperation === 'permanent' ? 'Permanently Delete Account' : 'Yes, Delete Account')}
                         </button>
