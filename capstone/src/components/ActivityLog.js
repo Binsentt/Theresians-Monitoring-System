@@ -77,12 +77,14 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
         const children = sortStudentsByName(Array.isArray(payload?.children) ? payload.children : []);
         if (cancelled) return;
         setParentChildren(children);
-        setSelectedChildId((current) => {
-          if (children.some((child) => String(child.student_id || child.id) === String(current))) {
-            return current;
-          }
-          return children[0] ? String(children[0].student_id || children[0].id) : '';
-        });
+        // Parent Activity Log defaults to all linked children. A specific child
+        // can still be selected from the filter when the parent wants a
+        // child-only view. Never infer a child by position.
+        setSelectedChildId((current) => (
+          current && children.some((child) => String(child.student_id || child.id) === String(current))
+            ? current
+            : ''
+        ));
       } catch (err) {
         console.error('Error fetching parent children:', err);
         if (!cancelled) {
@@ -110,13 +112,9 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
         return;
       }
 
-      if (isParentView && !selectedChildId) {
-        setActivities([]);
-        setPagination({ total: 0, pages: 1, current_page: 1 });
-        setLoading(false);
-        return;
-      }
-
+      // Empty child selection means "all children belonging to this parent".
+      // The backend parent scope remains authoritative and prevents unrelated
+      // students from being returned.
       setLoading(true);
       setError(null);
       try {
@@ -348,6 +346,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
               }}
               className="filter-input"
             >
+              <option value="">All Children</option>
               {parentChildren.map((child) => {
                 const childId = String(child.student_id || child.id);
                 return (
