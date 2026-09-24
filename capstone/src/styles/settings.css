@@ -419,42 +419,61 @@
   padding-right: 44px;
 }
 
-.password-toggle-button,
-.eye-btn {
-  position: absolute;
-  right: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 32px;
-  height: 32px;
-  margin: 0;
-  padding: 6px;
+.password-input-wrapper > .password-toggle-button,
+.password-input-wrapper > .eye-btn {
+  position: absolute !important;
+  right: 12px !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  margin: auto 0 !important;
+  padding: 6px !important;
+  box-sizing: border-box;
   line-height: 1;
-  background: none;
-  border: none;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 8px;
   cursor: pointer;
   color: var(--text-secondary);
-  display: flex;
+  display: flex !important;
   align-items: center;
   justify-content: center;
+  gap: 0 !important;
+  transform: none !important;
+  transition: color 0.18s ease, background-color 0.18s ease, box-shadow 0.18s ease;
 }
 
-.password-toggle-button svg,
-.eye-btn svg {
+.password-input-wrapper > .password-toggle-button svg,
+.password-input-wrapper > .eye-btn svg {
+  width: 20px;
+  height: 20px;
   display: block;
   flex: 0 0 auto;
   pointer-events: none;
 }
 
-.password-toggle-button:hover,
-.password-toggle-button:active,
-.password-toggle-button:focus-visible,
-.eye-btn:hover,
-.eye-btn:active,
-.eye-btn:focus-visible {
-  top: 50%;
-  transform: translateY(-50%);
+.password-input-wrapper > .password-toggle-button:hover,
+.password-input-wrapper > .password-toggle-button:active,
+.password-input-wrapper > .password-toggle-button:focus,
+.password-input-wrapper > .password-toggle-button:focus-visible,
+.password-input-wrapper > .eye-btn:hover,
+.password-input-wrapper > .eye-btn:active,
+.password-input-wrapper > .eye-btn:focus,
+.password-input-wrapper > .eye-btn:focus-visible {
+  top: 0 !important;
+  bottom: 0 !important;
+  margin: auto 0 !important;
+  transform: none !important;
   color: var(--text-primary);
+}
+
+.password-input-wrapper > .password-toggle-button:focus-visible,
+.password-input-wrapper > .eye-btn:focus-visible {
+  outline: 2px solid rgba(11, 36, 71, 0.25);
+  outline-offset: 2px;
 }
 
 /* OTP Input */
