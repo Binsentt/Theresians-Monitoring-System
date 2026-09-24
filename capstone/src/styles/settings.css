@@ -437,6 +437,28 @@
   color: var(--text-primary);
 }
 
+/* Keep Settings password visibility controls anchored while the shared
+   button hover animation is active. The translate property handles the
+   vertical centering without using transform, so button:hover cannot move
+   the eye icon. */
+.settings-container .password-input-wrapper > .password-toggle-button,
+.settings-container .password-input-wrapper > .password-toggle-button:hover,
+.settings-container .password-input-wrapper > .password-toggle-button:active,
+.settings-container .password-input-wrapper > .password-toggle-button:focus,
+.settings-container .password-input-wrapper > .password-toggle-button:focus-visible {
+  top: 50%;
+  right: 12px;
+  bottom: auto;
+  margin: 0;
+  width: auto;
+  height: auto;
+  padding: 5px;
+  border: none;
+  background: transparent;
+  transform: none !important;
+  translate: 0 -50%;
+}
+
 /* OTP Input */
 .otp-input {
   letter-spacing: 8px;
