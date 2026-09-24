@@ -44,7 +44,7 @@ export const validateGameStudentId = (value) => {
     return { isValid: false, value: null, error: 'Student ID is required.' };
   }
   if (!/^[0-9]{6}$/.test(normalized) && !/^[0-9]{8}$/.test(normalized)) {
-    return { isValid: false, value: null, error: 'Student ID must be 8 digits (or a legacy 6-digit ID).' };
+    return { isValid: false, value: null, error: 'Student ID must be 8 digits.' };
   }
   return { isValid: true, value: normalized, error: null };
 };
