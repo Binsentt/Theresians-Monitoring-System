@@ -54,6 +54,7 @@ describe('ParentActivityLog parent scope access', () => {
     });
 
     expect(mockNavigate).not.toHaveBeenCalledWith('/login');
+    expect(container.textContent).toContain('Child Activity Log');
     expect(container.textContent).toContain('ActivityLog role:parent user:20');
   });
 });
