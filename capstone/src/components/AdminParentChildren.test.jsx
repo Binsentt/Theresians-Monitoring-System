@@ -162,6 +162,6 @@ describe('AdminParentChildren', () => {
     ));
     await act(async () => { jest.advanceTimersByTime(300); });
     expect(global.fetch).not.toHaveBeenCalled();
-    expect(container.textContent).toContain('Student ID must be 8 digits (or a legacy 6-digit ID).');
+    expect(container.textContent).toContain('Student ID must be 8 digits.');
   });
 });

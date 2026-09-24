@@ -1636,3 +1636,170 @@
     background: var(--panel-bg, #ffffff);
     color: var(--text-primary, #0f172a);
 }
+
+
+/* Manage User child relationship UI */
+.admin-child-availability-success {
+  display: block;
+  margin-top: 6px;
+  color: #15803d !important;
+  font-weight: 700;
+}
+
+.managed-child-status {
+  color: #15803d !important;
+  background: rgba(22, 163, 74, 0.08);
+  border: 1px solid rgba(22, 163, 74, 0.22);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-weight: 700;
+}
+
+.admin-child-search-results {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color, #d9e0e8);
+  border-radius: 10px;
+  padding: 6px;
+  background: var(--panel-bg, #fff);
+}
+
+.admin-child-search-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: transparent;
+  color: var(--text-primary, #0f172a);
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-child-search-result:hover {
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.admin-child-search-result span {
+  color: var(--text-muted, #64748b);
+  font-size: 12px;
+}
+
+.managed-child-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.managed-child-confirmation-modal {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(88dvh, 720px);
+  overflow-y: auto;
+  margin: 0;
+  padding: 24px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 18px;
+  background: var(--panel-bg, #fff);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.25);
+}
+
+.managed-child-confirmation-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.managed-child-confirmation-header h4 {
+  margin: 4px 0 0;
+  font-size: 20px;
+  color: var(--text-primary, #0f172a);
+}
+
+.managed-child-confirmation-eyebrow {
+  color: var(--text-muted, #64748b);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.managed-child-close-btn {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--bg-secondary, #f1f5f9);
+  color: var(--text-primary, #0f172a);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.managed-child-summary {
+  display: grid;
+  grid-template-columns: minmax(100px, auto) 1fr;
+  gap: 6px 12px;
+  margin: 16px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--bg-secondary, #f8fafc);
+}
+
+.managed-child-summary span {
+  color: var(--text-muted, #64748b);
+  font-size: 13px;
+}
+
+.managed-child-summary strong {
+  color: var(--text-primary, #0f172a);
+}
+
+.managed-child-confirmation-modal label {
+  display: block;
+  margin: 14px 0 7px;
+  color: var(--text-primary, #334155);
+  font-weight: 700;
+}
+
+.managed-child-confirmation-modal textarea {
+  min-height: 110px;
+  margin: 0;
+}
+
+.managed-child-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 600px) {
+  .managed-child-modal-overlay {
+    padding: 12px;
+  }
+
+  .managed-child-confirmation-modal {
+    width: 100%;
+    padding: 18px;
+    border-radius: 14px;
+  }
+
+  .managed-child-modal-actions > button {
+    flex: 1 1 100%;
+  }
+}
+

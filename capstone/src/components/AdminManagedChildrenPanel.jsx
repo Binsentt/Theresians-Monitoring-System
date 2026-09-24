@@ -99,7 +99,7 @@ export default function AdminManagedChildrenPanel({ parentId, sectionRegistry, a
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || 'Unable to update this child.');
-      setMessage(permanent ? 'Student account permanently deleted.' : 'Child unlinked; Student account preserved.');
+      setMessage(permanent ? 'Student account permanently deleted.' : 'Child removed successfully.');
       setPending(null);
       setConfirmation('');
       setRemovalReason('');
@@ -137,7 +137,7 @@ export default function AdminManagedChildrenPanel({ parentId, sectionRegistry, a
           <button type="button" className="update-btn semantic-action-add" disabled={busy || draftValidation.pending || !draftValidation.isValid} onClick={addChildren}>Save Children</button>
         </div>
       )}
-      {message && <p className="info-text" role="status">{message}</p>}
+      {message && <p className="info-text managed-child-status" role="status">{message}</p>}
 
       <div className="table-report-controls no-print">
         <label>
@@ -184,27 +184,54 @@ export default function AdminManagedChildrenPanel({ parentId, sectionRegistry, a
       <PrintableTableReport title="Parent Children" context={searchQuery ? `Search: ${searchQuery}` : 'All linked children'} rows={filteredChildren} columns={printColumns} />
 
       {pending?.operation === 'unlink' && (
-        <div className="managed-child-confirmation" role="dialog" aria-modal="true" aria-label="Confirm Remove Child">
-          <h4>Remove Child</h4>
-          <p>Remove the Parent relationship for <strong>{pending.student_name}</strong> (Student ID {pending.game_student_id})?</p>
-          <p className="managed-child-confirmation-detail">Parent account: {parentId}. Affected data: this relationship only. The Student account and gameplay data will be preserved, including Screen Time and activity history.</p>
-          <label htmlFor="managed-child-unlink-reason">Reason *</label>
-          <textarea id="managed-child-unlink-reason" aria-label="Reason for removing this child relationship" value={removalReason} onChange={(event) => setRemovalReason(event.target.value)} maxLength={500} />
-          <button type="button" onClick={() => { setPending(null); setRemovalReason(''); }}>Cancel</button>
-          <button type="button" data-action="confirm-unlink-child" disabled={busy || !removalReason.trim()} onClick={() => removeChild(false)}>Confirm Remove Child</button>
+        <div className="managed-child-modal-overlay" role="dialog" aria-modal="true" aria-label="Confirm Remove Child">
+          <div className="managed-child-confirmation managed-child-confirmation-modal">
+            <div className="managed-child-confirmation-header">
+              <div>
+                <span className="managed-child-confirmation-eyebrow">Child Relationship</span>
+                <h4>Remove Child</h4>
+              </div>
+              <button type="button" className="managed-child-close-btn" aria-label="Close remove child dialog" onClick={() => { setPending(null); setRemovalReason(''); }}>×</button>
+            </div>
+            <p>Remove <strong>{pending.student_name}</strong> from this Parent's child list?</p>
+            <div className="managed-child-summary">
+              <span>Student ID</span><strong>{pending.game_student_id || 'Not linked'}</strong>
+            </div>
+            <p className="managed-child-confirmation-detail">Only the Parent relationship will be removed. The Student account, gameplay data, Screen Time, and activity history will be preserved.</p>
+            <label htmlFor="managed-child-unlink-reason">Reason for removal *</label>
+            <textarea id="managed-child-unlink-reason" aria-label="Reason for removing this child relationship" placeholder="Enter the reason for removing this child..." value={removalReason} onChange={(event) => setRemovalReason(event.target.value)} maxLength={500} />
+            <div className="managed-child-modal-actions">
+              <button type="button" className="cancel-btn" onClick={() => { setPending(null); setRemovalReason(''); }}>Cancel</button>
+              <button type="button" className="confirm-delete-btn" data-action="confirm-unlink-child" disabled={busy || !removalReason.trim()} onClick={() => removeChild(false)}>{busy ? 'Removing...' : 'Confirm Remove Child'}</button>
+            </div>
+          </div>
         </div>
       )}
       {pending?.operation === 'permanent' && (
-        <div className="managed-child-confirmation" role="dialog" aria-modal="true" aria-label="Confirm permanent Student deletion">
-          <h4>Delete Student Permanently</h4>
-          <p>This action is irreversible and deletes the Student account and its dependent gameplay records. Type DELETE to continue.</p>
-          <p><strong>{pending.student_name}</strong> — Student ID {pending.game_student_id}</p>
-          <p className="managed-child-confirmation-detail">Parent account: {parentId}. Affected data: Student account, gameplay/progress records, and derived insights. Sibling Students and the Parent account are not affected.</p>
-          <label htmlFor="managed-child-delete-reason">Reason *</label>
-          <textarea id="managed-child-delete-reason" aria-label="Reason for permanently deleting this Student account" value={removalReason} onChange={(event) => setRemovalReason(event.target.value)} maxLength={500} />
-          <input aria-label="Type DELETE to confirm Student deletion" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
-          <button type="button" onClick={() => { setPending(null); setConfirmation(''); setRemovalReason(''); }}>Cancel</button>
-          <button type="button" data-action="confirm-delete-student" disabled={busy || confirmation !== 'DELETE' || !removalReason.trim()} onClick={() => removeChild(true)}>Delete Student Permanently</button>
+        <div className="managed-child-modal-overlay" role="dialog" aria-modal="true" aria-label="Confirm permanent Student deletion">
+          <div className="managed-child-confirmation managed-child-confirmation-modal">
+            <div className="managed-child-confirmation-header">
+              <div>
+                <span className="managed-child-confirmation-eyebrow">Permanent Account Deletion</span>
+                <h4>Delete Student Permanently</h4>
+              </div>
+              <button type="button" className="managed-child-close-btn" aria-label="Close permanent deletion dialog" onClick={() => { setPending(null); setConfirmation(''); setRemovalReason(''); }}>×</button>
+            </div>
+            <p>This action is irreversible. Type <strong>DELETE</strong> to continue.</p>
+            <div className="managed-child-summary">
+              <span>Student</span><strong>{pending.student_name}</strong>
+              <span>Student ID</span><strong>{pending.game_student_id || 'Not linked'}</strong>
+            </div>
+            <p className="managed-child-confirmation-detail">The Student account and dependent gameplay records will be deleted. Sibling Students and the Parent account are not affected.</p>
+            <label htmlFor="managed-child-delete-reason">Reason for deletion *</label>
+            <textarea id="managed-child-delete-reason" aria-label="Reason for permanently deleting this Student account" placeholder="Enter the reason for permanent deletion..." value={removalReason} onChange={(event) => setRemovalReason(event.target.value)} maxLength={500} />
+            <label htmlFor="managed-child-delete-confirmation">Type DELETE to confirm *</label>
+            <input id="managed-child-delete-confirmation" className="delete-confirmation-input" aria-label="Type DELETE to confirm Student deletion" placeholder="DELETE" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
+            <div className="managed-child-modal-actions">
+              <button type="button" className="cancel-btn" onClick={() => { setPending(null); setConfirmation(''); setRemovalReason(''); }}>Cancel</button>
+              <button type="button" className="confirm-delete-btn" data-action="confirm-delete-student" disabled={busy || confirmation !== 'DELETE' || !removalReason.trim()} onClick={() => removeChild(true)}>{busy ? 'Deleting...' : 'Delete Student Permanently'}</button>
+            </div>
+          </div>
         </div>
       )}
     </section>

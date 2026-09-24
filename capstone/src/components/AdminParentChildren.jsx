@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { apiUrl } from '../api';
 import { getSectionsForGrade } from '../sectionRegistry';
 import {
@@ -30,7 +30,25 @@ export default function AdminParentChildren({
 }) {
   const children = Array.isArray(value) ? value : [];
   const [eligibility, setEligibility] = useState({});
+  const [studentDirectory, setStudentDirectory] = useState([]);
+  const [studentSearch, setStudentSearch] = useState('');
   const validationVersion = useRef(0);
+
+  useEffect(() => {
+    let active = true;
+    const hasLookupRow = children.some((child) => ['existing', 'link'].includes(String(child?.operation || '').toLowerCase()));
+    if (!hasLookupRow) {
+      setStudentDirectory([]);
+      setStudentSearch('');
+      return undefined;
+    }
+    fetch(apiUrl('/api/admin/id-directory?archived=false'), { headers: authHeaders })
+      .then((response) => response.json().catch(() => ({})).then((payload) => {
+        if (active && response.ok) setStudentDirectory(Array.isArray(payload?.students) ? payload.students : []);
+      }))
+      .catch(() => {});
+    return () => { active = false; };
+  }, [children, authHeaders?.Authorization]);
 
   useEffect(() => {
     const version = ++validationVersion.current;
@@ -85,6 +103,18 @@ export default function AdminParentChildren({
       isValid: children.length > 0 && states.every(({ status }) => status === 'valid' || status === 'idle'),
     });
   }, [children, eligibility, onValidationStateChange]);
+  const filteredStudentDirectory = useMemo(() => {
+    const query = String(studentSearch || '').trim().toLowerCase();
+    if (!query) return [];
+    return studentDirectory.filter((student) => [
+      student.student_id,
+      student.student_name,
+      student.grade_level,
+      student.section,
+      student.parent_name,
+    ].some((value) => String(value || '').toLowerCase().includes(query))).slice(0, 8);
+  }, [studentDirectory, studentSearch]);
+
   const updateChild = (index, updates) => {
     onChange?.(children.map((child, childIndex) => (
       childIndex === index ? { ...child, ...updates } : child
@@ -190,13 +220,41 @@ export default function AdminParentChildren({
             {child.operation !== 'create' && (
               <div className="form-group admin-parent-child-id">
                 <label htmlFor={`admin-child-${index}-student-id`}>Student ID *</label>
+                <label htmlFor={`admin-child-${index}-student-search`} className="field-help">Search existing Students</label>
+                <input
+                  id={`admin-child-${index}-student-search`}
+                  className="sts-input"
+                  aria-label={`Search existing Students for Child ${childNumber}`}
+                  type="search"
+                  placeholder="Search name or Student ID..."
+                  value={studentSearch}
+                  onChange={(event) => setStudentSearch(event.target.value)}
+                />
+                {filteredStudentDirectory.length > 0 && (
+                  <div className="admin-child-search-results" role="listbox" aria-label={`Student search results for Child ${childNumber}`}>
+                    {filteredStudentDirectory.map((student) => (
+                      <button
+                        type="button"
+                        className="admin-child-search-result"
+                        key={student.id || student.student_id}
+                        onClick={() => {
+                          updateChild(index, { studentId: String(student.student_id || '').replace(/[^0-9-]/g, '') });
+                          setStudentSearch('');
+                        }}
+                      >
+                        <strong>{student.student_name || 'Unknown Student'}</strong>
+                        <span>{student.student_id || 'No Student ID'}{student.grade_level ? ` · ${student.grade_level}` : ''}{student.section ? ` · ${student.section}` : ''}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <input
                   id={`admin-child-${index}-student-id`}
                   className="sts-input"
                   aria-label={`Child ${childNumber} Student ID`}
                   inputMode="text"
                   maxLength={9}
-                  placeholder={isExisting ? '17000087 or 17-000087' : '8 digits or legacy 6 digits'}
+                  placeholder={isExisting ? '17000087 or 17-000087' : '8-digit Student ID'}
                   value={child.studentId}
                   onChange={(event) => updateChild(index, { studentId: event.target.value.replace(/[^0-9-]/g, '').slice(0, 9) })}
                   aria-invalid={eligibilityState.status === 'error' ? 'true' : undefined}
@@ -209,7 +267,7 @@ export default function AdminParentChildren({
                 </span>
                 <ErrorText>{rowErrors.studentId}</ErrorText>
                 {eligibilityState.status === 'pending' && <span className="field-help" role="status">Checking Student ID...</span>}
-                {eligibilityState.status === 'valid' && <span className="field-help" role="status">Student ID is available.</span>}
+                {eligibilityState.status === 'valid' && <span className="field-help admin-child-availability-success" role="status">Student ID is available.</span>}
                 {eligibilityState.status === 'error' && <span id={eligibilityErrorId} className="error-text" role="alert">{eligibilityState.error}</span>}
               </div>
             )}

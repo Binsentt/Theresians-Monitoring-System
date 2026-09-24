@@ -4804,7 +4804,7 @@ app.get('/api/accounts/student-link-eligibility', requireAccountManagementAdmin,
     return res.status(400).json({
       error: operation === 'existing'
         ? 'Student ID must be 8 digits (for example, 17000087 or 17-000087).'
-        : 'Student ID must be 8 digits (or a legacy 6-digit ID).',
+        : 'Student ID must be 8 digits.',
     });
   }
 

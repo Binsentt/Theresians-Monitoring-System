@@ -194,7 +194,7 @@ describe('validation.utils', () => {
       expect(validateGameStudentId(value)).toEqual({
         isValid: false,
         value: null,
-        error: value === '' ? 'Student ID is required.' : 'Student ID must be 8 digits (or a legacy 6-digit ID).',
+        error: value === '' ? 'Student ID is required.' : 'Student ID must be 8 digits.',
       });
     });
 
@@ -293,7 +293,7 @@ describe('validation.utils', () => {
       })).toEqual({
         middleInitial: 'Middle initial must be one letter.',
         section: 'Section may only contain letters, numbers, spaces, periods, apostrophes, or hyphens.',
-        studentId: 'Student ID must be 8 digits (or a legacy 6-digit ID).',
+        studentId: 'Student ID must be 8 digits.',
       });
     });
 
