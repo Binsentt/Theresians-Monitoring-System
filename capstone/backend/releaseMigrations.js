@@ -34,6 +34,29 @@ function readMigration(migrationDir, migration) {
   return fs.readFileSync(filePath, 'utf8');
 }
 
+function buildReleaseDatabaseConfig(env = process.env) {
+  if (env.DATABASE_URL) {
+    return {
+      connectionString: env.DATABASE_URL,
+      ssl: env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+    };
+  }
+
+  const host = env.PGHOST;
+  const user = env.PGUSER;
+  const database = env.PGDATABASE;
+  if (!host || !user || !database) return null;
+
+  return {
+    host,
+    port: Number(env.PGPORT) || 5432,
+    user,
+    password: env.PGPASSWORD || '',
+    database,
+    ssl: env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+  };
+}
+
 async function applyReleaseMigrations({
   client,
   migrationDir = path.join(__dirname, 'migrations'),
@@ -73,15 +96,18 @@ async function applyReleaseMigrations({
 }
 
 async function runReleaseMigrations({
-  connectionString = process.env.DATABASE_URL,
+  databaseConfig = buildReleaseDatabaseConfig(process.env),
   migrationDir = path.join(__dirname, 'migrations'),
 } = {}) {
   if (process.env.RELEASE_MIGRATIONS_APPROVED !== 'true') {
     throw new Error('set RELEASE_MIGRATIONS_APPROVED=true for an authorized release migration run');
   }
-  if (!connectionString) throw new Error('DATABASE_URL is required for release migrations');
+  if (!databaseConfig) {
+    throw new Error('DATABASE_URL or Railway PostgreSQL connection variables are required for release migrations');
+  }
+
   const { Client } = require('pg');
-  const client = new Client({ connectionString, connectionTimeoutMillis: 10000 });
+  const client = new Client(databaseConfig);
   await client.connect();
   try {
     await applyReleaseMigrations({ client, migrationDir });
@@ -103,6 +129,7 @@ module.exports = {
   ADVISORY_LOCK_KEY,
   RELEASE_MIGRATIONS,
   applyReleaseMigrations,
+  buildReleaseDatabaseConfig,
   migrationChecksum,
   runReleaseMigrations,
 };
