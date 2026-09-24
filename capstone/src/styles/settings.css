@@ -423,18 +423,37 @@
 .eye-btn {
   position: absolute;
   right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 6px;
+  line-height: 1;
   background: none;
   border: none;
   cursor: pointer;
   color: var(--text-secondary);
-  padding: 5px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
+.password-toggle-button svg,
+.eye-btn svg {
+  display: block;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
 .password-toggle-button:hover,
-.eye-btn:hover {
+.password-toggle-button:active,
+.password-toggle-button:focus-visible,
+.eye-btn:hover,
+.eye-btn:active,
+.eye-btn:focus-visible {
+  top: 50%;
+  transform: translateY(-50%);
   color: var(--text-primary);
 }
 
