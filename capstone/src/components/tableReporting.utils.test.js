@@ -19,6 +19,15 @@ describe('table reporting utilities', () => {
     expect(matchesTableSearch(rows[0], '1234', ['student_name', 'game_student_id'])).toBe(false);
   });
 
+  test('filters school ID columns by safe leading prefixes without dropping leading-zero identity', () => {
+    expect(matchesTableSearch(rows[0], '001', ['student_name', 'game_student_id'])).toBe(true);
+    expect(matchesTableSearch(rows[0], '1234', ['student_name', 'game_student_id'])).toBe(false);
+
+    const dashed = { student_name: 'Dana Cruz', game_student_id: '17-000087' };
+    expect(matchesTableSearch(dashed, '17-0', ['student_name', 'game_student_id'])).toBe(true);
+    expect(matchesTableSearch(dashed, '1700', ['student_name', 'game_student_id'])).toBe(true);
+  });
+
   test('matches normalized multi-term searches across different displayed fields', () => {
     expect(matchesTableSearch(rows[0], '  ANA   Grade 1  ', ['student_name', 'game_student_id', 'grade_level'])).toBe(true);
     expect(matchesTableSearch(rows[0], 'Grade 1 001234', ['student_name', 'game_student_id', 'grade_level'])).toBe(true);
