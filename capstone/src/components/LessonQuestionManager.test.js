@@ -1,6 +1,6 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import LessonQuestionManager, { getLessonGenerationPollLimit } from './LessonQuestionManager';
+import LessonQuestionManager, { getLessonGenerationPollLimit, waitForLessonGeneration } from './LessonQuestionManager';
 import { clearPreparedReport, openPreparedReport } from './PrintReportPortal';
 
 const mockNavigate = jest.fn();
@@ -329,6 +329,30 @@ describe('LessonQuestionManager upload and trash controls', () => {
     container.remove();
     delete global.fetch;
     delete global.IntersectionObserver;
+  });
+
+  test('generation status polling uses the supplied role-scoped URL builder', async () => {
+    const buildUrl = jest.fn((path) => `${path}?scope=teacher`);
+    global.fetch = jest.fn(() => okJson({
+      learningFile: {
+        id: 801,
+        requested_question_count: 50,
+        generation_status: 'ready_for_review',
+        generation_completed_count: 50,
+      },
+    }));
+
+    const completed = await waitForLessonGeneration(801, {
+      questionCount: 50,
+      buildUrl,
+    });
+
+    expect(buildUrl).toHaveBeenCalledWith('/api/learning-files/801/generation-status');
+    expect(global.fetch).toHaveBeenCalledWith('/api/learning-files/801/generation-status?scope=teacher', {
+      signal: undefined,
+      headers: { Authorization: 'Bearer lesson-manager-token' },
+    });
+    expect(completed.generation_completed_count).toBe(50);
   });
 
   test('Fixed Question and Lesson uploads require Grade and Difficulty without a Topic selector', async () => {
