@@ -537,13 +537,21 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
   test('warns before closing a preview with unsaved question edits', async () => {
     fixtures.files = [buildReviewRequiredFile({ id: 77 })];
-    window.confirm = jest.fn(() => false);
     await act(async () => root.render(<LessonQuestionManager />));
     await act(async () => clickByText(container, 'Preview'));
     await act(async () => clickByText(document.body, 'Edit Questions'));
     await act(async () => setFieldValue(document.body.querySelector('textarea[aria-label="Question 1 text"]'), 'Unsaved revision'));
     await act(async () => clickByText(document.body, 'Close'));
-    expect(window.confirm).toHaveBeenCalled();
+    expect(document.body.textContent).toContain('Discard Changes?');
+    expect(document.body.textContent).toContain('Discard unsaved question changes?');
+    expect(document.body.querySelector('.generated-questions-preview-modal')).not.toBeNull();
+
+    const cancelButton = Array.from(document.body.querySelectorAll('.confirm-modal button')).find(
+      (button) => button.textContent === 'Cancel'
+    );
+    await act(async () => {
+      cancelButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
     expect(document.body.querySelector('.generated-questions-preview-modal')).not.toBeNull();
   });
 
