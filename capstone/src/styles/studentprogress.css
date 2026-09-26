@@ -1617,3 +1617,60 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+
+.student-insight-guidance-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 2px 0;
+}
+
+.student-insight-guidance-heading h2 {
+  margin: 0;
+  color: var(--text-primary, #0b2447);
+  font-size: 1.05rem;
+}
+
+.student-insight-guidance-heading p {
+  margin: 5px 0 0;
+  color: var(--text-muted, #64748b);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.student-insight-guidance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.student-insight-weaknesses {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--card-bg, #fff) 94%, #fee2e2 6%), var(--card-bg, #fff));
+  border-left-width: 5px;
+}
+
+.student-insight-recommendations {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--card-bg, #fff) 94%, #fef3c7 6%), var(--card-bg, #fff));
+  border-left-width: 5px;
+}
+
+.student-insight-weaknesses .student-card-heading h2 {
+  color: #b42318;
+}
+
+.student-insight-recommendations .student-card-heading h2 {
+  color: #b54708;
+}
+
+@media (max-width: 900px) {
+  .student-insight-guidance-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+[data-theme='dark'] .student-insight-weaknesses .student-card-heading h2,
+[data-theme='dark'] .student-insight-recommendations .student-card-heading h2 {
+  color: var(--text-primary, #f8fafc);
+}
