@@ -451,11 +451,12 @@ test('lesson generation completes the exact requested 5, 10, 20, and 25 question
   }
 });
 
-test('lesson generation can request each supported total in one exact provider batch', async () => {
+test('lesson generation honors teacher-selected totals up to 50 while capping each provider batch at 25', async () => {
   const { generateLessonQuestionsInBatches } = require('./lessonQuestionGeneration');
 
-  for (const target of [5, 10, 20, 25]) {
+  for (const target of [5, 10, 20, 25, 37, 50]) {
     const calls = [];
+    let nextQuestionNumber = 1;
     const questions = await generateLessonQuestionsInBatches({
       lessonText: 'A lesson about addition.',
       title: 'Addition lesson',
@@ -465,15 +466,19 @@ test('lesson generation can request each supported total in one exact provider b
       batchSize: target,
       generateBatch: async ({ questionCount }) => {
         calls.push(questionCount);
-        return Array.from({ length: questionCount }, (_, index) => ({
-          question: `Exact set ${target} question ${index + 1}`,
-          options: ['1', '2', '3', '4'],
-          correct_answer: '1',
-        }));
+        return Array.from({ length: questionCount }, () => {
+          const value = nextQuestionNumber++;
+          return {
+            question: `Exact set ${target} question ${value}`,
+            options: ['1', '2', '3', '4'],
+            correct_answer: '1',
+          };
+        });
       },
     });
 
-    assert.deepEqual(calls, [target]);
+    const expectedCalls = target <= 25 ? [target] : [25, target - 25];
+    assert.deepEqual(calls, expectedCalls);
     assert.equal(questions.length, target);
   }
 });
