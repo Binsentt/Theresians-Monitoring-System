@@ -1,0 +1,15 @@
+.announcement-input-error {
+  border: 1px solid #d93025 !important;
+  box-shadow: 0 0 0 1px rgba(217, 48, 37, 0.12);
+}
+
+.announcement-field-error {
+  margin: 6px 0 0;
+  color: #d93025;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+[data-theme='dark'] .announcement-field-error {
+  color: #ff8a80;
+}

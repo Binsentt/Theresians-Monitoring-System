@@ -15,6 +15,7 @@ import {
 import { canAccessRole, normalizeRole } from './manageUsers.utils';
 import { apiUrl } from '../api';
 import { getStoredUserSession } from './session.utils';
+import '../styles/announcementValidation.css';
 
 const API_BASE = apiUrl('').replace(/\/$/, '');
 
@@ -136,6 +137,8 @@ export default function AnnouncementPage({ mode = 'parent' }) {
   const [announcements, setAnnouncements] = useState([]);
   const [adminAnnouncements, setAdminAnnouncements] = useState([]);
   const [form, setForm] = useState({ title: '', message: '' });
+  const [formErrors, setFormErrors] = useState({ title: '', message: '' });
+  const [formTouched, setFormTouched] = useState({ title: false, message: false });
   const [editingAnnouncement, setEditingAnnouncement] = useState(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
@@ -206,16 +209,47 @@ export default function AnnouncementPage({ mode = 'parent' }) {
     loadPage();
   }, [config.requiredRole, navigate]);
 
+  const validateAnnouncementField = (field, value) => {
+    const normalized = String(value || '').trim();
+    if (!normalized) return 'Please fill out this field.';
+    if (field === 'title' && normalized.length > 150) return 'Title must be 150 characters or fewer.';
+    return '';
+  };
+
+  const updateAnnouncementField = (field, value) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    if (formTouched[field]) {
+      setFormErrors((prev) => ({ ...prev, [field]: validateAnnouncementField(field, value) }));
+    }
+  };
+
+  const touchAnnouncementField = (field) => {
+    setFormTouched((prev) => ({ ...prev, [field]: true }));
+    setFormErrors((prev) => ({ ...prev, [field]: validateAnnouncementField(field, form[field]) }));
+  };
+
   const resetComposer = () => {
     setForm({ title: '', message: '' });
+    setFormErrors({ title: '', message: '' });
+    setFormTouched({ title: false, message: false });
     setEditingAnnouncement(null);
     setStatus('');
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!form.title.trim() || !form.message.trim() || !actorId) {
-      setStatus('Please enter a title and message before posting.');
+    const nextErrors = {
+      title: validateAnnouncementField('title', form.title),
+      message: validateAnnouncementField('message', form.message),
+    };
+    setFormTouched({ title: true, message: true });
+    setFormErrors(nextErrors);
+    if (nextErrors.title || nextErrors.message) {
+      setStatus('');
+      return;
+    }
+    if (!actorId) {
+      setStatus('Unable to identify the signed-in account. Please sign in again.');
       return;
     }
 
@@ -227,8 +261,8 @@ export default function AnnouncementPage({ mode = 'parent' }) {
         method: isEditing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: form.title,
-          message: form.message,
+          title: form.title.trim(),
+          message: form.message.trim(),
           created_by: actorId,
           created_by_role: config.creatorRole,
           actor_id: actorId,
@@ -246,6 +280,8 @@ export default function AnnouncementPage({ mode = 'parent' }) {
 
       setAnnouncements((prev) => updateAnnouncementCollection(prev, data));
       setForm({ title: '', message: '' });
+      setFormErrors({ title: '', message: '' });
+      setFormTouched({ title: false, message: false });
       setEditingAnnouncement(null);
       setStatus(isEditing ? 'Announcement updated.' : 'Announcement posted successfully.');
     } catch (err) {
@@ -259,6 +295,8 @@ export default function AnnouncementPage({ mode = 'parent' }) {
   const handleEdit = (announcement) => {
     setEditingAnnouncement(announcement);
     setForm({ title: announcement.title || '', message: announcement.message || '' });
+    setFormErrors({ title: '', message: '' });
+    setFormTouched({ title: false, message: false });
     setStatus('');
   };
 
@@ -368,25 +406,41 @@ export default function AnnouncementPage({ mode = 'parent' }) {
                     </div>
                   </div>
                   <div className="form-group">
-                    <label>Title</label>
+                    <label htmlFor="announcement-title">Title <span aria-hidden="true">*</span></label>
                     <input
+                      id="announcement-title"
                       type="text"
-                      className="input-field"
+                      className={`input-field ${formTouched.title && formErrors.title ? 'announcement-input-error' : ''}`}
                       value={form.title}
-                      onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
+                      onChange={(event) => updateAnnouncementField('title', event.target.value)}
+                      onBlur={() => touchAnnouncementField('title')}
                       placeholder="Announcement title"
                       maxLength={150}
+                      required
+                      aria-invalid={Boolean(formTouched.title && formErrors.title)}
+                      aria-describedby={formTouched.title && formErrors.title ? 'announcement-title-error' : undefined}
                     />
+                    {formTouched.title && formErrors.title && (
+                      <p id="announcement-title-error" className="announcement-field-error" role="alert">{formErrors.title}</p>
+                    )}
                   </div>
                   <div className="form-group">
-                    <label>Message</label>
+                    <label htmlFor="announcement-message">Message <span aria-hidden="true">*</span></label>
                     <textarea
-                      className="textarea-field"
+                      id="announcement-message"
+                      className={`textarea-field ${formTouched.message && formErrors.message ? 'announcement-input-error' : ''}`}
                       value={form.message}
-                      onChange={(event) => setForm((prev) => ({ ...prev, message: event.target.value }))}
+                      onChange={(event) => updateAnnouncementField('message', event.target.value)}
+                      onBlur={() => touchAnnouncementField('message')}
                       placeholder={config.messagePlaceholder}
                       rows={4}
+                      required
+                      aria-invalid={Boolean(formTouched.message && formErrors.message)}
+                      aria-describedby={formTouched.message && formErrors.message ? 'announcement-message-error' : undefined}
                     />
+                    {formTouched.message && formErrors.message && (
+                      <p id="announcement-message-error" className="announcement-field-error" role="alert">{formErrors.message}</p>
+                    )}
                   </div>
                   <div className="announcement-actions">
                     <button type="submit" className="btn-primary announcement-submit" disabled={saving}>
