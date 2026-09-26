@@ -1,6 +1,6 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import LessonQuestionManager from './LessonQuestionManager';
+import LessonQuestionManager, { getLessonGenerationPollLimit } from './LessonQuestionManager';
 import { clearPreparedReport, openPreparedReport } from './PrintReportPortal';
 
 const mockNavigate = jest.fn();
@@ -41,6 +41,13 @@ const setFieldValue = (field, value) => {
 };
 
 const getUploadModal = () => document.body.querySelector('.drive-upload-modal');
+
+test('generation polling scales with the number of 25-question AI batches', () => {
+  expect(getLessonGenerationPollLimit(1)).toBe(240);
+  expect(getLessonGenerationPollLimit(25)).toBe(240);
+  expect(getLessonGenerationPollLimit(26)).toBe(480);
+  expect(getLessonGenerationPollLimit(50)).toBe(480);
+});
 const getUploadModalSelects = () => document.body.querySelectorAll('.drive-upload-modal select');
 let previewObservers = [];
 
