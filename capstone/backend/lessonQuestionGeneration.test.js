@@ -376,10 +376,11 @@ test('lesson generation aborts a provider request that exceeds its bounded timeo
   assert.equal(providerCalls, 1);
 });
 
-test('lesson generation reserves a realistic single deadline for five structured questions', () => {
-  const { QUESTION_GENERATION_TIMEOUT_MS } = require('./lessonQuestionGeneration');
+test('lesson generation reserves a realistic deadline for larger exact structured sets', () => {
+  const { QUESTION_GENERATION_TIMEOUT_MS, MAX_GENERATION_BATCH_SIZE } = require('./lessonQuestionGeneration');
 
-  assert.equal(QUESTION_GENERATION_TIMEOUT_MS, 60000);
+  assert.equal(QUESTION_GENERATION_TIMEOUT_MS, 120000);
+  assert.equal(MAX_GENERATION_BATCH_SIZE, 25);
 });
 
 test('lesson generation batches larger requests and only returns a complete validated set', async () => {
@@ -449,6 +450,34 @@ test('lesson generation completes the exact requested 5, 10, 20, and 25 question
     });
   }
 });
+
+test('lesson generation can request each supported total in one exact provider batch', async () => {
+  const { generateLessonQuestionsInBatches } = require('./lessonQuestionGeneration');
+
+  for (const target of [5, 10, 20, 25]) {
+    const calls = [];
+    const questions = await generateLessonQuestionsInBatches({
+      lessonText: 'A lesson about addition.',
+      title: 'Addition lesson',
+      gradeLevel: 'Grade 1',
+      difficulty: 'Easy',
+      questionCount: target,
+      batchSize: target,
+      generateBatch: async ({ questionCount }) => {
+        calls.push(questionCount);
+        return Array.from({ length: questionCount }, (_, index) => ({
+          question: `Exact set ${target} question ${index + 1}`,
+          options: ['1', '2', '3', '4'],
+          correct_answer: '1',
+        }));
+      },
+    });
+
+    assert.deepEqual(calls, [target]);
+    assert.equal(questions.length, target);
+  }
+});
+
 
 test('later AI batches receive prior question text and retry a duplicate batch instead of stopping at five', async () => {
   const { generateLessonQuestionsInBatches } = require('./lessonQuestionGeneration');
