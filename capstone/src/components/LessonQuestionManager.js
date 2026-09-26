@@ -239,7 +239,7 @@ export default function LessonQuestionManager() {
   const [notification, setNotification] = useState(null);
   const [curriculumRegistry, setCurriculumRegistry] = useState(null);
   const [files, setFiles] = useState([]);
-  const [lessonSources, setLessonSources] = useState([]);
+  const [, setLessonSources] = useState([]);
   const [aiRuntimeState, setAiRuntimeState] = useState({
     enabled: false,
     status: 'paused',
