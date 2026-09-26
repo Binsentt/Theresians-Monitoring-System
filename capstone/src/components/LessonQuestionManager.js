@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ModalPortal from './ModalPortal';
+import ConfirmModal from './ConfirmModal';
 import { Download, FilePenLine, FileText, Folder, HardDrive, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
@@ -263,6 +264,7 @@ export default function LessonQuestionManager() {
   const [previewQuestionErrors, setPreviewQuestionErrors] = useState({});
   const [previewQuestionSaving, setPreviewQuestionSaving] = useState(false);
   const [previewQuestionDirty, setPreviewQuestionDirty] = useState(false);
+  const [discardQuestionChangesAction, setDiscardQuestionChangesAction] = useState('');
   const [approvingPreview, setApprovingPreview] = useState(false);
   const [reviewComplete, setReviewComplete] = useState(false);
   const [reviewSnapshotKey, setReviewSnapshotKey] = useState('');
@@ -1015,8 +1017,7 @@ export default function LessonQuestionManager() {
     link.remove();
   };
 
-  const closeQuestionPreview = () => {
-    if (previewQuestionDirty && !window.confirm('Discard unsaved question changes?')) return;
+  const closeQuestionPreviewImmediately = () => {
     previewRequestRef.current = { token: previewRequestRef.current.token + 1 };
     setQuestionPreviewFile(null);
     setQuestionPreviewDetails(null);
@@ -1031,6 +1032,14 @@ export default function LessonQuestionManager() {
     setPreviewQuestionErrors({});
     setPreviewQuestionSaving(false);
     setPreviewQuestionDirty(false);
+  };
+
+  const closeQuestionPreview = () => {
+    if (previewQuestionDirty) {
+      setDiscardQuestionChangesAction('close-preview');
+      return;
+    }
+    closeQuestionPreviewImmediately();
   };
 
   const openQuestionSetPreview = async (file) => {
@@ -1089,12 +1098,29 @@ export default function LessonQuestionManager() {
     setPreviewQuestionDirty(false);
   };
 
-  const cancelPreviewQuestionEditing = () => {
-    if (previewQuestionDirty && !window.confirm('Discard unsaved question changes?')) return;
+  const cancelPreviewQuestionEditingImmediately = () => {
     setPreviewEditMode(false);
     setPreviewQuestionDrafts([]);
     setPreviewQuestionErrors({});
     setPreviewQuestionDirty(false);
+  };
+
+  const cancelPreviewQuestionEditing = () => {
+    if (previewQuestionDirty) {
+      setDiscardQuestionChangesAction('cancel-edit');
+      return;
+    }
+    cancelPreviewQuestionEditingImmediately();
+  };
+
+  const confirmDiscardQuestionChanges = () => {
+    const action = discardQuestionChangesAction;
+    setDiscardQuestionChangesAction('');
+    if (action === 'close-preview') {
+      closeQuestionPreviewImmediately();
+      return;
+    }
+    if (action === 'cancel-edit') cancelPreviewQuestionEditingImmediately();
   };
 
   const addPreviewQuestionDraft = () => {
@@ -2166,6 +2192,18 @@ export default function LessonQuestionManager() {
               </div>
               </ModalPortal>
             )}
+
+            <ConfirmModal
+              open={Boolean(discardQuestionChangesAction)}
+              title="Discard Changes?"
+              message="Discard unsaved question changes?"
+              confirmLabel="Discard"
+              cancelLabel="Cancel"
+              variant="danger"
+              busy={previewQuestionSaving}
+              onCancel={() => setDiscardQuestionChangesAction('')}
+              onConfirm={confirmDiscardQuestionChanges}
+            />
 
             {removalConfirmation && (
               <ModalPortal onClose={() => setRemovalConfirmation(null)}>
