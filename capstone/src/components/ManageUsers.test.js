@@ -375,7 +375,6 @@ describe('ManageUsers edit flow', () => {
 
   test('admin can issue a replacement temporary password without receiving it in the UI', async () => {
     localStorage.setItem('rememberToken', 'manage-users-token');
-    window.confirm = jest.fn(() => true);
     global.fetch = jest.fn((url, options = {}) => {
       if (String(url).includes('/api/accounts/7/temporary-password')) {
         return Promise.resolve({
@@ -400,7 +399,18 @@ describe('ManageUsers edit flow', () => {
       resendButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
+    expect(document.body.textContent).toContain('Issue New Temporary Password?');
+    expect(document.body.textContent).toContain('Send a new temporary password to');
+
+    const confirmButton = Array.from(document.body.querySelectorAll('.confirm-modal button')).find(
+      (button) => button.textContent === 'OK'
+    );
+    await act(async () => {
+      confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
     const request = global.fetch.mock.calls.find(([url]) => String(url).includes('/api/accounts/7/temporary-password'));
+    expect(request).toBeTruthy();
     expect(request[1].method).toBe('POST');
     expect(request[1].headers.Authorization).toBe('Bearer manage-users-token');
     expect(document.body.textContent).toContain('Temporary Password Issued');
