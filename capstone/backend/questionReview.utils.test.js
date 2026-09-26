@@ -12,5 +12,13 @@ test('active AI generation says remaining questions are automatic instead of ask
 test('duplicate question detection is case and whitespace insensitive', () => { const duplicate = findDuplicateQuestion([{ id: 1, question: '  What is 2 + 2? ' }], 'what   is 2 + 2?'); assert.equal(duplicate.id, 1); });
 test('duplicate question detection permits the current question during edit', () => { const duplicate = findDuplicateQuestion([{ id: 1, question: 'What is 2 + 2?' }], 'What is 2 + 2?', { excludeId: 1 }); assert.equal(duplicate, null); });
 test('empty question text is never treated as a duplicate', () => { assert.equal(findDuplicateQuestion([{ id: 1, question: '' }], ''), null); });
-test('only active generation stages hide manual add', () => { assert.equal(isQuestionGenerationActive('generating'), true); assert.equal(isQuestionGenerationActive('ready_for_review'), false); assert.equal(isQuestionGenerationActive('not_applicable'), false); });
+test('all active generation stages hide manual add and remain in-progress', () => {
+  for (const status of ['queued', 'extracting', 'generating', 'validating', 'saving']) {
+    assert.equal(isQuestionGenerationActive(status), true);
+  }
+  assert.equal(isQuestionGenerationActive('ready_for_review'), false);
+  assert.equal(isQuestionGenerationActive('partial_failed'), false);
+  assert.equal(isQuestionGenerationActive('failed'), false);
+  assert.equal(isQuestionGenerationActive('not_applicable'), false);
+});
 test('question count state preserves current count for fixed/manual sets', () => { const state = getQuestionCountState({ file_type: 'fixed_questions', requested_question_count: 25 }, 3); assert.deepEqual(state, { applies: false, requested: null, current: 3, missing: 0 }); });
