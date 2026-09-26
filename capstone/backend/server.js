@@ -131,6 +131,7 @@ const {
   toQuestionSetResponse,
 } = require('./questionSetLifecycle.utils');
 const {
+  ACTIVE_GENERATION_STATUSES,
   buildQuestionCountEligibility,
   findDuplicateQuestion,
   isQuestionGenerationActive,
@@ -2659,8 +2660,8 @@ const getInProgressLessonGenerationByFingerprint = (actorId, requestFingerprint)
   `lf.uploaded_by = $1
    AND lf.source = 'lesson'
    AND lf.generation_request_fingerprint = $2
-   AND lf.generation_status = 'generating'`,
-  [actorId, requestFingerprint]
+   AND lf.generation_status = ANY($3::text[])`,
+  [actorId, requestFingerprint, Array.from(ACTIVE_GENERATION_STATUSES)]
 );
 
 const buildLessonGenerationResponse = (learningFile, { idempotent = false } = {}) => ({
@@ -2676,7 +2677,7 @@ const respondToExistingLessonGeneration = ({ res, learningFile, requestFingerpri
       code: 'AI_GENERATION_IDEMPOTENCY_CONFLICT',
     });
   }
-  if (learningFile.generation_status === 'generating') {
+  if (isQuestionGenerationActive(learningFile.generation_status)) {
     return res.status(202).json({
       ...buildLessonGenerationResponse(learningFile, { idempotent: true }),
       code: 'AI_GENERATION_IN_PROGRESS',
