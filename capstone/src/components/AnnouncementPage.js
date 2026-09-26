@@ -5,6 +5,7 @@ import DashboardLoadingShell from './layout/DashboardLoadingShell';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import logoImage from '../assets/images/STS_Logo.png';
 import { AnnouncementCard, AnnouncementEmptyState } from './AnnouncementCard';
+import ConfirmModal from './ConfirmModal';
 import {
   getAnnouncementUserId,
   getAnnouncementUserName,
@@ -139,6 +140,7 @@ export default function AnnouncementPage({ mode = 'parent' }) {
   const [editingAnnouncement, setEditingAnnouncement] = useState(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
+  const [announcementToDelete, setAnnouncementToDelete] = useState(null);
 
   const sessionRole = normalizeRole(user?.role || getStoredUserSession()?.role);
   const sidebarRole = sessionRole === 'parent_teacher' ? 'parent_teacher' : config.sidebarRole;
@@ -262,9 +264,14 @@ export default function AnnouncementPage({ mode = 'parent' }) {
     setStatus('');
   };
 
-  const handleDelete = async (announcement) => {
-    if (!actorId || !announcement?.id) return;
-    if (!window.confirm('Delete this announcement permanently?')) return;
+  const handleDelete = (announcement) => {
+    if (!actorId || !announcement?.id || saving) return;
+    setAnnouncementToDelete(announcement);
+  };
+
+  const confirmDeleteAnnouncement = async () => {
+    const announcement = announcementToDelete;
+    if (!actorId || !announcement?.id || saving) return;
 
     setSaving(true);
     setStatus('');
@@ -286,6 +293,7 @@ export default function AnnouncementPage({ mode = 'parent' }) {
       if (editingAnnouncement?.id === announcement.id) {
         resetComposer();
       }
+      setAnnouncementToDelete(null);
       setStatus('Announcement deleted.');
     } catch (err) {
       setStatus('Connection error while deleting announcement.');
@@ -308,7 +316,8 @@ export default function AnnouncementPage({ mode = 'parent' }) {
   }
 
   return (
-    <DashboardContainer
+    <>
+      <DashboardContainer
       sidebar={
         <AnalyticsSidebar
           role={sidebarRole}
@@ -429,6 +438,18 @@ export default function AnnouncementPage({ mode = 'parent' }) {
           </PageContent>
         </MainContent>
       }
-    />
+      />
+      <ConfirmModal
+        open={Boolean(announcementToDelete)}
+        title="Confirm Delete"
+        message="Delete this announcement permanently?"
+        confirmLabel="OK"
+        cancelLabel="Cancel"
+        variant="danger"
+        busy={saving}
+        onCancel={() => setAnnouncementToDelete(null)}
+        onConfirm={confirmDeleteAnnouncement}
+      />
+    </>
   );
 }
