@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   ALLOWED_DIFFICULTIES,
   ALLOWED_MATH_TOPICS,
+  LESSON_QUESTION_COUNT_OPTIONS,
   MAX_LESSON_QUESTION_COUNT,
   getMathTopicsForGrade,
   getMathTopicsForGradeDifficulty,
@@ -175,11 +176,15 @@ test('parses and validates fixed question counts for uploaded question bundles',
   );
 });
 
-test('lesson Question Count accepts only required bounded whole numbers', () => {
-  assert.deepEqual(parseLessonQuestionCount('20'), { value: 20, error: null });
-  assert.equal(parseLessonQuestionCount('').error, 'Question Count is required for Lesson PDF files.');
-  assert.equal(parseLessonQuestionCount('0').error, 'Question Count must be a whole number between 1 and 50.');
-  assert.equal(parseLessonQuestionCount('-1').error, 'Question Count must be a whole number between 1 and 50.');
-  assert.equal(parseLessonQuestionCount('2.5').error, 'Question Count must be a whole number between 1 and 50.');
-  assert.equal(parseLessonQuestionCount(String(MAX_LESSON_QUESTION_COUNT + 1)).error, 'Question Count must be a whole number between 1 and 50.');
+test('lesson Question Count accepts only the supported AI generation totals', () => {
+  assert.deepEqual(LESSON_QUESTION_COUNT_OPTIONS, [5, 10, 20, 25]);
+  for (const count of LESSON_QUESTION_COUNT_OPTIONS) {
+    assert.deepEqual(parseLessonQuestionCount(String(count)), { value: count, error: null });
+  }
+  assert.equal(MAX_LESSON_QUESTION_COUNT, 25);
+  assert.equal(parseLessonQuestionCount('').error, 'Question Count is required for Lesson PDF or PPTX files.');
+  assert.equal(parseLessonQuestionCount('0').error, 'Question Count must be one of: 5, 10, 20, 25.');
+  assert.equal(parseLessonQuestionCount('6').error, 'Question Count must be one of: 5, 10, 20, 25.');
+  assert.equal(parseLessonQuestionCount('2.5').error, 'Question Count must be one of: 5, 10, 20, 25.');
+  assert.equal(parseLessonQuestionCount('50').error, 'Question Count must be one of: 5, 10, 20, 25.');
 });
