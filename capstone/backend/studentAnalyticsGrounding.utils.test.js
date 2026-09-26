@@ -288,6 +288,7 @@ test('dynamic provider schema allows only catalog ids and no free-text propertie
   assert.equal(schema.properties.performance_claim_ids.items.enum.includes('improving_accuracy'), false);
   assert.equal(schema.properties.strength_claim_ids.items.enum.includes('difficulty_easy_strength'), true);
   assert.equal(schema.properties.weakness_claim_ids.items.enum.includes('difficulty_difficult_weakness'), false);
+  assert.equal(schema.properties.weakness_claim_ids.minItems, 1);
   assert.equal(Object.prototype.hasOwnProperty.call(schema.properties, 'recommendation_claim_ids'), false);
 });
 
