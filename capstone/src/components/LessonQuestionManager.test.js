@@ -651,12 +651,11 @@ describe('LessonQuestionManager upload and trash controls', () => {
       setSelectValue(selects[2], 'lesson');
     });
 
-    const countField = document.body.querySelector('input[name="expected_question_count"]');
+    const countField = document.body.querySelector('select[name="expected_question_count"]');
     expect(document.body.textContent).toContain('Question Count');
     expect(countField).toBeTruthy();
     expect(countField.required).toBe(true);
-    expect(countField.min).toBe('1');
-    expect(countField.max).toBe('50');
+    expect(Array.from(countField.options).map((option) => option.value)).toEqual(['', '5', '10', '20', '25']);
 
     await act(async () => {
       setSelectValue(selects[0], 'Grade 1');
@@ -740,10 +739,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       const selects = getUploadModalSelects();
       setSelectValue(selects[0], 'Grade 1');
       setSelectValue(selects[1], 'Easy');
-      setSelectValue(selects[3], 'Basic Addition');
-      const countField = document.body.querySelector('input[name="expected_question_count"]');
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(countField, '2');
-      countField.dispatchEvent(new Event('change', { bubbles: true }));
+      setSelectValue(selects[3], '5');
       const fileInput = document.body.querySelector('input[type="file"]');
       const file = new File(['%PDF-1.4 lesson'], 'addition-lesson.pdf', { type: 'application/pdf' });
       Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
@@ -792,9 +788,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
       const selects = getUploadModalSelects();
       setSelectValue(selects[0], 'Grade 3');
       setSelectValue(selects[1], 'Normal');
-      const countField = getUploadModal().querySelector('input[name="expected_question_count"]');
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(countField, '5');
-      countField.dispatchEvent(new Event('change', { bubbles: true }));
+      const countField = getUploadModal().querySelector('select[name="expected_question_count"]');
+      setSelectValue(countField, '5');
       const fileInput = getUploadModal().querySelector('input[type="file"]');
       const file = new File(['PK\u0003\u0004ppt/presentation.xml'], 'fractions.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
