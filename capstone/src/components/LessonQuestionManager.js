@@ -141,6 +141,17 @@ function deriveUploadTitle(file) {
   return String(file?.name || '').replace(/\.[^.]+$/, '').trim() || 'Uploaded mathematics content';
 }
 
+function getUploadFileTypeError(fileName, fileType) {
+  const name = String(fileName || '').trim();
+  if (!name || isSupportedLearningUpload(name, fileType)) return '';
+  if (fileType === 'fixed_questions' && /\.pptx?$/i.test(name)) {
+    return 'PPT/PPTX files cannot be uploaded as Fixed Questions. Select Lesson PDF or PPTX File instead.';
+  }
+  return fileType === 'lesson'
+    ? 'Lesson files must be PDF or PPTX.'
+    : 'Fixed Question files must be DOCX, PDF, JSON, or CSV.';
+}
+
 function formatDifficultyLabel(gradeLevel, difficulty) {
   return difficulty;
 }
@@ -412,6 +423,15 @@ export default function LessonQuestionManager() {
     loadAiRuntimeState({ role });
   }, [navigate]);
 
+  const hasInProgressGeneration = files.some((file) => getGenerationStatusView(file).inProgress);
+  useEffect(() => {
+    if (!hasInProgressGeneration || !user?.role) return undefined;
+    const intervalId = window.setInterval(() => {
+      loadFilesAndFolders({ role: user.role });
+    }, GENERATION_POLL_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
+  }, [hasInProgressGeneration, user?.role]);
+
   const folderView = useMemo(() => getQuestionFolderView(files, {
     grade_level: selectedFolder.grade_level,
     difficulty: selectedFolder.difficulty,
@@ -504,9 +524,16 @@ export default function LessonQuestionManager() {
 
   const handleFormChange = (field, value) => {
     setUploadError('');
-    setFormErrors((current) => ({ ...current, [field]: '' }));
     if (field === 'file' || field === 'file_type') setFixedUploadValidation(null);
     if (field === 'file_type' && value !== 'lesson') setSelectedLessonSourceId('');
+    const candidateFile = field === 'file' ? value : form.file;
+    const candidateType = field === 'file_type' ? value : form.file_type;
+    const fileTypeError = getUploadFileTypeError(candidateFile?.name, candidateType);
+    setFormErrors((current) => ({
+      ...current,
+      [field]: '',
+      ...(field === 'file' || field === 'file_type' ? { file: fileTypeError } : {}),
+    }));
     setForm((prev) => {
       if (field === 'grade_level' || field === 'difficulty') {
         const gradeLevel = field === 'grade_level' ? value : prev.grade_level;
@@ -691,8 +718,12 @@ export default function LessonQuestionManager() {
       showNotification('The curriculum registry is still loading. Try again in a moment.', 'error');
       return;
     }
-    if (!uploadType || (!usingReusableLessonSource && !isSupportedLearningUpload(form.file.name, uploadType))) {
-      showNotification('Lesson files must be PDF or PPTX. Fixed Questions support DOCX or PDF documents.', 'error');
+    const uploadFileTypeError = !usingReusableLessonSource
+      ? getUploadFileTypeError(form.file?.name, uploadType)
+      : '';
+    if (!uploadType || uploadFileTypeError) {
+      setFormErrors((current) => ({ ...current, file: uploadFileTypeError || 'Select a supported file type.' }));
+      showNotification(uploadFileTypeError || 'Select a supported file type.', 'error');
       return;
     }
     if (
@@ -1864,26 +1895,6 @@ export default function LessonQuestionManager() {
                         <option value="fixed_questions">Fixed Question File</option>
                       </select>
                     </div>
-                    {form.file_type === 'lesson' && (
-                      <div className="form-group">
-                        <label className="form-label">Reusable Lesson PDF or PPTX Source</label>
-                        <select
-                          className="select-field"
-                          value={selectedLessonSourceId}
-                          onChange={(event) => setSelectedLessonSourceId(event.target.value)}
-                        >
-                          <option value="">Upload a Lesson PDF or PPTX for this generation</option>
-                          {lessonSources.map((source) => (
-                            <option key={source.id} value={source.id}>
-                              {source.title}{source.generated_child_count ? ` (${source.generated_child_count} generated sets)` : ''}
-                            </option>
-                          ))}
-                        </select>
-                        {selectedLessonSourceId && (
-                          <p className="fixed-question-upload-help">The selected source will be reused; the Grade, Difficulty, and Question Count create the new child set.</p>
-                        )}
-                      </div>
-                    )}
                     <div className="form-group">
                       <label className="form-label">Destination</label>
                       <div className="fixed-destination-display">
@@ -1920,11 +1931,7 @@ export default function LessonQuestionManager() {
                           onChange={(event) => handleFormChange('file', event.target.files[0] || null)}
                         />
                       )}
-                      {form.file_type === 'lesson' && !aiGenerationPaused && !selectedLessonSourceId && form.file && (
-                        <button type="button" className="secondary-button" onClick={saveLessonSource} disabled={savingLessonSource || uploading}>
-                          {savingLessonSource ? 'Saving Lesson Source...' : 'Save as Reusable Lesson Source'}
-                        </button>
-                      )}
+                      {formErrors.file && <p className="manager-inline-error" role="alert">{formErrors.file}</p>}
                       {form.file_type === 'fixed_questions' && (
                         <p className="fixed-question-upload-help">Fixed Questions supported: DOCX, PDF. JSON/CSV remain available for developer compatibility.</p>
                       )}
