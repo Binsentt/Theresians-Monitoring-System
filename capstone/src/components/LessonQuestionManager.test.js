@@ -651,17 +651,21 @@ describe('LessonQuestionManager upload and trash controls', () => {
       setSelectValue(selects[2], 'lesson');
     });
 
-    const countField = document.body.querySelector('select[name="expected_question_count"]');
+    const countField = document.body.querySelector('input[name="expected_question_count"]');
     expect(document.body.textContent).toContain('Question Count');
-    const questionCountSelect = document.body.querySelector('select[name="expected_question_count"]');
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set.call(questionCountSelect, '25');
-      questionCountSelect.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    expect(document.body.textContent).toContain('AI will generate exactly 25 questions from this lesson file.');
     expect(countField).toBeTruthy();
     expect(countField.required).toBe(true);
-    expect(Array.from(countField.options).map((option) => option.value)).toEqual(['', '5', '10', '20', '25']);
+    expect(countField.type).toBe('number');
+    expect(countField.min).toBe('1');
+    expect(countField.max).toBe('50');
+    expect(countField.step).toBe('1');
+    await act(async () => {
+      setFieldValue(countField, '50');
+    });
+    expect(document.body.textContent).toContain('AI will generate exactly 50 questions from this lesson file.');
+    await act(async () => {
+      setFieldValue(countField, '');
+    });
 
     await act(async () => {
       setSelectValue(selects[0], 'Grade 1');
@@ -745,7 +749,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
       const selects = getUploadModalSelects();
       setSelectValue(selects[0], 'Grade 1');
       setSelectValue(selects[1], 'Easy');
-      setSelectValue(selects[3], '5');
+      const countField = getUploadModal().querySelector('input[name="expected_question_count"]');
+      setFieldValue(countField, '50');
       const fileInput = document.body.querySelector('input[type="file"]');
       const file = new File(['%PDF-1.4 lesson'], 'addition-lesson.pdf', { type: 'application/pdf' });
       Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
@@ -761,6 +766,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       String(url).endsWith('/api/learning-files/upload') && options?.method === 'POST'
     ));
     expect(lessonRequests).toHaveLength(1);
+    expect(lessonRequests[0][1].body.get('expected_question_count')).toBe('50');
     expect(lessonRequests[0][1].headers).toEqual(expect.objectContaining({
       Authorization: 'Bearer lesson-manager-token',
       'Idempotency-Key': expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/),
@@ -794,8 +800,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
       const selects = getUploadModalSelects();
       setSelectValue(selects[0], 'Grade 3');
       setSelectValue(selects[1], 'Normal');
-      const countField = getUploadModal().querySelector('select[name="expected_question_count"]');
-      setSelectValue(countField, '5');
+      const countField = getUploadModal().querySelector('input[name="expected_question_count"]');
+      setFieldValue(countField, '50');
       const fileInput = getUploadModal().querySelector('input[type="file"]');
       const file = new File(['PK\u0003\u0004ppt/presentation.xml'], 'fractions.pptx', {
         type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -822,7 +828,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(uploadRequests).toHaveLength(1);
     expect(uploadRequests[0][1].body.get('file').name).toBe('fractions.pptx');
     expect(uploadRequests[0][1].body.get('file').type).toBe('application/vnd.openxmlformats-officedocument.presentationml.presentation');
-    expect(uploadRequests[0][1].body.get('expected_question_count')).toBe('5');
+    expect(uploadRequests[0][1].body.get('expected_question_count')).toBe('50');
     expect(getUploadModal()).not.toBeNull();
     expect(getUploadModal().textContent).not.toContain('Uploading file...');
     expect(getUploadModal().textContent).toContain('Question AI is unavailable. Retry after the service is restored.');
