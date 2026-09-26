@@ -63,7 +63,7 @@ export default function ParentActivityLog() {
         onSelect={handleSidebarSelection}
         logoSrc={logoImage}
         portalLabel="Parent Portal"
-        heading="Activity Log"
+        heading="Child Activity Log"
         subheading="Review recent activity for your account and children."
       />
     );
@@ -84,7 +84,7 @@ export default function ParentActivityLog() {
         <MainContent>
           <TopBar>
             <div>
-              <h1>Activity Log</h1>
+              <h1>Child Activity Log</h1>
               <p>View your child's gameplay sessions and engagement metrics</p>
             </div>
           </TopBar>
