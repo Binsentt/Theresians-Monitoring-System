@@ -13,9 +13,11 @@ const {
 
 const ALLOWED_GRADE_LEVELS = CANONICAL_GRADES;
 const ALLOWED_DIFFICULTIES = CANONICAL_DIFFICULTIES;
-const LESSON_QUESTION_COUNT_OPTIONS = Object.freeze([5, 10, 20, 25]);
-const MIN_LESSON_QUESTION_COUNT = LESSON_QUESTION_COUNT_OPTIONS[0];
-const MAX_LESSON_QUESTION_COUNT = LESSON_QUESTION_COUNT_OPTIONS[LESSON_QUESTION_COUNT_OPTIONS.length - 1];
+const MIN_LESSON_QUESTION_COUNT = 1;
+const MAX_LESSON_QUESTION_COUNT = 50;
+const LESSON_QUESTION_COUNT_OPTIONS = Object.freeze(
+  Array.from({ length: MAX_LESSON_QUESTION_COUNT }, (_, index) => index + MIN_LESSON_QUESTION_COUNT)
+);
 
 const ALLOWED_MATH_TOPICS = TOPICS.map((topic) => topic.display_label);
 
@@ -89,11 +91,11 @@ const parseLessonQuestionCount = (value) => {
     return { value: null, error: 'Question Count is required for Lesson PDF or PPTX files.' };
   }
   if (!/^\d+$/.test(rawValue)) {
-    return { value: null, error: `Question Count must be one of: ${LESSON_QUESTION_COUNT_OPTIONS.join(', ')}.` };
+    return { value: null, error: `Question Count must be a whole number between ${MIN_LESSON_QUESTION_COUNT} and ${MAX_LESSON_QUESTION_COUNT}.` };
   }
   const count = Number(rawValue);
-  if (!LESSON_QUESTION_COUNT_OPTIONS.includes(count)) {
-    return { value: null, error: `Question Count must be one of: ${LESSON_QUESTION_COUNT_OPTIONS.join(', ')}.` };
+  if (count < MIN_LESSON_QUESTION_COUNT || count > MAX_LESSON_QUESTION_COUNT) {
+    return { value: null, error: `Question Count must be a whole number between ${MIN_LESSON_QUESTION_COUNT} and ${MAX_LESSON_QUESTION_COUNT}.` };
   }
   return { value: count, error: null };
 };

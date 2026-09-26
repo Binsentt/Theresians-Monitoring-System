@@ -45,7 +45,8 @@ const initialFilterState = {
   search: '',
 };
 
-const LESSON_QUESTION_COUNT_OPTIONS = Object.freeze([5, 10, 20, 25]);
+const MIN_LESSON_QUESTION_COUNT = 1;
+const MAX_LESSON_QUESTION_COUNT = 50;
 const LESSON_GENERATION_IDEMPOTENCY_STORAGE_PREFIX = 'theresians.lesson-generation.';
 const AI_PAUSED_MESSAGE = 'AI generation is temporarily paused. Recorded data and available questions remain accessible.';
 const GENERATION_POLL_INTERVAL_MS = 1500;
@@ -744,10 +745,16 @@ export default function LessonQuestionManager() {
       return;
     }
     const requestedCount = String(form.expected_question_count || '').trim();
-    if (uploadType === 'lesson' && !LESSON_QUESTION_COUNT_OPTIONS.includes(Number(requestedCount))) {
+    const requestedQuestionCount = Number(requestedCount);
+    if (uploadType === 'lesson' && (
+      !/^\d+$/.test(requestedCount)
+      || !Number.isInteger(requestedQuestionCount)
+      || requestedQuestionCount < MIN_LESSON_QUESTION_COUNT
+      || requestedQuestionCount > MAX_LESSON_QUESTION_COUNT
+    )) {
       setFormErrors({
         expected_question_count: requestedCount
-          ? `Question Count must be one of: ${LESSON_QUESTION_COUNT_OPTIONS.join(', ')}.`
+          ? `Question Count must be a whole number between ${MIN_LESSON_QUESTION_COUNT} and ${MAX_LESSON_QUESTION_COUNT}.`
           : 'Question Count is required for Lesson PDF or PPTX files.',
       });
       return;
@@ -1931,20 +1938,21 @@ export default function LessonQuestionManager() {
                     {form.file_type === 'lesson' && !aiGenerationPaused && (
                       <div className="form-group">
                         <label className="form-label required" htmlFor="expected-question-count">Question Count</label>
-                        <select
+                        <input
                           id="expected-question-count"
                           name="expected_question_count"
+                          type="number"
+                          min={MIN_LESSON_QUESTION_COUNT}
+                          max={MAX_LESSON_QUESTION_COUNT}
+                          step="1"
                           required
+                          inputMode="numeric"
+                          placeholder="Enter 1 to 50"
                           aria-invalid={Boolean(formErrors.expected_question_count)}
-                          className={`select-field ${formErrors.expected_question_count ? 'input-error' : ''}`}
+                          className={`input-field ${formErrors.expected_question_count ? 'input-error' : ''}`}
                           value={form.expected_question_count}
                           onChange={(event) => handleFormChange('expected_question_count', event.target.value)}
-                        >
-                          <option value="">Select question count</option>
-                          {LESSON_QUESTION_COUNT_OPTIONS.map((count) => (
-                            <option key={count} value={count}>{count} questions</option>
-                          ))}
-                        </select>
+                        />
                         {form.expected_question_count && (
                           <p className="ai-question-count-help" role="status">
                             AI will generate exactly {form.expected_question_count} questions from this lesson file.

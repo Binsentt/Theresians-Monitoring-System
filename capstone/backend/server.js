@@ -2720,9 +2720,9 @@ const generateQuestionTextFromLesson = async ({ filePath, fileName, mimeType, le
     gradeLevel: grade_level,
     difficulty,
     questionCount,
-    // Generate the requested set as one exact provider batch (5/10/20/25).
-    // This avoids the production failure mode where the first five questions
-    // were saved but later back-to-back provider calls could stop the job.
+    // Honor the teacher's requested total while keeping each provider call bounded.
+    // generateLessonQuestionsInBatches caps individual provider batches at 25,
+    // so a request for 50 is persisted safely as 25 + 25 without changing the target.
     batchSize: questionCount,
     generateBatch: generateLessonQuestions,
     onBatchComplete,
