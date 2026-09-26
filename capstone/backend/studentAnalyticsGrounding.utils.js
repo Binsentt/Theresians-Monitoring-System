@@ -265,7 +265,10 @@ function buildClaimSelectionSchema(catalog) {
       grounding_policy_version: { type: 'string', enum: [catalog.policyVersion] },
       performance_claim_ids: arraySchemaFor(catalog.permittedClaimIds.performance, 1),
       strength_claim_ids: arraySchemaFor(catalog.permittedClaimIds.strength),
-      weakness_claim_ids: arraySchemaFor(catalog.permittedClaimIds.weakness),
+      weakness_claim_ids: arraySchemaFor(
+        catalog.permittedClaimIds.weakness,
+        catalog.permittedClaimIds.weakness.length > 0 ? 1 : 0
+      ),
     },
   };
 }
