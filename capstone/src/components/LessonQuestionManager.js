@@ -1945,6 +1945,11 @@ export default function LessonQuestionManager() {
                             <option key={count} value={count}>{count} questions</option>
                           ))}
                         </select>
+                        {form.expected_question_count && (
+                          <p className="ai-question-count-help" role="status">
+                            AI will generate exactly {form.expected_question_count} questions from this lesson file.
+                          </p>
+                        )}
                         {formErrors.expected_question_count && <p className="manager-inline-error" role="alert">{formErrors.expected_question_count}</p>}
                       </div>
                     )}
@@ -2077,7 +2082,7 @@ export default function LessonQuestionManager() {
                       </section>
                     ) : previewQuestions.length === 0 ? (
                       <>
-                        <p className="question-review-metadata">Requested: {previewFile.requested_question_count ?? 'Not specified'} · Available: 0</p>
+                        <p className="question-review-count-summary">AI Generated: 0 / {previewFile.requested_question_count ?? 'Not specified'}</p>
                         {previewValidation?.is_valid === false && <p className="manager-inline-error" role="alert">Needs Correction — review the validation details before this set can be pushed to the game.</p>}
                         <p className="empty-text">No questions are available for review yet.</p>
                       </>
@@ -2097,7 +2102,9 @@ export default function LessonQuestionManager() {
                             {previewGenerationStatus.failed && <button type="button" className="btn btn-secondary" onClick={previewGenerationStatus.partial ? retryPartialGeneration : () => { closeQuestionPreview(); setSelectedLessonSourceId(String(previewFile.source_learning_file_id || previewFile.id || '')); setShowUploadForm(true); }}>{previewGenerationStatus.partial ? 'Retry remaining questions' : 'Retry'}</button>}
                           </section>
                         )}
-                        <p className="question-review-metadata">Requested: {previewFile.requested_question_count ?? 'Not specified'} · Available: {displayedPreviewQuestionCount}</p>
+                        <p className="question-review-count-summary">
+                          AI Generated: {displayedPreviewQuestionCount} / {previewFile.requested_question_count ?? displayedPreviewQuestionCount}
+                        </p>
                         {previewValidation?.is_valid === false && <p className="manager-inline-error" role="alert">Needs Correction — every question must have four distinct choices and a mapped correct answer.</p>}
                         {previewValidation?.is_valid !== false && previewIsReadyForGame && <p className="question-validation-valid">Valid — this question set is ready for manual Push to Game.</p>}
                         {previewValidation?.is_valid !== false && previewApprovalRequired && <p className="question-review-metadata">Approve this structurally valid set before Push to Game.</p>}
