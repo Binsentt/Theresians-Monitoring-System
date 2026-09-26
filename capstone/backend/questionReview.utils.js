@@ -14,6 +14,14 @@ const buildQuestionCountEligibility = (learningFile = {}, currentQuestionCount =
   if (!state.applies || state.missing === 0) return { eligible: true, code: 'ELIGIBLE', state };
   const noun = state.missing === 1 ? 'question' : 'questions';
   const actionLabel = action === 'publication' ? 'Push to Game' : 'approval';
+  if (isQuestionGenerationActive(learningFile.generation_status) || isQuestionGenerationActive(learningFile.generation_stage)) {
+    return {
+      eligible: false,
+      code: 'QUESTION_COUNT_INCOMPLETE',
+      state,
+      message: `${state.current} of ${state.requested} questions are currently available. The remaining ${state.missing} ${noun} ${state.missing === 1 ? 'is' : 'are'} still being generated automatically before ${actionLabel}.`,
+    };
+  }
   return { eligible: false, code: 'QUESTION_COUNT_INCOMPLETE', state, message: `${state.current} of ${state.requested} questions are currently available. Add ${state.missing} ${noun} before ${actionLabel}.` };
 };
 
