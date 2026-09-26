@@ -136,6 +136,7 @@ describe('GroundedAiAnalysis', () => {
       />
     ));
 
+    expect(container.textContent).toContain('AI Learning Guidance');
     expect(container.textContent).toContain('AI-Identified Weaknesses');
     expect(container.textContent).toContain('AI-Grounded Recommendations');
     expect(container.textContent).toContain('Generate the AI insight to identify evidence-backed weaknesses.');

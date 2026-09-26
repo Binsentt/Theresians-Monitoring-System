@@ -93,6 +93,38 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
         )}
       </div>
 
+      <div className="student-insight-guidance-heading">
+        <div>
+          <h2>AI Learning Guidance</h2>
+          <p>Weaknesses and recommendations below are generated only from recorded student performance evidence.</p>
+        </div>
+      </div>
+
+      <div className="student-insight-guidance-grid">
+        <InsightList
+          title="AI-Identified Weaknesses"
+          icon={AlertTriangle}
+          tone="red"
+          items={weaknesses}
+          className="student-insight-weaknesses"
+          description="Areas where the recorded results show that the student may need more mathematics practice."
+          emptyMessage={insight
+            ? 'No supported weakness is identified from the recorded evidence.'
+            : 'Generate the AI insight to identify evidence-backed weaknesses.'}
+        />
+        <InsightList
+          title="AI-Grounded Recommendations"
+          icon={MapPin}
+          tone="orange"
+          items={recommendations}
+          className="student-insight-recommendations"
+          description="Recommended next steps linked to the recorded weaknesses and evidence gaps."
+          emptyMessage={insight
+            ? 'No additional recommendation is supported by the current recorded evidence.'
+            : 'Generate the AI insight to show recommended next steps.'}
+        />
+      </div>
+
       <InsightList
         title="Strengths"
         icon={CheckCircle2}
@@ -102,28 +134,6 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
         emptyMessage={insight
           ? 'No supported strength is identified from the recorded evidence yet.'
           : 'Generate the AI insight to identify supported strengths from recorded gameplay.'}
-      />
-      <InsightList
-        title="AI-Identified Weaknesses"
-        icon={AlertTriangle}
-        tone="red"
-        items={weaknesses}
-        className="student-insight-weaknesses"
-        description="Evidence-backed areas that may need more mathematics practice."
-        emptyMessage={insight
-          ? 'No supported weakness is identified from the recorded evidence.'
-          : 'Generate the AI insight to identify evidence-backed weaknesses.'}
-      />
-      <InsightList
-        title="AI-Grounded Recommendations"
-        icon={MapPin}
-        tone="orange"
-        items={recommendations}
-        className="student-insight-recommendations"
-        description="Suggested next steps grounded in the recorded weaknesses or evidence gaps."
-        emptyMessage={insight
-          ? 'No additional recommendation is supported by the current recorded evidence.'
-          : 'Generate the AI insight to show recommended next steps.'}
       />
       {questInsights.length > 0 && (
         <div className="student-dashboard-card student-insight-list grounded-ai-quest-insights">

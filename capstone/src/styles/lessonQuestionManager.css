@@ -1142,3 +1142,21 @@ button.drive-folder-card {
     max-height: 100%;
   }
 }
+
+
+.ai-question-count-help {
+  margin: 8px 0 0;
+  color: var(--text-muted, #64748b);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.question-review-count-summary {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color, #dbe4ee);
+  border-radius: 8px;
+  background: var(--bg-secondary, #f8fafc);
+  color: var(--text-primary, #0b2447);
+  font-weight: 800;
+}

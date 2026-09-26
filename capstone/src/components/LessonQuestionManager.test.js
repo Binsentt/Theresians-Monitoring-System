@@ -653,6 +653,12 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     const countField = document.body.querySelector('select[name="expected_question_count"]');
     expect(document.body.textContent).toContain('Question Count');
+    const questionCountSelect = document.body.querySelector('select[name="expected_question_count"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set.call(questionCountSelect, '25');
+      questionCountSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(document.body.textContent).toContain('AI will generate exactly 25 questions from this lesson file.');
     expect(countField).toBeTruthy();
     expect(countField.required).toBe(true);
     expect(Array.from(countField.options).map((option) => option.value)).toEqual(['', '5', '10', '20', '25']);
