@@ -320,4 +320,67 @@ describe('AnnouncementPage load states', () => {
     expect(container.textContent).toContain('Failed to post announcement.');
     expect(container.textContent).not.toContain('Connection error while saving announcement.');
   });
+
+  test('uses a centered custom modal before permanently deleting an announcement', async () => {
+    const announcement = {
+      id: 44,
+      title: 'Delete me',
+      message: 'Temporary announcement',
+      created_by_role: 'admin',
+      created_at: '2026-09-26T00:00:00.000Z',
+    };
+
+    global.fetch = jest.fn((url, options = {}) => {
+      if (options.method === 'DELETE') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => [announcement],
+      });
+    });
+
+    await act(async () => {
+      root.render(<AnnouncementPage mode="admin" />);
+    });
+
+    const deleteButton = container.querySelector('.announcement-delete-action');
+    expect(deleteButton).not.toBeNull();
+
+    await act(async () => {
+      deleteButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(document.body.textContent).toContain('Confirm Delete');
+    expect(document.body.textContent).toContain('Delete this announcement permanently?');
+    expect(global.fetch.mock.calls.some(([, options]) => options?.method === 'DELETE')).toBe(false);
+
+    const cancelButton = Array.from(document.body.querySelectorAll('.confirm-modal button')).find(
+      (button) => button.textContent === 'Cancel'
+    );
+    await act(async () => {
+      cancelButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(global.fetch.mock.calls.some(([, options]) => options?.method === 'DELETE')).toBe(false);
+
+    await act(async () => {
+      deleteButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const confirmButton = Array.from(document.body.querySelectorAll('.confirm-modal button')).find(
+      (button) => button.textContent === 'OK'
+    );
+    await act(async () => {
+      confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const deleteRequests = global.fetch.mock.calls.filter(([, options]) => options?.method === 'DELETE');
+    expect(deleteRequests).toHaveLength(1);
+    expect(document.body.textContent).toContain('Announcement deleted.');
+  });
+
 });
