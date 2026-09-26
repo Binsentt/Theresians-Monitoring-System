@@ -68,11 +68,16 @@ const fetchLessonManagerApi = (url, options = {}) => fetch(url, {
   },
 });
 
-const waitForLessonGeneration = async (learningFileId, { signal, onProgress, questionCount } = {}) => {
+export const waitForLessonGeneration = async (learningFileId, {
+  signal,
+  onProgress,
+  questionCount,
+  buildUrl = apiUrl,
+} = {}) => {
   const pollLimit = getLessonGenerationPollLimit(questionCount);
   for (let attempt = 0; attempt < pollLimit; attempt += 1) {
     if (signal?.aborted) throw new Error('Question generation status polling was cancelled.');
-    const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${learningFileId}/generation-status`), { signal });
+    const response = await fetchLessonManagerApi(buildUrl(`/api/learning-files/${learningFileId}/generation-status`), { signal });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Unable to read question generation status.');
     const learningFile = data.learningFile || {};
@@ -655,6 +660,7 @@ export default function LessonQuestionManager() {
         showNotification('Question generation is in progress. This page will update when it is ready.', 'info');
         const completedGeneration = await waitForLessonGeneration(data.learningFile?.id, {
           questionCount: Number(data.learningFile?.requested_question_count || requestedCount),
+          buildUrl: lessonManagerApiUrl,
           onProgress: (learningFile) => {
             const completed = Number(learningFile.generation_completed_count || 0);
             const total = Number(learningFile.requested_question_count || requestedCount);
