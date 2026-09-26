@@ -1,11 +1,23 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 
 const { applyReleaseMigrations } = require('./releaseMigrations');
 const { RELEASE_MIGRATIONS } = require('./releaseMigrations');
 
-test('release manifest includes migration 023 for quest evidence timing and playtime deletion tombstones', () => {
-  assert.deepEqual(RELEASE_MIGRATIONS.at(-1), { version: 23, file: '023_quest_evidence_and_playtime_tombstones.sql' });
+test('release manifest includes migration 024 for legacy six-digit Student cleanup', () => {
+  assert.deepEqual(RELEASE_MIGRATIONS.at(-1), { version: 24, file: '024_remove_legacy_six_digit_students.sql' });
+});
+
+test('legacy Student cleanup migration only targets exact six-digit Student IDs and removes dependent runtime data', () => {
+  const sql = fs.readFileSync(path.join(__dirname, 'migrations', '024_remove_legacy_six_digit_students.sql'), 'utf8');
+  assert.match(sql, /LOWER\(role\) = 'student'/);
+  assert.match(sql, /game_student_id[\s\S]*\^\[0-9\]\{6\}\$/);
+  assert.match(sql, /DELETE FROM public\.game_results/);
+  assert.match(sql, /DELETE FROM public\.playtime_sessions/);
+  assert.match(sql, /DELETE FROM public\.accounts/);
+  assert.doesNotMatch(sql, /\^\[0-9\]\{8\}\$/);
 });
 
 test('release migrations apply in order under an advisory lock and record checksums', async () => {
