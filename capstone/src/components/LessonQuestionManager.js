@@ -50,8 +50,15 @@ const MAX_LESSON_QUESTION_COUNT = 50;
 const LESSON_GENERATION_IDEMPOTENCY_STORAGE_PREFIX = 'theresians.lesson-generation.';
 const AI_PAUSED_MESSAGE = 'AI generation is temporarily paused. Recorded data and available questions remain accessible.';
 const GENERATION_POLL_INTERVAL_MS = 1500;
-const GENERATION_POLL_LIMIT = 120;
+const MAX_AI_GENERATION_BATCH_SIZE = 25;
+const GENERATION_POLL_WINDOW_PER_BATCH_MS = 6 * 60 * 1000;
 const GENERATION_READY_ACK_PREFIX = 'theresians.lesson-generation-ready.';
+
+export const getLessonGenerationPollLimit = (questionCount) => {
+  const count = Math.max(1, Number(questionCount) || 1);
+  const batchCount = Math.max(1, Math.ceil(count / MAX_AI_GENERATION_BATCH_SIZE));
+  return Math.ceil((batchCount * GENERATION_POLL_WINDOW_PER_BATCH_MS) / GENERATION_POLL_INTERVAL_MS);
+};
 
 const fetchLessonManagerApi = (url, options = {}) => fetch(url, {
   ...options,
@@ -61,8 +68,9 @@ const fetchLessonManagerApi = (url, options = {}) => fetch(url, {
   },
 });
 
-const waitForLessonGeneration = async (learningFileId, { signal, onProgress } = {}) => {
-  for (let attempt = 0; attempt < GENERATION_POLL_LIMIT; attempt += 1) {
+const waitForLessonGeneration = async (learningFileId, { signal, onProgress, questionCount } = {}) => {
+  const pollLimit = getLessonGenerationPollLimit(questionCount);
+  for (let attempt = 0; attempt < pollLimit; attempt += 1) {
     if (signal?.aborted) throw new Error('Question generation status polling was cancelled.');
     const response = await fetchLessonManagerApi(lessonManagerApiUrl(`/api/learning-files/${learningFileId}/generation-status`), { signal });
     const data = await response.json();
@@ -646,6 +654,7 @@ export default function LessonQuestionManager() {
       if (data.code === 'AI_GENERATION_QUEUED' || data.code === 'AI_GENERATION_IN_PROGRESS') {
         showNotification('Question generation is in progress. This page will update when it is ready.', 'info');
         const completedGeneration = await waitForLessonGeneration(data.learningFile?.id, {
+          questionCount: Number(data.learningFile?.requested_question_count || requestedCount),
           onProgress: (learningFile) => {
             const completed = Number(learningFile.generation_completed_count || 0);
             const total = Number(learningFile.requested_question_count || requestedCount);
