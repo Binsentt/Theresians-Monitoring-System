@@ -519,12 +519,23 @@ describe('ManageUsers edit flow', () => {
     const permanentConfirm = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === 'Permanently Delete Account'
     );
-    expect(permanentConfirm.disabled).toBe(true);
+    await act(async () => {
+      permanentConfirm.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const permanentRequiredError = document.body.querySelector('#delete-confirmation-error');
+    expect(permanentRequiredError).toBeTruthy();
+    expect(permanentRequiredError.textContent).toBe('Please fill out this field.');
+    expect(permanentRequiredError.classList.contains('error-text')).toBe(true);
+    expect(typedConfirmation.classList.contains('error')).toBe(true);
+    expect(global.fetch.mock.calls.some(([url, options]) => (
+      String(url).includes('/api/accounts/77?permanent=true') && options?.method === 'DELETE'
+    ))).toBe(false);
 
     await act(async () => {
       setFieldValue(typedConfirmation, 'DELETE');
     });
-    expect(permanentConfirm.disabled).toBe(false);
+    expect(document.body.querySelector('#delete-confirmation-error')).toBeNull();
+    expect(typedConfirmation.classList.contains('error')).toBe(false);
     await act(async () => {
       permanentConfirm.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
@@ -619,10 +630,13 @@ describe('ManageUsers edit flow', () => {
     await act(async () => {
       continueButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(document.body.textContent).toContain('Reason for archiving is required.');
-    expect(global.fetch.mock.calls.some(([url, options]) => String(url).includes('/api/accounts/7') && options?.method === 'DELETE')).toBe(false);
-
+    const requiredReasonError = document.body.querySelector('#deletion-reason-error');
+    expect(requiredReasonError).toBeTruthy();
+    expect(requiredReasonError.textContent).toBe('Please fill out this field.');
+    expect(requiredReasonError.classList.contains('error-text')).toBe(true);
     const reason = document.body.querySelector('textarea[name="deletion-reason"]');
+    expect(reason.classList.contains('error')).toBe(true);
+    expect(global.fetch.mock.calls.some(([url, options]) => String(url).includes('/api/accounts/7') && options?.method === 'DELETE')).toBe(false);
     await act(async () => {
       setFieldValue(reason, '  Account requested deactivation.  ');
     });
