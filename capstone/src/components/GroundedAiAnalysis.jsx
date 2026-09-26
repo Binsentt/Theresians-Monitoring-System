@@ -4,15 +4,18 @@ import { normalizeDisplayList, safeDisplayText } from './studentProgress.utils';
 import { buildStudentProgressDetailUrl } from './analyticsEndpoints';
 import { buildAuthHeaders } from './session.utils';
 
-const InsightList = ({ title, icon: Icon, tone, items }) => (
-  <div className="student-dashboard-card student-insight-list">
+const InsightList = ({ title, icon: Icon, tone, items, description, emptyMessage, className = '' }) => (
+  <div className={`student-dashboard-card student-insight-list ${className}`.trim()}>
     <div className="student-card-heading">
       <span className={`student-card-icon ${tone}`}><Icon size={20} aria-hidden="true" /></span>
-      <div><h2>{title}</h2><p>Backend-grounded statements from recorded gameplay evidence.</p></div>
+      <div>
+        <h2>{title}</h2>
+        <p>{description || 'Backend-grounded statements from recorded gameplay evidence.'}</p>
+      </div>
     </div>
     {items.length > 0
       ? <ul>{items.map((item, index) => <li key={`${title}-${index}`}>{item}</li>)}</ul>
-      : <p>No grounded {title.toLowerCase()} are available for this evidence.</p>}
+      : <p className="student-insight-empty">{emptyMessage || `No grounded ${title.toLowerCase()} are available for this evidence.`}</p>}
   </div>
 );
 
@@ -41,7 +44,12 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
   const recommendations = normalizeDisplayList(insight?.recommendations);
   const questInsights = Array.isArray(insight?.quest_insights) ? insight.quest_insights : [];
   const message = safeDisplayText(error || state.message, 'Grounded analysis is loading from recorded gameplay evidence.');
-  const showRecovery = Boolean(onRefresh && !noData && !paused && (unavailable || stale || error));
+  const showInsightAction = Boolean(onRefresh && !noData && !paused);
+  const insightActionLabel = loading
+    ? (insight ? 'Refreshing AI insight...' : 'Generating AI insight...')
+    : insight
+      ? 'Refresh AI Insight'
+      : 'Generate AI Insight';
   const generatedAt = state.generated_at ? new Date(state.generated_at) : null;
   const generatedLabel = generatedAt && !Number.isNaN(generatedAt.getTime())
     ? generatedAt.toLocaleString()
@@ -78,20 +86,45 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
         <p className="grounded-ai-evidence-meta">
           Evidence: {validResultCount ?? 0} valid results · Generated: {generatedLabel} · {cacheLabel}
         </p>
-        {showRecovery && (
+        {showInsightAction && (
           <button type="button" className="btn btn-primary student-insight-action" onClick={onRefresh} disabled={loading}>
-            {loading ? 'Retrying grounded insight...' : 'Retry grounded insight'}
+            {insightActionLabel}
           </button>
         )}
       </div>
 
-      {insight && (
-        <>
-          <InsightList title="Strengths" icon={CheckCircle2} tone="blue" items={strengths} />
-          <InsightList title="Weaknesses" icon={AlertTriangle} tone="red" items={weaknesses} />
-          <InsightList title="Recommendations" icon={MapPin} tone="orange" items={recommendations} />
-        </>
-      )}
+      <InsightList
+        title="Strengths"
+        icon={CheckCircle2}
+        tone="blue"
+        items={strengths}
+        description="Positive patterns selected from recorded gameplay evidence."
+        emptyMessage={insight
+          ? 'No supported strength is identified from the recorded evidence yet.'
+          : 'Generate the AI insight to identify supported strengths from recorded gameplay.'}
+      />
+      <InsightList
+        title="AI-Identified Weaknesses"
+        icon={AlertTriangle}
+        tone="red"
+        items={weaknesses}
+        className="student-insight-weaknesses"
+        description="Evidence-backed areas that may need more mathematics practice."
+        emptyMessage={insight
+          ? 'No supported weakness is identified from the recorded evidence.'
+          : 'Generate the AI insight to identify evidence-backed weaknesses.'}
+      />
+      <InsightList
+        title="AI-Grounded Recommendations"
+        icon={MapPin}
+        tone="orange"
+        items={recommendations}
+        className="student-insight-recommendations"
+        description="Suggested next steps grounded in the recorded weaknesses or evidence gaps."
+        emptyMessage={insight
+          ? 'No additional recommendation is supported by the current recorded evidence.'
+          : 'Generate the AI insight to show recommended next steps.'}
+      />
       {questInsights.length > 0 && (
         <div className="student-dashboard-card student-insight-list grounded-ai-quest-insights">
           <div className="student-card-heading">

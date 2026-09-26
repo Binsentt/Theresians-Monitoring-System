@@ -836,6 +836,29 @@
   background: #2563eb;
 }
 
+.student-insight-weaknesses {
+  border-left: 4px solid #ef4444;
+}
+
+.student-insight-weaknesses li::before {
+  background: #ef4444;
+}
+
+.student-insight-recommendations {
+  border-left: 4px solid #f59e0b;
+}
+
+.student-insight-recommendations li::before {
+  background: #f59e0b;
+}
+
+.student-insight-empty {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card-bg, #fff) 82%, #eef2f7 18%);
+  border: 1px dashed var(--border-color, #cbd5e1);
+}
+
 @keyframes studentBarGrow {
   from { transform: scaleX(0); }
   to { transform: scaleX(1); }

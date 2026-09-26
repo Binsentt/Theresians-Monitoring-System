@@ -4,7 +4,8 @@ const MAX_LESSON_TEXT_CHARS = 24000;
 // Five structured questions plus model reasoning can legitimately exceed a
 // short request deadline. Keep one bounded provider-call deadline so the
 // request remains cancellable without making generation wait indefinitely.
-const QUESTION_GENERATION_TIMEOUT_MS = 60000;
+const QUESTION_GENERATION_TIMEOUT_MS = 120000;
+const MAX_GENERATION_BATCH_SIZE = 25;
 // Reserve a predictable output budget for the structured JSON plus model reasoning.
 // The per-question allowance preserves the existing 1-50 request range without
 // imposing a small fixed cap that could truncate larger requested sets.
@@ -357,7 +358,9 @@ const generateLessonQuestionsInBatches = async ({
   if (!Number.isInteger(questionCount) || questionCount < 1) {
     throw new QuestionGenerationError('QUESTION_AI_INVALID_REQUEST', 'Question Count must be a positive whole number.');
   }
-  const boundedBatchSize = Number.isInteger(batchSize) && batchSize > 0 ? Math.min(batchSize, 5) : 5;
+  const boundedBatchSize = Number.isInteger(batchSize) && batchSize > 0
+    ? Math.min(batchSize, MAX_GENERATION_BATCH_SIZE)
+    : 5;
   const boundedAttempts = Number.isInteger(maxBatchAttempts) && maxBatchAttempts > 0 ? Math.min(maxBatchAttempts, 5) : 3;
   const questions = [];
   const seen = new Set();
@@ -425,6 +428,7 @@ module.exports = {
   OPENAI_RESPONSES_URL,
   QUESTION_GENERATION_MODEL,
   QUESTION_GENERATION_TIMEOUT_MS,
+  MAX_GENERATION_BATCH_SIZE,
   QUESTION_GENERATION_OUTPUT_BASE_TOKENS,
   QUESTION_GENERATION_OUTPUT_TOKENS_PER_QUESTION,
   getQuestionGenerationMaxOutputTokens,

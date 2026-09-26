@@ -83,7 +83,7 @@ describe('GroundedAiAnalysis', () => {
 
     expect(container.textContent).toContain('stale');
     expect(container.textContent).toContain('Previously generated evidence.');
-    const retry = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Retry grounded insight');
+    const retry = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Refresh AI Insight');
     expect(retry).not.toBeNull();
     await act(async () => retry.click());
     expect(onRefresh).toHaveBeenCalledTimes(1);
@@ -126,6 +126,27 @@ describe('GroundedAiAnalysis', () => {
     expect(container.textContent).toContain('No valid gameplay results are available.');
     expect(container.querySelector('button')).toBeNull();
   });
+
+  test('shows explicit weakness and recommendation cards plus a generate action when insight is not generated yet', async () => {
+    const onRefresh = jest.fn();
+    await act(async () => root.render(
+      <GroundedAiAnalysis
+        aiInsight={{ status: 'not_generated', data_level: 'limited_data', valid_result_count: 3, message: 'No grounded insight has been generated yet.' }}
+        onRefresh={onRefresh}
+      />
+    ));
+
+    expect(container.textContent).toContain('AI-Identified Weaknesses');
+    expect(container.textContent).toContain('AI-Grounded Recommendations');
+    expect(container.textContent).toContain('Generate the AI insight to identify evidence-backed weaknesses.');
+    expect(container.textContent).toContain('Generate the AI insight to show recommended next steps.');
+
+    const generateButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Generate AI Insight');
+    expect(generateButton).not.toBeNull();
+    await act(async () => generateButton.click());
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
 
   test('renders an unavailable error once while preserving deterministic metrics outside the panel', async () => {
     await act(async () => root.render(
