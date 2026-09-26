@@ -2778,15 +2778,7 @@ const processLessonGenerationJob = async ({ learningFile, sourceFilePath, source
       fileName: sourceFileName,
       mimeType: sourceMimeType,
       lessonText,
-    }, title, gradeLevel, difficulty, remainingQuestionCount, async ({ completed }) => {
-      await pool.query(
-        `UPDATE public.learning_files
-         SET generation_status = 'generating', generation_stage = 'generating',
-             generation_completed_count = $2, generation_remaining_count = $3
-         WHERE id = $1`,
-        [learningFile.id, generatedCount + completed, Math.max(0, Number(targetQuestionCount) - generatedCount - completed)]
-      );
-    }, {
+    }, title, gradeLevel, difficulty, remainingQuestionCount, null, {
       existingQuestions,
       onBatch: async ({ batch, batch_index }) => {
         failedBatchIndex = batch_index;
@@ -5869,7 +5861,7 @@ app.get('/api/learning-files/:id/generation-status', requireLessonQuestionManage
     );
     const row = result.rows[0];
     if (!row) return res.status(404).json({ error: 'Learning file not found.' });
-    if (row.generation_status === 'generating' && !activeLessonGenerationJobs.has(Number(row.id))) {
+    if (isQuestionGenerationActive(row.generation_status) && !activeLessonGenerationJobs.has(Number(row.id))) {
       const sourceResult = row.source_learning_file_id
         ? await pool.query('SELECT * FROM public.learning_files WHERE id = $1 AND deleted_at IS NULL', [row.source_learning_file_id])
         : { rows: [row] };
@@ -5885,6 +5877,7 @@ app.get('/api/learning-files/:id/generation-status', requireLessonQuestionManage
           gradeLevel: row.grade_level,
           difficulty: row.difficulty,
           questionCount: Number(row.requested_question_count),
+          targetQuestionCount: Number(row.requested_question_count),
         }).catch((error) => {
           if (!(error instanceof QuestionGenerationError)) console.error('Recovered lesson generation failed:', error.message);
         }));
