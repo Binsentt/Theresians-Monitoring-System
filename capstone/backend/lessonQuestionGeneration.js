@@ -187,7 +187,7 @@ const parseGeneratedQuestions = (outputText, expectedCount) => {
   return questions;
 };
 
-const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, questionCount }) => {
+const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, questionCount, avoidQuestions = [] }) => {
   const lesson = asTrimmedString(lessonText);
   const fallbackTitle = asTrimmedString(title);
   if (!lesson) {
@@ -196,6 +196,10 @@ const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, quest
   if (lesson.length > MAX_LESSON_TEXT_CHARS) {
     throw new QuestionGenerationError('QUESTION_AI_LESSON_TOO_LARGE', 'The readable lesson text exceeds the safe size limit.');
   }
+
+  const normalizedAvoidQuestions = (Array.isArray(avoidQuestions) ? avoidQuestions : [])
+    .map((question) => asTrimmedString(question))
+    .filter(Boolean);
 
   return [
     {
@@ -214,6 +218,9 @@ const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, quest
           `Grade: ${asTrimmedString(gradeLevel)}.`,
           `Difficulty: ${asTrimmedString(difficulty)}.`,
           'The lesson can cover multiple topics. Generate only from its readable material and do not introduce unrelated material.',
+          ...(normalizedAvoidQuestions.length > 0
+            ? [`Do not repeat or closely restate any of these previously generated questions:\n- ${normalizedAvoidQuestions.join('\n- ')}`]
+            : []),
           `Lesson title: ${fallbackTitle || 'Untitled lesson'}.`,
           'Lesson content:',
           lesson,
@@ -229,6 +236,7 @@ const generateLessonQuestions = async ({
   gradeLevel,
   difficulty,
   questionCount,
+  avoidQuestions = [],
   aiGenerationEnabled = isAiGenerationEnabled(),
   apiKey = process.env.OPENAI_API_KEY,
   fetchImpl = global.fetch,
@@ -253,7 +261,7 @@ const generateLessonQuestions = async ({
   const boundedTimeoutMs = Number.isInteger(timeoutMs) && timeoutMs > 0
     ? timeoutMs
     : QUESTION_GENERATION_TIMEOUT_MS;
-  const input = buildGenerationInput({ lessonText, title, gradeLevel, difficulty, questionCount });
+  const input = buildGenerationInput({ lessonText, title, gradeLevel, difficulty, questionCount, avoidQuestions });
   const controller = new AbortController();
   const requestStartedAt = Date.now();
   const timeoutHandle = setTimeout(() => controller.abort(), boundedTimeoutMs);
@@ -343,12 +351,14 @@ const generateLessonQuestionsInBatches = async ({
   onBatchComplete = null,
   onBatch = null,
   existingQuestions = [],
+  maxBatchAttempts = 3,
   ...input
 }) => {
   if (!Number.isInteger(questionCount) || questionCount < 1) {
     throw new QuestionGenerationError('QUESTION_AI_INVALID_REQUEST', 'Question Count must be a positive whole number.');
   }
   const boundedBatchSize = Number.isInteger(batchSize) && batchSize > 0 ? Math.min(batchSize, 5) : 5;
+  const boundedAttempts = Number.isInteger(maxBatchAttempts) && maxBatchAttempts > 0 ? Math.min(maxBatchAttempts, 5) : 3;
   const questions = [];
   const seen = new Set();
   (Array.isArray(existingQuestions) ? existingQuestions : []).forEach((question) => {
@@ -357,18 +367,43 @@ const generateLessonQuestionsInBatches = async ({
   });
   for (let offset = 0; offset < questionCount; offset += boundedBatchSize) {
     const count = Math.min(boundedBatchSize, questionCount - offset);
-    const batch = await generateBatch({ ...input, questionCount: count });
-    if (!Array.isArray(batch) || batch.length !== count) {
-      throw new QuestionGenerationError('QUESTION_AI_INVALID_RESPONSE', 'Question generation returned an incomplete batch.');
+    let batch = null;
+    for (let attempt = 0; attempt < boundedAttempts; attempt += 1) {
+      const candidate = await generateBatch({
+        ...input,
+        questionCount: count,
+        avoidQuestions: [...seen],
+      });
+      if (!Array.isArray(candidate) || candidate.length !== count) {
+        if (attempt === boundedAttempts - 1) {
+          throw new QuestionGenerationError('QUESTION_AI_INVALID_RESPONSE', 'Question generation returned an incomplete batch.');
+        }
+        continue;
+      }
+      const normalizedBatch = candidate.map(normalizeGeneratedQuestion);
+      const fingerprints = normalizedBatch.map((question) => question?.question.toLocaleLowerCase());
+      const batchHasInvalid = normalizedBatch.some((question) => !question);
+      const batchHasDuplicate = fingerprints.some((fingerprint, index) => (
+        !fingerprint
+        || seen.has(fingerprint)
+        || fingerprints.indexOf(fingerprint) !== index
+      ));
+      if (batchHasInvalid || batchHasDuplicate) {
+        if (attempt === boundedAttempts - 1) {
+          throw new QuestionGenerationError('QUESTION_AI_INVALID_RESPONSE', 'Question generation returned duplicate or invalid questions.');
+        }
+        continue;
+      }
+      batch = normalizedBatch;
+      break;
+    }
+    if (!batch) {
+      throw new QuestionGenerationError('QUESTION_AI_INVALID_RESPONSE', 'Question generation returned unusable question data.');
     }
     for (const question of batch) {
-      const normalized = normalizeGeneratedQuestion(question);
-      const fingerprint = normalized?.question.toLocaleLowerCase();
-      if (!normalized || seen.has(fingerprint)) {
-        throw new QuestionGenerationError('QUESTION_AI_INVALID_RESPONSE', 'Question generation returned duplicate or invalid questions.');
-      }
+      const fingerprint = question.question.toLocaleLowerCase();
       seen.add(fingerprint);
-      questions.push(normalized);
+      questions.push(question);
     }
     if (typeof onBatchComplete === 'function') {
       await onBatchComplete({ completed: questions.length, total: questionCount });

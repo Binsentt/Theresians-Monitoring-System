@@ -229,7 +229,6 @@ export default function AdminDashboard() {
                     label="Print User List"
                     showPrintHeading={false}
                   />
-                  <button className="btn-primary" onClick={() => navigate('/manage-users')}>View All Users</button>
                 </div>
               )}
             >
@@ -287,15 +286,7 @@ export default function AdminDashboard() {
               />
             </ContentSection>
 
-            <ContentSection
-              title="Analytics"
-              actions={
-                <div style={{ display: 'flex', gap: '12px' }}>
-                  <button className="btn-primary" onClick={() => navigate('/admin/top-achievers')}>View Top Achievers</button>
-                  <button className="btn-primary" onClick={() => navigate('/admin/activity-log')}>View Activity Log</button>
-                </div>
-              }
-            >
+            <ContentSection title="Analytics">
               <InfoCard variant="info">
                 <p>Access detailed analytics for Top Achievers and Recent Activity through dedicated pages for comprehensive system monitoring.</p>
               </InfoCard>

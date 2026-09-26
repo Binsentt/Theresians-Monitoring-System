@@ -362,7 +362,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
 
     expect(getUploadModal().textContent).not.toContain('Topic');
-    expect(getUploadModalSelects()).toHaveLength(4);
+    expect(getUploadModalSelects()).toHaveLength(3);
   });
 
   test('renders the upload dialog in a viewport portal and removes it when cancelled', async () => {
@@ -653,7 +653,6 @@ describe('LessonQuestionManager upload and trash controls', () => {
     await act(async () => {
       setSelectValue(selects[0], 'Grade 1');
       setSelectValue(selects[1], 'Easy');
-      setSelectValue(getUploadModalSelects()[3], 'Basic Addition');
       const fileInput = document.body.querySelector('input[type="file"]');
       const file = new File(['%PDF-1.4 lesson'], 'addition-lesson.pdf', { type: 'application/pdf' });
       Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
@@ -708,9 +707,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       String(url).endsWith('/api/learning-files/upload') && options?.method === 'POST'
     ))).toBe(false);
 
-    await act(async () => {
-      setSelectValue(getUploadModalSelects()[3], '701');
-    });
+    expect(getUploadModal().textContent).not.toContain('Reusable Lesson PDF or PPTX Source');
     const pausedButton = getUploadModal().querySelector('button[type="submit"]');
     expect(pausedButton.textContent).toContain('AI Generation Paused');
     expect(pausedButton.disabled).toBe(true);
@@ -823,7 +820,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(getUploadModal().querySelector('button[type="submit"]').disabled).toBe(false);
   });
 
-  test('reuses a Lesson PDF source to generate an independent exact-scope child set', async () => {
+  test('does not expose the reusable Lesson source selector in the normal Upload File dialog', async () => {
     fixtures.lessonSources = [{
       id: 701,
       title: 'Reusable arithmetic lesson',
@@ -832,39 +829,14 @@ describe('LessonQuestionManager upload and trash controls', () => {
       content_role: 'lesson_source',
       generated_child_count: 1,
     }];
-    await act(async () => {
-      root.render(<LessonQuestionManager />);
-    });
-    await act(async () => {
-      clickByText(container, 'New');
-    });
-    await act(async () => {
-      clickByText(container, 'Upload File');
-    });
+    await act(async () => root.render(<LessonQuestionManager />));
+    await act(async () => clickByText(container, 'New'));
+    await act(async () => clickByText(container, 'Upload File'));
+    await act(async () => setSelectValue(getUploadModalSelects()[2], 'lesson'));
 
-    await act(async () => {
-      setSelectValue(getUploadModalSelects()[2], 'lesson');
-      setSelectValue(getUploadModalSelects()[0], 'Grade 1');
-      setSelectValue(getUploadModalSelects()[1], 'Easy');
-      setSelectValue(getUploadModalSelects()[3], '701');
-      const countField = document.body.querySelector('input[name="expected_question_count"]');
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(countField, '5');
-      countField.dispatchEvent(new Event('change', { bubbles: true }));
-      getUploadModal().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    });
-
-    const generationRequest = global.fetch.mock.calls.find(([url, options]) => (
-      String(url).includes('/api/learning-files/lesson-sources/701/generate') && options?.method === 'POST'
-    ));
-    expect(generationRequest).toBeTruthy();
-    expect(JSON.parse(generationRequest[1].body)).toEqual({
-      grade_level: 'Grade 1',
-      difficulty: 'Easy',
-        expected_question_count: '5',
-    });
-    expect(generationRequest[1].headers).toEqual(expect.objectContaining({
-      'Idempotency-Key': expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/),
-    }));
+    expect(getUploadModal().textContent).not.toContain('Reusable Lesson PDF or PPTX Source');
+    expect(getUploadModal().textContent).not.toContain('Reusable arithmetic lesson');
+    expect(getUploadModalSelects()).toHaveLength(3);
   });
 
   test('prioritizes DOCX and PDF documents for Teacher Fixed Questions uploads', async () => {
@@ -884,6 +856,27 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(fileInput.accept).toContain('.pdf');
     expect(getUploadModal().textContent).toContain('Fixed Questions supported: DOCX, PDF');
   });
+
+  test('rejects a PPTX immediately when Fixed Question File is selected', async () => {
+    await act(async () => root.render(<LessonQuestionManager />));
+    await act(async () => clickByText(container, 'New'));
+    await act(async () => clickByText(container, 'Upload File'));
+
+    const fileInput = getUploadModal().querySelector('input[type="file"]');
+    const pptx = new File(['PK\u0003\u0004ppt/presentation.xml'], 'questions.pptx', {
+      type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    });
+    await act(async () => {
+      Object.defineProperty(fileInput, 'files', { configurable: true, value: [pptx] });
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    expect(getUploadModal().textContent).toContain('PPT/PPTX files cannot be uploaded as Fixed Questions');
+    expect(global.fetch.mock.calls.some(([url, options]) => (
+      String(url).endsWith('/api/learning-files/upload') && options?.method === 'POST'
+    ))).toBe(false);
+  });
+
 
   test('restores a trashed file and reports the requested success message', async () => {
     await act(async () => {

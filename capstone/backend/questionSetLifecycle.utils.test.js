@@ -114,7 +114,7 @@ test('generated lesson children expose an authoritative generated review mode', 
   assert.equal(response.generation_stage, 'generating');
 });
 
-test('generated lifecycle counts reconcile to persisted question rows', () => {
+test('generated lifecycle counts reconcile to persisted question rows without overriding the worker lifecycle', () => {
   const response = toQuestionSetResponse({
     id: 21,
     file_type: 'lesson',
@@ -140,8 +140,8 @@ test('generated lifecycle counts reconcile to persisted question rows', () => {
   });
   assert.equal(complete.generation_completed_count, 10);
   assert.equal(complete.generation_remaining_count, 0);
-  assert.equal(complete.generation_status, 'ready_for_review');
-  assert.equal(complete.generation_stage, 'completed');
+  assert.equal(complete.generation_status, 'generating');
+  assert.equal(complete.generation_stage, 'generating');
 });
 
 test('partial generated children retain their persisted partial status and count', () => {

@@ -181,10 +181,6 @@ function toQuestionSetResponse(row = {}) {
     normalizedRow.generation_completed_count = persistedQuestionCount;
     if (Number.isFinite(requestedQuestionCount) && requestedQuestionCount > 0) {
       normalizedRow.generation_remaining_count = Math.max(0, requestedQuestionCount - persistedQuestionCount);
-      if (persistedQuestionCount >= requestedQuestionCount && normalizedRow.generation_status !== 'ready_for_review') {
-        normalizedRow.generation_status = 'ready_for_review';
-        normalizedRow.generation_stage = 'completed';
-      }
     }
   }
 

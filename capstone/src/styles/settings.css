@@ -107,8 +107,8 @@
 /* Main Content Layout */
 .settings-content {
   display: grid;
-  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
   max-width: none;
   margin: 0;
   width: 100%;
@@ -118,16 +118,19 @@
 /* Sidebar */
 .settings-sidebar {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   background: rgba(255, 255, 255, 0.8);
-  padding: 18px;
-  border-radius: 22px;
+  padding: 12px 14px;
+  border-radius: 14px;
   height: fit-content;
   border: 1px solid rgba(219, 227, 239, 0.9);
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
   min-width: 0;
+  width: 100%;
 }
 
 [data-theme="dark"] .settings-sidebar {
@@ -135,7 +138,7 @@
 }
 
 .sidebar-btn {
-  padding: 14px 16px;
+  padding: 13px 20px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-secondary);
@@ -150,6 +153,8 @@
   text-align: left;
   font-weight: 600;
   box-shadow: none;
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .sidebar-btn:hover {
@@ -805,8 +810,9 @@
   }
 
   .settings-sidebar {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
   }
 
   .profile-form,

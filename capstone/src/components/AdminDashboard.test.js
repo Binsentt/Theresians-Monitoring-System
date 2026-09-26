@@ -133,6 +133,9 @@ describe('AdminDashboard route protection', () => {
     expect(container.textContent).toContain('2 teachers');
     expect(container.textContent).toContain('2 parents');
     expect(container.textContent).not.toContain('Unavailable');
+    expect(container.textContent).not.toContain('View All Users');
+    expect(container.textContent).not.toContain('View Top Achievers');
+    expect(container.textContent).not.toContain('View Activity Log');
     expect(container.textContent).not.toContain('Account 01');
     expect(container.textContent).toContain('Account 11');
 
