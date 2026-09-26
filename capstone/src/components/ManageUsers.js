@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import ModalPortal from './ModalPortal';
+import ConfirmModal from './ConfirmModal';
 import { useNavigate } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
@@ -112,6 +113,7 @@ export default function ManageUsers() {
   const [permanentDeleteConfirmation, setPermanentDeleteConfirmation] = useState('');
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [regeneratingUserId, setRegeneratingUserId] = useState(null);
+  const [temporaryPasswordTarget, setTemporaryPasswordTarget] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
 
   const filteredUsers = filterUsers(users, searchTerm);
@@ -753,12 +755,14 @@ export default function ManageUsers() {
     }
   };
 
-  const handleRegenerateTemporaryPassword = async (account) => {
-    if (!account?.id || isCurrentAccount(account)) return;
-    const confirmed = window.confirm(
-      `Send a new temporary password to ${account.email}? Their previous password will stop working and the new temporary password will expire in 30 minutes.`
-    );
-    if (!confirmed) return;
+  const handleRegenerateTemporaryPassword = (account) => {
+    if (!account?.id || isCurrentAccount(account) || regeneratingUserId) return;
+    setTemporaryPasswordTarget(account);
+  };
+
+  const confirmRegenerateTemporaryPassword = async () => {
+    const account = temporaryPasswordTarget;
+    if (!account?.id || isCurrentAccount(account) || regeneratingUserId) return;
 
     setRegeneratingUserId(account.id);
     try {
@@ -788,6 +792,7 @@ export default function ManageUsers() {
       });
     } finally {
       setRegeneratingUserId(null);
+      setTemporaryPasswordTarget(null);
     }
   };
 
@@ -1200,6 +1205,19 @@ export default function ManageUsers() {
               context={reportScope}
               rows={filteredUsers}
               columns={reportColumns}
+            />
+
+            <ConfirmModal
+              open={Boolean(temporaryPasswordTarget)}
+              title="Issue New Temporary Password?"
+              message={temporaryPasswordTarget
+                ? `Send a new temporary password to ${temporaryPasswordTarget.email}? Their previous password will stop working and the new temporary password will expire in 30 minutes.`
+                : ''}
+              confirmLabel="OK"
+              cancelLabel="Cancel"
+              busy={Boolean(regeneratingUserId)}
+              onCancel={() => setTemporaryPasswordTarget(null)}
+              onConfirm={confirmRegenerateTemporaryPassword}
             />
 
             {validationModal && (
