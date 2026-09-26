@@ -450,6 +450,42 @@ test('lesson generation completes the exact requested 5, 10, 20, and 25 question
   }
 });
 
+test('later AI batches receive prior question text and retry a duplicate batch instead of stopping at five', async () => {
+  const { generateLessonQuestionsInBatches } = require('./lessonQuestionGeneration');
+  const calls = [];
+  let providerCall = 0;
+
+  const questions = await generateLessonQuestionsInBatches({
+    lessonText: 'A lesson about addition.',
+    title: 'Addition lesson',
+    gradeLevel: 'Grade 1',
+    difficulty: 'Easy',
+    questionCount: 10,
+    batchSize: 5,
+    generateBatch: async ({ questionCount, avoidQuestions = [] }) => {
+      providerCall += 1;
+      calls.push({ providerCall, questionCount, avoidQuestions: [...avoidQuestions] });
+      const start = providerCall === 1 ? 1 : providerCall === 2 ? 1 : 6;
+      return Array.from({ length: questionCount }, (_, index) => {
+        const value = start + index;
+        return {
+          question: `What is ${value} + 1?`,
+          options: [String(value), String(value + 1), String(value + 2), String(value + 3)],
+          correct_answer: String(value + 1),
+        };
+      });
+    },
+  });
+
+  assert.equal(questions.length, 10);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[0].avoidQuestions, []);
+  assert.ok(calls[1].avoidQuestions.some((question) => /what is 1 \+ 1\?/i.test(question)));
+  assert.ok(calls[2].avoidQuestions.some((question) => /what is 5 \+ 1\?/i.test(question)));
+  assert.equal(new Set(questions.map((question) => question.question.toLowerCase())).size, 10);
+});
+
+
 test('lesson generation retries only the missing questions and rejects duplicates from the retained set', async () => {
   const batches = [];
   const retained = [{
