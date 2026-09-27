@@ -18,15 +18,183 @@ let queryHandler = async () => emptyResult;
 let parsedPdfText = '';
 let pdfParseFailure = null;
 const authenticatedTeacher = { id: 1, role: 'admin', is_archived: false, session_version: 0 };
+const generationRows = new Map();
+const generationQuestions = new Map();
 
 const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+const rowQuestionCount = (learningFileId) => generationQuestions.get(Number(learningFileId))?.length || 0;
+
+const queryMockDatabase = async (sql, params = []) => {
+  const normalizedSql = compactSql(sql);
+  if (normalizedSql.startsWith('select pg_try_advisory_lock')) return { rows: [{ acquired: true }] };
+  if (normalizedSql.startsWith('select pg_advisory_unlock')) return { rows: [{ pg_advisory_unlock: true }] };
+  if (normalizedSql === 'begin' || normalizedSql === 'commit' || normalizedSql === 'rollback') {
+    return (await queryHandler(normalizedSql, params, sql)) || emptyResult;
+  }
+
+  if (normalizedSql.includes('generation_idempotency_key') && normalizedSql.startsWith('select')) {
+    const custom = await queryHandler(normalizedSql, params, sql);
+    if (custom?.rows?.length) return custom;
+    const [actorId, idempotencyKey] = params;
+    const matches = [...generationRows.values()].filter((row) => row.uploaded_by === actorId
+      && row.generation_idempotency_key === idempotencyKey);
+    return { rows: matches.map((row) => ({ ...row })) };
+  }
+
+  if (normalizedSql.includes('generation_request_fingerprint') && normalizedSql.startsWith('select')) {
+    const custom = await queryHandler(normalizedSql, params, sql);
+    if (custom?.rows?.length) return custom;
+    const [actorId, fingerprint] = params;
+    const matches = [...generationRows.values()].filter((row) => row.uploaded_by === actorId
+      && row.generation_request_fingerprint === fingerprint
+      && row.generation_status === 'generating');
+    return { rows: matches.map((row) => ({ ...row })) };
+  }
+
+  if (normalizedSql.startsWith('select lf.*, count(q.id)::integer as actual_question_count from public.learning_files lf')) {
+    const result = await queryHandler(normalizedSql, params, sql);
+    if (result?.rows?.length) return result;
+    const row = generationRows.get(Number(params[0]));
+    return row ? { rows: [{ ...row, actual_question_count: rowQuestionCount(row.id) }] } : emptyResult;
+  }
+
+  if (normalizedSql.startsWith('select question, options, correct_answer from public.questions where learning_file_id')) {
+    const result = await queryHandler(normalizedSql, params, sql);
+    if (result?.rows?.length) return result;
+    return { rows: generationQuestions.get(Number(params[0])) || [] };
+  }
+
+  if (normalizedSql.startsWith('select count(*)::integer as actual_question_count from public.questions where learning_file_id')) {
+    return { rows: [{ actual_question_count: rowQuestionCount(params[0]) }] };
+  }
+
+  if (normalizedSql.startsWith('select id, requested_question_count, grade_level, difficulty, math_topic, topic_id, source, content_role from public.learning_files where id = $1 for update')) {
+    const result = await queryHandler(normalizedSql, params, sql);
+    if (result?.rows?.length) return result;
+    const row = generationRows.get(Number(params[0]));
+    return row ? { rows: [{ ...row }] } : emptyResult;
+  }
+
+  if (normalizedSql.startsWith('select question from public.questions where learning_file_id')) {
+    return { rows: (generationQuestions.get(Number(params[0])) || []).map(({ question }) => ({ question })) };
+  }
+
+  if (normalizedSql.startsWith('with actual as (') && normalizedSql.includes("set generation_status = 'generating'")) {
+    const row = generationRows.get(Number(params[0]));
+    if (!row) return emptyResult;
+    row.generation_status = 'generating';
+    row.generation_stage = params[1];
+    row.generation_completed_count = rowQuestionCount(row.id);
+    row.generation_remaining_count = Math.max(0, Number(row.requested_question_count) - row.generation_completed_count);
+    return { rows: [{ ...row, actual_question_count: row.generation_completed_count }] };
+  }
+
+  if (normalizedSql.startsWith('with actual as (') && normalizedSql.includes("set generation_status = 'ready_for_review'")) {
+    const row = generationRows.get(Number(params[0]));
+    if (!row || rowQuestionCount(row.id) !== Number(row.requested_question_count)) return emptyResult;
+    row.generation_status = 'ready_for_review';
+    row.generation_stage = 'completed';
+    row.generation_completed_count = rowQuestionCount(row.id);
+    row.generation_remaining_count = 0;
+    row.generated_at = row.generated_at || new Date().toISOString();
+    await queryHandler(normalizedSql, params, sql);
+    return { rows: [{ ...row, actual_question_count: row.generation_completed_count }] };
+  }
+
+  if (normalizedSql.startsWith('with actual as (') && normalizedSql.includes('set generation_status = case')) {
+    const row = generationRows.get(Number(params[0]));
+    if (!row) return emptyResult;
+    const actual = rowQuestionCount(row.id);
+    row.generation_status = actual === Number(row.requested_question_count)
+      ? 'ready_for_review'
+      : actual > 0 ? 'partial_failed' : 'failed';
+    row.generation_stage = row.generation_status === 'ready_for_review' ? 'completed' : row.generation_status;
+    row.generation_completed_count = actual;
+    row.generation_remaining_count = Math.max(0, Number(row.requested_question_count) - actual);
+    row.generation_error_code = row.generation_status === 'ready_for_review' ? null : params[1];
+    row.generation_failed_at = row.generation_status === 'ready_for_review' ? null : new Date().toISOString();
+    row.generation_failed_batch_index = row.generation_status === 'ready_for_review' ? null : params[2];
+    await queryHandler(normalizedSql, params, sql);
+    return { rows: [{ ...row, actual_question_count: actual }] };
+  }
+
+  if (normalizedSql.startsWith('insert into public.learning_files')) {
+    const result = await queryHandler(normalizedSql, params, sql);
+    const inserted = result?.rows?.[0];
+    if (!inserted?.id) return result || emptyResult;
+    const reusableLessonSource = normalizedSql.includes('source_learning_file_id, source_content_fingerprint');
+    const requestedQuestionCount = reusableLessonSource ? params[10] : params[13];
+    const source = inserted.source || (reusableLessonSource ? 'lesson' : params[10]);
+    const row = {
+      ...inserted,
+      id: Number(inserted.id),
+      title: inserted.title || params[0],
+      file_name: inserted.file_name || params[1],
+      file_url: inserted.file_url || params[2],
+      grade_level: inserted.grade_level || params[3],
+      difficulty: inserted.difficulty || params[4],
+      math_topic: inserted.math_topic ?? params[5],
+      topic_id: inserted.topic_id ?? params[6],
+      uploaded_by: inserted.uploaded_by ?? (reusableLessonSource ? params[8] : params[11]),
+      requested_question_count: Number(inserted.requested_question_count ?? requestedQuestionCount),
+      source,
+      content_role: inserted.content_role || (source === 'lesson' ? 'question_set' : 'file'),
+      generation_status: inserted.generation_status || 'generating',
+      generation_stage: inserted.generation_stage || 'queued',
+      generation_completed_count: Number(inserted.generation_completed_count || 0),
+      generation_remaining_count: Number(inserted.generation_remaining_count ?? requestedQuestionCount),
+      generation_idempotency_key: inserted.generation_idempotency_key || (reusableLessonSource ? params[13] : params[16]),
+      generation_request_fingerprint: inserted.generation_request_fingerprint || (reusableLessonSource ? params[14] : params[17]),
+    };
+    generationRows.set(row.id, row);
+    generationQuestions.set(row.id, generationQuestions.get(row.id) || []);
+    return { ...result, rows: [{ ...row }] };
+  }
+
+  if (normalizedSql.startsWith('insert into public.questions')) {
+    const result = await queryHandler(normalizedSql, params, sql);
+    const learningFileId = Number(params[0]);
+    const row = {
+      learning_file_id: learningFileId,
+      question: params[1],
+      options: Array.isArray(params[2]) ? params[2] : JSON.parse(params[2]),
+      correct_answer: params[3],
+      grade_level: params[4],
+      difficulty: params[5],
+      math_topic: params[6],
+      topic_id: params[7],
+      source: 'ai',
+      published: false,
+    };
+    const saved = generationQuestions.get(learningFileId) || [];
+    saved.push(row);
+    generationQuestions.set(learningFileId, saved);
+    return result || emptyResult;
+  }
+
+  if (normalizedSql.startsWith('update public.learning_files') && normalizedSql.includes('set generation_status = $2')) {
+    const row = generationRows.get(Number(params[0]));
+    if (row) {
+      row.generation_status = params[1];
+      row.generation_completed_count = Number(params[2]);
+      row.generation_remaining_count = Number(params[3]);
+      row.generation_stage = params[4];
+    }
+    const result = await queryHandler(normalizedSql, params, sql);
+    return result?.rows?.length ? result : row ? { rows: [{ ...row }] } : emptyResult;
+  }
+
+  return (await queryHandler(normalizedSql, params, sql)) || emptyResult;
+};
+
 const mockPool = {
   query: async (sql, params = []) => {
     const normalizedSql = compactSql(sql);
     if (normalizedSql.startsWith('select * from public.accounts where id = $1')) {
       return resultRows([authenticatedTeacher]);
     }
-    return (await queryHandler(normalizedSql, params, sql)) || emptyResult;
+    return queryMockDatabase(sql, params);
   },
   connect: async () => ({
     query: async (sql, params = []) => {
@@ -34,7 +202,7 @@ const mockPool = {
       if (normalizedSql.startsWith('select * from public.accounts where id = $1')) {
         return resultRows([authenticatedTeacher]);
       }
-      return (await queryHandler(normalizedSql, params, sql)) || emptyResult;
+      return queryMockDatabase(sql, params);
     },
     release: () => {},
   }),
@@ -96,6 +264,8 @@ const { app } = serverExports;
 
 const setQueryHandler = (handler) => {
   queryHandler = handler;
+  generationRows.clear();
+  generationQuestions.clear();
 };
 
 const resultRows = (rows) => ({ rows });
@@ -1190,14 +1360,10 @@ test('lesson upload fails gracefully and persists a failed source record without
   });
 
   let insertCalled = false;
-  let failedStatusPersisted = false;
   setQueryHandler(async (sql) => {
     if (sql.startsWith('insert into public.learning_files')) {
       insertCalled = true;
       return resultRows([{ id: 303 }]);
-    }
-    if (sql.startsWith('update public.learning_files') && sql.includes("generation_status = 'failed'")) {
-      failedStatusPersisted = true;
     }
     return emptyResult;
   });
@@ -1219,7 +1385,7 @@ test('lesson upload fails gracefully and persists a failed source record without
   assert.equal(response.body.error, 'Question AI is temporarily unavailable. Please contact the administrator.');
   assert.equal(response.body.code, 'QUESTION_AI_NOT_CONFIGURED');
   assert.equal(insertCalled, true);
-  assert.equal(failedStatusPersisted, true);
+  assert.equal(generationRows.get(303)?.generation_status, 'failed');
 });
 
 test('a failed AI generation key cannot replay, while a deliberate new key creates one new attempt', async (t) => {
@@ -1262,9 +1428,9 @@ test('a failed AI generation key cannot replay, while a deliberate new key creat
       records.push(record);
       return resultRows([record]);
     }
-    if (sql.startsWith('update public.learning_files') && sql.includes("generation_status = 'failed'")) {
+    if (sql.startsWith('with actual as (') && sql.includes('set generation_status = case')) {
       const record = records.find((item) => item.id === params[0]);
-      record.generation_status = 'failed';
+      if (record) record.generation_status = 'failed';
       return emptyResult;
     }
     return emptyResult;
@@ -1410,7 +1576,7 @@ test('lesson upload rejects unsupported, empty, and unreadable PDFs without read
   };
   setQueryHandler(async (sql) => {
     if (sql.startsWith('insert into public.learning_files')) return resultRows([{ id: 701 }]);
-    if (sql.startsWith('update public.learning_files') && sql.includes("generation_status = 'ready_for_review'")) {
+    if (sql.startsWith('with actual as (') && sql.includes("set generation_status = 'ready_for_review'")) {
       readyForReview = true;
     }
     return emptyResult;
@@ -1695,9 +1861,9 @@ test('lesson generation coalesces concurrent duplicate uploads and replays the c
       records.push(record);
       return resultRows([record]);
     }
-    if (sql.startsWith('update public.learning_files') && sql.includes("generation_status = 'ready_for_review'")) {
+    if (sql.startsWith('with actual as (') && sql.includes("set generation_status = 'ready_for_review'")) {
       const record = records.find((item) => item.id === params[0]);
-      record.generation_status = 'ready_for_review';
+      if (record) record.generation_status = 'ready_for_review';
       return resultRows([record]);
     }
     if (sql.startsWith('insert into public.questions')) return emptyResult;
@@ -2829,7 +2995,7 @@ test('a reusable mixed-topic Lesson source creates Grade and Difficulty children
       return resultRows([child]);
     }
     if (sql.startsWith('insert into public.questions')) return emptyResult;
-    if (sql.startsWith('update public.learning_files') && sql.includes("generation_status = 'ready_for_review'")) {
+    if (sql.startsWith('with actual as (') && sql.includes("set generation_status = 'ready_for_review'")) {
       return resultRows([{ ...insertedChildren.at(-1), generation_status: 'ready_for_review' }]);
     }
     return emptyResult;

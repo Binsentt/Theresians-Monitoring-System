@@ -53,6 +53,7 @@ const GENERATION_POLL_INTERVAL_MS = 1500;
 const MAX_AI_GENERATION_BATCH_SIZE = 25;
 const GENERATION_POLL_WINDOW_PER_BATCH_MS = 6 * 60 * 1000;
 const GENERATION_READY_ACK_PREFIX = 'theresians.lesson-generation-ready.';
+const GENERATION_FAILURE_ACK_PREFIX = 'theresians.lesson-generation-failure.';
 
 export const getLessonGenerationPollLimit = (questionCount) => {
   const count = Math.max(1, Number(questionCount) || 1);
@@ -439,14 +440,78 @@ export default function LessonQuestionManager() {
     loadAiRuntimeState({ role });
   }, [navigate]);
 
-  const hasInProgressGeneration = files.some((file) => getGenerationStatusView(file).inProgress);
+  const activeGenerationFileIds = files
+    .filter((file) => getGenerationStatusView(file).inProgress && Number.isSafeInteger(Number(file.id)) && Number(file.id) > 0)
+    .map((file) => Number(file.id));
+  const activeGenerationFileKey = activeGenerationFileIds.join(',');
   useEffect(() => {
-    if (!hasInProgressGeneration || !user?.role) return undefined;
-    const intervalId = window.setInterval(() => {
-      loadFilesAndFolders({ role: user.role });
-    }, GENERATION_POLL_INTERVAL_MS);
-    return () => window.clearInterval(intervalId);
-  }, [hasInProgressGeneration, user?.role]);
+    if (!activeGenerationFileKey || !user?.role) return undefined;
+    const fileIds = activeGenerationFileKey.split(',').map(Number);
+    let stopped = false;
+    let pollTimer = null;
+    let polling = false;
+
+    const pollExactRows = async () => {
+      if (stopped || polling) return;
+      polling = true;
+      try {
+        const results = await Promise.all(fileIds.map(async (fileId) => {
+          const url = withLessonManagerScope(apiUrl(`/api/learning-files/${fileId}/generation-status`), user.role);
+          const response = await fetchLessonManagerApi(url);
+          if (!response.ok) return null;
+          const data = await response.json();
+          return data.learningFile || null;
+        }));
+        if (stopped) return;
+
+        const latestById = new Map(results.filter(Boolean).map((row) => [Number(row.id), row]));
+        setFiles((current) => current.map((file) => latestById.has(Number(file.id))
+          ? { ...file, ...latestById.get(Number(file.id)) }
+          : file));
+
+        for (const row of latestById.values()) {
+          const actualCount = Number(row.question_count ?? row.generation_completed_count);
+          const requestedCount = Number(row.requested_question_count);
+          if (row.generation_status === 'ready_for_review' && row.generated_at) {
+            if (!Number.isFinite(actualCount)) continue;
+            const key = `${GENERATION_READY_ACK_PREFIX}${row.id}:${row.generated_at}`;
+            if (!window.sessionStorage?.getItem(key)) {
+              window.sessionStorage?.setItem(key, 'acknowledged');
+              setNotification({
+                message: `${actualCount} question${actualCount === 1 ? '' : 's'} generated successfully.`,
+                type: 'success',
+              });
+              window.setTimeout(() => setNotification(null), 5000);
+            }
+          } else if (row.generation_status === 'partial_failed') {
+            const key = `${GENERATION_FAILURE_ACK_PREFIX}${row.id}:${row.generation_failed_at || row.generation_retry_count || 'failed'}`;
+            if (!window.sessionStorage?.getItem(key)) {
+              window.sessionStorage?.setItem(key, 'acknowledged');
+              const completed = Number.isFinite(actualCount) ? actualCount : 0;
+              const total = Number.isFinite(requestedCount) ? requestedCount : completed;
+              const remaining = Number(row.generation_remaining_count ?? Math.max(0, total - completed));
+              setNotification({
+                message: `Generated ${completed} of ${total} questions. Retry the remaining ${remaining}.`,
+                type: 'error',
+              });
+              window.setTimeout(() => setNotification(null), 5000);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Unable to poll active question generation rows:', error);
+      } finally {
+        polling = false;
+        if (!stopped) pollTimer = window.setTimeout(pollExactRows, GENERATION_POLL_INTERVAL_MS);
+      }
+    };
+
+    pollExactRows();
+    return () => {
+      stopped = true;
+      if (pollTimer) window.clearTimeout(pollTimer);
+    };
+  }, [activeGenerationFileKey, user?.role]);
 
   const folderView = useMemo(() => getQuestionFolderView(files, {
     grade_level: selectedFolder.grade_level,
@@ -1962,7 +2027,7 @@ export default function LessonQuestionManager() {
                           step="1"
                           required
                           inputMode="numeric"
-                          placeholder="Enter 1 to 50"
+                          placeholder="Enter question count"
                           aria-invalid={Boolean(formErrors.expected_question_count)}
                           className={`input-field ${formErrors.expected_question_count ? 'input-error' : ''}`}
                           value={form.expected_question_count}

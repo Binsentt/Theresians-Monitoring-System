@@ -105,8 +105,15 @@ const {
   QuestionGenerationError,
   generateLessonQuestions,
   generateLessonQuestionsInBatches,
+  MAX_GENERATION_BATCH_SIZE,
   toQuestionGenerationHttpFailure,
 } = require('./lessonQuestionGeneration');
+const {
+  acquireLessonQuestionGenerationLock,
+} = require('./lessonQuestionGenerationStore');
+const {
+  runQuestionGenerationJob,
+} = require('./lessonQuestionGenerationWorker');
 const {
   AI_PAUSED_CODE,
   AI_PAUSED_MESSAGE,
@@ -2734,126 +2741,73 @@ const generateQuestionTextFromLesson = async ({ filePath, fileName, mimeType, le
 
 const activeLessonGenerationJobs = new Set();
 
-const processLessonGenerationJob = async ({ learningFile, sourceFilePath, sourceFileName, sourceMimeType, title, gradeLevel, difficulty, questionCount, targetQuestionCount = questionCount, lessonText = null }) => {
+const processLessonGenerationJob = async ({ learningFile, sourceFilePath, sourceFileName, sourceMimeType, title, gradeLevel, difficulty, lessonText = null }) => {
   const jobId = Number(learningFile?.id);
+  if (!Number.isSafeInteger(jobId) || jobId < 1) throw new TypeError('Question generation row ID is invalid');
   if (activeLessonGenerationJobs.has(jobId)) return { learningFile, questions: [] };
   activeLessonGenerationJobs.add(jobId);
-  let generatedCount = 0;
-  let existingQuestions = [];
-  let failedBatchIndex = null;
+
+  let lock = null;
   try {
+    lock = await acquireLessonQuestionGenerationLock(pool, jobId);
+    if (!lock.acquired) {
+      const existing = await pool.query(
+        `SELECT lf.*, COUNT(q.id)::INTEGER AS question_count
+         FROM public.learning_files lf
+         LEFT JOIN public.questions q ON q.learning_file_id = lf.id
+         WHERE lf.id = $1
+         GROUP BY lf.id`,
+        [jobId],
+      );
+      return { learningFile: existing.rows[0] || learningFile, questions: [] };
+    }
+
+    const { store } = lock;
+    const job = await store.getJob(jobId);
+    if (!job) throw new Error('Question generation row was not found');
     if (!String(process.env.OPENAI_API_KEY || '').trim()) {
       throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
     }
-    const existingResult = await pool.query(
-      `SELECT id, question, options, correct_answer, grade_level, difficulty, math_topic, topic_id, source
-       FROM public.questions
-       WHERE learning_file_id = $1
-       ORDER BY id ASC`,
-      [learningFile.id]
-    );
-    existingQuestions = existingResult.rows || [];
-    generatedCount = existingQuestions.length;
-    const remainingQuestionCount = Math.max(0, Number(targetQuestionCount) - generatedCount);
-    if (remainingQuestionCount === 0) {
-      const completed = await pool.query(
-        `UPDATE public.learning_files
-         SET generation_status = 'ready_for_review', generation_stage = 'completed',
-             generation_completed_count = $2, generation_remaining_count = 0,
-             generated_at = COALESCE(generated_at, CURRENT_TIMESTAMP),
-             generation_failed_at = NULL, generation_error_code = NULL,
-             generation_failed_batch_index = NULL
-         WHERE id = $1 RETURNING *`,
-        [learningFile.id, generatedCount]
-      );
-      return { learningFile: completed.rows[0] || learningFile, questions: existingQuestions };
-    }
-    await pool.query(
-      `UPDATE public.learning_files
-       SET generation_status = 'extracting', generation_stage = 'extracting',
-           generation_completed_count = $2, generation_remaining_count = $3,
-           generation_retry_count = COALESCE(generation_retry_count, 0) + CASE WHEN $2 > 0 THEN 1 ELSE 0 END,
-           generation_failed_batch_index = NULL, generation_error_code = NULL
-       WHERE id = $1`,
-      [learningFile.id, generatedCount, remainingQuestionCount]
-    );
-    const generatedQuestions = await generateQuestionTextFromLesson({
+
+    await store.setStage(jobId, 'extracting');
+    const cleanLessonText = lessonText || await extractLessonTextForGeneration({
       filePath: sourceFilePath,
       fileName: sourceFileName,
       mimeType: sourceMimeType,
-      lessonText,
-    }, title, gradeLevel, difficulty, remainingQuestionCount, null, {
-      existingQuestions,
-      onBatch: async ({ batch, batch_index }) => {
-        failedBatchIndex = batch_index;
-        await saveQuestionsForFile(learningFile.id, batch.map((question) => ({
-          ...question,
-          grade_level: gradeLevel,
-          difficulty,
-          math_topic: learningFile.math_topic || null,
-          topic_id: learningFile.topic_id || null,
-          source: 'ai',
-        })));
-        generatedCount += batch.length;
-        await pool.query(
-          `UPDATE public.learning_files
-           SET generation_status = 'generating', generation_stage = 'generating',
-               generation_completed_count = $2, generation_remaining_count = $3,
-               generation_failed_batch_index = $4
-           WHERE id = $1`,
-          [learningFile.id, generatedCount, Math.max(0, Number(targetQuestionCount) - generatedCount), batch_index]
-        );
-      },
     });
-    const questions = [...existingQuestions, ...generatedQuestions];
-    await pool.query(
-      `UPDATE public.learning_files
-       SET generation_status = 'validating', generation_stage = 'validating', generation_completed_count = $2
-       WHERE id = $1`,
-      [learningFile.id, questions.length]
-    );
-    await pool.query(
-      `UPDATE public.learning_files
-       SET generation_status = 'saving', generation_stage = 'saving', generation_completed_count = $2
-       WHERE id = $1`,
-      [learningFile.id, questions.length]
-    );
-    const completed = await pool.query(
-        `UPDATE public.learning_files
-         SET generation_status = 'ready_for_review',
-             generation_stage = 'completed',
-             generation_completed_count = $2,
-             generation_remaining_count = 0,
-             generated_at = CURRENT_TIMESTAMP,
-             generation_failed_at = NULL,
-             generation_error_code = NULL,
-             generation_failed_batch_index = NULL
-         WHERE id = $1
-         RETURNING *`,
-        [learningFile.id, questions.length]
-      );
-    return { learningFile: completed.rows[0] || learningFile, questions };
+
+    const generation = await runQuestionGenerationJob({
+      learningFileId: jobId,
+      store,
+      batchSize: MAX_GENERATION_BATCH_SIZE,
+      generateBatch: (count, _batchIndex, { existingQuestions, job: generationRow }) => generateLessonQuestions({
+        lessonText: cleanLessonText,
+        title: generationRow.title,
+        gradeLevel: generationRow.grade_level,
+        difficulty: generationRow.difficulty,
+        questionCount: count,
+        avoidQuestions: existingQuestions.map((question) => question.question),
+      }),
+    });
+    const [latestJob, questions] = await Promise.all([
+      store.getJob(jobId),
+      store.listQuestions(jobId),
+    ]);
+    return {
+      ...generation,
+      learningFile: { ...latestJob, question_count: questions.length },
+      questions,
+    };
   } catch (error) {
     const errorCode = error instanceof QuestionGenerationError ? error.code : 'QUESTION_GENERATION_FAILED';
-    const failureQuery = generatedCount > 0
-      ? `UPDATE public.learning_files
-         SET generation_status = 'partial_failed', generation_stage = 'partial_failed',
-             generation_failed_at = CURRENT_TIMESTAMP, generation_error_code = $2,
-             generation_completed_count = $3,
-             generation_remaining_count = GREATEST(0, $4 - $3),
-             generation_failed_batch_index = $5
-         WHERE id = $1`
-      : `UPDATE public.learning_files
-         SET generation_status = 'failed', generation_stage = 'failed',
-             generation_failed_at = CURRENT_TIMESTAMP, generation_error_code = $2,
-             generation_completed_count = 0,
-             generation_remaining_count = $4,
-             generation_failed_batch_index = $5
-         WHERE id = $1`;
-    await pool.query(failureQuery, [learningFile.id, errorCode, generatedCount, Number(targetQuestionCount), failedBatchIndex])
-      .catch((persistError) => console.error('Failed to persist lesson generation status:', persistError.message));
+    if (lock?.acquired) {
+      await lock.store.markFailed(jobId, errorCode).catch((persistError) => {
+        console.error('Failed to persist lesson generation status:', persistError.message);
+      });
+    }
     throw error;
   } finally {
+    if (lock?.acquired) await lock.release();
     activeLessonGenerationJobs.delete(jobId);
   }
 };
@@ -2884,7 +2838,24 @@ const resumePartialLessonGeneration = async ({
       code: 'LESSON_SOURCE_FILE_MISSING',
     });
   }
-  const remainingQuestionCount = Math.max(0, Number(learningFile.generation_remaining_count || 0));
+  const savedCountResult = await pool.query(
+    `SELECT lf.requested_question_count,
+            COUNT(q.id)::INTEGER AS actual_question_count
+     FROM public.learning_files lf
+     LEFT JOIN public.questions q ON q.learning_file_id = lf.id
+     WHERE lf.id = $1
+     GROUP BY lf.id`,
+    [learningFile.id],
+  );
+  const savedCountRow = savedCountResult.rows[0];
+  if (!savedCountRow) return res.status(404).json({ error: 'Generated question set not found.' });
+  const authoritativeTarget = Number(savedCountRow.requested_question_count);
+  const actualSavedCount = Number(savedCountRow.actual_question_count);
+  if (!Number.isSafeInteger(authoritativeTarget) || authoritativeTarget < 1
+    || !Number.isSafeInteger(actualSavedCount) || actualSavedCount > authoritativeTarget) {
+    return res.status(409).json({ error: 'The generated question set has inconsistent saved progress.', code: 'QUESTION_AI_COUNT_MISMATCH' });
+  }
+  const remainingQuestionCount = authoritativeTarget - actualSavedCount;
   const jobInput = {
     learningFile,
     sourceFilePath,
@@ -2894,7 +2865,7 @@ const resumePartialLessonGeneration = async ({
     gradeLevel,
     difficulty,
     questionCount: remainingQuestionCount,
-    targetQuestionCount,
+    targetQuestionCount: authoritativeTarget,
     lessonText,
   };
   if (remainingQuestionCount > 5) {
@@ -5777,21 +5748,19 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
       });
     }
     const queuedGeneration = scope.questionCount > 5;
-    const lessonText = queuedGeneration ? null : await extractLessonTextForGeneration({
-      filePath: sourceFilePath,
-      fileName: lessonSource.file_name,
-      mimeType: lessonSource.source_file_mime_type || 'application/pdf',
-    });
+    const lessonText = null;
 
     const insertResult = await pool.query(
       `INSERT INTO public.learning_files (
          title, file_name, file_url, grade_level, difficulty, math_topic, topic_id, document_topic,
          file_type, subject, folder_id, published, source, uploaded_by, file_size,
-         requested_question_count, generation_status, publish_status, content_role,
+         requested_question_count, generation_status, generation_stage,
+         generation_completed_count, generation_remaining_count,
+         publish_status, content_role,
          source_learning_file_id, source_content_fingerprint, generation_idempotency_key,
          generation_request_fingerprint, source_file_mime_type
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, 'lesson', 'Mathematics', $8, false, 'lesson', $9, $10,
-                 $11, 'generating', 'staged', 'question_set', $12, $13, $14, $15, $16)
+                 $11, 'generating', 'queued', 0, $11, 'staged', 'question_set', $12, $13, $14, $15, $16)
        RETURNING *`,
       [
         `${lessonSource.title} — ${scope.gradeLevel} / ${scope.difficulty}`,
@@ -6099,22 +6068,21 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     fs.renameSync(req.file.path, destinationPath);
     storedFilePath = destinationPath;
     const fileUrl = buildFileUrl(fileName);
-    const preflightLessonText = normalizedType === 'lesson' && requestedQuestionCount <= 5
-      ? await extractLessonTextForGeneration({
-        filePath: storedFilePath,
-        fileName: req.file.originalname,
-        mimeType: req.file.mimetype,
-      })
-      : null;
+    const preflightLessonText = null;
 
     const createLearningFile = async (generationStatus) => {
       const insertResult = await pool.query(
         `INSERT INTO public.learning_files (
           title, file_name, file_url, grade_level, difficulty, math_topic, topic_id, document_topic,
           file_type, subject, folder_id, published, source, uploaded_by,
-          file_size, requested_question_count, generation_status, publish_status,
+          file_size, requested_question_count, generation_status, generation_stage,
+          generation_completed_count, generation_remaining_count, publish_status,
           source_content_fingerprint, generation_idempotency_key, generation_request_fingerprint
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Mathematics', $10, false, $11, $12, $13, $14, $15, 'staged', $16, $17, $18)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Mathematics', $10, false, $11, $12, $13, $14, $15,
+                  CASE WHEN $15 = 'generating' THEN 'queued' ELSE 'not_applicable' END,
+                  0,
+                  CASE WHEN $15 = 'generating' THEN $14 ELSE 0 END,
+                  'staged', $16, $17, $18)
          RETURNING *`,
         [
           String(title).trim(),

@@ -201,6 +201,10 @@ describe('LessonQuestionManager upload and trash controls', () => {
         fixtures.files = [generated, ...fixtures.files];
         return okJson({ success: true, learningFile: generated });
       }
+      const generationStatusMatch = scopedValue.match(/\/api\/learning-files\/(\d+)\/generation-status$/);
+      if (generationStatusMatch) {
+        return okJson({ success: true, learningFile: fixtures.generationStatus });
+      }
       if (scopedValue.endsWith('/api/learning-files')) return okJson(fixtures.files);
       if (scopedValue.endsWith('/api/folders')) return okJson(fixtures.folders);
       if (scopedValue.endsWith('/api/learning-files/trash') && options.method === 'DELETE') {
@@ -353,6 +357,72 @@ describe('LessonQuestionManager upload and trash controls', () => {
       headers: { Authorization: 'Bearer lesson-manager-token' },
     });
     expect(completed.generation_completed_count).toBe(50);
+  });
+
+  test('polls the exact active question-file row and renders persisted database progress', async () => {
+    fixtures.files = [{
+      id: 841,
+      title: 'fractions-lesson.pdf',
+      file_name: 'fractions-lesson.pdf',
+      file_type: 'lesson',
+      content_role: 'question_set',
+      source: 'lesson',
+      requested_question_count: 37,
+      question_count: 0,
+      generation_completed_count: 0,
+      generation_remaining_count: 37,
+      generation_status: 'generating',
+      generation_stage: 'generating',
+    }];
+    fixtures.generationStatus = {
+      ...fixtures.files[0],
+      question_count: 12,
+      generation_completed_count: 12,
+      generation_remaining_count: 25,
+    };
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+
+    expect(global.fetch.mock.calls.map(([url]) => String(url)))
+      .toContain('/api/learning-files/841/generation-status');
+    expect(container.textContent).toContain('12 / 37 completed');
+  });
+
+  test('shows the success notification using the exact persisted question count', async () => {
+    const generatingRow = {
+      id: 842,
+      title: 'fractions-lesson.pdf',
+      file_name: 'fractions-lesson.pdf',
+      file_type: 'lesson',
+      content_role: 'question_set',
+      source: 'lesson',
+      requested_question_count: 7,
+      question_count: 0,
+      generation_completed_count: 0,
+      generation_remaining_count: 7,
+      generation_status: 'generating',
+      generation_stage: 'generating',
+    };
+    fixtures.files = [generatingRow];
+    fixtures.generationStatus = {
+      ...generatingRow,
+      question_count: 7,
+      generation_completed_count: 7,
+      generation_remaining_count: 0,
+      generation_status: 'ready_for_review',
+      generation_stage: 'completed',
+      generated_at: '2026-09-27T00:00:00.000Z',
+    };
+
+    await act(async () => {
+      root.render(<LessonQuestionManager />);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('7 questions generated successfully.');
   });
 
   test('Fixed Question and Lesson uploads require Grade and Difficulty without a Topic selector', async () => {
@@ -684,6 +754,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     const countField = document.body.querySelector('input[name="expected_question_count"]');
     expect(document.body.textContent).toContain('Question Count');
+    expect(getUploadModal().querySelector('#expected-question-count')?.getAttribute('placeholder')).not.toMatch(/1\s*(?:-|–|to)\s*50/i);
     expect(countField).toBeTruthy();
     expect(countField.required).toBe(true);
     expect(countField.type).toBe('number');
