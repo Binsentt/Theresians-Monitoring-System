@@ -189,6 +189,30 @@ describe('AnnouncementPage load states', () => {
     expect(container.textContent).toContain('No teacher announcements yet');
   });
 
+  test('shows field-level required validation and does not post when announcement fields are empty', async () => {
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    }));
+
+    await act(async () => {
+      root.render(<AnnouncementPage mode="admin" />);
+    });
+
+    const initialCalls = global.fetch.mock.calls.length;
+    const form = container.querySelector('form');
+
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.querySelector('#announcement-title')).toHaveAttribute('aria-invalid', 'true');
+    expect(container.querySelector('#announcement-message')).toHaveAttribute('aria-invalid', 'true');
+    expect(container.querySelectorAll('.announcement-field-error')).toHaveLength(2);
+    expect(container.textContent).toContain('Please fill out this field.');
+    expect(global.fetch).toHaveBeenCalledTimes(initialCalls);
+  });
+
   test('keeps a failed announcement post out of the generic connection error path when the response is not JSON', async () => {
     global.fetch = jest.fn()
       .mockResolvedValueOnce({

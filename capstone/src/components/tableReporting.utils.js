@@ -53,6 +53,9 @@ export function matchesTableSearch(row, query, fields) {
       field,
       value: normalizeText(row?.[field]),
       identifier: schoolIdentifierField(field) ? normalizeSchoolIdentifier(row?.[field]) : null,
+      identifierPrefix: schoolIdentifierField(field)
+        ? normalizeText(row?.[field]).replace(/-/g, '')
+        : null,
     }))
     .filter(({ value }) => Boolean(value));
 
@@ -70,8 +73,11 @@ export function matchesTableSearch(row, query, fields) {
     if (canonicalIdentifier) {
       return values.some(({ field, identifier }) => schoolIdentifierField(field) && identifier === canonicalIdentifier);
     }
-    return values.some(({ field, value }) => (
-      schoolIdentifierField(field) ? value === term : value.includes(term)
+    const compactTerm = term.replace(/-/g, '');
+    return values.some(({ field, value, identifierPrefix }) => (
+      schoolIdentifierField(field)
+        ? Boolean(identifierPrefix && identifierPrefix.startsWith(compactTerm))
+        : value.includes(term)
     ));
   });
 }
