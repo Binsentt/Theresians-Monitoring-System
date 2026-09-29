@@ -1479,11 +1479,67 @@ test('lesson upload rejects unsupported, empty, and unreadable PDFs without read
 
   assert.equal(unsupportedResponse.status, 400);
   assert.equal(emptyResponse.status, 422);
-  assert.equal(emptyResponse.body.code, 'QUESTION_AI_EMPTY_LESSON');
+  assert.equal(emptyResponse.body.code, 'QUESTION_AI_PDF_NO_TEXT');
+  assert.equal(emptyResponse.body.error, 'No readable text was found in this PDF. Use a text-based PDF, PPTX, or DOCX file.');
   assert.equal(unreadableResponse.status, 422);
-  assert.equal(unreadableResponse.body.code, 'QUESTION_AI_EMPTY_LESSON');
+  assert.equal(unreadableResponse.body.code, 'QUESTION_AI_PDF_EXTRACTION_FAILED');
+  assert.match(unreadableResponse.body.error, /PDF text extraction failed/i);
   assert.equal(providerCalls, 0);
   assert.equal(readyForReview, false);
+});
+
+test('Lesson source upload accepts a structurally valid DOCX and persists its correct MIME type without provider calls', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lesson-source-docx-test-'));
+  const uploadName = `lesson-source-${Date.now()}.docx`;
+  const tempDocx = path.join(tempDir, uploadName);
+  const sourceDocx = path.join(__dirname, '../docs/teacher-fixed-question-documents/grade1-easy-basic-addition-set-b.docx');
+  const uploadsDir = path.join(__dirname, 'uploads');
+  const uploadsBefore = new Set(fs.readdirSync(uploadsDir));
+  fs.copyFileSync(sourceDocx, tempDocx);
+  nextUploadedFile = {
+    path: tempDocx,
+    originalname: uploadName,
+    mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    size: fs.statSync(tempDocx).size,
+  };
+  let insertParams = null;
+  setQueryHandler(async (sql, params) => {
+    if (sql.startsWith('insert into public.learning_files')) {
+      insertParams = params;
+      return resultRows([{
+        id: 704,
+        title: 'DOCX lesson source',
+        file_name: uploadName,
+        file_type: 'lesson',
+        generation_status: 'source_ready',
+        content_role: 'lesson_source',
+        source_file_mime_type: params[7],
+      }]);
+    }
+    return emptyResult;
+  });
+  t.after(async () => {
+    nextUploadedFile = null;
+    setQueryHandler(async () => emptyResult);
+    if (fs.existsSync(tempDocx)) fs.unlinkSync(tempDocx);
+    if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir);
+    for (const entry of fs.readdirSync(uploadsDir)) {
+      const candidate = path.join(uploadsDir, entry);
+      if (!uploadsBefore.has(entry) && entry.endsWith(`_${uploadName}`) && fs.existsSync(candidate)) fs.unlinkSync(candidate);
+    }
+    await close(server);
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/lesson-sources', {
+    method: 'POST',
+    body: JSON.stringify({ title: 'DOCX lesson source' }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal(insertParams[7], 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  assert.equal(response.body.lessonSource.source_file_mime_type, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
 });
 
 test('lesson upload generates exactly the requested staged questions through the server-side OpenAI call', async (t) => {

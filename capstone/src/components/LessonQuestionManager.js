@@ -160,10 +160,10 @@ function getUploadFileTypeError(fileName, fileType) {
   const name = String(fileName || '').trim();
   if (!name || isSupportedLearningUpload(name, fileType)) return '';
   if (fileType === 'fixed_questions' && /\.pptx?$/i.test(name)) {
-    return 'PPT/PPTX files cannot be uploaded as Fixed Questions. Select Lesson PDF or PPTX File instead.';
+    return 'PPT/PPTX files cannot be uploaded as Fixed Questions. Select Lesson PDF, PPTX, or DOCX File instead.';
   }
   return fileType === 'lesson'
-    ? 'Lesson files must be PDF or PPTX.'
+    ? 'Lesson files must be PDF, PPTX, or DOCX.'
     : 'Fixed Question files must be DOCX, PDF, JSON, or CSV.';
 }
 
@@ -465,7 +465,7 @@ export default function LessonQuestionManager() {
     : 'All Question Files';
   const displayedFiles = useMemo(() => folderView.files.filter((file) => matchesTableSearch({
     ...file,
-    source_label: file.source_label || (file.file_type === 'lesson' ? 'Lesson PDF or PPTX File' : 'Fixed Question File'),
+    source_label: file.source_label || (file.file_type === 'lesson' ? 'Lesson PDF, PPTX, or DOCX File' : 'Fixed Question File'),
     lifecycle_status: getQuestionSetStatus(file),
     modified_date: formatUploadDate(file.published_at || file.generated_at || file.uploaded_at),
   }, filters.search, [
@@ -501,7 +501,7 @@ export default function LessonQuestionManager() {
     { header: 'File / Question Set Name', value: (row) => row.generated_question_set_name || row.title || row.file_name },
     { header: 'Grade', value: (row) => row.grade_level },
     { header: 'Difficulty', value: (row) => row.difficulty },
-    { header: 'File Type / Source', value: (row) => row.source_label || (row.file_type === 'lesson' ? 'Lesson PDF or PPTX File' : 'Fixed Question File') },
+    { header: 'File Type / Source', value: (row) => row.source_label || (row.file_type === 'lesson' ? 'Lesson PDF, PPTX, or DOCX File' : 'Fixed Question File') },
     { header: 'Question Count', value: (row) => Number.isInteger(Number(row.question_count)) ? Number(row.question_count) : (row.file_type === 'lesson' ? row.requested_question_count : null) },
     { header: 'Status', value: (row) => getQuestionSetStatus(row) },
     { header: 'Date Modified', value: (row) => formatUploadDate(row.published_at || row.generated_at || row.uploaded_at) },
@@ -589,11 +589,11 @@ export default function LessonQuestionManager() {
   const saveLessonSource = async () => {
     if (uploading || savingLessonSource || uploadInFlightRef.current) return;
     if (uploadType !== 'lesson' || !form.file) {
-      showNotification('Choose a Lesson PDF or PPTX before saving a reusable source.', 'error');
+      showNotification('Choose a Lesson PDF, PPTX, or DOCX before saving a reusable source.', 'error');
       return;
     }
     if (!isSupportedLearningUpload(form.file.name, 'lesson')) {
-      showNotification('Lesson sources must be PDF or PPTX files.', 'error');
+      showNotification('Lesson sources must be PDF, PPTX, or DOCX files.', 'error');
       return;
     }
     const payload = new FormData();
@@ -625,7 +625,7 @@ export default function LessonQuestionManager() {
   const generateQuestionSetFromLessonSource = async (requestedCount) => {
     const sourceId = Number(selectedLessonSourceId);
     if (!Number.isSafeInteger(sourceId) || sourceId < 1) {
-      showNotification('Select a reusable Lesson PDF or PPTX source first.', 'error');
+      showNotification('Select a reusable Lesson source first.', 'error');
       return;
     }
     const storageKey = buildLessonSourceGenerationStorageKey({
@@ -770,7 +770,7 @@ export default function LessonQuestionManager() {
       setFormErrors({
         expected_question_count: requestedCount
           ? `Question Count must be a whole number between ${MIN_LESSON_QUESTION_COUNT} and ${MAX_LESSON_QUESTION_COUNT}.`
-          : 'Question Count is required for Lesson PDF or PPTX files.',
+          : 'Question Count is required for Lesson files.',
       });
       return;
     }
@@ -1460,7 +1460,7 @@ export default function LessonQuestionManager() {
       className: 'drive-type-column',
       render: (value, row) => (
         <div className="manager-file-type-cell">
-          <span>{value === 'lesson' ? 'Lesson PDF or PPTX File' : 'Fixed Question File'}</span>
+          <span>{value === 'lesson' ? 'Lesson PDF, PPTX, or DOCX File' : 'Fixed Question File'}</span>
           {row.source_label && <span className="file-meta">{row.source_label}</span>}
         </div>
       ),
@@ -1940,7 +1940,7 @@ export default function LessonQuestionManager() {
                     <div className="form-group">
                       <label className="form-label required">File Type</label>
                       <select className="select-field" value={form.file_type} onChange={(event) => handleFormChange('file_type', event.target.value)}>
-                        <option value="lesson">Lesson PDF or PPTX File</option>
+                        <option value="lesson">Lesson PDF, PPTX, or DOCX File</option>
                         <option value="fixed_questions">Fixed Question File</option>
                       </select>
                     </div>
@@ -1982,7 +1982,7 @@ export default function LessonQuestionManager() {
                         <input
                           type="file"
                           accept={form.file_type === 'lesson'
-                            ? '.pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation'
+                            ? '.pdf,.pptx,.docx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document'
                             : '.docx,.pdf,.json,.csv,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,application/json,text/csv'}
                           onChange={(event) => handleFormChange('file', event.target.files[0] || null)}
                         />
@@ -2049,7 +2049,7 @@ export default function LessonQuestionManager() {
                     <div>
                       <h2 id="generated-questions-preview-title">Question Review</h2>
                       <p className="question-review-metadata">File Name: {previewFile.title || previewFile.file_name}</p>
-                      <p className="question-review-metadata">File Type: {previewFile.file_type === 'lesson' ? 'Lesson PDF or PPTX File' : 'Fixed Question File'}</p>
+                      <p className="question-review-metadata">File Type: {previewFile.file_type === 'lesson' ? 'Lesson PDF, PPTX, or DOCX File' : 'Fixed Question File'}</p>
                       <p className="question-review-metadata">Grade: {previewFile.grade_level} · Difficulty: {previewFile.difficulty}</p>
                       <p className="question-review-metadata">Destination: {getQuestionFolderPath(previewFile.grade_level, previewFile.difficulty)}</p>
                       <p className="question-review-metadata">Parent set: {previewFile.source_learning_file_id ? `Source set #${previewFile.source_learning_file_id}` : (previewFile.title || previewFile.file_name)}</p>

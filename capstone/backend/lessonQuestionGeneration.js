@@ -48,9 +48,19 @@ const toQuestionGenerationHttpFailure = (error) => {
     };
   }
 
+  const sourceValidationCodes = [
+    'QUESTION_AI_PDF_INVALID',
+    'QUESTION_AI_PDF_NO_TEXT',
+    'QUESTION_AI_PDF_EXTRACTION_FAILED',
+    'QUESTION_AI_DOCX_INVALID',
+    'QUESTION_AI_DOCX_NO_TEXT',
+    'QUESTION_AI_DOCX_EXTRACTION_FAILED',
+    'QUESTION_AI_PPTX_INVALID',
+    'QUESTION_AI_SOURCE_INVALID',
+  ];
   const status = error.code === 'QUESTION_AI_NOT_CONFIGURED' ? 503
     : error.code === 'QUESTION_AI_TIMEOUT' ? 504
-      : ['QUESTION_AI_EMPTY_LESSON', 'QUESTION_AI_LESSON_TOO_LARGE', 'QUESTION_AI_INVALID_REQUEST', 'QUESTION_AI_INVALID_RESPONSE'].includes(error.code) ? 422
+      : ['QUESTION_AI_EMPTY_LESSON', 'QUESTION_AI_LESSON_TOO_LARGE', 'QUESTION_AI_INVALID_REQUEST', 'QUESTION_AI_INVALID_RESPONSE', ...sourceValidationCodes].includes(error.code) ? 422
         : 502;
   const message = error.code === 'QUESTION_AI_NOT_CONFIGURED'
     ? 'Question AI is temporarily unavailable. Please contact the administrator.'
@@ -58,8 +68,10 @@ const toQuestionGenerationHttpFailure = (error) => {
       ? 'Question generation timed out. Please try again.'
       : error.code === 'QUESTION_AI_EMPTY_LESSON'
         ? 'No readable lesson text was found in this source.'
-        : error.code === 'QUESTION_AI_LESSON_TOO_LARGE'
+      : error.code === 'QUESTION_AI_LESSON_TOO_LARGE'
           ? 'The readable lesson text exceeds the safe size limit.'
+          : sourceValidationCodes.includes(error.code)
+            ? error.message
           : error.code === 'QUESTION_AI_INVALID_RESPONSE'
             ? 'Question generation returned unusable question data. Please try again.'
             : 'Question generation could not be completed. Please review the lesson source and try again.';

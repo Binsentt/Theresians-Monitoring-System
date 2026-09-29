@@ -386,7 +386,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(getUploadModal().querySelector('.fixed-destination-display').textContent.trim()).toBe('Questions/Grade 3/Normal');
     expect(document.body.textContent).not.toContain('Select Folder');
     expect(document.body.textContent).not.toContain('New Folder');
-    expect(document.body.textContent).toContain('Lesson PDF or PPTX File');
+    expect(document.body.textContent).toContain('Lesson PDF, PPTX, or DOCX File');
     expect(document.body.textContent).toContain('Fixed Question File');
     await act(async () => {
       setSelectValue(getUploadModalSelects()[2], 'lesson');
@@ -664,7 +664,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     });
   });
 
-  test('Question Count is required only for Lesson PDF or PPTX uploads and is hidden for fixed question files', async () => {
+  test('Question Count is required only for Lesson uploads and is hidden for fixed question files', async () => {
     await act(async () => {
       root.render(<LessonQuestionManager />);
     });
@@ -709,8 +709,23 @@ describe('LessonQuestionManager upload and trash controls', () => {
       getUploadModal().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
 
-    expect(document.body.textContent).toContain('Question Count is required for Lesson PDF or PPTX files.');
+    expect(document.body.textContent).toContain('Question Count is required for Lesson files.');
     expect(global.fetch).not.toHaveBeenCalledWith('/api/learning-files/upload', expect.anything());
+  });
+
+  test('Lesson source upload accepts PDF, PPTX, and DOCX documents', async () => {
+    await act(async () => root.render(<LessonQuestionManager />));
+    await act(async () => clickByText(container, 'New'));
+    await act(async () => clickByText(container, 'Upload File'));
+    await act(async () => setSelectValue(getUploadModalSelects()[2], 'lesson'));
+
+    const fileInput = getUploadModal().querySelector('input[type="file"]');
+    expect(fileInput.accept).toContain('.pdf');
+    expect(fileInput.accept).toContain('.pptx');
+    expect(fileInput.accept).toContain('.docx');
+    expect(fileInput.accept).toContain('application/pdf');
+    expect(fileInput.accept).toContain('application/vnd.openxmlformats-officedocument.presentationml.presentation');
+    expect(fileInput.accept).toContain('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   });
 
   test.each([7, 13, 28])('passes the entered Question Count %s unchanged to lesson generation', async (requestedCount) => {

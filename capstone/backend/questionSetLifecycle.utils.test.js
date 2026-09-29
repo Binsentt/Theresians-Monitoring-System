@@ -42,6 +42,17 @@ test('uses the persisted active, superseded, generating, and failed states', () 
   assert.equal(failed.failureLabel, 'Question AI is unavailable. Retry after the service is restored.');
 });
 
+test('preserves a specific PDF no-text explanation on failed generated lesson rows', () => {
+  const failed = deriveQuestionSetLifecycle({
+    generation_status: 'failed',
+    generation_error_code: 'QUESTION_AI_PDF_NO_TEXT',
+    publish_status: 'staged',
+  });
+
+  assert.equal(failed.label, 'Failed');
+  assert.equal(failed.failureLabel, 'No readable text was found in this PDF. Use a text-based PDF, PPTX, or DOCX file.');
+});
+
 test('reports an approved staged set as approved but not in the game', () => {
   const lifecycle = deriveQuestionSetLifecycle({
     approval_status: 'approved',

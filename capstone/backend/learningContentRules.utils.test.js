@@ -184,7 +184,7 @@ test('lesson Question Count accepts teacher-entered whole numbers from 1 through
     assert.deepEqual(parseLessonQuestionCount(String(count)), { value: count, error: null });
   }
   assert.equal(MAX_LESSON_QUESTION_COUNT, 50);
-  assert.equal(parseLessonQuestionCount('').error, 'Question Count is required for Lesson PDF or PPTX files.');
+  assert.equal(parseLessonQuestionCount('').error, 'Question Count is required for Lesson files.');
   assert.equal(parseLessonQuestionCount('0').error, 'Question Count must be a whole number between 1 and 50.');
   assert.equal(parseLessonQuestionCount('-1').error, 'Question Count must be a whole number between 1 and 50.');
   assert.equal(parseLessonQuestionCount('2.5').error, 'Question Count must be a whole number between 1 and 50.');

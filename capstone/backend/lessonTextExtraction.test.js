@@ -12,9 +12,12 @@ const {
   extractPptxTextFromParts,
   readPptxParts,
   validateLessonUploadFile,
+  validateLessonDocumentStructure,
 } = require('./lessonTextExtraction');
+const { generateLessonQuestionsInBatches } = require('./lessonQuestionGeneration');
 
 const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 const presentationXml = `<?xml version="1.0" encoding="UTF-8"?>
 <p:presentation xmlns:p="p" xmlns:r="r"><p:sldIdLst><p:sldId id="256" r:id="rId2"/><p:sldId id="257" r:id="rId1"/><p:sldId id="258" r:id="rId3"/></p:sldIdLst></p:presentation>`;
@@ -23,6 +26,14 @@ const relationshipsXml = `<?xml version="1.0" encoding="UTF-8"?>
 const slideOneXml = `<p:sld xmlns:p="p" xmlns:a="a"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>First slide</a:t></a:r></a:p><a:p><a:r><a:t>First paragraph</a:t></a:r><a:r><a:t> continued</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`;
 const slideTwoXml = `<p:sld xmlns:p="p" xmlns:a="a"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>Second slide</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`;
 const slideThreeXml = `<p:sld xmlns:p="p" xmlns:a="a"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>3 + 2 = 5</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`;
+const docxContentTypes = `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`;
+const docxRelationships = `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`;
+const docxDocument = `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>DOCX lesson text about adding counters.</w:t></w:r></w:p><w:p><w:r><w:t>Three plus two equals five.</w:t></w:r></w:p><w:sectPr/></w:body></w:document>`;
+const createDocx = () => createZip([
+  ['[Content_Types].xml', docxContentTypes],
+  ['_rels/.rels', docxRelationships],
+  ['word/document.xml', docxDocument],
+]);
 
 const crc32 = (buffer) => {
   let crc = 0xFFFFFFFF;
@@ -89,11 +100,30 @@ test('accepts only a coherent PPTX upload signature and rejects legacy PPT', () 
   assert.equal(validateLessonUploadFile({ originalname: 'lesson.pptx', mimetype: PPTX_MIME }, Buffer.from('PK\x03\x04ppt/presentation.xml')), '');
   assert.match(
     validateLessonUploadFile({ originalname: 'lesson.ppt', mimetype: 'application/vnd.ms-powerpoint' }, Buffer.from('D0CF11E0')),
-    /PDF or PPTX/i
+    /PDF.*PPTX.*DOCX/i
   );
   assert.match(
     validateLessonUploadFile({ originalname: 'lesson.pptx', mimetype: PPTX_MIME }, Buffer.from('%PDF-1.7')),
     /MIME type.*content/i
+  );
+});
+
+test('accepts DOCX only when extension, MIME type, and ZIP signature agree', () => {
+  const docx = createDocx();
+  assert.equal(validateLessonUploadFile({ originalname: 'lesson.docx', mimetype: DOCX_MIME }, docx), '');
+  assert.match(validateLessonUploadFile({ originalname: 'lesson.docx', mimetype: 'application/zip' }, docx), /MIME type.*content/i);
+  assert.match(validateLessonUploadFile({ originalname: 'lesson.pdf', mimetype: DOCX_MIME }, docx), /extension.*content/i);
+  assert.match(validateLessonUploadFile({ originalname: 'lesson.docx', mimetype: DOCX_MIME }, Buffer.from('%PDF-1.7')), /signature|content/i);
+});
+
+test('rejects a ZIP that has a DOCX name and MIME type but lacks a valid DOCX package structure', async () => {
+  await assert.rejects(
+    () => validateLessonDocumentStructure({
+      originalname: 'not-a-docx.docx',
+      mimetype: DOCX_MIME,
+      buffer: Buffer.from('PK\x03\x04not really a complete archive'),
+    }),
+    (error) => error instanceof LessonTextExtractionError && error.code === 'DOCX_STRUCTURE_INVALID'
   );
 });
 
@@ -113,6 +143,146 @@ test('uses the same public extraction boundary for PDF text without sending the 
 
   assert.equal(receivedBytes, pdfBytes);
   assert.equal(lessonText, 'Adding means combining numbers.\n\n3 + 2 = 5');
+});
+
+test('extracts readable text from a real text-based PDF through pdf-parse', async () => {
+  const pdfPath = path.join(__dirname, 'test-fixtures', 'fixed-question-four-choice.pdf');
+  const lessonText = await extractLessonText({
+    path: pdfPath,
+    originalname: 'lesson.pdf',
+    mimetype: 'application/pdf',
+  });
+
+  assert.ok(lessonText.length > 0);
+  assert.match(lessonText, /What is/i);
+});
+
+test('distinguishes a valid PDF with no readable text and returns the actionable message', async () => {
+  await assert.rejects(
+    () => extractLessonText({
+      originalname: 'image-only.pdf',
+      mimetype: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.7 valid-but-image-only'),
+    }, { extractPdfText: async () => '' }),
+    (error) => error instanceof LessonTextExtractionError
+      && error.code === 'LESSON_PDF_NO_TEXT'
+      && error.message === 'No readable text was found in this PDF. Use a text-based PDF, PPTX, or DOCX file.'
+  );
+});
+
+test('distinguishes invalid PDFs from parser/extraction failures', async () => {
+  await assert.rejects(
+    () => extractLessonText({
+      originalname: 'corrupt.pdf',
+      mimetype: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.7 invalid'),
+    }, { extractPdfText: async () => {
+      const error = new Error('invalid document structure');
+      error.name = 'InvalidPDFException';
+      throw error;
+    } }),
+    (error) => error instanceof LessonTextExtractionError && error.code === 'LESSON_PDF_INVALID'
+  );
+  await assert.rejects(
+    () => extractLessonText({
+      originalname: 'parser-error.pdf',
+      mimetype: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.7 readable'),
+    }, { extractPdfText: async () => { throw new Error('internal extraction failure'); } }),
+    (error) => error instanceof LessonTextExtractionError && error.code === 'LESSON_PDF_EXTRACTION_FAILED'
+  );
+  await assert.rejects(
+    () => extractLessonText({
+      originalname: 'actually-corrupt.pdf',
+      mimetype: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.7\nnot a real PDF'),
+    }),
+    (error) => error instanceof LessonTextExtractionError && error.code === 'LESSON_PDF_INVALID'
+  );
+  await assert.rejects(
+    () => extractLessonText({
+      originalname: 'page-extraction-error.pdf',
+      mimetype: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.7 page extraction failure'),
+    }, {
+      pdfParseImpl: async (_input, options) => {
+        await options.pagerender({ getTextContent: async () => { throw new Error('page text failed'); } });
+        return { numpages: 1, text: '' };
+      },
+    }),
+    (error) => error instanceof LessonTextExtractionError && error.code === 'LESSON_PDF_EXTRACTION_FAILED'
+  );
+});
+
+test('extracts raw readable text from a valid DOCX with Mammoth', async () => {
+  const lessonText = await extractLessonText({
+    originalname: 'lesson.docx',
+    mimetype: DOCX_MIME,
+    buffer: createDocx(),
+  });
+
+  assert.equal(lessonText, 'DOCX lesson text about adding counters.\n\nThree plus two equals five.');
+});
+
+test('extracts lesson text from an existing real DOCX document package', async () => {
+  const docxPath = path.join(__dirname, '../docs/teacher-fixed-question-documents/grade1-easy-basic-addition-set-b.docx');
+  const lessonText = await extractLessonText({
+    path: docxPath,
+    originalname: 'addition-lesson.docx',
+    mimetype: DOCX_MIME,
+  });
+
+  assert.ok(lessonText.length > 0);
+  assert.match(lessonText, /addition|number/i);
+});
+
+test('PDF, PPTX, and DOCX extraction share the same dynamic-count generation pipeline', async () => {
+  const pptxParts = new Map([
+    ['[Content_Types].xml', '<Types/>'],
+    ['ppt/presentation.xml', presentationXml],
+    ['ppt/_rels/presentation.xml.rels', relationshipsXml],
+    ['ppt/slides/slide1.xml', slideOneXml],
+    ['ppt/slides/slide2.xml', slideTwoXml],
+    ['ppt/slides/slide3.xml', slideThreeXml],
+  ]);
+  const sources = [
+    {
+      file: { originalname: 'lesson.pdf', mimetype: 'application/pdf', buffer: Buffer.from('%PDF-1.7 text') },
+      options: { extractPdfText: async () => 'PDF lesson about adding counters.' },
+    },
+    {
+      file: { originalname: 'lesson.pptx', mimetype: PPTX_MIME, buffer: Buffer.from('PK\x03\x04ppt') },
+      options: { pptxParts },
+    },
+    {
+      file: { originalname: 'lesson.docx', mimetype: DOCX_MIME, buffer: createDocx() },
+      options: {},
+    },
+  ];
+
+  for (const { file, options } of sources) {
+    const lessonText = await extractLessonText(file, options);
+    const calls = [];
+    const questions = await generateLessonQuestionsInBatches({
+      lessonText,
+      title: 'Addition lesson',
+      gradeLevel: 'Grade 1',
+      difficulty: 'Easy',
+      questionCount: 7,
+      batchSize: 5,
+      generateBatch: async ({ questionCount }) => {
+        calls.push(questionCount);
+        return Array.from({ length: questionCount }, (_, index) => ({
+          question: `${file.originalname} question ${calls.reduce((sum, count) => sum + count, 0) - questionCount + index + 1}`,
+          options: ['1', '2', '3', '4'],
+          correct_answer: '1',
+        }));
+      },
+    });
+
+    assert.deepEqual(calls, [5, 2]);
+    assert.equal(questions.length, 7);
+  }
 });
 
 test('extracts only ordered rendered PPTX slide text and excludes package junk', () => {

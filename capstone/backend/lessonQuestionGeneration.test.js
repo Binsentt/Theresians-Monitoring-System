@@ -451,6 +451,22 @@ test('lesson generation completes the exact requested 5, 10, 20, and 25 question
   }
 });
 
+test('lesson source extraction errors remain distinct controlled client errors', () => {
+  const cases = [
+    ['QUESTION_AI_PDF_INVALID', 'The uploaded PDF is invalid or corrupted. Use a valid text-based PDF, PPTX, or DOCX file.'],
+    ['QUESTION_AI_PDF_NO_TEXT', 'No readable text was found in this PDF. Use a text-based PDF, PPTX, or DOCX file.'],
+    ['QUESTION_AI_PDF_EXTRACTION_FAILED', 'PDF text extraction failed. Re-export as a text-based PDF or use a PPTX or DOCX file.'],
+    ['QUESTION_AI_DOCX_INVALID', 'The uploaded DOCX is invalid or missing required document content.'],
+  ];
+  for (const [code, message] of cases) {
+    assert.deepEqual(toQuestionGenerationHttpFailure(new QuestionGenerationError(code, message)), {
+      status: 422,
+      code,
+      error: message,
+    });
+  }
+});
+
 test('lesson generation preserves arbitrary whole-number targets and reports exact batch progress', async () => {
   const { generateLessonQuestionsInBatches } = require('./lessonQuestionGeneration');
 

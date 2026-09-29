@@ -112,6 +112,7 @@ const {
 const {
   LessonTextExtractionError,
   extractLessonText,
+  validateLessonDocumentStructure,
   validateLessonUploadFile,
 } = require('./lessonTextExtraction');
 const {
@@ -2367,12 +2368,17 @@ const ALLOWED_FILE_TYPES = ['lesson', 'fixed_questions'];
 const isValidFileType = (value) => ALLOWED_FILE_TYPES.includes(String(value || '').trim().toLowerCase());
 const hasAllowedMimeType = (file, allowedTypes) => allowedTypes.includes(String(file?.mimetype || '').toLowerCase());
 
-const validateUploadedLearningFile = (file, fileType) => {
+const validateUploadedLearningFile = async (file, fileType) => {
   const originalName = String(file?.originalname || '').toLowerCase();
   if (fileType === 'lesson') {
     try {
-      return validateLessonUploadFile(file, fs.readFileSync(file.path));
-    } catch {
+      const content = fs.readFileSync(file.path);
+      const validationError = validateLessonUploadFile(file, content);
+      if (validationError) return validationError;
+      await validateLessonDocumentStructure(file, content);
+      return '';
+    } catch (error) {
+      if (error instanceof LessonTextExtractionError) return error.message;
       return 'The uploaded Lesson source could not be read.';
     }
   }
@@ -2707,14 +2713,29 @@ const extractLessonTextForGeneration = async ({ filePath, fileName, mimeType }) 
       originalname: fileName,
       mimetype: mimeType,
     }, {
-      extractPdfText: async (buffer) => (await pdfParse(buffer)).text,
+      pdfParseImpl: pdfParse,
     });
   } catch (error) {
     if (error instanceof LessonTextExtractionError) {
+      const sourceErrors = {
+        LESSON_PDF_INVALID: ['QUESTION_AI_PDF_INVALID', 'The uploaded PDF is invalid or corrupted. Use a valid text-based PDF, PPTX, or DOCX file.'],
+        LESSON_PDF_NO_TEXT: ['QUESTION_AI_PDF_NO_TEXT', 'No readable text was found in this PDF. Use a text-based PDF, PPTX, or DOCX file.'],
+        LESSON_PDF_EXTRACTION_FAILED: ['QUESTION_AI_PDF_EXTRACTION_FAILED', 'PDF text extraction failed. Re-export as a text-based PDF or use a PPTX or DOCX file.'],
+        LESSON_DOCX_NO_TEXT: ['QUESTION_AI_DOCX_NO_TEXT', 'No readable text was found in this DOCX file.'],
+        LESSON_DOCX_EXTRACTION_FAILED: ['QUESTION_AI_DOCX_EXTRACTION_FAILED', 'DOCX text extraction failed. Check the document or save it as a new DOCX file.'],
+        DOCX_STRUCTURE_INVALID: ['QUESTION_AI_DOCX_INVALID', 'The uploaded DOCX is invalid or missing required document content.'],
+        PPTX_STRUCTURE_INVALID: ['QUESTION_AI_PPTX_INVALID', 'The uploaded PPTX is invalid or missing required presentation content.'],
+        LESSON_FILE_INVALID: ['QUESTION_AI_SOURCE_INVALID', error.message],
+      };
+      if (sourceErrors[error.code]) {
+        const [code, message] = sourceErrors[error.code];
+        throw new QuestionGenerationError(code, message);
+      }
       const code = error.code === 'LESSON_TEXT_TOO_LARGE' ? 'QUESTION_AI_LESSON_TOO_LARGE' : 'QUESTION_AI_EMPTY_LESSON';
-      throw new QuestionGenerationError(code, code === 'QUESTION_AI_LESSON_TOO_LARGE'
+      const message = code === 'QUESTION_AI_LESSON_TOO_LARGE'
         ? 'The readable lesson text exceeds the safe size limit.'
-        : 'No readable lesson text was found for question generation.');
+        : 'No readable lesson text was found for question generation.';
+      throw new QuestionGenerationError(code, message);
     }
     throw new QuestionGenerationError('QUESTION_AI_EMPTY_LESSON', 'No readable lesson text was found for question generation.');
   }
@@ -5655,7 +5676,7 @@ app.post('/api/learning-files/lesson-sources', requireLessonQuestionManagerAcces
       cleanTemporaryUpload(req.file.path);
       return res.status(413).json({ error: 'Uploaded files must be 30 MB or smaller.', code: 'LESSON_FILE_TOO_LARGE' });
     }
-    const fileValidationError = validateUploadedLearningFile(req.file, 'lesson');
+    const fileValidationError = await validateUploadedLearningFile(req.file, 'lesson');
     if (fileValidationError) {
       cleanTemporaryUpload(req.file.path);
       return res.status(400).json({ error: fileValidationError });
@@ -5936,7 +5957,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
       return res.status(400).json({ error: 'Invalid file type.' });
     }
 
-    const fileValidationError = validateUploadedLearningFile(req.file, normalizedType);
+    const fileValidationError = await validateUploadedLearningFile(req.file, normalizedType);
     if (fileValidationError) {
       cleanTemporaryUpload(req.file.path);
       return res.status(400).json({ error: fileValidationError });

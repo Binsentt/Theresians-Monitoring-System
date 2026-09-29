@@ -88,7 +88,7 @@ const parseExpectedQuestionCount = (value) => {
 const parseLessonQuestionCount = (value) => {
   const rawValue = String(value ?? '').trim();
   if (!rawValue) {
-    return { value: null, error: 'Question Count is required for Lesson PDF or PPTX files.' };
+    return { value: null, error: 'Question Count is required for Lesson files.' };
   }
   if (!/^\d+$/.test(rawValue)) {
     return { value: null, error: `Question Count must be a whole number between ${MIN_LESSON_QUESTION_COUNT} and ${MAX_LESSON_QUESTION_COUNT}.` };

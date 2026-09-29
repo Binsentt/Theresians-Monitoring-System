@@ -378,8 +378,9 @@ describe('lesson question manager helpers', () => {
     expect(isSupportedLearningUpload('set-a.pdf', 'fixed_questions')).toBe(true);
     expect(isSupportedLearningUpload('set-a.pdf', 'lesson')).toBe(true);
     expect(isSupportedLearningUpload('lesson.pptx', 'lesson')).toBe(true);
+    expect(isSupportedLearningUpload('lesson.docx', 'lesson')).toBe(true);
     expect(isSupportedLearningUpload('lesson.ppt', 'lesson')).toBe(false);
-    expect(isSupportedLearningUpload('set-a.docx', 'lesson')).toBe(false);
+    expect(isSupportedLearningUpload('lesson.doc', 'lesson')).toBe(false);
     expect(formatLearningFileSize(1536)).toBe('1.5 KB');
     expect(formatLearningFileSize(1.3 * 1024 * 1024 * 1024)).toBe('1.3 GB');
     expect(formatLearningFileSize(null)).toBe('-');

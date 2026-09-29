@@ -150,7 +150,7 @@ export const inferLearningFileUploadType = (fileName) => {
 export const isSupportedLearningUpload = (fileName, fileType) => {
   const normalizedName = String(fileName || '').trim().toLowerCase();
   const normalizedType = String(fileType || '').trim().toLowerCase();
-  if (normalizedType === 'lesson') return /\.(pdf|pptx)$/.test(normalizedName);
+  if (normalizedType === 'lesson') return /\.(pdf|pptx|docx)$/.test(normalizedName);
   if (normalizedType === 'fixed_questions') {
     return /\.(docx|pdf|json|csv)$/.test(normalizedName);
   }

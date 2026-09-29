@@ -70,6 +70,14 @@ function sourceLabel(source) {
 function generationFailureLabel(errorCode) {
   if (errorCode === 'QUESTION_AI_TIMEOUT') return 'Question generation timed out. Retry the upload.';
   if (errorCode === 'QUESTION_AI_INVALID_RESPONSE') return 'Question AI returned unusable question data. Retry the upload.';
+  if (errorCode === 'QUESTION_AI_PDF_INVALID') return 'The uploaded PDF is invalid or corrupted. Use a valid text-based PDF, PPTX, or DOCX file.';
+  if (errorCode === 'QUESTION_AI_PDF_NO_TEXT') return 'No readable text was found in this PDF. Use a text-based PDF, PPTX, or DOCX file.';
+  if (errorCode === 'QUESTION_AI_PDF_EXTRACTION_FAILED') return 'PDF text extraction failed. Re-export as a text-based PDF or use a PPTX or DOCX file.';
+  if (errorCode === 'QUESTION_AI_DOCX_INVALID') return 'The uploaded DOCX is invalid or missing required document content.';
+  if (errorCode === 'QUESTION_AI_DOCX_NO_TEXT') return 'No readable text was found in this DOCX file.';
+  if (errorCode === 'QUESTION_AI_DOCX_EXTRACTION_FAILED') return 'DOCX text extraction failed. Check the document or save it as a new DOCX file.';
+  if (errorCode === 'QUESTION_AI_PPTX_INVALID') return 'The uploaded PPTX is invalid or missing required presentation content.';
+  if (errorCode === 'QUESTION_AI_SOURCE_INVALID') return 'The lesson source file type or document signature is invalid.';
   if (errorCode === 'QUESTION_AI_EMPTY_LESSON') return 'No readable lesson text was found.';
   if (errorCode === 'QUESTION_AI_LESSON_TOO_LARGE') return 'The readable lesson text exceeds the safe size limit.';
   if (errorCode === 'QUESTION_AI_NOT_CONFIGURED') return 'Question AI is not configured. Contact the administrator.';
