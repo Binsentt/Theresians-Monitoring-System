@@ -23,6 +23,7 @@ export default function LoginScreen() {
   const [skipOtpFor30Days, setSkipOtpFor30Days] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [statusMessage, setStatusMessage] = useState('');
 
   // Field validation states
   const [emailError, setEmailError] = useState('');
@@ -152,9 +153,9 @@ export default function LoginScreen() {
 
     localStorage.setItem('loggedInUser', JSON.stringify(sessionUser));
     const role = normalizeRole(sessionUser.role);
-    alert(`Welcome back, ${sessionUser.name}!`);
-
-    navigate(getDefaultDashboardRoute(role));
+    navigate(getDefaultDashboardRoute(role), {
+      state: { loginStatus: { message: `Welcome back, ${sessionUser.name}!`, type: 'success' } },
+    });
   };
 
   const handleLogin = async () => {
@@ -181,6 +182,7 @@ export default function LoginScreen() {
 
     authRequestInFlightRef.current = true;
     setErrorMessage('');
+    setStatusMessage('');
     setLoading(true);
     try {
       const response = await fetch(apiUrl('/api/login'), {
@@ -216,7 +218,7 @@ export default function LoginScreen() {
         if (data.warning) {
           setErrorMessage(data.warning);
         } else {
-          alert('Verification code sent to your email.');
+          setStatusMessage('Verification code sent to your email.');
         }
       }
     } catch (error) {
@@ -462,6 +464,7 @@ export default function LoginScreen() {
                   setOtpExpiresAt(null);
                   setSkipOtpFor30Days(false);
                   setErrorMessage('');
+                  setStatusMessage('');
                   // Clear field errors
                   setOtpError('');
                   setOtpTouched(false);
@@ -504,6 +507,12 @@ export default function LoginScreen() {
           >
             ×
           </button>
+        </div>
+      )}
+      {statusMessage && (
+        <div className="login-feedback-toast login-feedback-toast-success" role="status" aria-live="polite">
+          <span>{statusMessage}</span>
+          <button type="button" aria-label="Dismiss status message" onClick={() => setStatusMessage('')}>×</button>
         </div>
       )}
     </div>

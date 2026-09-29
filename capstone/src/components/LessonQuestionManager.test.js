@@ -485,7 +485,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).not.toContain('Source topic metadata (optional): Basic Addition');
   });
 
-  test('warns before closing a preview with unsaved question edits', async () => {
+  test('uses an in-app confirmation and keeps editing when unsaved question changes are cancelled', async () => {
     fixtures.files = [buildReviewRequiredFile({ id: 77 })];
     window.confirm = jest.fn(() => false);
     await act(async () => root.render(<LessonQuestionManager />));
@@ -493,8 +493,34 @@ describe('LessonQuestionManager upload and trash controls', () => {
     await act(async () => document.body.querySelector('button[aria-label="Edit question 1"]').click());
     await act(async () => setFieldValue(document.body.querySelector('textarea[aria-label="Question 1 text"]'), 'Unsaved revision'));
     await act(async () => clickByText(document.body, 'Close'));
-    expect(window.confirm).toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
     expect(document.body.querySelector('.generated-questions-preview-modal')).not.toBeNull();
+    const discardDialog = document.body.querySelector('[role="dialog"][aria-labelledby="discard-question-changes-title"]');
+    expect(discardDialog).not.toBeNull();
+    expect(discardDialog.textContent).toContain('Discard unsaved question changes?');
+    await act(async () => clickByText(discardDialog, 'Keep Editing'));
+    expect(document.body.querySelector('[role="dialog"][aria-labelledby="discard-question-changes-title"]')).toBeNull();
+    expect(document.body.querySelector('.generated-questions-preview-modal')).not.toBeNull();
+    expect(document.body.querySelector('textarea[aria-label="Question 1 text"]')).not.toBeNull();
+    delete window.confirm;
+  });
+
+  test('discards unsaved question changes only after confirming in the in-app dialog', async () => {
+    fixtures.files = [buildReviewRequiredFile({ id: 77 })];
+    window.confirm = jest.fn();
+    await act(async () => root.render(<LessonQuestionManager />));
+    await act(async () => clickByText(container, 'Preview'));
+    await act(async () => document.body.querySelector('button[aria-label="Edit question 1"]').click());
+    await act(async () => setFieldValue(document.body.querySelector('textarea[aria-label="Question 1 text"]'), 'Unsaved revision'));
+    await act(async () => clickByText(document.body, 'Close'));
+
+    const discardDialog = document.body.querySelector('[role="dialog"][aria-labelledby="discard-question-changes-title"]');
+    expect(discardDialog).not.toBeNull();
+    await act(async () => clickByText(discardDialog, 'Discard Changes'));
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(document.body.querySelector('.generated-questions-preview-modal')).toBeNull();
+    expect(document.body.querySelector('[role="dialog"][aria-labelledby="discard-question-changes-title"]')).toBeNull();
+    delete window.confirm;
   });
 
   test('requires and sends a reason when deleting an individual staged question', async () => {

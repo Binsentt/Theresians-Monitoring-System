@@ -226,6 +226,7 @@ export default function LessonQuestionManager() {
   const [previewQuestionErrors, setPreviewQuestionErrors] = useState([]);
   const [previewQuestionSaving, setPreviewQuestionSaving] = useState(false);
   const [previewQuestionDirty, setPreviewQuestionDirty] = useState(false);
+  const [discardPreviewChangesConfirmation, setDiscardPreviewChangesConfirmation] = useState(false);
   const [approvingPreview, setApprovingPreview] = useState(false);
   const [reviewComplete, setReviewComplete] = useState(false);
   const [reviewSnapshotKey, setReviewSnapshotKey] = useState('');
@@ -879,8 +880,8 @@ export default function LessonQuestionManager() {
     link.remove();
   };
 
-  const closeQuestionPreview = () => {
-    if (previewQuestionDirty && !window.confirm('Discard unsaved question changes?')) return;
+  const resetQuestionPreview = () => {
+    setDiscardPreviewChangesConfirmation(false);
     setQuestionPreviewFile(null);
     setQuestionPreviewDetails(null);
     setPreviewQuestions([]);
@@ -894,6 +895,18 @@ export default function LessonQuestionManager() {
     setPreviewQuestionErrors([]);
     setPreviewQuestionSaving(false);
     setPreviewQuestionDirty(false);
+  };
+
+  const closeQuestionPreview = () => {
+    if (previewQuestionDirty) {
+      setDiscardPreviewChangesConfirmation(true);
+      return;
+    }
+    resetQuestionPreview();
+  };
+
+  const confirmDiscardPreviewChanges = () => {
+    resetQuestionPreview();
   };
 
   const openQuestionSetPreview = async (file) => {
@@ -1927,6 +1940,25 @@ export default function LessonQuestionManager() {
                   </div>
                 </div>
               </div>
+              </ModalPortal>
+            )}
+
+            {discardPreviewChangesConfirmation && (
+              <ModalPortal onClose={() => setDiscardPreviewChangesConfirmation(false)}>
+                <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setDiscardPreviewChangesConfirmation(false)}>
+                  <div className="manager-modal replacement-confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="discard-question-changes-title" onMouseDown={(event) => event.stopPropagation()}>
+                    <div className="manager-modal-header">
+                      <div>
+                        <h2 id="discard-question-changes-title">Discard unsaved question changes?</h2>
+                        <p className="empty-text">Your unsaved edits will be lost if you close this question review.</p>
+                      </div>
+                    </div>
+                    <div className="preview-actions">
+                      <button type="button" className="btn btn-secondary" onClick={() => setDiscardPreviewChangesConfirmation(false)}>Keep Editing</button>
+                      <button type="button" className="btn btn-danger" onClick={confirmDiscardPreviewChanges}>Discard Changes</button>
+                    </div>
+                  </div>
+                </div>
               </ModalPortal>
             )}
 

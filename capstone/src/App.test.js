@@ -109,6 +109,35 @@ describe('App public auth routes', () => {
     expect(document.body.querySelector('[role="dialog"][aria-labelledby="temporary-password-title"]')).toBeNull();
   });
 
+  test('shows successful login feedback in the protected app shell instead of a native alert', async () => {
+    window.history.pushState({
+      usr: { loginStatus: { message: 'Welcome back, QA Admin!', type: 'success' } },
+      key: 'login-success',
+      idx: 0,
+    }, '', '/admin-dashboard');
+    localStorage.setItem('rememberToken', 'established-admin-token');
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, name: 'QA Admin', role: 'admin' }));
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({ valid: true, user: { id: 1, name: 'QA Admin', role: 'admin' } }),
+    }));
+
+    await act(async () => { root.render(<App />); });
+
+    const status = document.body.querySelector('[role="status"][aria-label="Login status"]');
+    expect(status).not.toBeNull();
+    expect(status.textContent).toContain('Welcome back, QA Admin!');
+    expect(container.textContent).toContain('Admin Dashboard');
+    expect(window.history.state?.usr?.loginStatus).toBeUndefined();
+
+    await act(async () => {
+      status.querySelector('button[aria-label="Dismiss login status"]').click();
+    });
+    expect(document.body.querySelector('[role="status"][aria-label="Login status"]')).toBeNull();
+    expect(window.location.pathname).toBe('/admin-dashboard');
+  });
+
   test('keeps the dashboard content mounted while revalidating a sidebar route change', async () => {
     window.history.pushState({}, '', '/admin-dashboard');
     localStorage.setItem('rememberToken', 'established-admin-token');

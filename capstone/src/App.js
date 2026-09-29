@@ -40,6 +40,7 @@ function DashboardRouteGate() {
   const location = useLocation();
   const navigate = useNavigate();
   const [allowed, setAllowed] = useState(false);
+  const [loginStatus, setLoginStatus] = useState(() => location.state?.loginStatus || null);
 
   useEffect(() => {
     let active = true;
@@ -75,10 +76,34 @@ function DashboardRouteGate() {
     };
   }, [location.pathname, navigate]);
 
+  useEffect(() => {
+    if (!allowed || !location.state?.loginStatus) return;
+    const nextState = { ...location.state };
+    delete nextState.loginStatus;
+    navigate(location.pathname, {
+      replace: true,
+      state: Object.keys(nextState).length > 0 ? nextState : null,
+    });
+  }, [allowed, location.pathname, location.state, navigate]);
+
   return allowed ? (
-    <TemporaryPasswordExperience>
-      <Outlet />
-    </TemporaryPasswordExperience>
+    <>
+      {loginStatus?.message && (
+        <div className="login-feedback-toast login-feedback-toast-success" role="status" aria-label="Login status" aria-live="polite">
+          <span>{loginStatus.message}</span>
+          <button
+            type="button"
+            aria-label="Dismiss login status"
+            onClick={() => setLoginStatus(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+      <TemporaryPasswordExperience>
+        <Outlet />
+      </TemporaryPasswordExperience>
+    </>
   ) : <div className="route-loading" role="status">Loading...</div>;
 }
 
