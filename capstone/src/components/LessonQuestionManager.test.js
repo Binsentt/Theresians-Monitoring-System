@@ -690,6 +690,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(countField.min).toBe('1');
     expect(countField.max).toBe('50');
     expect(countField.step).toBe('1');
+    expect(countField.placeholder).toBe('Enter question count');
     await act(async () => {
       setFieldValue(countField, '50');
     });
@@ -710,6 +711,37 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     expect(document.body.textContent).toContain('Question Count is required for Lesson PDF or PPTX files.');
     expect(global.fetch).not.toHaveBeenCalledWith('/api/learning-files/upload', expect.anything());
+  });
+
+  test.each([7, 13, 28])('passes the entered Question Count %s unchanged to lesson generation', async (requestedCount) => {
+    await act(async () => root.render(<LessonQuestionManager />));
+    await act(async () => clickByText(container, 'New'));
+    await act(async () => clickByText(container, 'Upload File'));
+
+    const selects = getUploadModalSelects();
+    await act(async () => {
+      setSelectValue(selects[0], 'Grade 1');
+      setSelectValue(selects[1], 'Easy');
+      setSelectValue(selects[2], 'lesson');
+      const countField = getUploadModal().querySelector('input[name="expected_question_count"]');
+      expect(countField.type).toBe('number');
+      expect(countField.placeholder).toBe('Enter question count');
+      setFieldValue(countField, String(requestedCount));
+      const fileInput = getUploadModal().querySelector('input[type="file"]');
+      const file = new File(['%PDF-1.4 lesson'], 'dynamic-count-lesson.pdf', { type: 'application/pdf' });
+      Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    await act(async () => {
+      getUploadModal().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    const uploadRequests = global.fetch.mock.calls.filter(([url, options]) => (
+      String(url).endsWith('/api/learning-files/upload') && options?.method === 'POST'
+    ));
+    expect(uploadRequests).toHaveLength(1);
+    expect(uploadRequests[0][1].body.get('expected_question_count')).toBe(String(requestedCount));
   });
 
   test('paused AI keeps a new lesson source, exposes Not Generated, and blocks reusable-source generation', async () => {

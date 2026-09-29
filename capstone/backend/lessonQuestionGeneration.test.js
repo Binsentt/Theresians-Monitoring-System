@@ -451,6 +451,46 @@ test('lesson generation completes the exact requested 5, 10, 20, and 25 question
   }
 });
 
+test('lesson generation preserves arbitrary whole-number targets and reports exact batch progress', async () => {
+  const { generateLessonQuestionsInBatches } = require('./lessonQuestionGeneration');
+
+  for (const target of [7, 13, 28]) {
+    const calls = [];
+    const progress = [];
+    let nextQuestionNumber = 1;
+    const questions = await generateLessonQuestionsInBatches({
+      lessonText: 'A lesson about addition.',
+      title: 'Addition lesson',
+      gradeLevel: 'Grade 1',
+      difficulty: 'Easy',
+      questionCount: target,
+      batchSize: 5,
+      onBatchComplete: (state) => progress.push(state),
+      generateBatch: async ({ questionCount }) => {
+        calls.push(questionCount);
+        return Array.from({ length: questionCount }, () => {
+          const value = nextQuestionNumber++;
+          return {
+            question: `Dynamic target ${target}: ${value} + 1?`,
+            options: [String(value), String(value + 1), String(value + 2), String(value + 3)],
+            correct_answer: String(value + 1),
+          };
+        });
+      },
+    });
+
+    const expectedCalls = Array(Math.floor(target / 5)).fill(5);
+    if (target % 5) expectedCalls.push(target % 5);
+    const expectedProgress = expectedCalls.map((_, index) => ({
+      completed: Math.min((index + 1) * 5, target),
+      total: target,
+    }));
+    assert.deepEqual(calls, expectedCalls);
+    assert.deepEqual(progress, expectedProgress);
+    assert.equal(questions.length, target);
+  }
+});
+
 test('lesson generation honors teacher-selected totals up to 50 while capping each provider batch at 25', async () => {
   const { generateLessonQuestionsInBatches } = require('./lessonQuestionGeneration');
 

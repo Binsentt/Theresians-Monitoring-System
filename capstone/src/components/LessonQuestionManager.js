@@ -1962,7 +1962,7 @@ export default function LessonQuestionManager() {
                           step="1"
                           required
                           inputMode="numeric"
-                          placeholder="Enter 1 to 50"
+                          placeholder="Enter question count"
                           aria-invalid={Boolean(formErrors.expected_question_count)}
                           className={`input-field ${formErrors.expected_question_count ? 'input-error' : ''}`}
                           value={form.expected_question_count}

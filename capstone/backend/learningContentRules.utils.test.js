@@ -180,7 +180,7 @@ test('lesson Question Count accepts teacher-entered whole numbers from 1 through
   assert.equal(LESSON_QUESTION_COUNT_OPTIONS.length, 50);
   assert.equal(LESSON_QUESTION_COUNT_OPTIONS[0], 1);
   assert.equal(LESSON_QUESTION_COUNT_OPTIONS[49], 50);
-  for (const count of [1, 5, 10, 20, 25, 37, 50]) {
+  for (const count of [1, 5, 7, 10, 13, 20, 25, 28, 37, 50]) {
     assert.deepEqual(parseLessonQuestionCount(String(count)), { value: count, error: null });
   }
   assert.equal(MAX_LESSON_QUESTION_COUNT, 50);
