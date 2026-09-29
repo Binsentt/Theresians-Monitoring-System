@@ -135,7 +135,9 @@ describe('LoginScreen OTP device controls', () => {
       skipOtpFor30Days: true,
     });
     expect(localStorage.getItem('rememberToken')).toBe('thirty-day-token');
-    expect(mockNavigate).toHaveBeenCalledWith('/teacher-dashboard');
+    expect(mockNavigate).toHaveBeenCalledWith('/teacher-dashboard', {
+      state: { loginStatus: { message: 'Welcome back, Teacher User!', type: 'success' } },
+    });
   });
 
   test('routes successful temporary-password login to the normal role dashboard', async () => {
@@ -169,8 +171,26 @@ describe('LoginScreen OTP device controls', () => {
       loginButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(mockNavigate).toHaveBeenCalledWith('/parent-dashboard');
+    expect(mockNavigate).toHaveBeenCalledWith('/parent-dashboard', {
+      state: { loginStatus: { message: 'Welcome back, Parent User!', type: 'success' } },
+    });
     expect(mockNavigate).not.toHaveBeenCalledWith('/initial-password-setup');
+    expect(window.alert).not.toHaveBeenCalled();
+  });
+
+  test('shows OTP-sent feedback in the app without opening a native alert', async () => {
+    await act(async () => { root.render(<LoginScreen />); });
+    const inputs = container.querySelectorAll('input');
+    await act(async () => {
+      setInputValue(inputs[0], 'parent@example.com');
+      setInputValue(inputs[1], 'StrongPassword123!');
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'LOGIN')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('Verification code sent to your email.');
+    expect(window.alert).not.toHaveBeenCalled();
   });
 
   test('shows the required session expired message when routed from an expired session', async () => {

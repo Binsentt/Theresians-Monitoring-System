@@ -15,7 +15,7 @@ import {
 } from './announcementDashboard.utils';
 import { canAccessRole, normalizeRole } from './manageUsers.utils';
 import { apiUrl } from '../api';
-import { getStoredUserSession } from './session.utils';
+import { buildAuthHeaders, getStoredUserSession } from './session.utils';
 
 const API_BASE = apiUrl('').replace(/\/$/, '');
 
@@ -121,12 +121,15 @@ const pageConfig = {
   },
 };
 
-const buildDeleteUrl = (announcementId, actorId, actorRole) => {
+const buildDeleteUrl = (announcementId, useTeacherScope) => {
   const url = new URL(`${API_BASE}/api/announcements/${announcementId}`, window.location.origin);
-  url.searchParams.set('actor_id', String(actorId));
-  url.searchParams.set('actor_role', actorRole);
+  if (useTeacherScope) url.searchParams.set('scope', 'teacher');
   return url.toString();
 };
+
+const withTeacherScope = (url, useTeacherScope) => (
+  useTeacherScope ? `${url}${url.includes('?') ? '&' : '?'}scope=teacher` : url
+);
 
 export default function AnnouncementPage({ mode = 'parent' }) {
   const navigate = useNavigate();
@@ -144,6 +147,7 @@ export default function AnnouncementPage({ mode = 'parent' }) {
 
   const sessionRole = normalizeRole(user?.role || getStoredUserSession()?.role);
   const sidebarRole = sessionRole === 'parent_teacher' ? 'parent_teacher' : config.sidebarRole;
+  const useTeacherScope = sessionRole === 'parent_teacher' && mode === 'teacher';
   const statusType = isAnnouncementStatusError(status) ? 'error' : 'success';
 
   const actorId = useMemo(() => getAnnouncementUserId(user), [user]);
@@ -225,16 +229,16 @@ export default function AnnouncementPage({ mode = 'parent' }) {
     setStatus('');
     try {
       const isEditing = Boolean(editingAnnouncement?.id);
-      const response = await fetch(isEditing ? `${API_BASE}/api/announcements/${editingAnnouncement.id}` : `${API_BASE}/api/announcements`, {
+      const requestUrl = withTeacherScope(
+        isEditing ? `${API_BASE}/api/announcements/${editingAnnouncement.id}` : `${API_BASE}/api/announcements`,
+        useTeacherScope
+      );
+      const response = await fetch(requestUrl, {
         method: isEditing ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...buildAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: form.title,
           message: form.message,
-          created_by: actorId,
-          created_by_role: config.creatorRole,
-          actor_id: actorId,
-          actor_role: config.creatorRole,
           target_role: config.targetRole,
         }),
       });
@@ -276,10 +280,9 @@ export default function AnnouncementPage({ mode = 'parent' }) {
     setSaving(true);
     setStatus('');
     try {
-      const response = await fetch(buildDeleteUrl(announcement.id, actorId, config.creatorRole), {
+      const response = await fetch(buildDeleteUrl(announcement.id, useTeacherScope), {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ actor_id: actorId, actor_role: config.creatorRole }),
+        headers: { ...buildAuthHeaders(), 'Content-Type': 'application/json' },
       });
       const data = response.ok
         ? await readJsonResponse(response)

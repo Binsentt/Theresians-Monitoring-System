@@ -195,9 +195,9 @@ export default function LoginScreen() {
 
     localStorage.setItem('loggedInUser', JSON.stringify(sessionUser));
     const role = normalizeRole(sessionUser.role);
-    alert(`Welcome back, ${sessionUser.name}!`);
-
-    navigate(getDefaultDashboardRoute(role));
+    navigate(getDefaultDashboardRoute(role), {
+      state: { loginStatus: { message: `Welcome back, ${sessionUser.name}!`, type: 'success' } },
+    });
   };
 
   const handleLogin = async () => {
@@ -224,6 +224,7 @@ export default function LoginScreen() {
 
     authRequestInFlightRef.current = true;
     setErrorMessage('');
+    setOtpNotice('');
     setLoading(true);
     try {
       const response = await fetch(apiUrl('/api/login'), {
@@ -288,7 +289,7 @@ export default function LoginScreen() {
         if (data.warning) {
           setErrorMessage(data.warning);
         } else {
-          alert('Verification code sent to your email.');
+          setOtpNotice('Verification code sent to your email.');
         }
       }
     } catch (error) {
