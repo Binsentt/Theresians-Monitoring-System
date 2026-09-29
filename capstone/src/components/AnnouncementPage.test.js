@@ -35,9 +35,12 @@ const setFieldValue = (field, value) => {
 describe('AnnouncementPage load states', () => {
   let container;
   let root;
+  let originalConfirm;
 
   beforeEach(() => {
     global.IS_REACT_ACT_ENVIRONMENT = true;
+    originalConfirm = window.confirm;
+    window.confirm = jest.fn();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -53,6 +56,7 @@ describe('AnnouncementPage load states', () => {
     });
     container.remove();
     delete global.fetch;
+    window.confirm = originalConfirm;
     console.error.mockRestore();
   });
 
@@ -319,5 +323,95 @@ describe('AnnouncementPage load states', () => {
 
     expect(container.textContent).toContain('Failed to post announcement.');
     expect(container.textContent).not.toContain('Connection error while saving announcement.');
+  });
+
+  test('opens an in-app delete dialog and cancel sends no delete request', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => [{ id: 8, title: 'Remove me', message: 'Announcement body', created_by_role: 'admin' }],
+    });
+
+    await act(async () => root.render(<AnnouncementPage mode="admin" />));
+    await act(async () => {
+      container.querySelector('.announcement-delete-action').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const dialog = document.body.querySelector('[role="alertdialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog.textContent).toContain('Delete Announcement?');
+    expect(dialog.textContent).toContain('Are you sure you want to permanently delete this announcement?');
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(global.fetch.mock.calls.some(([, options = {}]) => options.method === 'DELETE')).toBe(false);
+
+    await act(async () => {
+      Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Cancel')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(global.fetch.mock.calls.some(([, options = {}]) => options.method === 'DELETE')).toBe(false);
+    expect(container.textContent).toContain('Remove me');
+  });
+
+  test('confirmed deletion sends one authenticated request and removes only the selected announcement', async () => {
+    localStorage.setItem('token', 'qa-session-token');
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [
+          { id: 8, title: 'Remove me', message: 'Announcement body', created_by_role: 'admin' },
+          { id: 9, title: 'Keep me', message: 'Another announcement', created_by_role: 'admin' },
+        ],
+      })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true }) });
+
+    await act(async () => root.render(<AnnouncementPage mode="admin" />));
+    await act(async () => {
+      container.querySelector('.announcement-delete-action').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(global.fetch.mock.calls.some(([, options = {}]) => options.method === 'DELETE')).toBe(false);
+
+    const dialog = document.body.querySelector('[role="alertdialog"]');
+    await act(async () => {
+      Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Delete')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const deleteCalls = global.fetch.mock.calls.filter(([, options = {}]) => options.method === 'DELETE');
+    expect(deleteCalls).toHaveLength(1);
+    expect(deleteCalls[0][0]).toContain('/api/announcements/8');
+    expect(deleteCalls[0][1].headers.Authorization).toBe('Bearer qa-session-token');
+    expect(container.textContent).not.toContain('Remove me');
+    expect(container.textContent).toContain('Keep me');
+    expect(container.textContent).toContain('Announcement deleted.');
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  test('keeps the announcement and shows the server error when confirmed deletion fails', async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [{ id: 8, title: 'Keep this announcement', message: 'Still visible', created_by_role: 'admin' }],
+      })
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ error: 'Deletion was rejected by the server.' }) });
+
+    await act(async () => root.render(<AnnouncementPage mode="admin" />));
+    await act(async () => {
+      container.querySelector('.announcement-delete-action').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const dialog = document.body.querySelector('[role="alertdialog"]');
+    await act(async () => {
+      Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Delete')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Keep this announcement');
+    expect(container.textContent).toContain('Deletion was rejected by the server.');
+    expect(global.fetch.mock.calls.filter(([, options = {}]) => options.method === 'DELETE')).toHaveLength(1);
+    expect(window.confirm).not.toHaveBeenCalled();
   });
 });

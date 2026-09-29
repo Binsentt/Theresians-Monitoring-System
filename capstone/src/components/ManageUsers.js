@@ -109,6 +109,7 @@ export default function ManageUsers() {
   const [permanentDeleteConfirmation, setPermanentDeleteConfirmation] = useState('');
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [regeneratingUserId, setRegeneratingUserId] = useState(null);
+  const [regeneratePasswordAccount, setRegeneratePasswordAccount] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
 
   const filteredUsers = filterUsers(users, searchTerm);
@@ -733,13 +734,14 @@ export default function ManageUsers() {
     }
   };
 
-  const handleRegenerateTemporaryPassword = async (account) => {
+  const handleRegenerateTemporaryPassword = (account) => {
     if (!account?.id || isCurrentAccount(account)) return;
-    const confirmed = window.confirm(
-      `Send a new temporary password to ${account.email}? Their previous password will stop working and the new temporary password will expire in 30 minutes.`
-    );
-    if (!confirmed) return;
+    setRegeneratePasswordAccount(account);
+  };
 
+  const confirmRegenerateTemporaryPassword = async () => {
+    const account = regeneratePasswordAccount;
+    if (!account?.id || isCurrentAccount(account) || regeneratingUserId) return;
     setRegeneratingUserId(account.id);
     try {
       const response = await fetch(apiUrl(`/api/accounts/${account.id}/temporary-password`), {
@@ -768,7 +770,13 @@ export default function ManageUsers() {
       });
     } finally {
       setRegeneratingUserId(null);
+      setRegeneratePasswordAccount(null);
     }
+  };
+
+  const cancelRegenerateTemporaryPassword = () => {
+    if (regeneratingUserId) return;
+    setRegeneratePasswordAccount(null);
   };
 
   useEffect(() => {
@@ -1205,6 +1213,25 @@ export default function ManageUsers() {
                   </div>
                 </div>
               </div>
+              </ModalPortal>
+            )}
+
+            {regeneratePasswordAccount && (
+              <ModalPortal onClose={cancelRegenerateTemporaryPassword}>
+                <div className="modal-overlay" onClick={cancelRegenerateTemporaryPassword}>
+                  <div className="modal-content" role="dialog" aria-modal="true" aria-labelledby="temporary-password-confirm-title" aria-describedby="temporary-password-confirm-description" onClick={(event) => event.stopPropagation()}>
+                    <h2 id="temporary-password-confirm-title">Send Temporary Password?</h2>
+                    <p id="temporary-password-confirm-description">
+                      Send a new temporary password to <strong>{regeneratePasswordAccount.email}</strong>? Their previous password will stop working. The new temporary password will expire in 30 minutes and must be changed after login.
+                    </p>
+                    <div className="modal-actions">
+                      <button type="button" className="cancel-btn" onClick={cancelRegenerateTemporaryPassword} disabled={Boolean(regeneratingUserId)}>Cancel</button>
+                      <button type="button" className="update-btn" onClick={confirmRegenerateTemporaryPassword} disabled={Boolean(regeneratingUserId)}>
+                        {regeneratingUserId ? 'Sending...' : 'Send Temporary Password'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </ModalPortal>
             )}
 

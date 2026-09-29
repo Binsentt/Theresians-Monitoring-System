@@ -113,7 +113,10 @@ describe('AnnouncementPage authenticated mutations', () => {
 
     await act(async () => root.render(<AnnouncementPage mode="admin" />));
     await act(async () => container.querySelector('.announcement-delete-action').dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    await act(async () => Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Delete Announcement')
+    const confirmation = document.body.querySelector('[role="alertdialog"]');
+    expect(confirmation).not.toBeNull();
+    expect(global.fetch.mock.calls.some(([, requestOptions = {}]) => requestOptions.method === 'DELETE')).toBe(false);
+    await act(async () => Array.from(confirmation.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Delete')
       .dispatchEvent(new MouseEvent('click', { bubbles: true })));
 
     const [url, options] = global.fetch.mock.calls.find(([, requestOptions = {}]) => requestOptions.method === 'DELETE');

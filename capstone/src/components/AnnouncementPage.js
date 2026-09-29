@@ -139,6 +139,8 @@ export default function AnnouncementPage({ mode = 'parent' }) {
   const [announcements, setAnnouncements] = useState([]);
   const [adminAnnouncements, setAdminAnnouncements] = useState([]);
   const [form, setForm] = useState({ title: '', message: '' });
+  const [announcementToDelete, setAnnouncementToDelete] = useState(null);
+  const [deleteError, setDeleteError] = useState('');
   const [editingAnnouncement, setEditingAnnouncement] = useState(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
@@ -266,12 +268,12 @@ export default function AnnouncementPage({ mode = 'parent' }) {
     setStatus('');
   };
 
-  const handleDelete = async (announcement) => {
+  const deleteAnnouncement = async (announcement) => {
     if (!actorId || !announcement?.id) return;
-    if (!window.confirm('Delete this announcement permanently?')) return;
 
     setSaving(true);
     setStatus('');
+    setDeleteError('');
     try {
       const response = await fetch(buildDeleteUrl(announcement.id, useTeacherScope), {
         method: 'DELETE',
@@ -281,7 +283,7 @@ export default function AnnouncementPage({ mode = 'parent' }) {
         ? await readJsonResponse(response)
         : await readJsonResponse(response).catch(() => null);
       if (!response.ok) {
-        setStatus(data?.error || 'Failed to delete announcement.');
+        setDeleteError(data?.error || 'Failed to delete announcement.');
         return;
       }
 
@@ -290,11 +292,23 @@ export default function AnnouncementPage({ mode = 'parent' }) {
         resetComposer();
       }
       setStatus('Announcement deleted.');
+      setAnnouncementToDelete(null);
     } catch (err) {
-      setStatus('Connection error while deleting announcement.');
+      setDeleteError('Connection error while deleting announcement.');
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleDelete = (announcement) => {
+    setDeleteError('');
+    setAnnouncementToDelete(announcement);
+  };
+
+  const cancelDelete = () => {
+    if (saving) return;
+    setDeleteError('');
+    setAnnouncementToDelete(null);
   };
 
   if (loading) {
@@ -311,6 +325,7 @@ export default function AnnouncementPage({ mode = 'parent' }) {
   }
 
   return (
+    <>
     <DashboardContainer
       sidebar={
         <AnalyticsSidebar
@@ -433,5 +448,28 @@ export default function AnnouncementPage({ mode = 'parent' }) {
         </MainContent>
       }
     />
+    {announcementToDelete && (
+      <div className="modal-overlay" role="presentation" onMouseDown={cancelDelete}>
+        <div
+          className="modal-content"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="announcement-delete-title"
+          aria-describedby="announcement-delete-description"
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <h2 id="announcement-delete-title">Delete Announcement?</h2>
+          <p id="announcement-delete-description">Are you sure you want to permanently delete this announcement?</p>
+          {deleteError && <div role="alert" className="announcement-status announcement-status-error">{deleteError}</div>}
+          <div className="modal-actions">
+            <button type="button" className="btn-secondary" onClick={cancelDelete} disabled={saving}>Cancel</button>
+            <button type="button" className="btn btn-danger" onClick={() => deleteAnnouncement(announcementToDelete)} disabled={saving}>
+              {saving ? 'Deleting...' : 'Delete'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

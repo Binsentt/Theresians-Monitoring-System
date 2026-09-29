@@ -91,9 +91,12 @@ const setSelectValue = (field, value) => {
 describe('ManageUsers edit flow', () => {
   let container;
   let root;
+  let originalConfirm;
 
   beforeEach(() => {
     global.IS_REACT_ACT_ENVIRONMENT = true;
+    originalConfirm = window.confirm;
+    window.confirm = jest.fn();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -143,6 +146,7 @@ describe('ManageUsers edit flow', () => {
     });
     container.remove();
     delete global.fetch;
+    window.confirm = originalConfirm;
   });
 
   test('renders eight-row pagination controls below the actual users table and navigates records', async () => {
@@ -373,9 +377,8 @@ describe('ManageUsers edit flow', () => {
     });
   });
 
-  test('admin can issue a replacement temporary password without receiving it in the UI', async () => {
+  test('admin must confirm replacement temporary password in-app before sending it', async () => {
     localStorage.setItem('rememberToken', 'manage-users-token');
-    window.confirm = jest.fn(() => true);
     global.fetch = jest.fn((url, options = {}) => {
       if (String(url).includes('/api/accounts/7/temporary-password')) {
         return Promise.resolve({
@@ -398,6 +401,29 @@ describe('ManageUsers edit flow', () => {
     );
     await act(async () => {
       resendButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog.textContent).toContain('Their previous password will stop working');
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes('/api/accounts/7/temporary-password'))).toBe(false);
+    expect(window.confirm).not.toHaveBeenCalled();
+
+    await act(async () => {
+      Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Cancel')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes('/api/accounts/7/temporary-password'))).toBe(false);
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Send Temporary Password')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const confirmation = document.body.querySelector('[role="dialog"]');
+    await act(async () => {
+      Array.from(confirmation.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Send Temporary Password')
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
     const request = global.fetch.mock.calls.find(([url]) => String(url).includes('/api/accounts/7/temporary-password'));
