@@ -25,11 +25,8 @@ const {
 } = require('./parentIdGame.utils');
 const {
   buildAnnouncementSchemaRepairStatements,
-  normalizeAnnouncementPayload,
   normalizeAnnouncementTarget,
   normalizeAnnouncementRole,
-  normalizeAnnouncementManagementPayload,
-  normalizeAnnouncementActorPayload,
   canManageAnnouncement,
 } = require('./announcements.utils');
 const {
@@ -904,6 +901,16 @@ const requireAuthenticatedRoles = (allowedRoles) => (req, res, next) => {
 
   req.authenticatedRole = role;
   next();
+};
+
+const requireAnnouncementManagementAccess = (req, res, next) => {
+  requireAuthenticatedRoles(['admin', 'teacher', 'parent_teacher'])(req, res, () => {
+    if (req.authenticatedRole === 'parent_teacher'
+      && String(req.query?.scope || '').trim().toLowerCase() !== 'teacher') {
+      return res.status(403).json({ error: 'Announcements are available only in Teacher scope.' });
+    }
+    next();
+  });
 };
 
 const requireLessonQuestionManagerAccess = (req, res, next) => {
@@ -6590,12 +6597,13 @@ app.get('/api/announcements', async (req, res) => {
   }
 });
 
-app.put('/api/announcements/:id', async (req, res) => {
+app.put('/api/announcements/:id', requireAnnouncementManagementAccess, async (req, res) => {
   try {
     const announcementId = parseInt(req.params.id, 10);
-    const payload = normalizeAnnouncementManagementPayload(req.body);
-    if (Number.isNaN(announcementId) || !payload) {
-      return res.status(400).json({ error: 'Title, message, actor, and actor role are required.' });
+    const title = String(req.body?.title || '').trim();
+    const message = String(req.body?.message || '').trim();
+    if (Number.isNaN(announcementId) || !title || !message) {
+      return res.status(400).json({ error: 'Title and message are required.' });
     }
 
     const existing = await pool.query('SELECT * FROM public.announcements WHERE id = $1', [announcementId]);
@@ -6603,7 +6611,11 @@ app.put('/api/announcements/:id', async (req, res) => {
       return res.status(404).json({ error: 'Announcement not found.' });
     }
 
-    if (!canManageAnnouncement(existing.rows[0], payload)) {
+    const actor = {
+      actorId: Number(req.authenticatedUser.id),
+      actorRole: req.authenticatedRole === 'parent_teacher' ? 'teacher' : normalizeAnnouncementRole(req.authenticatedRole),
+    };
+    if (!canManageAnnouncement(existing.rows[0], actor)) {
       return res.status(403).json({ error: 'You can only manage announcements you posted.' });
     }
 
@@ -6613,7 +6625,7 @@ app.put('/api/announcements/:id', async (req, res) => {
            message = $2
        WHERE id = $3
        RETURNING *`,
-      [payload.title, payload.message, announcementId]
+      [title, message, announcementId]
     );
 
     const hydrated = await pool.query(
@@ -6629,12 +6641,11 @@ app.put('/api/announcements/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/announcements/:id', async (req, res) => {
+app.delete('/api/announcements/:id', requireAnnouncementManagementAccess, async (req, res) => {
   try {
     const announcementId = parseInt(req.params.id, 10);
-    const actor = normalizeAnnouncementActorPayload({ ...req.query, ...req.body });
-    if (Number.isNaN(announcementId) || !actor) {
-      return res.status(400).json({ error: 'Actor and actor role are required.' });
+    if (Number.isNaN(announcementId)) {
+      return res.status(400).json({ error: 'A valid announcement ID is required.' });
     }
 
     const existing = await pool.query('SELECT * FROM public.announcements WHERE id = $1', [announcementId]);
@@ -6642,6 +6653,10 @@ app.delete('/api/announcements/:id', async (req, res) => {
       return res.status(404).json({ error: 'Announcement not found.' });
     }
 
+    const actor = {
+      actorId: Number(req.authenticatedUser.id),
+      actorRole: req.authenticatedRole === 'parent_teacher' ? 'teacher' : normalizeAnnouncementRole(req.authenticatedRole),
+    };
     if (!canManageAnnouncement(existing.rows[0], actor)) {
       return res.status(403).json({ error: 'You can only manage announcements you posted.' });
     }
@@ -6654,39 +6669,34 @@ app.delete('/api/announcements/:id', async (req, res) => {
   }
 });
 
-app.post('/api/announcements', async (req, res) => {
+app.post('/api/announcements', requireAnnouncementManagementAccess, async (req, res) => {
   try {
-    const payload = normalizeAnnouncementPayload(req.body);
-    if (!payload) {
-      return res.status(400).json({ error: 'Title, message, creator, creator role, and target role are required.' });
+    const title = String(req.body?.title || '').trim();
+    const message = String(req.body?.message || '').trim();
+    const targetRole = normalizeAnnouncementTarget(req.body?.target_role);
+    const creatorId = Number(req.authenticatedUser.id);
+    const creatorRole = req.authenticatedRole === 'parent_teacher' ? 'teacher' : normalizeAnnouncementRole(req.authenticatedRole);
+    if (!title || !message || !targetRole || !Number.isInteger(creatorId) || creatorId <= 0 || !creatorRole) {
+      return res.status(400).json({ error: 'Title, message, and a valid target role are required.' });
     }
 
     if (
-      (payload.createdByRole === 'admin' && payload.targetRole !== 'teacher') ||
-      (payload.createdByRole === 'teacher' && payload.targetRole !== 'parent')
+      (creatorRole === 'admin' && targetRole !== 'teacher') ||
+      (creatorRole === 'teacher' && targetRole !== 'parent')
     ) {
       return res.status(400).json({ error: 'Announcement target does not match creator role.' });
-    }
-
-    const creatorRoles = payload.createdByRole === 'teacher' ? ['teacher', 'parent_teacher'] : [payload.createdByRole];
-    const creatorResult = await pool.query(
-      'SELECT id, name, role FROM public.accounts WHERE id = $1 AND LOWER(role) = ANY($2::text[]) AND COALESCE(is_archived, false) = false',
-      [payload.createdBy, creatorRoles]
-    );
-    if (creatorResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Announcement creator not found.' });
     }
 
     const result = await pool.query(
       `INSERT INTO public.announcements (title, message, created_by, created_by_role, target_role)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [payload.title, payload.message, payload.createdBy, payload.createdByRole, payload.targetRole]
+      [title, message, creatorId, creatorRole, targetRole]
     );
 
     res.status(201).json({
       ...result.rows[0],
-      posted_by: creatorResult.rows[0].name,
+      posted_by: req.authenticatedUser.name,
     });
   } catch (err) {
     console.error('Create announcement failed:', err.message);
