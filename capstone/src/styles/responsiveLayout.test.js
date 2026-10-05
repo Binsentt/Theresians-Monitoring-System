@@ -55,6 +55,10 @@ describe('responsive text and table layout guardrails', () => {
     expect(progressStyles).toMatch(/\.table-wrapper\s*\{[\s\S]*overflow-x:\s*auto;/);
   });
 
+  test('Manage Users deletion reason errors remain red inside the modal', () => {
+    expect(manageUsersStyles).toMatch(/\.delete-modal\s+p\.error-text\s*\{[^}]*color:\s*#dc2626/i);
+  });
+
   test('Student Progress uses a compact no-scroll desktop table while retaining mobile overflow fallback', () => {
     expect(progressStyles).toMatch(/@media\s*\(min-width:\s*1200px\)[\s\S]*\.student-progress-table\s*\{[\s\S]*min-width:\s*0/);
     expect(progressStyles).toMatch(/@media\s*\(min-width:\s*1200px\)[\s\S]*table-layout:\s*fixed/);

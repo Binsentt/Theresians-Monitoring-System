@@ -79,15 +79,23 @@ const reset = () => {
 
 test('Parent soft Delete and restore preserve child accounts and relationships', async (t) => {
   reset();
+  let parentArchived = false;
   queryHandler = async (sql, params) => {
-    if (sql.startsWith('select id, email, role, is_archived')) {
-      return resultRows([{ id: 19, email: 'parent@example.com', role: 'parent', is_archived: false, parent_id: '112832' }]);
+    if (sql.startsWith('select id, email, role, is_archived from public.accounts')) {
+      return resultRows([{ id: 19, email: 'parent@example.com', role: 'parent', is_archived: parentArchived, parent_id: '112832' }]);
+    }
+    if (sql.startsWith('select id, name, email, role, parent_id, is_archived')) {
+      return resultRows([{ id: 19, name: 'Parent User', email: 'parent@example.com', role: 'parent', is_archived: parentArchived, parent_id: '112832' }]);
+    }
+    if (sql.startsWith('select id, role, is_archived from public.accounts')) {
+      return resultRows([{ id: 19, role: 'parent', is_archived: parentArchived }]);
     }
     if (sql.startsWith('update public.accounts set is_archived = true')) {
+      parentArchived = true;
       return resultRows([{ id: 19, role: 'parent', is_archived: true }]);
     }
-    if (sql.startsWith('select id, role from public.accounts')) return resultRows([{ id: 19, role: 'parent' }]);
     if (sql.startsWith('update public.accounts set is_archived = false')) {
+      parentArchived = false;
       return resultRows([{ id: 19, role: 'parent', is_archived: false }]);
     }
     return emptyResult;
@@ -103,8 +111,8 @@ test('Parent soft Delete and restore preserve child accounts and relationships',
     method: 'POST', headers: { Authorization: 'Bearer admin' },
   });
 
-  assert.equal(archived.status, 200);
-  assert.equal(restored.status, 200);
+  assert.equal(archived.status, 200, JSON.stringify(archived.body));
+  assert.equal(restored.status, 200, JSON.stringify(restored.body));
   assert.equal(queries.some(({ sql }) => sql.startsWith('delete from public.accounts')), false);
   assert.equal(queries.some(({ sql }) => sql.startsWith('delete from public.teacher_student_relationships')), false);
 });

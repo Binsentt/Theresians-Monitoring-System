@@ -17,33 +17,29 @@ test('migration 010 adds only the lifecycle and archive controls required for ca
   assert.doesNotMatch(sql, /\bDROP\s+TABLE\b|\bTRUNCATE\b|\bDELETE\s+FROM\b/i);
 });
 
-test('server exposes scoped archive, bulk lifecycle, permanent delete, and canonical cycle contracts', () => {
+test('server preserves the progress marker as legacy metadata and retires progress-only mutations', () => {
   const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
 
   assert.match(source, /app\.get\('\/api\/game\/learning-cycle\/:student_id'/);
   assert.match(source, /app\.get\('\/api\/student-progress\/lifecycle-summary'/);
   assert.match(source, /app\.post\('\/api\/student-progress\/bulk\/reset'/);
-  assert.match(source, /app\.post\('\/api\/student-progress\/bulk\/archive'/);
-  assert.match(source, /app\.post\('\/api\/student-progress\/:studentId\/archive'/);
-  assert.match(source, /app\.post\('\/api\/student-progress\/:studentId\/permanent-delete'/);
+  assert.match(source, /app\.post\('\/api\/student-progress\/bulk\/archive', requireAnalyticsAccess, retiredStudentProgressLifecycle\)/);
+  assert.match(source, /app\.get\('\/api\/student-progress\/bulk\/permanent-delete\/preview', requireAccountManagementAdmin, retiredStudentProgressLifecycle\)/);
+  assert.match(source, /app\.post\('\/api\/student-progress\/bulk\/permanent-delete', requireAccountManagementAdmin, retiredStudentProgressLifecycle\)/);
+  assert.match(source, /app\.post\('\/api\/student-progress\/:studentId\/archive', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, retiredStudentProgressLifecycle\)/);
+  assert.match(source, /app\.post\('\/api\/student-progress\/:studentId\/permanent-delete', requireAccountManagementAdmin, retiredStudentProgressLifecycle\)/);
   assert.match(source, /current_learning_cycle_version/);
   assert.match(source, /LEARNING_CYCLE_CHANGED/);
 
-  const permanentDeleteRoute = source.slice(
-    source.indexOf("app.post('/api/student-progress/:studentId/permanent-delete'"),
-    source.indexOf("app.get('/api/student-progress/:studentId/ai-insight'", source.indexOf("app.post('/api/student-progress/:studentId/permanent-delete'"))
-  );
-  assert.match(permanentDeleteRoute, /progress_archived_at IS NOT NULL/);
-  assert.doesNotMatch(permanentDeleteRoute, /progress_archived_at IS NULL/);
-  assert.doesNotMatch(permanentDeleteRoute, /DELETE FROM public\.accounts/i);
-  assert.doesNotMatch(permanentDeleteRoute, /DELETE FROM public\.teacher_student_relationships/i);
-  assert.match(permanentDeleteRoute, /accounts, and relationships remain preserved/i);
+  const lifecycleHelper = source.slice(source.indexOf('const getStudentProgressArchivePredicate'), source.indexOf('const getLifecycleMutationScope'));
+  assert.match(lifecycleHelper, /=> 'true'/);
+  assert.match(source, /Permanently delete the Student account to remove Student-owned progress/);
 
   const resetRoute = source.slice(
     source.indexOf("app.post('/api/student-progress/:studentId/reset'"),
     source.indexOf("app.get('/api/student-progress/lifecycle-summary'", source.indexOf("app.post('/api/student-progress/:studentId/reset'"))
   );
-  assert.match(resetRoute, /progress_archived_at IS NULL/);
+  assert.doesNotMatch(resetRoute, /progress_archived_at/);
   assert.match(resetRoute, /startFreshLearningCycle\(client, studentId\)/);
 });
 
@@ -77,64 +73,30 @@ test('Screen Time monitoring separates active and soft-archived session history'
   assert.match(playtimeFilters, /lifecycle === 'archived'/);
   assert.match(playtimeFilters, /ps\.deleted_at IS NOT NULL/);
   assert.match(playtimeFilters, /ps\.deleted_at IS NULL/);
-  assert.match(topAchievers, /a\.progress_archived_at IS NULL/);
-  assert.match(source, /Archive: Progress Archived/);
+  assert.doesNotMatch(topAchievers, /progress_archived_at/);
   assert.match(source, /Reset: New Learning Cycle Started/);
 });
 
-test('archived bulk permanent delete exposes an admin-only preview-token contract bound to exact targets', () => {
+test('legacy progress archive markers do not filter active progress or Top Achievers', () => {
   const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-  const previewIndex = source.indexOf("app.get('/api/student-progress/bulk/permanent-delete/preview'");
-  const deleteIndex = source.indexOf("app.post('/api/student-progress/bulk/permanent-delete'");
-  const singleIndex = source.indexOf("app.post('/api/student-progress/:studentId/permanent-delete'");
-  assert.ok(previewIndex >= 0, 'archived bulk preview route is registered');
-  assert.ok(deleteIndex >= 0, 'archived bulk delete route is registered');
-  assert.ok(previewIndex < singleIndex, 'bulk preview precedes the single-student route');
-  assert.ok(deleteIndex < singleIndex, 'bulk delete precedes the single-student route');
-  const previewRoute = source.slice(previewIndex, deleteIndex);
-  const deleteRoute = source.slice(deleteIndex, singleIndex);
-  const targetResolver = source.slice(source.indexOf('const getArchivedProgressBulkTargets'), previewIndex);
   const canonicalProgressBuilder = source.slice(
     source.indexOf('const buildCanonicalStudentProgressQuery'),
     source.indexOf('const normalizeTopAchieverRow')
   );
-  const archivePredicateHelper = source.slice(
-    source.indexOf('const getStudentProgressArchivePredicate'),
-    source.indexOf('const getLifecycleMutationScope')
-  );
-  assert.match(previewRoute, /requireAccountManagementAdmin/);
-  assert.match(targetResolver, /buildCanonicalStudentProgressQuery\('archived'\)/);
   assert.match(canonicalProgressBuilder, /getStudentProgressArchivePredicate\(lifecycle/);
-  assert.match(archivePredicateHelper, /progress_archived_at IS NOT NULL/);
-  assert.match(previewRoute, /preview_token/);
-  assert.match(previewRoute, /targets/);
-  assert.match(previewRoute, /student_game_progress|game_results|student_ai_insights/);
-  assert.match(deleteRoute, /requireAccountManagementAdmin/);
-  assert.match(deleteRoute, /jwt\.verify|verifyRememberToken/);
-  assert.match(deleteRoute, /target_ids|targetIds/);
-  assert.match(deleteRoute, /forUpdate:\s*true/);
-  assert.match(deleteRoute, /ROLLBACK/);
-  assert.match(deleteRoute, /confirmation.*DELETE|DELETE.*confirmation/);
-  assert.match(deleteRoute, /DELETE FROM public\.student_game_progress|startFreshLearningCycle/);
-  assert.match(deleteRoute, /DELETE FROM public\.game_results/);
-  assert.match(deleteRoute, /DELETE FROM public\.student_ai_insights/);
-  assert.doesNotMatch(deleteRoute, /DELETE FROM public\.accounts/i);
-  assert.doesNotMatch(deleteRoute, /DELETE FROM public\.teacher_student_relationships/i);
-  assert.doesNotMatch(deleteRoute, /DELETE FROM public\.playtime_sessions/i);
-  assert.match(deleteRoute, /writeAdminAuditLog|writeStudentLifecycleAudit/);
+  assert.doesNotMatch(canonicalProgressBuilder, /progress_archived_at\s+IS\s+(?:NOT\s+)?NULL/i);
+  assert.doesNotMatch(source.slice(source.indexOf('const handleTopAchieversRequest'), source.indexOf("app.get('/api/top-achievers'")), /progress_archived_at/);
 });
 
-test('archived bulk permanent delete binds actor, target fingerprint, expiry, and replay protection', () => {
+test('permanent Student account removal remains the owned-data deletion path', () => {
   const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-  const helperStart = source.indexOf('const getArchivedProgressBulkTargets');
-  const routeStart = source.indexOf("app.post('/api/student-progress/bulk/permanent-delete'");
-  const relevant = source.slice(helperStart, routeStart);
-  assert.ok(helperStart >= 0, 'archived target resolver exists');
-  assert.match(relevant, /createHash\(['"]sha256/);
-  assert.match(relevant, /actor_id|actorId/);
-  assert.match(relevant, /expires|expires_at|expiresIn/);
-  assert.match(relevant, /preview_token/);
-  assert.match(relevant, /target_fingerprint|fingerprint/);
-  assert.match(relevant, /used|replay|operation/);
-  assert.match(relevant, /search/);
+  const familyLifecycle = fs.readFileSync(path.join(__dirname, 'familyLifecycle.service.js'), 'utf8');
+  const routeStart = source.indexOf("app.delete('/api/accounts/:parentId/children/:studentId'");
+  const routeEnd = source.indexOf("app.get('/api/accounts'", routeStart);
+  const route = source.slice(routeStart, routeEnd);
+  assert.ok(routeStart >= 0, 'managed Student account deletion route exists');
+  assert.match(route, /permanentlyDeleteManagedStudent\(pool, req\.params\.parentId, req\.params\.studentId/);
+  assert.match(familyLifecycle, /DELETE FROM public\.game_results[\s\S]*DELETE FROM public\.playtime_sessions[\s\S]*DELETE FROM public\.accounts/i);
+  assert.match(source, /student_game_progress \([\s\S]*student_id INTEGER NOT NULL REFERENCES public\.accounts\(id\) ON DELETE CASCADE/i);
+  assert.match(source, /student_ai_insights \([\s\S]*student_id INTEGER NOT NULL REFERENCES public\.accounts\(id\) ON DELETE CASCADE/i);
 });

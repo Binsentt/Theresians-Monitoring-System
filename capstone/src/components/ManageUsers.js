@@ -660,7 +660,7 @@ export default function ManageUsers() {
   const validateDeletionReason = (value) => (
     String(value || '').trim()
       ? ''
-      : 'Please fill out this field.'
+      : 'A reason is required.'
   );
 
   const validatePermanentDeleteConfirmation = (value) => (

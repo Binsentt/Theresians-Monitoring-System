@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import AdminIdDirectory from './AdminIdDirectory';
 
 const mockNavigate = jest.fn();
+const originalConfirm = window.confirm;
 
 jest.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
@@ -81,6 +82,7 @@ describe('Admin ID Directory', () => {
     act(() => root.unmount());
     container.remove();
     delete global.fetch;
+    window.confirm = originalConfirm;
   });
 
   test('loads authoritative Student and Teacher rows with the admin-only endpoint', async () => {
@@ -291,6 +293,56 @@ describe('Admin ID Directory', () => {
     await act(async () => archiveToggle.click());
 
     expect(global.fetch.mock.calls.at(-1)[0]).toContain('/api/admin/id-directory?archived=true');
+  });
+
+  test('archives a Student account from the active directory with a reason and no native dialog', async () => {
+    window.confirm = jest.fn();
+    await act(async () => root.render(<AdminIdDirectory />));
+    const archiveButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Archive Student');
+    await act(async () => archiveButton.click());
+
+    expect(container.querySelector('[role="dialog"][aria-label="Archive Student account"]')).not.toBeNull();
+    const reason = container.querySelector('textarea[name="student-archive-reason"]');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    setter.call(reason, 'Transferred to another school.');
+    await act(async () => reason.dispatchEvent(new Event('input', { bubbles: true })));
+    await act(async () => reason.dispatchEvent(new Event('change', { bubbles: true })));
+    const confirm = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Confirm Archive');
+    await act(async () => confirm.click());
+
+    expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/accounts/20'), expect.objectContaining({
+      method: 'DELETE',
+      body: JSON.stringify({ reason: 'Transferred to another school.' }),
+    }));
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  test('shows archived Students separately and restores them through the existing account lifecycle', async () => {
+    let archived = true;
+    global.fetch = jest.fn(async (url, options = {}) => {
+      if (String(url).includes('/api/admin/id-directory?archived=true')) {
+        return { ok: true, json: async () => ({ ...directoryPayload, students: archived ? [{ ...directoryPayload.students[0], is_archived: true }] : [] }) };
+      }
+      if (String(url).includes('/api/admin/id-directory?archived=false')) {
+        return { ok: true, json: async () => ({ ...directoryPayload, students: archived ? [] : [{ ...directoryPayload.students[0], is_archived: false }] }) };
+      }
+      if (String(url).endsWith('/api/accounts/20/restore')) {
+        archived = false;
+        return { ok: true, json: async () => ({ success: true }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    await act(async () => root.render(<AdminIdDirectory />));
+
+    const showArchived = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Show Archived');
+    await act(async () => showArchived.click());
+    expect(container.textContent).toContain('Ana Santos');
+    const restore = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Restore Student');
+    await act(async () => restore.click());
+
+    expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/accounts/20/restore'), expect.objectContaining({ method: 'POST' }));
+    expect(container.textContent).toContain('Student account restored to the active directory.');
+    expect(container.textContent).toContain('No student IDs match the current filters.');
   });
 
   test('redirects non-admin sessions before showing directory data', async () => {

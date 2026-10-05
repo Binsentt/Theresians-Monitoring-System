@@ -1008,6 +1008,11 @@
     margin-bottom: 20px;
 }
 
+.delete-modal p.error-text {
+    color: #dc2626;
+    font-weight: 600;
+}
+
 .delete-account-role,
 .deletion-reason-label {
     display: block;

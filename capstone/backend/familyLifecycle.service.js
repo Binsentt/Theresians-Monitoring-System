@@ -149,7 +149,6 @@ const archiveParentFamily = async (pool, parentId) => withFamilyTransaction(pool
   const studentIds = children.map((child) => Number(child.student_id)).filter(Number.isInteger);
 
   if (studentIds.length > 0) {
-    await clearStudentLearningData(client, studentIds);
     await client.query(
       `UPDATE public.accounts
       SET is_archived = true,

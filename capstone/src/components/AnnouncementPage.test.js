@@ -189,6 +189,38 @@ describe('AnnouncementPage load states', () => {
     expect(container.textContent).toContain('No teacher announcements yet');
   });
 
+  test('shows field-level errors for both empty fields and updates them while typing', async () => {
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => [],
+    }));
+
+    await act(async () => root.render(<AnnouncementPage mode="admin" />));
+    const form = container.querySelector('form');
+    const title = form.querySelector('input');
+    const message = form.querySelector('textarea');
+    await act(async () => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+
+    expect(form.noValidate).toBe(true);
+    expect(title.getAttribute('aria-invalid')).toBe('true');
+    expect(message.getAttribute('aria-invalid')).toBe('true');
+    expect(form.querySelectorAll('[role="alert"]')).toHaveLength(2);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      setFieldValue(title, 'Reminder');
+      setFieldValue(message, 'Read the lesson.');
+    });
+    expect(title.getAttribute('aria-invalid')).toBe('false');
+    expect(message.getAttribute('aria-invalid')).toBe('false');
+    expect(form.querySelectorAll('[role="alert"]')).toHaveLength(0);
+
+    await act(async () => setFieldValue(title, '   '));
+    expect(title.getAttribute('aria-invalid')).toBe('true');
+    expect(form.querySelector('#announcement-title-error')?.textContent).toBe('Please fill out this field.');
+  });
+
   test('keeps a failed announcement post out of the generic connection error path when the response is not JSON', async () => {
     global.fetch = jest.fn()
       .mockResolvedValueOnce({

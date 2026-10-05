@@ -506,8 +506,18 @@ describe('ManageUsers edit flow', () => {
     expect(document.body.textContent).toContain('This action is irreversible.');
     expect(document.body.textContent).toContain('all exclusively owned child Student accounts');
 
+    const reason = document.body.querySelector('textarea[name="deletion-reason"]');
+    const continueButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue');
+    await act(async () => continueButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(reason.getAttribute('aria-invalid')).toBe('true');
+    expect(reason.classList.contains('error')).toBe(true);
+    expect(document.body.querySelector('#deletion-reason-error')?.textContent).toBe('A reason is required.');
+    expect(global.fetch.mock.calls.some(([url, options]) => (
+      String(url).includes('/api/accounts/77?permanent=true') && options?.method === 'DELETE'
+    ))).toBe(false);
+
     await act(async () => {
-      setFieldValue(document.body.querySelector('textarea[name="deletion-reason"]'), 'Duplicate account cleanup.');
+      setFieldValue(reason, 'Duplicate account cleanup.');
     });
     await act(async () => {
       Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue')
@@ -632,7 +642,7 @@ describe('ManageUsers edit flow', () => {
     });
     const requiredReasonError = document.body.querySelector('#deletion-reason-error');
     expect(requiredReasonError).toBeTruthy();
-    expect(requiredReasonError.textContent).toBe('Please fill out this field.');
+    expect(requiredReasonError.textContent).toBe('A reason is required.');
     expect(requiredReasonError.classList.contains('error-text')).toBe(true);
     const reason = document.body.querySelector('textarea[name="deletion-reason"]');
     expect(reason.classList.contains('error')).toBe(true);

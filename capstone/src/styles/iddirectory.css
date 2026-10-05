@@ -138,6 +138,109 @@
   min-width: 150px;
 }
 
+.id-directory-lifecycle-cell {
+  min-width: 150px;
+  white-space: nowrap;
+}
+
+.id-directory-lifecycle-button,
+.id-directory-lifecycle-modal-actions button {
+  border: 1px solid #c9d6e5;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  color: #19324f;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.id-directory-lifecycle-button.is-archive,
+.id-directory-lifecycle-modal-actions button.is-archive {
+  border-color: #d8b265;
+  background: #fff7e6;
+  color: #81530c;
+}
+
+.id-directory-lifecycle-button.is-restore {
+  border-color: #8fc7a1;
+  background: #edf8f0;
+  color: #21643a;
+}
+
+.id-directory-lifecycle-button:disabled,
+.id-directory-lifecycle-modal-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.id-directory-notice {
+  margin: 0 0 14px;
+  color: #21643a;
+  font-weight: 600;
+}
+
+.id-directory-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(15 23 42 / 48%);
+}
+
+.id-directory-lifecycle-modal {
+  width: min(100%, 520px);
+  padding: 24px;
+  border: 1px solid #d6deea;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgb(15 23 42 / 24%);
+}
+
+.id-directory-lifecycle-modal h2 {
+  margin: 0 0 12px;
+  color: #173354;
+}
+
+.id-directory-lifecycle-modal p {
+  line-height: 1.5;
+}
+
+.id-directory-lifecycle-modal label {
+  display: block;
+  margin: 16px 0 6px;
+  color: #243b53;
+  font-weight: 700;
+}
+
+.id-directory-lifecycle-modal textarea {
+  width: 100%;
+  min-height: 94px;
+  padding: 10px 12px;
+  border: 1px solid #aebdce;
+  border-radius: 8px;
+  resize: vertical;
+}
+
+.id-directory-lifecycle-modal textarea[aria-invalid='true'] {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 2px rgb(220 38 38 / 12%);
+}
+
+.id-directory-field-error {
+  margin: 6px 0 0;
+  color: #dc2626;
+  font-size: 0.9rem;
+}
+
+.id-directory-lifecycle-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 .id-directory-empty {
   margin: 0;
   padding: var(--spacing-lg, 24px);

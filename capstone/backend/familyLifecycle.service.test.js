@@ -137,11 +137,17 @@ test('explicit Student deletion removes owned data and releases the Student acco
   assert.ok(sql.some((statement) => statement.startsWith('delete from public.game_results')));
   assert.ok(sql.some((statement) => statement.startsWith('delete from public.playtime_sessions')));
   assert.ok(sql.some((statement) => statement.startsWith('delete from public.accounts')));
+  const gameResultDelete = pool.calls.find(({ sql: statement }) => statement.startsWith('delete from public.game_results'));
+  const playtimeDelete = pool.calls.find(({ sql: statement }) => statement.startsWith('delete from public.playtime_sessions'));
+  const accountDelete = pool.calls.find(({ sql: statement }) => statement.startsWith('delete from public.accounts'));
+  assert.deepEqual(gameResultDelete.params, [[44], null]);
+  assert.deepEqual(playtimeDelete.params, [[44], null]);
+  assert.deepEqual(accountDelete.params, [[44]]);
   assert.ok(sql.includes('commit'));
 });
 
 
-test('archiving a Parent archives linked Students and clears their learning data', async () => {
+test('archiving a Parent archives linked Students without deleting their learning data', async () => {
   const { archiveParentFamily } = require('./familyLifecycle.service');
   const pool = createPool(async (sql) => {
     if (sql.includes('from public.accounts') && sql.includes('for update')) {
@@ -164,9 +170,7 @@ test('archiving a Parent archives linked Students and clears their learning data
   const sql = pool.calls.map((call) => call.sql);
 
   assert.deepEqual(result.archivedStudentIds, [44, 45]);
-  assert.ok(sql.some((statement) => statement.startsWith('delete from public.game_results')));
-  assert.ok(sql.some((statement) => statement.startsWith('delete from public.playtime_sessions')));
-  assert.ok(sql.some((statement) => statement.startsWith('delete from public.student_game_progress')));
+  assert.equal(pool.calls.some(({ sql: statement }) => statement.startsWith('delete from public.')), false);
   assert.ok(sql.some((statement) => statement.startsWith('update public.accounts') && statement.includes('where id = any')));
   assert.ok(sql.some((statement) => statement.startsWith('update public.accounts') && statement.includes('where id = $1')));
   assert.ok(sql.includes('commit'));

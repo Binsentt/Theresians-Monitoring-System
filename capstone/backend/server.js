@@ -1146,11 +1146,9 @@ const resolveStudentProgressLifecycle = (value) => {
   return ['active', 'archived'].includes(lifecycle) ? lifecycle : null;
 };
 
-const getStudentProgressArchivePredicate = (lifecycle = 'active', alias = 'a') => (
-  lifecycle === 'archived'
-    ? `${alias}.progress_archived_at IS NOT NULL`
-    : `${alias}.progress_archived_at IS NULL`
-);
+// The legacy progress-only archive marker is retained for historical rows, but
+// it no longer determines visibility or eligibility for active Student data.
+const getStudentProgressArchivePredicate = () => 'true';
 
 const getLifecycleMutationScope = (req, { allowParentSingle = false } = {}) => {
   const scope = resolveAnalyticsScope(req);
@@ -8446,7 +8444,6 @@ app.post('/api/game/leaderboard', async (req, res) => {
                   OR gr.played_at >= a.current_learning_cycle_started_at)
          ) canonical_results ON true
          WHERE COALESCE(a.is_archived, false) = false
-           AND a.progress_archived_at IS NULL
            AND (
              a.current_learning_cycle_started_at IS NULL
              OR p.updated_at >= a.current_learning_cycle_started_at
@@ -8494,7 +8491,8 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
     if (isSameAccount(req.authenticatedUser, targetAccount, id)) {
       return res.status(403).json({ error: 'You cannot delete your own account.' });
     }
-    if (!isWebsiteManagedAccountRole(accountRole)) {
+    const isStudentAccount = accountRole === 'student';
+    if (!isWebsiteManagedAccountRole(accountRole) && !(isStudentAccount && !permanent)) {
       return res.status(403).json({ error: 'Manage Users can only delete website accounts.' });
     }
     if (accountRole === 'admin') {
@@ -8531,7 +8529,8 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
         afterMetadata: {
           parent_archived: true,
           children_archived: true,
-          student_progress_cleared: true,
+          student_progress_cleared: false,
+          student_progress_preserved: true,
         },
       });
       return res.json({
@@ -8573,8 +8572,13 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
       reason: 'account_archived',
     });
     await pool.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [id]);
-    await writeAdminAuditLog(req.authenticatedUser, 'Archive Account', archiveResult.rows[0] || targetAccount, auditOptions);
-    res.json({ success: true, message: 'Account archived' });
+    await writeAdminAuditLog(
+      req.authenticatedUser,
+      isStudentAccount ? 'Archive Student Account' : 'Archive Account',
+      archiveResult.rows[0] || targetAccount,
+      auditOptions
+    );
+    res.json({ success: true, message: isStudentAccount ? 'Student account archived' : 'Account archived' });
   } catch (err) {
     console.error('Delete/archive failed:', err.message);
     res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Delete/archive failed' });
@@ -8800,8 +8804,25 @@ app.post('/api/accounts/:id/restore', requireAccountManagementAdmin, async (req,
     const { id } = req.params;
     const accountResult = await pool.query('SELECT id, role, is_archived FROM public.accounts WHERE id = $1', [id]);
     if (accountResult.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
-    if (!isWebsiteManagedAccountRole(accountResult.rows[0].role)) {
+    const accountRole = normalizeAccountRole(accountResult.rows[0].role);
+    if (!isWebsiteManagedAccountRole(accountRole) && accountRole !== 'student') {
       return res.status(403).json({ error: 'Manage Users can only restore website accounts.' });
+    }
+
+    if (accountRole === 'student') {
+      const result = await pool.query(
+        `UPDATE public.accounts
+         SET is_archived = false,
+             status = 'Offline',
+             session_version = COALESCE(session_version, 0) + 1
+         WHERE id = $1
+           AND LOWER(role) = 'student'
+         RETURNING *`,
+        [id]
+      );
+      if (result.rows.length === 0) return res.status(404).json({ error: 'Student account not found.' });
+      await writeAdminAuditLog(req.authenticatedUser, 'Restore Student Account', result.rows[0], { operationType: 'restore_student' });
+      return res.json({ success: true, message: 'Student account restored', user: serializeUser(result.rows[0]) });
     }
 
     if (accountHasParentAccess(accountResult.rows[0].role)) {
@@ -9213,7 +9234,6 @@ const handleTopAchieversRequest = async (req, res) => {
         ) canonical_playtime ON true
         WHERE 1=1
           AND COALESCE(a.is_archived, false) = false
-          AND a.progress_archived_at IS NULL
           AND (
             a.current_learning_cycle_started_at IS NULL
             OR p.updated_at >= a.current_learning_cycle_started_at
@@ -10980,7 +11000,6 @@ app.get('/api/students/progress-analysis', requireAuthenticatedRoles(['admin', '
       a.current_learning_cycle_started_at IS NULL
       OR p.updated_at >= a.current_learning_cycle_started_at
     )`);
-    filters.push('a.progress_archived_at IS NULL');
     if (filters.length > 0) {
       baseQuery += ` WHERE ${filters.join(' AND ')}`;
     } else {
@@ -11023,8 +11042,16 @@ app.get('/api/students/progress-analysis', requireAuthenticatedRoles(['admin', '
   }
 });
 
+const retiredStudentProgressLifecycle = (_req, res) => res.status(410).json({
+  error: 'Progress-only archive and delete are no longer supported. Permanently delete the Student account to remove Student-owned progress.',
+});
+
 app.post('/api/student-progress/bulk/reset', requireAnalyticsAccess, (req, res) => runBulkLifecycleAction(req, res, 'reset'));
-app.post('/api/student-progress/bulk/archive', requireAnalyticsAccess, (req, res) => runBulkLifecycleAction(req, res, 'archive'));
+app.post('/api/student-progress/bulk/archive', requireAnalyticsAccess, retiredStudentProgressLifecycle);
+app.get('/api/student-progress/bulk/permanent-delete/preview', requireAccountManagementAdmin, retiredStudentProgressLifecycle);
+app.post('/api/student-progress/bulk/permanent-delete', requireAccountManagementAdmin, retiredStudentProgressLifecycle);
+app.post('/api/student-progress/:studentId/archive', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, retiredStudentProgressLifecycle);
+app.post('/api/student-progress/:studentId/permanent-delete', requireAccountManagementAdmin, retiredStudentProgressLifecycle);
 
 app.post('/api/student-progress/:studentId/reset', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, async (req, res) => {
   const studentId = resolvePositiveInteger(req.params.studentId);
@@ -11042,7 +11069,6 @@ app.post('/api/student-progress/:studentId/reset', requireAnalyticsAccess, verif
        WHERE id = $1
          AND LOWER(role) = 'student'
          AND COALESCE(is_archived, false) = false
-         AND progress_archived_at IS NULL
        FOR UPDATE`,
       [studentId]
     );
@@ -11087,6 +11113,7 @@ app.post('/api/student-progress/:studentId/reset', requireAnalyticsAccess, verif
 app.get('/api/student-progress/lifecycle-summary', requireAnalyticsAccess, async (req, res) => {
   try {
     const operation = String(req.query.operation || '').trim().toLowerCase();
+    if (operation === 'archive') return res.status(410).json({ error: 'Progress-only archive is no longer supported.' });
     const scope = getLifecycleMutationScope(req);
     if (!['reset', 'archive'].includes(operation)) {
       return res.status(400).json({ error: 'A valid lifecycle operation is required.' });

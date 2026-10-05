@@ -130,14 +130,13 @@ export default function ParentChildProgress() {
   }, [selectedStudentId, students]);
 
   const focusStudentId = focusStudent?.student_id || focusStudent?.id || null;
-  const isFocusStudentProgressArchived = Boolean(focusStudent?.progress_archived_at);
 
   useEffect(() => {
     const requestVersion = ++childRequestVersion.current;
     setInsightLoading(false);
     setInsightError('');
     setTopicDetailsError('');
-    if (!focusStudentId || !parentAccountId || isFocusStudentProgressArchived) {
+    if (!focusStudentId || !parentAccountId) {
       setQuizSessions([]);
       setTopicCoverage([]);
       setSelectedChildMetrics(null);
@@ -204,7 +203,7 @@ export default function ParentChildProgress() {
       active = false;
       if (childRequestVersion.current === requestVersion) childRequestVersion.current += 1;
     };
-  }, [focusStudentId, parentAccountId, isFocusStudentProgressArchived, refreshToken]);
+  }, [focusStudentId, parentAccountId, refreshToken]);
 
   const logsByStudent = useMemo(() => {
     return activityLogs.reduce((groups, log) => {
@@ -394,14 +393,12 @@ export default function ParentChildProgress() {
                         <p>{[safeDisplayText(focusStudent.grade_level || focusStudent.grade, 'Grade N/A'), safeDisplayText(focusStudent.section, 'Not assigned')].filter(Boolean).join(' - ')}</p>
                         <small>Student ID: {focusStudent.game_student_id || 'Not linked'}</small>
                       </div>
-                      {!isFocusStudentProgressArchived && (
-                        <LearningCycleResetAction
-                          studentId={focusStudentId}
-                          role="parent"
-                          className="table-action-button child-reset-action"
-                          onReset={() => setRefreshToken((value) => value + 1)}
-                        />
-                      )}
+                      <LearningCycleResetAction
+                        studentId={focusStudentId}
+                        role="parent"
+                        className="table-action-button child-reset-action"
+                        onReset={() => setRefreshToken((value) => value + 1)}
+                      />
                     </div>
 
                     <div className="child-progress-stats">
@@ -419,27 +416,27 @@ export default function ParentChildProgress() {
                       </div>
                       <div className="child-progress-stat">
                         <span>Current Quest</span>
-                        <strong>{isFocusStudentProgressArchived ? 'Archived' : safeDisplayText(currentQuest, 'Not available')}</strong>
+                        <strong>{safeDisplayText(currentQuest, 'Not available')}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Current Difficulty</span>
-                        <strong>{isFocusStudentProgressArchived ? 'No Data' : currentDifficulty}</strong>
+                        <strong>{currentDifficulty}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Current Location</span>
-                        <strong>{isFocusStudentProgressArchived ? 'No Data' : safeDisplayText(selectedChildProgress?.current_location, 'Not available')}</strong>
+                        <strong>{safeDisplayText(selectedChildProgress?.current_location, 'Not available')}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Score</span>
-                        <strong>{isFocusStudentProgressArchived ? 'No Data' : selectedChildMetrics?.gameScore ?? 'Not available'}</strong>
+                        <strong>{selectedChildMetrics?.gameScore ?? 'Not available'}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Accuracy</span>
-                        <strong>{isFocusStudentProgressArchived ? 'No Data' : formatPercent(selectedChildMetrics?.accuracy, 'Not available')}</strong>
+                        <strong>{formatPercent(selectedChildMetrics?.accuracy, 'Not available')}</strong>
                       </div>
                       <div className="child-progress-stat">
                         <span>Progress</span>
-                        <strong>{isFocusStudentProgressArchived ? 'No Data' : formatPercent(selectedChildMetrics?.totalProgress, 'Not available')}</strong>
+                        <strong>{formatPercent(selectedChildMetrics?.totalProgress, 'Not available')}</strong>
                       </div>
                       {[
                         { label: 'Correct Answers', key: 'correctAnswers' },
@@ -448,19 +445,12 @@ export default function ParentChildProgress() {
                       ].map(({ label, key }) => (
                         <div className="child-progress-stat" key={key}>
                           <span>{label}</span>
-                          <strong>{isFocusStudentProgressArchived ? 'No Data' : safeDisplayText(selectedChildMetrics?.[key], 'Not available')}</strong>
+                          <strong>{safeDisplayText(selectedChildMetrics?.[key], 'Not available')}</strong>
                         </div>
                       ))}
                     </div>
 
-                    {isFocusStudentProgressArchived && (
-                      <div className="parent-progress-archived-notice" role="status">
-                        This child’s progress is archived. Historical activity and Screen Time remain preserved, but current-cycle analytics are not shown in Active Progress.
-                      </div>
-                    )}
-
-                    {!isFocusStudentProgressArchived && (
-                      <div className="child-activity-panel child-difficulty-panel">
+                    <div className="child-activity-panel child-difficulty-panel">
                         <div className="insights-header">
                           <h2>Difficulty Breakdown</h2>
                           <p>Accuracy from recorded question results only.</p>
@@ -474,7 +464,6 @@ export default function ParentChildProgress() {
                           ))}
                         </div>
                       </div>
-                    )}
 
                     <div className="child-activity-panel">
                       <div className="insights-header">
@@ -600,7 +589,7 @@ export default function ParentChildProgress() {
                   aiInsight={selectedChildAiInsight}
                   error={insightError}
                   loading={loading || childDetailsLoading || insightLoading}
-                  onRefresh={!isFocusStudentProgressArchived && focusStudentId ? generateChildInsight : undefined}
+                  onRefresh={focusStudentId ? generateChildInsight : undefined}
                 />
               </div>
             </ContentSection>

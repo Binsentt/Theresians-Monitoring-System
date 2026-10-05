@@ -209,3 +209,211 @@ test('Teacher permanent deletion removes its directory ID without deleting Stude
   assert.equal(activeAfter.body.students.length, 1);
   assert.equal(activeAfter.body.students[0].student_id, '00440001');
 });
+
+test('unlinking a Parent-child relationship preserves the active Student directory row', async (t) => {
+  reset();
+  const accounts = [
+    { id: 44, role: 'student', game_student_id: '00440001', name: 'Unlinked Student', is_archived: false },
+    { id: 45, role: 'student', game_student_id: '00450001', name: 'Other Student', is_archived: false },
+  ];
+  const relationships = [
+    { id: 7, teacher_id: 19, student_id: 44, relationship_type: 'Parent' },
+    { id: 8, teacher_id: 19, student_id: 45, relationship_type: 'Parent' },
+  ];
+  const progressStudentIds = [44, 45];
+  queryHandler = async (sql, params) => {
+    if (sql.includes('from public.accounts a') && sql.includes('teacher_student_relationships')) {
+      const archived = sql.includes('coalesce(a.is_archived, false) = true');
+      return resultRows(accounts.filter((account) => Boolean(account.is_archived) === archived).map((account) => ({
+        ...account,
+        directory_type: 'student',
+        student_id: account.game_student_id,
+        student_name: account.name,
+      })));
+    }
+    if (sql.startsWith('select id, name, email, role, parent_id, is_archived from public.accounts where id = $1')) {
+      return resultRows([{ id: 19, role: 'parent', parent_id: '000019', is_archived: false }]);
+    }
+    if (sql.startsWith('delete from public.teacher_student_relationships')) {
+      const index = relationships.findIndex((relationship) => relationship.teacher_id === Number(params[0]) && relationship.student_id === Number(params[1]));
+      if (index < 0) return emptyResult;
+      return resultRows([relationships.splice(index, 1)[0]]);
+    }
+    if (sql.startsWith('insert into public.admin_audit_logs')) return resultRows([{ id: 1 }]);
+    return emptyResult;
+  };
+
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  const before = await requestJson(baseUrl, '/api/admin/id-directory?archived=false', { Authorization: 'Bearer admin' });
+  assert.deepEqual(before.body.students.map((student) => student.student_id), ['00440001', '00450001']);
+  const unlinked = await requestWithOptions(baseUrl, '/api/accounts/19/children/44', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer admin' },
+    body: JSON.stringify({ reason: 'Relationship cleanup only.' }),
+  });
+  assert.equal(unlinked.status, 200);
+  const after = await requestJson(baseUrl, '/api/admin/id-directory?archived=false', { Authorization: 'Bearer admin' });
+  assert.deepEqual(after.body.students.map((student) => student.student_id), ['00440001', '00450001']);
+  assert.equal(relationships.some((relationship) => relationship.student_id === 44), false);
+  assert.deepEqual(progressStudentIds, [44, 45]);
+});
+
+test('permanently deleting one Student removes its directory row and leaves the other Student untouched', async (t) => {
+  reset();
+  let accounts = [
+    { id: 44, role: 'student', game_student_id: '00440001', name: 'Deleted Student', is_archived: false },
+    { id: 45, role: 'student', game_student_id: '00450001', name: 'Retained Student', is_archived: false },
+  ];
+  const relationships = [
+    { id: 7, teacher_id: 19, student_id: 44, relationship_type: 'Parent' },
+    { id: 8, teacher_id: 19, student_id: 45, relationship_type: 'Parent' },
+  ];
+  let gameResultStudentIds = [44, 45];
+  let playtimeStudentIds = [44, 45];
+  let progressStudentIds = [44, 45];
+  queryHandler = async (sql, params) => {
+    if (sql.includes('from public.accounts a') && sql.includes('teacher_student_relationships')) {
+      const archived = sql.includes('coalesce(a.is_archived, false) = true');
+      return resultRows(accounts.filter((account) => Boolean(account.is_archived) === archived).map((account) => ({
+        ...account,
+        directory_type: 'student',
+        student_id: account.game_student_id,
+        student_name: account.name,
+      })));
+    }
+    if (sql.includes('from public.accounts parent') && sql.includes('join public.teacher_student_relationships')) {
+      const student = accounts.find((account) => account.id === Number(params[1]));
+      const relationship = relationships.find((entry) => entry.teacher_id === Number(params[0]) && entry.student_id === Number(params[1]));
+      return student && relationship ? resultRows([{
+        parent_id: 19,
+        parent_code: '000019',
+        parent_role: 'parent',
+        parent_is_archived: false,
+        student_id: student.id,
+        student_name: student.name,
+        game_student_id: student.game_student_id,
+      }]) : emptyResult;
+    }
+    if (sql.includes('other_parent')) return emptyResult;
+    if (sql.startsWith('delete from public.game_results')) {
+      gameResultStudentIds = gameResultStudentIds.filter((id) => !params[0].includes(id));
+      return emptyResult;
+    }
+    if (sql.startsWith('delete from public.playtime_sessions')) {
+      playtimeStudentIds = playtimeStudentIds.filter((id) => !params[0].includes(id));
+      return emptyResult;
+    }
+    if (sql.startsWith('delete from public.accounts') && sql.includes('where id = any')) {
+      const selectedIds = params[0];
+      const deleted = accounts.filter((account) => selectedIds.includes(account.id));
+      accounts = accounts.filter((account) => !selectedIds.includes(account.id));
+      relationships.splice(0, relationships.length, ...relationships.filter((relationship) => !selectedIds.includes(relationship.student_id)));
+      progressStudentIds = progressStudentIds.filter((id) => !selectedIds.includes(id));
+      return resultRows(deleted.map(({ id, game_student_id }) => ({ id, game_student_id })));
+    }
+    if (sql.startsWith('insert into public.admin_audit_logs')) return resultRows([{ id: 1 }]);
+    return emptyResult;
+  };
+
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  const deleted = await requestWithOptions(baseUrl, '/api/accounts/19/children/44?permanent=true', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer admin' },
+    body: JSON.stringify({ reason: 'Duplicate Student record.', permanent_confirmation: 'DELETE' }),
+  });
+  assert.equal(deleted.status, 200);
+  assert.equal(deleted.body.deleted_student.game_student_id, '00440001');
+  const activeDirectory = await requestJson(baseUrl, '/api/admin/id-directory?archived=false', { Authorization: 'Bearer admin' });
+  const archivedDirectory = await requestJson(baseUrl, '/api/admin/id-directory?archived=true', { Authorization: 'Bearer admin' });
+  assert.deepEqual(activeDirectory.body.students.map((student) => student.student_id), ['00450001']);
+  assert.equal(archivedDirectory.body.students.some((student) => student.student_id === '00440001'), false);
+  assert.deepEqual(gameResultStudentIds, [45]);
+  assert.deepEqual(playtimeStudentIds, [45]);
+  assert.deepEqual(progressStudentIds, [45]);
+  assert.deepEqual(relationships.map((relationship) => relationship.student_id), [45]);
+});
+
+test('individual Student archive and restore use account lifecycle while preserving the Student record', async (t) => {
+  reset();
+  const student = {
+    id: 44,
+    name: 'Formerly Active Student',
+    email: 'student@example.test',
+    role: 'student',
+    game_student_id: '00440001',
+    is_archived: false,
+    session_version: 0,
+  };
+  const directorySql = [];
+  const mutations = [];
+  const dataDeleteSql = [];
+  queryHandler = async (sql, params) => {
+    if (/^delete from public\.(game_results|playtime_sessions|student_game_progress|student_quest_milestones|student_ai_insights)/.test(sql)) dataDeleteSql.push(sql);
+    if (sql.startsWith('select id, email, role, is_archived from public.accounts where id = $1')) {
+      return resultRows([{ ...student }]);
+    }
+    if (sql.startsWith('select id, role, is_archived from public.accounts where id = $1')) {
+      return resultRows([{ ...student }]);
+    }
+    if (sql.includes('from public.accounts a') && sql.includes('teacher_student_relationships')) {
+      directorySql.push(sql);
+      const archived = sql.includes('coalesce(a.is_archived, false) = true');
+      return resultRows(student.is_archived === archived ? [{
+        ...student,
+        directory_type: 'student',
+        student_id: student.game_student_id,
+        student_name: student.name,
+        parent_name: null,
+        parent_relationship: null,
+      }] : []);
+    }
+    if (sql.startsWith('update public.accounts set is_archived = true')) {
+      mutations.push('archive');
+      student.is_archived = true;
+      student.status = 'Offline';
+      student.session_version += 1;
+      return resultRows([{ ...student }]);
+    }
+    if (sql.startsWith('update public.accounts set is_archived = false')) {
+      mutations.push('restore');
+      student.is_archived = false;
+      student.session_version += 1;
+      return resultRows([{ ...student }]);
+    }
+    if (sql.startsWith('insert into public.admin_audit_logs')) return resultRows([{ id: 1 }]);
+    return emptyResult;
+  };
+
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  const archived = await requestWithOptions(baseUrl, '/api/accounts/44', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer admin' },
+    body: JSON.stringify({ reason: 'Student transferred schools.' }),
+  });
+  assert.equal(archived.status, 200);
+  assert.equal(student.is_archived, true);
+  assert.deepEqual(mutations, ['archive']);
+  assert.equal((await requestJson(baseUrl, '/api/admin/id-directory?archived=false', { Authorization: 'Bearer admin' })).body.students.length, 0);
+  assert.equal((await requestJson(baseUrl, '/api/admin/id-directory?archived=true', { Authorization: 'Bearer admin' })).body.students[0].student_id, '00440001');
+  assert.deepEqual(dataDeleteSql, []);
+
+  const restored = await requestWithOptions(baseUrl, '/api/accounts/44/restore', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer admin' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(restored.status, 200);
+  assert.equal(student.is_archived, false);
+  assert.equal((await requestJson(baseUrl, '/api/admin/id-directory?archived=false', { Authorization: 'Bearer admin' })).body.students[0].student_id, '00440001');
+  assert.deepEqual(mutations, ['archive', 'restore']);
+  assert.equal(directorySql.length, 3);
+});

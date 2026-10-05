@@ -27,7 +27,7 @@ const getParentDisplay = (row) => {
   return `${name} (${relationship})`;
 };
 
-function StudentDirectoryTable({ rows }) {
+function StudentDirectoryTable({ rows, onArchive, onRestore, lifecycleBusy }) {
   return (
     <div className="id-directory-table-wrap">
       <table className="id-directory-table" aria-label="Student ID Directory">
@@ -39,6 +39,7 @@ function StudentDirectoryTable({ rows }) {
             <th scope="col">Section</th>
             <th scope="col">Parent (Relationship)</th>
             <th scope="col">Date Added</th>
+            <th scope="col">Enrollment</th>
           </tr>
         </thead>
         <tbody>
@@ -50,6 +51,13 @@ function StudentDirectoryTable({ rows }) {
               <td>{row.section || '—'}</td>
               <td>{getParentDisplay(row)}</td>
               <td>{formatDirectoryDate(row.created_at)}</td>
+              <td className="id-directory-lifecycle-cell">
+                {row.is_archived ? (
+                  <button type="button" className="id-directory-lifecycle-button is-restore" disabled={lifecycleBusy} onClick={() => onRestore(row)}>Restore Student</button>
+                ) : (
+                  <button type="button" className="id-directory-lifecycle-button is-archive" disabled={lifecycleBusy} onClick={() => onArchive(row)}>Archive Student</button>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -116,6 +124,11 @@ export default function AdminIdDirectory() {
   const [teacherPage, setTeacherPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [pendingArchiveStudent, setPendingArchiveStudent] = useState(null);
+  const [studentArchiveReason, setStudentArchiveReason] = useState('');
+  const [lifecycleError, setLifecycleError] = useState('');
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
 
   const loadDirectory = useCallback(async () => {
     setError('');
@@ -141,6 +154,53 @@ export default function AdminIdDirectory() {
       setLoading(false);
     }
   }, [navigate, showArchived]);
+
+  const archiveStudent = async () => {
+    const reason = studentArchiveReason.trim();
+    if (!pendingArchiveStudent || !reason) {
+      setLifecycleError('A reason is required to archive this Student account.');
+      return;
+    }
+    setLifecycleBusy(true);
+    setLifecycleError('');
+    try {
+      const response = await fetch(apiUrl(`/api/accounts/${pendingArchiveStudent.id}`), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
+        body: JSON.stringify({ reason }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'Unable to archive this Student account.');
+      setPendingArchiveStudent(null);
+      setStudentArchiveReason('');
+      setNotice('Student account archived. Historical academic records were preserved.');
+      await loadDirectory();
+    } catch (archiveError) {
+      setLifecycleError(archiveError.message || 'Unable to archive this Student account.');
+    } finally {
+      setLifecycleBusy(false);
+    }
+  };
+
+  const restoreStudent = async (student) => {
+    setLifecycleBusy(true);
+    setNotice('');
+    setError('');
+    try {
+      const response = await fetch(apiUrl(`/api/accounts/${student.id}/restore`), {
+        method: 'POST',
+        headers: buildAuthHeaders(),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'Unable to restore this Student account.');
+      setNotice('Student account restored to the active directory.');
+      await loadDirectory();
+    } catch (restoreError) {
+      setError(restoreError.message || 'Unable to restore this Student account.');
+    } finally {
+      setLifecycleBusy(false);
+    }
+  };
 
   useEffect(() => {
     const initialize = async () => {
@@ -215,6 +275,32 @@ export default function AdminIdDirectory() {
 
           <PageContent>
             {error && <p className="id-directory-error" role="alert">{error}</p>}
+            {notice && <p className="id-directory-notice" role="status">{notice}</p>}
+            {lifecycleError && !pendingArchiveStudent && <p className="id-directory-error" role="alert">{lifecycleError}</p>}
+            {pendingArchiveStudent && (
+              <div className="id-directory-modal-overlay">
+                <section className="id-directory-lifecycle-modal" role="dialog" aria-modal="true" aria-label="Archive Student account">
+                  <h2>Archive Student account</h2>
+                  <p>Remove <strong>{pendingArchiveStudent.student_name}</strong> from the active directory while preserving the Student account and historical academic records.</p>
+                  <label htmlFor="student-archive-reason">Reason for archive</label>
+                  <textarea
+                    id="student-archive-reason"
+                    name="student-archive-reason"
+                    value={studentArchiveReason}
+                    aria-invalid={lifecycleError ? 'true' : 'false'}
+                    aria-describedby={lifecycleError ? 'student-archive-reason-error' : undefined}
+                    onChange={(event) => { setStudentArchiveReason(event.target.value); setLifecycleError(''); }}
+                    maxLength={500}
+                    disabled={lifecycleBusy}
+                  />
+                  {lifecycleError && <p id="student-archive-reason-error" className="id-directory-field-error" role="alert">{lifecycleError}</p>}
+                  <div className="id-directory-lifecycle-modal-actions">
+                    <button type="button" disabled={lifecycleBusy} onClick={() => { setPendingArchiveStudent(null); setStudentArchiveReason(''); setLifecycleError(''); }}>Cancel</button>
+                    <button type="button" className="is-archive" disabled={lifecycleBusy} onClick={archiveStudent}>{lifecycleBusy ? 'Archiving…' : 'Confirm Archive'}</button>
+                  </div>
+                </section>
+              </div>
+            )}
             <div className="id-directory-toolbar">
               <p className="id-directory-source-note">IDs are read from authoritative account records. New accounts appear when this page is opened or refocused.</p>
               <button type="button" className="sts-add-btn" onClick={() => setShowArchived((current) => !current)}>
@@ -265,7 +351,12 @@ export default function AdminIdDirectory() {
                 )}
                 contentClassName="id-directory-section-content"
               >
-                <StudentDirectoryTable rows={paginatedStudents.rows} />
+                <StudentDirectoryTable
+                  rows={paginatedStudents.rows}
+                  onArchive={(student) => { setPendingArchiveStudent(student); setStudentArchiveReason(''); setLifecycleError(''); }}
+                  onRestore={restoreStudent}
+                  lifecycleBusy={lifecycleBusy}
+                />
                 <DirectoryPagination page={paginatedStudents} setPage={setStudentPage} />
                 <PrintableTableReport
                   title="Student ID Directory"

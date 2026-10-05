@@ -95,7 +95,10 @@ const reset = () => {
     if (sql === 'begin') { observed.transactionStarted = true; return emptyResult; }
     if (sql === 'commit') { observed.transactionCommitted = true; return emptyResult; }
     if (sql === 'rollback') { observed.transactionRolledBack = true; return emptyResult; }
-    if (sql.includes('from public.accounts') && sql.includes('for update')) {
+    if (sql.startsWith('select id, name, grade_level, section from public.accounts') && sql.includes('for update')) {
+      return resultRows([{ id: 44, name: 'Scoped Student', grade_level: 'Grade 3', section: null }]);
+    }
+    if (sql.startsWith('select a.id, a.name, a.grade_level, a.section')) {
       return resultRows([{ id: 44, name: 'Scoped Student', grade_level: 'Grade 3', section: null }]);
     }
     if (sql.startsWith('update public.accounts set current_learning_cycle_started_at')) {
@@ -349,47 +352,42 @@ test('Reset rolls back if the current progress snapshot cannot be cleared', asyn
   assert.equal(observed.transactionRolledBack, true);
 });
 
-test('Archive preserves gameplay and monitoring history, and rejects New Lesson as an archive reason', async (t) => {
+test('legacy progress archive and progress-only deletion endpoints are disabled without writes', async (t) => {
   reset();
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => { reset(); await close(server); });
 
-  const rejected = await requestJson(baseUrl, '/api/student-progress/44/archive', {
-    method: 'POST', headers: authHeaders('admin'), body: JSON.stringify({ reason: 'New Lesson' }),
-  });
-  assert.equal(rejected.status, 400);
-  assert.match(rejected.body.error, /Reset Progress/i);
-
-  const archived = await requestJson(baseUrl, '/api/student-progress/44/archive', {
-    method: 'POST', headers: authHeaders('admin'), body: JSON.stringify({ reason: 'Transferred' }),
-  });
-  assert.equal(archived.status, 200);
-  assert.equal(observed.transactionCommitted, true);
+  const requests = [
+    requestJson(baseUrl, '/api/student-progress/44/archive', { method: 'POST', headers: authHeaders('admin'), body: JSON.stringify({ reason: 'Transferred' }) }),
+    requestJson(baseUrl, '/api/student-progress/bulk/archive', { method: 'POST', headers: authHeaders('admin'), body: JSON.stringify({}) }),
+    requestJson(baseUrl, '/api/student-progress/44/permanent-delete', { method: 'POST', headers: authHeaders('admin'), body: JSON.stringify({ reason: 'Cleanup', confirmation_phrase: 'DELETE' }) }),
+    requestJson(baseUrl, '/api/student-progress/bulk/permanent-delete/preview', { headers: authHeaders('admin') }),
+    requestJson(baseUrl, '/api/student-progress/bulk/permanent-delete', { method: 'POST', headers: authHeaders('admin'), body: JSON.stringify({}) }),
+    requestJson(baseUrl, '/api/student-progress/lifecycle-summary?operation=archive', { headers: authHeaders('admin') }),
+  ];
+  const responses = await Promise.all(requests);
+  assert.deepEqual(responses.map((response) => response.status), [410, 410, 410, 410, 410, 410]);
+  assert.equal(observed.transactionCommitted, false);
   assert.equal(observed.currentSnapshotDeletedFor, null);
   assert.equal(observed.gameResultsDeleted, false);
   assert.equal(observed.playtimeDeleted, false);
   assert.equal(observed.activityHistoryDeleted, false);
 });
 
-test('Admin permanent delete removes only approved gameplay-derived rows and advances the cycle', async (t) => {
+test('progress-only permanent delete is retired; Student account deletion owns cleanup', async (t) => {
   reset();
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => { reset(); await close(server); });
 
-  const denied = await requestJson(baseUrl, '/api/student-progress/44/permanent-delete', {
+  const response = await requestJson(baseUrl, '/api/student-progress/44/permanent-delete', {
     method: 'POST', headers: authHeaders('admin'), body: JSON.stringify({ reason: 'Testing Data Cleanup', confirmation_phrase: 'REMOVE' }),
   });
-  assert.equal(denied.status, 400);
-
-  const deleted = await requestJson(baseUrl, '/api/student-progress/44/permanent-delete', {
-    method: 'POST', headers: authHeaders('admin'), body: JSON.stringify({ reason: 'Testing Data Cleanup', confirmation_phrase: 'DELETE' }),
-  });
-  assert.equal(deleted.status, 200);
-  assert.equal(observed.currentSnapshotDeletedFor, 44);
-  assert.equal(observed.gameResultsDeleted, true);
+  assert.equal(response.status, 410);
+  assert.equal(observed.transactionCommitted, false);
+  assert.equal(observed.currentSnapshotDeletedFor, null);
+  assert.equal(observed.gameResultsDeleted, false);
   assert.equal(observed.playtimeDeleted, false);
   assert.equal(observed.activityHistoryDeleted, false);
-  assert.deepEqual(deleted.body.learning_cycle, { version: 1, started_at: '2026-08-24T00:00:00.000Z' });
 });

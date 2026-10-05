@@ -140,6 +140,8 @@ export default function AnnouncementPage({ mode = 'parent' }) {
   const [announcements, setAnnouncements] = useState([]);
   const [adminAnnouncements, setAdminAnnouncements] = useState([]);
   const [form, setForm] = useState({ title: '', message: '' });
+  const [fieldErrors, setFieldErrors] = useState({ title: '', message: '' });
+  const [validationActive, setValidationActive] = useState(false);
   const [editingAnnouncement, setEditingAnnouncement] = useState(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
@@ -214,14 +216,26 @@ export default function AnnouncementPage({ mode = 'parent' }) {
 
   const resetComposer = () => {
     setForm({ title: '', message: '' });
+    setFieldErrors({ title: '', message: '' });
+    setValidationActive(false);
     setEditingAnnouncement(null);
     setStatus('');
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!form.title.trim() || !form.message.trim() || !actorId) {
-      setStatus('Please enter a title and message before posting.');
+    const errors = {
+      title: form.title.trim() ? '' : 'Please fill out this field.',
+      message: form.message.trim() ? '' : 'Please fill out this field.',
+    };
+    setValidationActive(true);
+    setFieldErrors(errors);
+    if (errors.title || errors.message) {
+      setStatus('');
+      return;
+    }
+    if (!actorId) {
+      setStatus('Your account could not be verified. Please sign in again.');
       return;
     }
 
@@ -252,6 +266,8 @@ export default function AnnouncementPage({ mode = 'parent' }) {
 
       setAnnouncements((prev) => updateAnnouncementCollection(prev, data));
       setForm({ title: '', message: '' });
+      setFieldErrors({ title: '', message: '' });
+      setValidationActive(false);
       setEditingAnnouncement(null);
       setStatus(isEditing ? 'Announcement updated.' : 'Announcement posted successfully.');
     } catch (err) {
@@ -265,6 +281,8 @@ export default function AnnouncementPage({ mode = 'parent' }) {
   const handleEdit = (announcement) => {
     setEditingAnnouncement(announcement);
     setForm({ title: announcement.title || '', message: announcement.message || '' });
+    setFieldErrors({ title: '', message: '' });
+    setValidationActive(false);
     setStatus('');
   };
 
@@ -371,7 +389,7 @@ export default function AnnouncementPage({ mode = 'parent' }) {
 
             {!config.readOnly && (
               <ContentSection title={config.formTitle}>
-                <form className="announcement-form announcement-composer" onSubmit={handleSubmit}>
+                <form noValidate className="announcement-form announcement-composer" onSubmit={handleSubmit}>
                   <div className="announcement-composer-header">
                     <div className="announcement-composer-icon" aria-hidden="true">{config.icon}</div>
                     <div>
@@ -383,22 +401,36 @@ export default function AnnouncementPage({ mode = 'parent' }) {
                     <label>Title</label>
                     <input
                       type="text"
-                      className="input-field"
+                      className={`input-field ${fieldErrors.title ? 'announcement-field-invalid' : ''}`}
                       value={form.title}
-                      onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setForm((prev) => ({ ...prev, title: value }));
+                        if (validationActive) setFieldErrors((prev) => ({ ...prev, title: value.trim() ? '' : 'Please fill out this field.' }));
+                      }}
                       placeholder="Announcement title"
                       maxLength={150}
+                      aria-invalid={Boolean(fieldErrors.title)}
+                      aria-describedby={fieldErrors.title ? 'announcement-title-error' : undefined}
                     />
+                    {fieldErrors.title && <p id="announcement-title-error" className="field-error" role="alert">{fieldErrors.title}</p>}
                   </div>
                   <div className="form-group">
                     <label>Message</label>
                     <textarea
-                      className="textarea-field"
+                      className={`textarea-field ${fieldErrors.message ? 'announcement-field-invalid' : ''}`}
                       value={form.message}
-                      onChange={(event) => setForm((prev) => ({ ...prev, message: event.target.value }))}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setForm((prev) => ({ ...prev, message: value }));
+                        if (validationActive) setFieldErrors((prev) => ({ ...prev, message: value.trim() ? '' : 'Please fill out this field.' }));
+                      }}
                       placeholder={config.messagePlaceholder}
                       rows={4}
+                      aria-invalid={Boolean(fieldErrors.message)}
+                      aria-describedby={fieldErrors.message ? 'announcement-message-error' : undefined}
                     />
+                    {fieldErrors.message && <p id="announcement-message-error" className="field-error" role="alert">{fieldErrors.message}</p>}
                   </div>
                   <div className="announcement-actions">
                     <button type="submit" className="btn-primary announcement-submit" disabled={saving}>

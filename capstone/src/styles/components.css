@@ -602,6 +602,16 @@ label {
   resize: vertical;
 }
 
+.announcement-composer .announcement-field-invalid {
+  border-color: var(--error-color, #dc2626);
+  box-shadow: 0 0 0 1px var(--error-color, #dc2626);
+}
+
+.announcement-composer .announcement-field-invalid:focus {
+  border-color: var(--error-color, #dc2626);
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
+}
+
 .announcement-actions {
   display: flex;
   align-items: center;

@@ -212,11 +212,10 @@ describe('Student Progress summary cards', () => {
     expect(container.textContent).toContain('No student records are available yet.');
   });
 
-  test('keeps active and archived progress separate and limits permanent gameplay deletion to the archived admin view', async () => {
+  test('shows progress for active Students with a legacy progress archive marker and exposes no archive actions', async () => {
     global.fetch = jest.fn((url) => {
       const value = String(url);
-      if (value.startsWith('/api/students/progress?lifecycle=active')) return jsonResponse([{ student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 3' }]);
-      if (value.startsWith('/api/students/progress?lifecycle=archived')) return jsonResponse([{ student_id: 45, student_name: 'Noah Santos', grade_level: 'Grade 4', progress_archived_at: '2026-08-25T00:00:00.000Z' }]);
+      if (value.startsWith('/api/students/progress')) return jsonResponse([{ student_id: 45, student_name: 'Noah Santos', grade_level: 'Grade 4', current_quest: 'Tutorial', progress_archived_at: '2026-08-25T00:00:00.000Z' }]);
       if (value.startsWith('/api/analytics/overview')) return jsonResponse({ studentCount: 1, averageAccuracy: null, averageProgress: null });
       if (value.startsWith('/api/analytics/recommendations')) return jsonResponse({ recommendations: [] });
       return jsonResponse({});
@@ -224,22 +223,14 @@ describe('Student Progress summary cards', () => {
 
     await act(async () => root.render(<AdminStudentProgress />));
     expect(container.textContent).toContain('Reset All');
-    expect(container.textContent).toContain('Archive All');
-    expect(container.textContent).toContain('Archive Student Progress');
-    expect(container.textContent).not.toContain('Delete All');
-    expect(container.textContent).not.toContain('Permanent Delete');
-
-    const progressView = Array.from(container.querySelectorAll('select')).find((select) => select.value === 'active');
-    await act(async () => {
-      progressView.value = 'archived';
-      progressView.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-
-    expect(global.fetch.mock.calls.some(([url]) => String(url).startsWith('/api/students/progress?lifecycle=archived'))).toBe(true);
-    expect(container.textContent).toContain('Archived Student Progress');
-    expect(container.textContent).toContain('Permanent Delete');
-    expect(container.textContent).toContain('Delete All Archived Progress');
+    expect(container.textContent).toContain('Noah Santos');
+    expect(container.textContent).toContain('Tutorial');
+    expect(container.textContent).not.toContain('Archived Progress');
     expect(container.textContent).not.toContain('Archive All');
+    expect(container.textContent).not.toContain('Archive Student Progress');
+    expect(container.textContent).not.toContain('Delete All Archived Progress');
+    expect(container.textContent).not.toContain('Permanent Delete');
+    expect(global.fetch.mock.calls.some(([url]) => String(url) === '/api/students/progress')).toBe(true);
   });
 
   test('groups active row actions in a dedicated vertical layout with truthful archive wording', async () => {
@@ -258,12 +249,10 @@ describe('Student Progress summary cards', () => {
     expect(Array.from(actionStack.querySelectorAll('button')).map((button) => button.textContent)).toEqual([
       'View Analytics',
       'Reset Progress',
-      'Archive Student Progress',
     ]);
     const actionButtons = Array.from(actionStack.querySelectorAll('button'));
     expect(actionButtons[0].classList.contains('table-action-button')).toBe(true);
     expect(actionButtons[1].classList.contains('table-reset-action')).toBe(true);
-    expect(actionButtons[2].classList.contains('table-archive-action')).toBe(true);
   });
 
   test('records list state only when the explicit View Analytics action opens details', async () => {

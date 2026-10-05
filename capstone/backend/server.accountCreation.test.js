@@ -394,7 +394,7 @@ test('account management rejects updating student game accounts', async (t) => {
   assert.equal(updatedAccount, false);
 });
 
-test('account management rejects deleting student game accounts', async (t) => {
+test('account management keeps generic permanent deletion blocked for Student game accounts', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   let deletedAccount = false;
@@ -417,9 +417,10 @@ test('account management rejects deleting student game accounts', async (t) => {
     return emptyResult;
   });
 
-  const response = await requestJson(baseUrl, '/api/accounts/44', {
+  const response = await requestJson(baseUrl, '/api/accounts/44?permanent=true', {
     method: 'DELETE',
     headers: { Authorization: 'Bearer admin-token' },
+    body: JSON.stringify({ reason: 'Student permanently deleted.', permanent_confirmation: 'DELETE' }),
   });
 
   assert.equal(response.status, 403);
@@ -921,6 +922,10 @@ test('admin account management writes audit log entries for create edit archive 
     if (sql.startsWith('select id, email, role, is_archived from public.accounts where id = $1')) {
       const account = accounts.get(Number(params[0]));
       return resultRows(account ? [{ id: account.id, email: account.email, role: account.role, is_archived: account.is_archived }] : []);
+    }
+    if (sql.startsWith('select id, role, is_archived from public.accounts where id = $1')) {
+      const account = accounts.get(Number(params[0]));
+      return resultRows(account ? [{ id: account.id, role: account.role, is_archived: account.is_archived }] : []);
     }
     if (sql.startsWith('select count')) {
       return resultRows([{ count: '2' }]);
