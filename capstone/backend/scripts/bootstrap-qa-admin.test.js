@@ -65,6 +65,10 @@ const stageFailures = [
     stage: 'credential-validation',
     expectedError: /valid QA Admin email/i,
     makeArgs: ({ pool }) => ({ env: makeEnv({ QA_ADMIN_EMAIL: 'not-an-email' }), pool }),
+    expectedOutput: [
+      { level: 'error', message: 'QA Admin bootstrap failed at stage: credential-validation.' },
+      { level: 'error', message: 'QA Admin credential validation failed: invalid-admin-email.' },
+    ],
   },
   {
     stage: 'database-connect',
@@ -93,7 +97,7 @@ const stageFailures = [
   },
 ];
 
-for (const { stage, expectedError, makeArgs } of stageFailures) {
+for (const { stage, expectedError, makeArgs, expectedOutput } of stageFailures) {
   test(`QA admin bootstrap reports only the safe ${stage} failure stage`, async () => {
     const { pool } = createPool();
     const { logger, output } = makeFailureLogger();
@@ -103,7 +107,51 @@ for (const { stage, expectedError, makeArgs } of stageFailures) {
       runQaAdminBootstrap({ ...args, logger }),
       expectedError,
     );
-    assert.deepEqual(output, [{ level: 'error', message: `QA Admin bootstrap failed at stage: ${stage}.` }]);
+    assert.deepEqual(output, expectedOutput || [{ level: 'error', message: `QA Admin bootstrap failed at stage: ${stage}.` }]);
+  });
+}
+
+const credentialValidationCases = [
+  { reason: 'missing-database-url', overrides: { DATABASE_URL: '' } },
+  { reason: 'missing-admin-email', overrides: { QA_ADMIN_EMAIL: '' } },
+  { reason: 'invalid-admin-email', overrides: { QA_ADMIN_EMAIL: 'private-invalid-email-do-not-log' } },
+  { reason: 'missing-admin-password', overrides: { QA_ADMIN_PASSWORD: '' } },
+  { reason: 'admin-password-too-short', overrides: { QA_ADMIN_PASSWORD: 'short7!' } },
+  { reason: 'admin-password-too-long', overrides: { QA_ADMIN_PASSWORD: 'x'.repeat(73) } },
+];
+
+for (const { reason, overrides } of credentialValidationCases) {
+  test(`QA Admin bootstrap reports sanitized credential validation reason ${reason}`, async () => {
+    const secrets = {
+      QA_ADMIN_EMAIL: 'private-admin-email-sentinel@example.invalid',
+      QA_ADMIN_PASSWORD: 'private-admin-password-sentinel',
+      DATABASE_URL: 'postgres://private-user:private-password@qa.invalid/private-db',
+    };
+    const env = makeEnv({ ...secrets, ...overrides });
+    const { pool } = createPool();
+    const { logger, output } = makeFailureLogger();
+    let thrownError;
+
+    await assert.rejects(
+      runQaAdminBootstrap({ env, pool, logger }),
+      (error) => {
+        thrownError = error;
+        return true;
+      },
+    );
+
+    assert.deepEqual(output, [
+      { level: 'error', message: 'QA Admin bootstrap failed at stage: credential-validation.' },
+      { level: 'error', message: `QA Admin credential validation failed: ${reason}.` },
+    ]);
+
+    const serializedLogs = JSON.stringify(output);
+    for (const secret of [env.QA_ADMIN_EMAIL, env.QA_ADMIN_PASSWORD, env.DATABASE_URL].filter(Boolean)) {
+      assert.equal(serializedLogs.includes(secret), false, 'logs must not contain credential values');
+      assert.equal(String(thrownError).includes(secret), false, 'validation errors must not contain credential values');
+    }
+    assert.equal(serializedLogs.includes(String(Buffer.byteLength(env.QA_ADMIN_PASSWORD, 'utf8'))), false,
+      'logs must not contain password length');
   });
 }
 
@@ -153,6 +201,35 @@ test('QA admin bootstrap CLI keeps the generic final failure after the safe stag
   assert.equal(result.stdout, '');
   assert.equal(result.stderr.includes(secretSentinel), false);
   assert.equal(result.stderr.includes(databaseUrlSentinel), false);
+});
+
+test('QA admin bootstrap CLI keeps the generic final failure after a sanitized credential reason', () => {
+  const emailSentinel = 'qa-admin-email-sentinel@example.invalid';
+  const passwordSentinel = 'qa-admin-password-sentinel-never-log';
+  const result = spawnSync(process.execPath, [path.join(__dirname, 'bootstrap-qa-admin.js')], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      NODE_ENV: 'qa',
+      RAILWAY_ENVIRONMENT_NAME: 'qa-owner-testing',
+      RAILWAY_PROJECT_ID: 'dd2c27df-22e4-4ee0-82dc-a1c510b07d0c',
+      RAILWAY_ENVIRONMENT_ID: '0ab9cd4e-5281-4a4b-a9c7-a521616194f1',
+      QA_ADMIN_BOOTSTRAP_APPROVED: 'true',
+      QA_ADMIN_EMAIL: emailSentinel,
+      QA_ADMIN_PASSWORD: passwordSentinel,
+      DATABASE_URL: '',
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr.trim(), [
+    'QA Admin bootstrap failed at stage: credential-validation.',
+    'QA Admin credential validation failed: missing-database-url.',
+    GENERIC_BOOTSTRAP_FAILURE,
+  ].join('\n'));
+  assert.equal(result.stderr.includes(emailSentinel), false);
+  assert.equal(result.stderr.includes(passwordSentinel), false);
+  assert.equal(result.stdout, '');
 });
 
 test('QA admin bootstrap rejects production before opening a database connection', async () => {

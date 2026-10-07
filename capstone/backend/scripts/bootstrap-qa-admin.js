@@ -8,12 +8,28 @@ const QA_ENVIRONMENT = 'qa-owner-testing';
 const QA_PROJECT_ID = 'dd2c27df-22e4-4ee0-82dc-a1c510b07d0c';
 const QA_ENVIRONMENT_ID = '0ab9cd4e-5281-4a4b-a9c7-a521616194f1';
 const GENERIC_BOOTSTRAP_FAILURE = 'QA Admin bootstrap failed; no success was confirmed.';
+const SAFE_CREDENTIAL_DIAGNOSTIC_REASONS = new Set([
+  'missing-database-url',
+  'missing-admin-email',
+  'invalid-admin-email',
+  'missing-admin-password',
+  'admin-password-too-short',
+  'admin-password-too-long',
+]);
 
-function reportFailureStage(logger, stage) {
+function reportFailureStage(logger, stage, credentialReason) {
   try {
     logger.error(`QA Admin bootstrap failed at stage: ${stage}.`);
   } catch {
     // Diagnostics must never replace the generic sanitized failure.
+  }
+
+  if (stage === 'credential-validation' && SAFE_CREDENTIAL_DIAGNOSTIC_REASONS.has(credentialReason)) {
+    try {
+      logger.error(`QA Admin credential validation failed: ${credentialReason}.`);
+    } catch {
+      // Diagnostics must never replace the generic sanitized failure.
+    }
   }
 }
 
@@ -35,12 +51,29 @@ function assertQaBootstrapAllowed(env) {
 function readCredentials(env) {
   const email = String(env.QA_ADMIN_EMAIL || '').trim().toLowerCase();
   const password = String(env.QA_ADMIN_PASSWORD || '');
-  if (!env.DATABASE_URL) throw new Error('QA database configuration is required.');
-  if (email.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    throw new Error('A valid QA Admin email is required.');
+  const fail = (reason, message) => {
+    const error = new Error(message);
+    error.qaCredentialReason = reason;
+    throw error;
+  };
+
+  if (!String(env.DATABASE_URL || '').trim()) {
+    fail('missing-database-url', 'QA database configuration is required.');
   }
-  if (password.length < 12 || Buffer.byteLength(password, 'utf8') > 72) {
-    throw new Error('QA Admin password must be 12–72 UTF-8 bytes.');
+  if (!email) {
+    fail('missing-admin-email', 'A QA Admin email is required.');
+  }
+  if (email.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    fail('invalid-admin-email', 'A valid QA Admin email is required.');
+  }
+  if (!password) {
+    fail('missing-admin-password', 'A QA Admin password is required.');
+  }
+  if (password.length < 12) {
+    fail('admin-password-too-short', 'QA Admin password must be at least 12 characters.');
+  }
+  if (Buffer.byteLength(password, 'utf8') > 72) {
+    fail('admin-password-too-long', 'QA Admin password exceeds the supported UTF-8 byte limit.');
   }
   return { email, password };
 }
@@ -65,7 +98,7 @@ async function runQaAdminBootstrap({
   try {
     credentials = readCredentials(env);
   } catch (error) {
-    reportFailureStage(logger, stage);
+    reportFailureStage(logger, stage, error?.qaCredentialReason);
     throw error;
   }
   const { email, password } = credentials;
