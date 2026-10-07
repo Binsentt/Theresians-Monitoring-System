@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const { randomBytes, randomUUID } = require('node:crypto');
+const path = require('node:path');
 const test = require('node:test');
 const bcrypt = require('bcrypt');
 const { runQaAdminBootstrap } = require('./bootstrap-qa-admin');
@@ -16,15 +18,20 @@ const makeEnv = (overrides = {}) => ({
   ...overrides,
 });
 
-const createPool = ({ existing = [], insertRows = [{ id: 41 }] } = {}) => {
+const createPool = ({ existing = [], insertRows = [{ id: 41 }], failAt, error = new Error('synthetic database failure') } = {}) => {
   const statements = [];
   const pool = {
     async connect() {
+      if (failAt === 'database-connect') throw error;
       return {
         async query(sql, values = []) {
           statements.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), values });
-          if (/^SELECT id, role, is_archived/i.test(String(sql).trim())) return { rows: existing };
-          if (/^INSERT INTO public\.accounts/i.test(String(sql).trim())) return { rows: insertRows };
+          const normalizedSql = String(sql).trim();
+          if (failAt === 'existing-account-check' && /^SELECT id, role, is_archived/i.test(normalizedSql)) throw error;
+          if (failAt === 'account-insert' && /^INSERT INTO public\.accounts/i.test(normalizedSql)) throw error;
+          if (failAt === 'transaction-commit' && /^COMMIT$/i.test(normalizedSql)) throw error;
+          if (/^SELECT id, role, is_archived/i.test(normalizedSql)) return { rows: existing };
+          if (/^INSERT INTO public\.accounts/i.test(normalizedSql)) return { rows: insertRows };
           return { rows: [] };
         },
         release() {},
@@ -35,28 +42,147 @@ const createPool = ({ existing = [], insertRows = [{ id: 41 }] } = {}) => {
   return { pool, statements };
 };
 
+const makeFailureLogger = () => {
+  const output = [];
+  return {
+    output,
+    logger: {
+      log: (message) => output.push({ level: 'log', message }),
+      error: (message) => output.push({ level: 'error', message }),
+    },
+  };
+};
+
+const GENERIC_BOOTSTRAP_FAILURE = 'QA Admin bootstrap failed; no success was confirmed.';
+
+const stageFailures = [
+  {
+    stage: 'qa-guard',
+    expectedError: /refuses production/i,
+    makeArgs: ({ pool }) => ({ env: makeEnv({ NODE_ENV: 'production' }), pool }),
+  },
+  {
+    stage: 'credential-validation',
+    expectedError: /valid QA Admin email/i,
+    makeArgs: ({ pool }) => ({ env: makeEnv({ QA_ADMIN_EMAIL: 'not-an-email' }), pool }),
+  },
+  {
+    stage: 'database-connect',
+    expectedError: new RegExp(GENERIC_BOOTSTRAP_FAILURE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    makeArgs: ({ pool }) => ({ env: makeEnv(), pool: createPool({ failAt: 'database-connect' }).pool }),
+  },
+  {
+    stage: 'existing-account-check',
+    expectedError: new RegExp(GENERIC_BOOTSTRAP_FAILURE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    makeArgs: () => ({ env: makeEnv(), pool: createPool({ failAt: 'existing-account-check' }).pool }),
+  },
+  {
+    stage: 'password-hash',
+    expectedError: new RegExp(GENERIC_BOOTSTRAP_FAILURE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    makeArgs: ({ pool }) => ({ env: makeEnv(), pool, bcrypt: { hash: async () => { throw new Error('synthetic hash failure'); } } }),
+  },
+  {
+    stage: 'account-insert',
+    expectedError: new RegExp(GENERIC_BOOTSTRAP_FAILURE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    makeArgs: () => ({ env: makeEnv(), pool: createPool({ failAt: 'account-insert' }).pool }),
+  },
+  {
+    stage: 'transaction-commit',
+    expectedError: new RegExp(GENERIC_BOOTSTRAP_FAILURE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    makeArgs: () => ({ env: makeEnv(), pool: createPool({ failAt: 'transaction-commit' }).pool }),
+  },
+];
+
+for (const { stage, expectedError, makeArgs } of stageFailures) {
+  test(`QA admin bootstrap reports only the safe ${stage} failure stage`, async () => {
+    const { pool } = createPool();
+    const { logger, output } = makeFailureLogger();
+    const args = makeArgs({ pool });
+
+    await assert.rejects(
+      runQaAdminBootstrap({ ...args, logger }),
+      expectedError,
+    );
+    assert.deepEqual(output, [{ level: 'error', message: `QA Admin bootstrap failed at stage: ${stage}.` }]);
+  });
+}
+
+test('QA admin bootstrap never logs credentials, database URLs, or raw database errors', async () => {
+  const email = 'qa-stage-secret@example.invalid';
+  const password = 'qa-stage-password-never-log';
+  const databaseUrl = 'postgres://qa-user:qa-password@db.invalid/private-qa';
+  const rawDatabaseError = `RAW_DATABASE_ERROR ${email} ${password} ${databaseUrl}`;
+  const { pool } = createPool({ failAt: 'database-connect', error: new Error(rawDatabaseError) });
+  const { logger, output } = makeFailureLogger();
+
+  await assert.rejects(
+    runQaAdminBootstrap({
+      env: makeEnv({ QA_ADMIN_EMAIL: email, QA_ADMIN_PASSWORD: password, DATABASE_URL: databaseUrl }),
+      pool,
+      logger,
+    }),
+    (error) => error.message === GENERIC_BOOTSTRAP_FAILURE,
+  );
+
+  const serializedOutput = JSON.stringify(output);
+  for (const sensitive of [email, password, databaseUrl, 'RAW_DATABASE_ERROR', 'qa-user', 'qa-password']) {
+    assert.equal(serializedOutput.includes(sensitive), false, `output must not contain ${sensitive}`);
+  }
+  assert.deepEqual(output, [{ level: 'error', message: 'QA Admin bootstrap failed at stage: database-connect.' }]);
+});
+
+test('QA admin bootstrap CLI keeps the generic final failure after the safe stage diagnostic', () => {
+  const secretSentinel = 'qa-bootstrap-secret-sentinel-never-log';
+  const databaseUrlSentinel = 'postgres://user:private@host.invalid/db';
+  const result = spawnSync(process.execPath, [path.join(__dirname, 'bootstrap-qa-admin.js')], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      QA_ADMIN_EMAIL: secretSentinel,
+      QA_ADMIN_PASSWORD: secretSentinel,
+      DATABASE_URL: databaseUrlSentinel,
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr.trim(), [
+    'QA Admin bootstrap failed at stage: qa-guard.',
+    GENERIC_BOOTSTRAP_FAILURE,
+  ].join('\n'));
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr.includes(secretSentinel), false);
+  assert.equal(result.stderr.includes(databaseUrlSentinel), false);
+});
+
 test('QA admin bootstrap rejects production before opening a database connection', async () => {
   let opened = false;
+  const { logger, output } = makeFailureLogger();
   await assert.rejects(
     runQaAdminBootstrap({
       env: makeEnv({ NODE_ENV: 'production' }),
+      logger,
       poolFactory: () => { opened = true; throw new Error('must not open'); },
     }),
     /refuses production/i,
   );
   assert.equal(opened, false);
+  assert.deepEqual(output, [{ level: 'error', message: 'QA Admin bootstrap failed at stage: qa-guard.' }]);
 });
 
 test('QA admin bootstrap rejects the wrong Railway environment before database access', async () => {
   let opened = false;
+  const { logger, output } = makeFailureLogger();
   await assert.rejects(
     runQaAdminBootstrap({
       env: makeEnv({ RAILWAY_ENVIRONMENT_NAME: 'production' }),
+      logger,
       poolFactory: () => { opened = true; throw new Error('must not open'); },
     }),
     /qa-owner-testing/i,
   );
   assert.equal(opened, false);
+  assert.deepEqual(output, [{ level: 'error', message: 'QA Admin bootstrap failed at stage: qa-guard.' }]);
 });
 
 test('QA admin bootstrap rejects a different Railway project or environment ID before database access', async () => {
@@ -65,27 +191,33 @@ test('QA admin bootstrap rejects a different Railway project or environment ID b
     { RAILWAY_ENVIRONMENT_ID: 'another-environment' },
   ]) {
     let opened = false;
+    const { logger, output } = makeFailureLogger();
     await assert.rejects(
       runQaAdminBootstrap({
         env: makeEnv(overrides),
+        logger,
         poolFactory: () => { opened = true; throw new Error('must not open'); },
       }),
       /verified QA project and environment/i,
     );
     assert.equal(opened, false);
+    assert.deepEqual(output, [{ level: 'error', message: 'QA Admin bootstrap failed at stage: qa-guard.' }]);
   }
 });
 
 test('QA admin bootstrap requires the explicit one-time approval flag', async () => {
   let opened = false;
+  const { logger, output } = makeFailureLogger();
   await assert.rejects(
     runQaAdminBootstrap({
       env: makeEnv({ QA_ADMIN_BOOTSTRAP_APPROVED: undefined }),
+      logger,
       poolFactory: () => { opened = true; throw new Error('must not open'); },
     }),
     /approval/i,
   );
   assert.equal(opened, false);
+  assert.deepEqual(output, [{ level: 'error', message: 'QA Admin bootstrap failed at stage: qa-guard.' }]);
 });
 
 test('QA admin bootstrap refuses an existing non-admin account without inserting', async () => {

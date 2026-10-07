@@ -7,6 +7,15 @@ const BCRYPT_ROUNDS = 10;
 const QA_ENVIRONMENT = 'qa-owner-testing';
 const QA_PROJECT_ID = 'dd2c27df-22e4-4ee0-82dc-a1c510b07d0c';
 const QA_ENVIRONMENT_ID = '0ab9cd4e-5281-4a4b-a9c7-a521616194f1';
+const GENERIC_BOOTSTRAP_FAILURE = 'QA Admin bootstrap failed; no success was confirmed.';
+
+function reportFailureStage(logger, stage) {
+  try {
+    logger.error(`QA Admin bootstrap failed at stage: ${stage}.`);
+  } catch {
+    // Diagnostics must never replace the generic sanitized failure.
+  }
+}
 
 function assertQaBootstrapAllowed(env) {
   if (String(env.NODE_ENV || '').toLowerCase() === 'production') {
@@ -43,26 +52,45 @@ async function runQaAdminBootstrap({
   bcrypt = bcryptDefault,
   logger = console,
 } = {}) {
-  assertQaBootstrapAllowed(env);
-  const { email, password } = readCredentials(env);
+  let stage = 'qa-guard';
+  try {
+    assertQaBootstrapAllowed(env);
+  } catch (error) {
+    reportFailureStage(logger, stage);
+    throw error;
+  }
+
+  stage = 'credential-validation';
+  let credentials;
+  try {
+    credentials = readCredentials(env);
+  } catch (error) {
+    reportFailureStage(logger, stage);
+    throw error;
+  }
+  const { email, password } = credentials;
   let ownsPool = false;
-  const pool = providedPool || (() => {
-    if (poolFactory) {
-      ownsPool = true;
-      return poolFactory(buildDatabaseConfig(env));
-    }
-    const { Pool } = require('pg');
-    ownsPool = true;
-    return new Pool(buildDatabaseConfig(env));
-  })();
+  let pool = providedPool;
 
   let client;
   let transactionOpen = false;
   try {
+    stage = 'database-connect';
+    if (!pool) {
+      if (poolFactory) {
+        ownsPool = true;
+        pool = poolFactory(buildDatabaseConfig(env));
+      } else {
+        const { Pool } = require('pg');
+        ownsPool = true;
+        pool = new Pool(buildDatabaseConfig(env));
+      }
+    }
     client = await pool.connect();
     await client.query('BEGIN');
     transactionOpen = true;
 
+    stage = 'existing-account-check';
     // Serialize concurrent invocations for this normalized email so a retry
     // cannot race into creating a second account.
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [email]);
@@ -79,6 +107,7 @@ async function runQaAdminBootstrap({
       const account = existing.rows[0];
       const isActiveAdmin = String(account.role || '').toLowerCase() === 'admin'
         && account.is_archived !== true;
+      stage = 'transaction-commit';
       await client.query('COMMIT');
       transactionOpen = false;
       if (!isActiveAdmin) return { created: false, reason: 'email-in-use' };
@@ -86,7 +115,9 @@ async function runQaAdminBootstrap({
       return { created: false, reason: 'already-exists' };
     }
 
+    stage = 'password-hash';
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    stage = 'account-insert';
     const inserted = await client.query(
       `INSERT INTO public.accounts
          (name, email, password, role, status, is_archived, must_change_password)
@@ -102,6 +133,7 @@ async function runQaAdminBootstrap({
       return { created: false, reason: 'email-in-use' };
     }
 
+    stage = 'transaction-commit';
     await client.query('COMMIT');
     transactionOpen = false;
     logger.log('QA Admin created.');
@@ -111,7 +143,8 @@ async function runQaAdminBootstrap({
       try { await client.query('ROLLBACK'); } catch { /* preserve sanitized failure */ }
     }
     // Do not leak database errors, connection strings, or credential inputs.
-    throw new Error('QA Admin bootstrap failed; no success was confirmed.');
+    reportFailureStage(logger, stage);
+    throw new Error(GENERIC_BOOTSTRAP_FAILURE);
   } finally {
     if (client) client.release();
     if (ownsPool && typeof pool.end === 'function') await pool.end();
@@ -120,7 +153,7 @@ async function runQaAdminBootstrap({
 
 if (require.main === module) {
   runQaAdminBootstrap().catch(() => {
-    console.error('QA Admin bootstrap failed; no success was confirmed.');
+    console.error(GENERIC_BOOTSTRAP_FAILURE);
     process.exitCode = 1;
   });
 }
