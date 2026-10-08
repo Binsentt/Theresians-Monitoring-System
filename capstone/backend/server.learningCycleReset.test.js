@@ -365,9 +365,11 @@ test('legacy progress archive and progress-only deletion endpoints are disabled 
     requestJson(baseUrl, '/api/student-progress/bulk/permanent-delete/preview', { headers: authHeaders('admin') }),
     requestJson(baseUrl, '/api/student-progress/bulk/permanent-delete', { method: 'POST', headers: authHeaders('admin'), body: JSON.stringify({}) }),
     requestJson(baseUrl, '/api/student-progress/lifecycle-summary?operation=archive', { headers: authHeaders('admin') }),
+    requestJson(baseUrl, '/api/students/progress?lifecycle=archived', { headers: authHeaders('admin') }),
+    requestJson(baseUrl, '/api/student-progress/44?lifecycle=archived', { headers: authHeaders('admin') }),
   ];
   const responses = await Promise.all(requests);
-  assert.deepEqual(responses.map((response) => response.status), [410, 410, 410, 410, 410, 410]);
+  assert.deepEqual(responses.map((response) => response.status), [410, 410, 410, 410, 410, 410, 410, 410]);
   assert.equal(observed.transactionCommitted, false);
   assert.equal(observed.currentSnapshotDeletedFor, null);
   assert.equal(observed.gameResultsDeleted, false);

@@ -28,11 +28,20 @@ test('server preserves the progress marker as legacy metadata and retires progre
   assert.match(source, /app\.post\('\/api\/student-progress\/bulk\/permanent-delete', requireAccountManagementAdmin, retiredStudentProgressLifecycle\)/);
   assert.match(source, /app\.post\('\/api\/student-progress\/:studentId\/archive', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, retiredStudentProgressLifecycle\)/);
   assert.match(source, /app\.post\('\/api\/student-progress\/:studentId\/permanent-delete', requireAccountManagementAdmin, retiredStudentProgressLifecycle\)/);
+  assert.equal((source.match(/app\.post\('\/api\/student-progress\/bulk\/archive'/g) || []).length, 1);
+  assert.equal((source.match(/app\.post\('\/api\/student-progress\/:studentId\/archive'/g) || []).length, 1);
+  assert.equal((source.match(/app\.post\('\/api\/student-progress\/bulk\/permanent-delete'/g) || []).length, 1);
+  assert.equal((source.match(/app\.get\('\/api\/student-progress\/bulk\/permanent-delete\/preview'/g) || []).length, 1);
+  assert.equal((source.match(/app\.post\('\/api\/student-progress\/:studentId\/permanent-delete'/g) || []).length, 1);
+  assert.doesNotMatch(source, /const getArchivedProgressBulkTargets/);
+  assert.doesNotMatch(source, /const resolveLearningCycleArchiveReason/);
+  assert.doesNotMatch(source, /archivedProgressBulkPreviewStore/);
   assert.match(source, /current_learning_cycle_version/);
   assert.match(source, /LEARNING_CYCLE_CHANGED/);
 
-  const lifecycleHelper = source.slice(source.indexOf('const getStudentProgressArchivePredicate'), source.indexOf('const getLifecycleMutationScope'));
-  assert.match(lifecycleHelper, /=> 'true'/);
+  const lifecycleHelper = source.slice(source.indexOf('const resolveStudentProgressListingLifecycle'), source.indexOf('const getLifecycleMutationScope'));
+  assert.match(lifecycleHelper, /lifecycle === 'archived'/);
+  assert.match(lifecycleHelper, /status: 410/);
   assert.match(source, /Permanently delete the Student account to remove Student-owned progress/);
 
   const resetRoute = source.slice(
@@ -77,14 +86,16 @@ test('Screen Time monitoring separates active and soft-archived session history'
   assert.match(source, /Reset: New Learning Cycle Started/);
 });
 
-test('legacy progress archive markers do not filter active progress or Top Achievers', () => {
+test('legacy progress archive markers are metadata only and do not filter active progress or Top Achievers', () => {
   const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   const canonicalProgressBuilder = source.slice(
     source.indexOf('const buildCanonicalStudentProgressQuery'),
     source.indexOf('const normalizeTopAchieverRow')
   );
-  assert.match(canonicalProgressBuilder, /getStudentProgressArchivePredicate\(lifecycle/);
+  assert.match(canonicalProgressBuilder, /a\.progress_archived_at/);
   assert.doesNotMatch(canonicalProgressBuilder, /progress_archived_at\s+IS\s+(?:NOT\s+)?NULL/i);
+  assert.doesNotMatch(canonicalProgressBuilder, /getStudentProgressArchivePredicate/);
+  assert.match(canonicalProgressBuilder, /a\.progress_archived_at/);
   assert.doesNotMatch(source.slice(source.indexOf('const handleTopAchieversRequest'), source.indexOf("app.get('/api/top-achievers'")), /progress_archived_at/);
 });
 

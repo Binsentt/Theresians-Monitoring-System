@@ -10,7 +10,7 @@ import { buildAuthHeaders } from './session.utils';
 import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext, matchesTableSearch, paginateTableRows } from './tableReporting.utils';
-import { BulkStudentProgressLifecycleAction } from './StudentProgressLifecycleActions';
+import { StudentProgressResetAction } from './StudentProgressLifecycleActions';
 import '../styles/topachievers.css';
 
 export default function AdminTopAchievers() {
@@ -179,8 +179,7 @@ export default function AdminTopAchievers() {
 
             <ContentSection title={`Top Achievers (${filteredAchievers.length} found)`}>
               <div className="table-report-controls">
-                <BulkStudentProgressLifecycleAction
-                  operation="reset"
+                <StudentProgressResetAction
                   role="admin"
                   label="Reset Top Achievers"
                   warning="Resetting Top Achievers starts a new learning cycle for the affected students. Their current progress and leaderboard ranking will restart, while historical results and Screen Time remain preserved."

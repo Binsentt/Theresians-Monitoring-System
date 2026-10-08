@@ -1,17 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import ModalPortal from './ModalPortal';
 import { buildScopedApiUrl } from './analyticsEndpoints';
 import { buildAuthHeaders } from './session.utils';
 
-const ARCHIVE_REASONS = [
-  'Graduated',
-  'End of School Year',
-  'Transferred',
-  'No Longer Enrolled',
-  'Testing Data Cleanup',
-  'Other',
-];
-
+const RESET_REASONS = ['New Lesson', 'Completed Current Lesson', 'New Grading Period', 'Testing Data Cleanup', 'Other'];
 const stopModalEvent = (event) => event.stopPropagation();
 
 const requestJson = async (path, role, body) => {
@@ -21,278 +13,42 @@ const requestJson = async (path, role, body) => {
     body: JSON.stringify(body),
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload?.error || 'Unable to update Student progress.');
+  if (!response.ok) throw new Error(payload?.error || 'Unable to reset Student progress.');
   return payload;
 };
 
-const LifecycleDialog = ({ children, onClose, className = '' }) => (
+const LifecycleDialog = ({ children, onClose }) => (
   <ModalPortal onClose={onClose}>
-  <div
-    className="learning-cycle-reset-overlay"
-    onPointerDown={(event) => {
-      stopModalEvent(event);
-      if (event.target === event.currentTarget) onClose();
-    }}
-    onMouseDown={stopModalEvent}
-    onClick={(event) => {
-      stopModalEvent(event);
-      if (event.target === event.currentTarget) onClose();
-    }}
-    onChange={stopModalEvent}
-    onSubmit={stopModalEvent}
-  >
     <div
-      className={`learning-cycle-reset-dialog ${className}`.trim()}
-      role="dialog"
-      aria-modal="true"
-      onPointerDown={stopModalEvent}
+      className="learning-cycle-reset-overlay"
+      onPointerDown={(event) => {
+        stopModalEvent(event);
+        if (event.target === event.currentTarget) onClose();
+      }}
       onMouseDown={stopModalEvent}
-      onClick={stopModalEvent}
+      onClick={(event) => {
+        stopModalEvent(event);
+        if (event.target === event.currentTarget) onClose();
+      }}
       onChange={stopModalEvent}
+      onSubmit={stopModalEvent}
     >
-      {children}
+      <div
+        className="learning-cycle-reset-dialog"
+        role="dialog"
+        aria-modal="true"
+        onPointerDown={stopModalEvent}
+        onMouseDown={stopModalEvent}
+        onClick={stopModalEvent}
+        onChange={stopModalEvent}
+      >
+        {children}
+      </div>
     </div>
-  </div>
   </ModalPortal>
 );
 
-export const StudentProgressArchiveAction = ({ studentId, role, onComplete, className = 'table-action-button table-archive-action' }) => {
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState('');
-  const [customReason, setCustomReason] = useState('');
-  const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  const close = (force = false) => {
-    if (submitting && !force) return;
-    setOpen(false);
-    setReason('');
-    setCustomReason('');
-    setError('');
-  };
-
-  const submit = async (event) => {
-    event.preventDefault();
-    if (!reason) return setError('Select a reason for archive.');
-    if (reason === 'Other' && !customReason.trim()) return setError('Provide a reason for Other.');
-    setSubmitting(true);
-    setError('');
-    try {
-      const payload = await requestJson(`/api/student-progress/${studentId}/archive`, role, {
-        reason,
-        custom_reason: customReason.trim(),
-      });
-      close(true);
-      onComplete?.(payload);
-    } catch (requestError) {
-      setError(requestError.message || 'Unable to archive Student progress.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <>
-      <button type="button" className={className} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={(event) => { event.stopPropagation(); setOpen(true); }}>
-        Archive Student Progress
-      </button>
-      {open && (
-        <LifecycleDialog onClose={close}>
-          <form onSubmit={submit} onPointerDown={stopModalEvent} onClick={stopModalEvent}>
-            <h2>Archive Student Progress</h2>
-            <p><strong>Action type: Archive / Remove from Active Progress</strong></p>
-            <p>This removes the student from Active Progress views. Historical gameplay, Screen Time, and Activity Log remain preserved.</p>
-            <label htmlFor={`archive-reason-${studentId}`}>Reason for Archive</label>
-            <select
-              id={`archive-reason-${studentId}`}
-              name="archive-reason"
-              value={reason}
-              onPointerDown={stopModalEvent}
-              onMouseDown={stopModalEvent}
-              onClick={stopModalEvent}
-              onChange={(event) => { setReason(event.target.value); setError(''); }}
-              disabled={submitting}
-            >
-              <option value="">Select a reason</option>
-              {ARCHIVE_REASONS.map((option) => <option key={option} value={option}>{option}</option>)}
-            </select>
-            {reason === 'Other' && (
-              <>
-                <label htmlFor={`archive-custom-reason-${studentId}`}>Custom reason</label>
-                <textarea
-                  id={`archive-custom-reason-${studentId}`}
-                  value={customReason}
-                  onPointerDown={stopModalEvent}
-                  onMouseDown={stopModalEvent}
-                  onClick={stopModalEvent}
-                  onChange={(event) => { setCustomReason(event.target.value); setError(''); }}
-                  maxLength={1000}
-                  disabled={submitting}
-                />
-              </>
-            )}
-            {error && <p className="learning-cycle-reset-error" role="alert">{error}</p>}
-            <div className="learning-cycle-reset-actions">
-              <button type="button" className="secondary-button" onClick={close} disabled={submitting}>Cancel</button>
-              <button type="submit" className="table-action-button table-archive-action" disabled={submitting}>{submitting ? 'Archiving…' : 'Archive Student Progress'}</button>
-            </div>
-          </form>
-        </LifecycleDialog>
-      )}
-    </>
-  );
-};
-
-export const StudentProgressPermanentDeleteAction = ({ studentId, onComplete, className = 'table-action-button table-permanent-delete-action' }) => {
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState('');
-  const [confirmation, setConfirmation] = useState('');
-  const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const close = (force = false) => {
-    if (submitting && !force) return;
-    setOpen(false); setReason(''); setConfirmation(''); setError('');
-  };
-  const submit = async (event) => {
-    event.preventDefault();
-    if (!reason.trim()) return setError('Provide a deletion reason.');
-    if (confirmation !== 'DELETE') return setError('Type DELETE to confirm.');
-    setSubmitting(true); setError('');
-    try {
-      const payload = await requestJson(`/api/student-progress/${studentId}/permanent-delete`, 'admin', {
-        reason: reason.trim(),
-        confirmation_phrase: confirmation,
-      });
-      close(true);
-      onComplete?.(payload);
-    } catch (requestError) {
-      setError(requestError.message || 'Unable to permanently delete gameplay progress.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-  return (
-    <>
-      <button type="button" className={className} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={(event) => { event.stopPropagation(); setOpen(true); }}>Permanent Delete</button>
-      {open && (
-        <LifecycleDialog onClose={close} className="learning-cycle-permanent-delete-dialog">
-          <form onSubmit={submit} onPointerDown={stopModalEvent} onClick={stopModalEvent}>
-            <h2>Permanently Delete Gameplay Progress</h2>
-            <p>This deletes only current and historical gameplay/progress-derived data. Screen Time, activity history, accounts, and relationships remain preserved.</p>
-            <label htmlFor={`permanent-delete-reason-${studentId}`}>Required reason</label>
-            <textarea id={`permanent-delete-reason-${studentId}`} value={reason} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setReason(event.target.value); setError(''); }} maxLength={1000} disabled={submitting} />
-            <label htmlFor={`permanent-delete-confirmation-${studentId}`}>Type DELETE to confirm</label>
-            <input id={`permanent-delete-confirmation-${studentId}`} value={confirmation} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setConfirmation(event.target.value); setError(''); }} disabled={submitting} autoComplete="off" />
-            {error && <p className="learning-cycle-reset-error" role="alert">{error}</p>}
-            <div className="learning-cycle-reset-actions">
-              <button type="button" className="secondary-button" onClick={close} disabled={submitting}>Cancel</button>
-              <button type="submit" className="table-action-button table-permanent-delete-action" disabled={submitting}>{submitting ? 'Deleting…' : 'Delete Gameplay Data'}</button>
-            </div>
-          </form>
-        </LifecycleDialog>
-      )}
-    </>
-  );
-};
-
-export const BulkStudentProgressPermanentDeleteAction = ({ searchQuery = '', disabled = false, onComplete, className = 'table-action-button table-permanent-delete-action' }) => {
-  const [open, setOpen] = useState(false);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [preview, setPreview] = useState(null);
-  const [reason, setReason] = useState('');
-  const [confirmation, setConfirmation] = useState('');
-  const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const normalizedSearch = String(searchQuery || '').trim();
-  const label = normalizedSearch ? 'Delete All Matching Archived Progress' : 'Delete All Archived Progress';
-
-  const close = (force = false) => {
-    if (submitting && !force) return;
-    setOpen(false);
-    setPreview(null);
-    setReason('');
-    setConfirmation('');
-    setError('');
-  };
-
-  const openDialog = async (event) => {
-    event.stopPropagation();
-    setOpen(true);
-    setPreviewLoading(true);
-    setError('');
-    try {
-      const query = normalizedSearch ? `?search=${encodeURIComponent(normalizedSearch)}` : '';
-      const response = await fetch(buildScopedApiUrl(`/api/student-progress/bulk/permanent-delete/preview${query}`, 'admin'), {
-        headers: buildAuthHeaders(),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error || 'Unable to prepare archived progress deletion.');
-      setPreview(payload);
-      if (!Number(payload.affected_count || 0)) setError('There are no eligible archived progress records in this scope.');
-    } catch (requestError) {
-      setError(requestError.message || 'Unable to prepare archived progress deletion.');
-    } finally {
-      setPreviewLoading(false);
-    }
-  };
-
-  const submit = async (event) => {
-    event.preventDefault();
-    if (!preview?.preview_token) return setError('Review the archived deletion scope before confirming.');
-    if (!reason.trim()) return setError('Provide a deletion reason.');
-    if (confirmation !== 'DELETE') return setError('Type DELETE to confirm.');
-    setSubmitting(true);
-    setError('');
-    try {
-      const payload = await requestJson('/api/student-progress/bulk/permanent-delete', 'admin', {
-        preview_token: preview.preview_token,
-        reason: reason.trim(),
-        confirmation: 'DELETE',
-      });
-      close(true);
-      onComplete?.(payload);
-    } catch (requestError) {
-      setError(requestError.message || 'Unable to permanently delete archived Student progress.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <>
-      <button type="button" className={className} disabled={disabled || previewLoading} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={openDialog}>
-        {label}
-      </button>
-      {open && (
-        <LifecycleDialog onClose={close} className="learning-cycle-permanent-delete-dialog learning-cycle-bulk-permanent-delete-dialog">
-          <form onSubmit={submit} onPointerDown={stopModalEvent} onClick={stopModalEvent}>
-            <h2>{label}</h2>
-            <p>This permanently deletes gameplay/progress-derived records for the archived Students in this reviewed scope. Student accounts, Parent/Teacher relationships, Screen Time, Activity Log, and active learning-cycle data remain preserved.</p>
-            <p><strong>{previewLoading ? 'Preparing deletion scope…' : `${Number(preview?.affected_count || 0)} archived Student progress records will be permanently deleted.`}</strong></p>
-            {normalizedSearch && <p>Filter scope: <strong>{normalizedSearch}</strong></p>}
-            {preview?.targets?.length > 0 && (
-              <ul className="learning-cycle-bulk-preview-targets">
-                {preview.targets.slice(0, 10).map((target) => <li key={target.student_id}>{target.name || 'Student'}{target.game_student_id ? ` (${target.game_student_id})` : ''}</li>)}
-                {preview.targets.length > 10 && <li>…and {preview.targets.length - 10} more.</li>}
-              </ul>
-            )}
-            <label htmlFor="bulk-permanent-delete-reason">Required reason</label>
-            <textarea id="bulk-permanent-delete-reason" value={reason} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setReason(event.target.value); setError(''); }} maxLength={1000} disabled={submitting || previewLoading} />
-            <label htmlFor="bulk-permanent-delete-confirmation">Type DELETE to confirm</label>
-            <input id="bulk-permanent-delete-confirmation" value={confirmation} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setConfirmation(event.target.value); setError(''); }} disabled={submitting || previewLoading} autoComplete="off" />
-            {error && <p className="learning-cycle-reset-error" role="alert">{error}</p>}
-            <div className="learning-cycle-reset-actions">
-              <button type="button" className="secondary-button" onClick={close} disabled={submitting}>Cancel</button>
-              <button type="submit" className="table-action-button table-permanent-delete-action" disabled={submitting || previewLoading || !preview?.preview_token}>{submitting ? 'Deleting…' : label}</button>
-            </div>
-          </form>
-        </LifecycleDialog>
-      )}
-    </>
-  );
-};
-
-export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete, label: labelOverride, warning: warningOverride }) => {
+export const StudentProgressResetAction = ({ role, onComplete, label: labelOverride, warning: warningOverride }) => {
   const [open, setOpen] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [affectedCount, setAffectedCount] = useState(null);
@@ -301,71 +57,115 @@ export const BulkStudentProgressLifecycleAction = ({ operation, role, onComplete
   const [confirmation, setConfirmation] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const isArchive = operation === 'archive';
-  const label = labelOverride || (isArchive ? 'Archive All' : 'Reset All');
-  const requiredPhrase = isArchive ? 'ARCHIVE' : 'RESET';
-  const reasons = isArchive ? ARCHIVE_REASONS : ['New Lesson', 'Completed Current Lesson', 'New Grading Period', 'Testing Data Cleanup', 'Other'];
+  const label = labelOverride || 'Reset All';
 
   const close = (force = false) => {
     if (submitting && !force) return;
-    setOpen(false); setAffectedCount(null); setReason(''); setCustomReason(''); setConfirmation(''); setError('');
+    setOpen(false);
+    setAffectedCount(null);
+    setReason('');
+    setCustomReason('');
+    setConfirmation('');
+    setError('');
   };
+
   const openDialog = async (event) => {
     event.stopPropagation();
-    setOpen(true); setSummaryLoading(true); setError('');
+    setOpen(true);
+    setSummaryLoading(true);
+    setError('');
     try {
-      const response = await fetch(buildScopedApiUrl(`/api/student-progress/lifecycle-summary?operation=${operation}`, role), { headers: buildAuthHeaders() });
+      const response = await fetch(buildScopedApiUrl('/api/student-progress/lifecycle-summary?operation=reset', role), {
+        headers: buildAuthHeaders(),
+      });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error || 'Unable to prepare the lifecycle action.');
+      if (!response.ok) throw new Error(payload?.error || 'Unable to prepare the reset.');
       setAffectedCount(Number(payload.affected_count || 0));
     } catch (requestError) {
-      setError(requestError.message || 'Unable to prepare the lifecycle action.');
+      setError(requestError.message || 'Unable to prepare the reset.');
     } finally {
       setSummaryLoading(false);
     }
   };
+
   const submit = async (event) => {
     event.preventDefault();
-    if (!reason) return setError(`Select a reason for ${isArchive ? 'archive' : 'reset'}.`);
+    if (!reason) return setError('Select a reason for reset.');
     if (reason === 'Other' && !customReason.trim()) return setError('Provide a reason for Other.');
-    if (confirmation !== requiredPhrase) return setError(`Type ${requiredPhrase} to confirm.`);
+    if (confirmation !== 'RESET') return setError('Type RESET to confirm.');
     if (affectedCount === null) return setError('Wait for the affected-student count before confirming.');
-    setSubmitting(true); setError('');
+    setSubmitting(true);
+    setError('');
     try {
-      const payload = await requestJson(`/api/student-progress/bulk/${operation}`, role, {
+      const payload = await requestJson('/api/student-progress/bulk/reset', role, {
         reason,
         custom_reason: customReason.trim(),
         expected_count: affectedCount,
-      confirmation,
+        confirmation,
       });
-      close(true); onComplete?.(payload);
+      close(true);
+      onComplete?.(payload);
     } catch (requestError) {
-      setError(requestError.message || `Unable to ${operation} authorized Student progress.`);
+      setError(requestError.message || 'Unable to reset authorized Student progress.');
     } finally {
       setSubmitting(false);
     }
   };
+
   return (
     <>
-      <button type="button" className={`table-action-button ${isArchive ? 'table-archive-action' : 'table-reset-action'}`} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={openDialog}>{label}</button>
+      <button type="button" className="table-action-button table-reset-action" onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={openDialog}>
+        {label}
+      </button>
       {open && (
         <LifecycleDialog onClose={close}>
           <form onSubmit={submit} onPointerDown={stopModalEvent} onClick={stopModalEvent}>
             <h2>{label}</h2>
-            <p>{warningOverride || (isArchive ? 'Archive all currently authorized active Students by moving them to Archived Progress. Historical records remain preserved. New Lesson is not an archive reason.' : 'Start a fresh learning cycle for all currently authorized active Students.')}</p>
+            <p>{warningOverride || 'Start a fresh learning cycle for all currently authorized active Students.'}</p>
             <p><strong>{summaryLoading ? 'Preparing affected count…' : `${affectedCount ?? 0} Students will be affected.`}</strong></p>
-            <label htmlFor={`bulk-${operation}-reason`}>Reason</label>
-            <select id={`bulk-${operation}-reason`} name={`bulk-${operation}-reason`} value={reason} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setReason(event.target.value); setError(''); }} disabled={submitting || summaryLoading}>
+            <label htmlFor="bulk-reset-reason">Reason</label>
+            <select
+              id="bulk-reset-reason"
+              name="bulk-reset-reason"
+              value={reason}
+              onPointerDown={stopModalEvent}
+              onMouseDown={stopModalEvent}
+              onClick={stopModalEvent}
+              onChange={(event) => { setReason(event.target.value); setError(''); }}
+              disabled={submitting || summaryLoading}
+            >
               <option value="">Select a reason</option>
-              {reasons.map((option) => <option key={option} value={option}>{option}</option>)}
+              {RESET_REASONS.map((option) => <option key={option} value={option}>{option}</option>)}
             </select>
-            {reason === 'Other' && <textarea aria-label="Custom reason" value={customReason} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setCustomReason(event.target.value); setError(''); }} maxLength={1000} disabled={submitting} />}
-            <label htmlFor={`bulk-${operation}-confirmation`}>Type {requiredPhrase} to confirm</label>
-            <input id={`bulk-${operation}-confirmation`} value={confirmation} onPointerDown={stopModalEvent} onMouseDown={stopModalEvent} onClick={stopModalEvent} onChange={(event) => { setConfirmation(event.target.value); setError(''); }} disabled={submitting || summaryLoading} autoComplete="off" />
+            {reason === 'Other' && (
+              <textarea
+                aria-label="Custom reason"
+                value={customReason}
+                onPointerDown={stopModalEvent}
+                onMouseDown={stopModalEvent}
+                onClick={stopModalEvent}
+                onChange={(event) => { setCustomReason(event.target.value); setError(''); }}
+                maxLength={1000}
+                disabled={submitting}
+              />
+            )}
+            <label htmlFor="bulk-reset-confirmation">Type RESET to confirm</label>
+            <input
+              id="bulk-reset-confirmation"
+              value={confirmation}
+              onPointerDown={stopModalEvent}
+              onMouseDown={stopModalEvent}
+              onClick={stopModalEvent}
+              onChange={(event) => { setConfirmation(event.target.value); setError(''); }}
+              disabled={submitting || summaryLoading}
+              autoComplete="off"
+            />
             {error && <p className="learning-cycle-reset-error" role="alert">{error}</p>}
             <div className="learning-cycle-reset-actions">
               <button type="button" className="secondary-button" onClick={close} disabled={submitting}>Cancel</button>
-              <button type="submit" className={`table-action-button ${isArchive ? 'table-archive-action' : 'table-reset-action'}`} disabled={submitting || summaryLoading || affectedCount === null}>{submitting ? 'Saving…' : label}</button>
+              <button type="submit" className="table-action-button table-reset-action" disabled={submitting || summaryLoading || affectedCount === null}>
+                {submitting ? 'Saving…' : label}
+              </button>
             </div>
           </form>
         </LifecycleDialog>

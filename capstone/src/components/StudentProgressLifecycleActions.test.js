@@ -1,11 +1,6 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import {
-  BulkStudentProgressLifecycleAction,
-  BulkStudentProgressPermanentDeleteAction,
-  StudentProgressArchiveAction,
-  StudentProgressPermanentDeleteAction,
-} from './StudentProgressLifecycleActions';
+import * as lifecycleActions from './StudentProgressLifecycleActions';
 
 const jsonResponse = (body, status = 200) => Promise.resolve({
   ok: status >= 200 && status < 300,
@@ -33,190 +28,65 @@ describe('StudentProgressLifecycleActions', () => {
     delete global.fetch;
   });
 
-  test('keeps keyboard navigation in the archive dialog and returns to its table action on Escape', async () => {
-    await act(async () => root.render(<StudentProgressArchiveAction studentId={44} role="teacher" />));
-    const trigger = container.querySelector('button');
-    trigger.focus();
-    await act(async () => trigger.click());
-    const dialog = document.querySelector('[role="dialog"]');
-    expect(dialog.contains(document.activeElement)).toBe(true);
-    const last = dialog.querySelector('button[type="submit"]');
-    last.focus();
-    last.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
-    expect(document.activeElement).toBe(dialog.querySelector('select'));
-    await act(async () => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+  test('progress lifecycle UI exposes no archive or progress-only delete action', () => {
+    expect(lifecycleActions.StudentProgressArchiveAction).toBeUndefined();
+    expect(lifecycleActions.StudentProgressPermanentDeleteAction).toBeUndefined();
+    expect(lifecycleActions.BulkStudentProgressPermanentDeleteAction).toBeUndefined();
+    expect(lifecycleActions.BulkStudentProgressLifecycleAction).toBeUndefined();
+    expect(lifecycleActions.StudentProgressResetAction).toEqual(expect.any(Function));
   });
 
-  test('archives only the selected Student after a required reason and keeps every modal event out of the row', async () => {
-    const onComplete = jest.fn();
-    const rowClick = jest.fn();
-    global.fetch = jest.fn(() => jsonResponse({ success: true }));
-    await act(async () => root.render(<div onClick={rowClick}><StudentProgressArchiveAction studentId={44} role="teacher" onComplete={onComplete} /></div>));
+  test('Reset Progress remains available without exposing archive workflow', async () => {
+    global.fetch = jest.fn(() => jsonResponse({ affected_count: 2 }));
+    await act(async () => root.render(<lifecycleActions.StudentProgressResetAction role="admin" />));
 
-    const button = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Archive Student Progress');
+    expect(container.textContent).toContain('Reset All');
+    expect(container.textContent).not.toMatch(/archive|archived progress|permanent delete/i);
+    const button = container.querySelector('button');
     await act(async () => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(rowClick).not.toHaveBeenCalled();
-
-    const overlay = document.body.querySelector('.learning-cycle-reset-overlay');
-    expect(overlay?.parentElement).toBe(document.body);
-    expect(overlay.textContent).toContain('Archive Student Progress');
-    expect(overlay.textContent).toContain('Reason for Archive');
-    const select = overlay.querySelector('select[name="archive-reason"]');
-    await act(async () => {
-      select.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-      select.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-      select.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      select.value = 'Transferred';
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    expect(rowClick).not.toHaveBeenCalled();
-    const submit = Array.from(overlay.querySelectorAll('button')).find((item) => item.textContent === 'Archive Student Progress' && item.type === 'submit');
-    await act(async () => submit.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 
     expect(global.fetch).toHaveBeenCalledWith(
-      '/api/student-progress/44/archive',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({ Authorization: 'Bearer lifecycle-token' }),
-        body: JSON.stringify({ reason: 'Transferred', custom_reason: '' }),
-      })
+      '/api/student-progress/lifecycle-summary?operation=reset',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer lifecycle-token' }) })
     );
-    expect(onComplete).toHaveBeenCalledTimes(1);
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  test('requires DELETE before the admin-only gameplay delete request', async () => {
-    global.fetch = jest.fn(() => jsonResponse({ success: true }));
-    await act(async () => root.render(<StudentProgressPermanentDeleteAction studentId={44} onComplete={jest.fn()} />));
-    const open = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Permanent Delete');
-    await act(async () => open.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    const submit = Array.from(document.body.querySelectorAll('button')).find((item) => item.textContent === 'Delete Gameplay Data');
-    await act(async () => submit.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(document.body.textContent).toContain('Provide a deletion reason.');
-    expect(global.fetch).not.toHaveBeenCalled();
-  });
+  test('bulk Reset keeps its affected-count and typed RESET safeguards', async () => {
+    global.fetch = jest.fn((url) => (
+      String(url).includes('lifecycle-summary')
+        ? jsonResponse({ affected_count: 3 })
+        : jsonResponse({ success: true, affected_count: 3 })
+    ));
+    await act(async () => root.render(<lifecycleActions.StudentProgressResetAction role="teacher" />));
+    await act(async () => container.querySelector('button').dispatchEvent(new MouseEvent('click', { bubbles: true })));
 
-  test('retrieves the authorized affected count and requires the typed bulk confirmation', async () => {
-    global.fetch = jest.fn((url) => {
-      if (String(url).includes('lifecycle-summary')) return jsonResponse({ affected_count: 3 });
-      return jsonResponse({ success: true, affected_count: 3 });
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog.textContent).toContain('3 Students will be affected.');
+    const reason = dialog.querySelector('select[name="bulk-reset-reason"]');
+    await act(async () => {
+      reason.value = 'New Lesson';
+      reason.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    await act(async () => root.render(<BulkStudentProgressLifecycleAction operation="reset" role="teacher" onComplete={jest.fn()} />));
-    const open = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Reset All');
-    await act(async () => open.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    const overlay = document.body.querySelector('.learning-cycle-reset-overlay');
-    expect(overlay.textContent).toContain('3 Students will be affected.');
-    const select = overlay.querySelector('select[name="bulk-reset-reason"]');
-    await act(async () => { select.value = 'New Lesson'; select.dispatchEvent(new Event('change', { bubbles: true })); });
-    const submit = Array.from(overlay.querySelectorAll('button')).find((item) => item.textContent === 'Reset All' && item.type === 'submit');
+    const submit = Array.from(dialog.querySelectorAll('button')).find((button) => button.type === 'submit');
     await act(async () => submit.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(overlay.textContent).toContain('Type RESET to confirm.');
+    expect(dialog.textContent).toContain('Type RESET to confirm.');
     expect(global.fetch).toHaveBeenCalledTimes(1);
 
-    const confirmation = overlay.querySelector('input[id="bulk-reset-confirmation"]');
+    const confirmation = dialog.querySelector('#bulk-reset-confirmation');
     await act(async () => {
-      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-      valueSetter.call(confirmation, 'RESET');
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setValue.call(confirmation, 'RESET');
       confirmation.dispatchEvent(new Event('input', { bubbles: true }));
       confirmation.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await act(async () => submit.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(global.fetch).toHaveBeenCalledWith(
+
+    expect(global.fetch).toHaveBeenLastCalledWith(
       '/api/student-progress/bulk/reset',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ reason: 'New Lesson', custom_reason: '', expected_count: 3, confirmation: 'RESET' }),
       })
     );
-  });
-
-  test('archives all authorized active Students only after ARCHIVE is typed', async () => {
-    global.fetch = jest.fn((url) => {
-      if (String(url).includes('lifecycle-summary')) return jsonResponse({ affected_count: 2 });
-      return jsonResponse({ success: true, affected_count: 2 });
-    });
-    await act(async () => root.render(<BulkStudentProgressLifecycleAction operation="archive" role="admin" onComplete={jest.fn()} />));
-    const open = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Archive All');
-    await act(async () => open.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    const overlay = document.body.querySelector('.learning-cycle-reset-overlay');
-    expect(overlay.textContent).toContain('Archive all currently authorized active Students');
-    expect(overlay.textContent).toContain('Type ARCHIVE to confirm');
-
-    const select = overlay.querySelector('select[name="bulk-archive-reason"]');
-    await act(async () => { select.value = 'End of School Year'; select.dispatchEvent(new Event('change', { bubbles: true })); });
-    const confirmation = overlay.querySelector('input[id="bulk-archive-confirmation"]');
-    await act(async () => {
-      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-      valueSetter.call(confirmation, 'ARCHIVE');
-      confirmation.dispatchEvent(new Event('input', { bubbles: true }));
-      confirmation.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    const submit = Array.from(overlay.querySelectorAll('button')).find((item) => item.textContent === 'Archive All' && item.type === 'submit');
-    await act(async () => submit.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-
-    expect(global.fetch).toHaveBeenCalledWith(
-      '/api/student-progress/bulk/archive',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ reason: 'End of School Year', custom_reason: '', expected_count: 2, confirmation: 'ARCHIVE' }),
-      })
-    );
-  });
-
-  test('previews and confirms archived bulk gameplay deletion with a signed target token', async () => {
-    const onComplete = jest.fn();
-    global.fetch = jest.fn((url) => {
-      if (String(url).includes('/bulk/permanent-delete/preview')) {
-        return jsonResponse({
-          affected_count: 2,
-          scope: { lifecycle: 'archived', search: 'Ava' },
-          preview_token: 'signed-preview-token',
-          expires_at: '2026-09-11T01:00:00.000Z',
-          targets: [{ student_id: 44, name: 'Ava Santos' }, { student_id: 45, name: 'Ava Cruz' }],
-        });
-      }
-      return jsonResponse({ success: true, affected_count: 2 });
-    });
-    await act(async () => root.render(<BulkStudentProgressPermanentDeleteAction searchQuery="Ava" onComplete={onComplete} />));
-    const open = Array.from(container.querySelectorAll('button')).find((item) => item.textContent === 'Delete All Matching Archived Progress');
-    expect(open).not.toBeNull();
-    await act(async () => open.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    const overlay = document.body.querySelector('.learning-cycle-reset-overlay');
-    expect(overlay.textContent).toContain('2 archived Student progress records');
-    expect(overlay.textContent).toContain('Ava');
-    expect(overlay.textContent).toContain('Type DELETE to confirm');
-    const reason = overlay.querySelector('textarea');
-    await act(async () => {
-      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
-      valueSetter.call(reason, 'Approved local cleanup');
-      reason.dispatchEvent(new Event('input', { bubbles: true }));
-      reason.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    const confirmation = overlay.querySelector('input');
-    await act(async () => {
-      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-      valueSetter.call(confirmation, 'DELETE');
-      confirmation.dispatchEvent(new Event('input', { bubbles: true }));
-      confirmation.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    const submit = Array.from(overlay.querySelectorAll('button')).find((item) => item.textContent === 'Delete All Matching Archived Progress' && item.type === 'submit');
-    await act(async () => submit.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(global.fetch).toHaveBeenLastCalledWith(
-      '/api/student-progress/bulk/permanent-delete',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ preview_token: 'signed-preview-token', reason: 'Approved local cleanup', confirmation: 'DELETE' }),
-      })
-    );
-    expect(onComplete).toHaveBeenCalledTimes(1);
-  });
-
-  test('uses the unfiltered archived bulk label and disables it when no eligible rows exist', async () => {
-    await act(async () => root.render(<BulkStudentProgressPermanentDeleteAction searchQuery="" disabled />));
-    const button = container.querySelector('button');
-    expect(button?.textContent).toBe('Delete All Archived Progress');
-    expect(button?.disabled).toBe(true);
   });
 });

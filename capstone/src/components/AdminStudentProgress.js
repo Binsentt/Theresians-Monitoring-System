@@ -16,7 +16,7 @@ import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext } from './tableReporting.utils';
 import { LearningCycleResetAction } from './LearningCycleResetAction';
-import { BulkStudentProgressLifecycleAction } from './StudentProgressLifecycleActions';
+import { StudentProgressResetAction } from './StudentProgressLifecycleActions';
 import '../styles/studentprogress.css';
 
 const studentReportColumns = [
@@ -187,7 +187,7 @@ export default function AdminStudentProgress() {
                   showPrintHeading={false}
                 />
                 <div className="student-lifecycle-bulk-actions no-print">
-                  <BulkStudentProgressLifecycleAction operation="reset" role="admin" onComplete={() => setRefreshToken((value) => value + 1)} />
+                  <StudentProgressResetAction role="admin" onComplete={() => setRefreshToken((value) => value + 1)} />
                 </div>
               </div>
               <div className="table-wrapper">

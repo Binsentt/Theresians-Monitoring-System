@@ -96,6 +96,7 @@ const canonicalZeroGameplayStudent = {
   current_map: null,
   difficulty_level: null,
   last_played: null,
+  progress_archived_at: '2026-08-25T00:00:00.000Z',
 };
 
 const isCanonicalProgressQuery = (sql) => (
@@ -134,6 +135,7 @@ test('canonical students remain visible before gameplay through only their authe
   assert.equal(admin.body.length, 1);
   assert.equal(admin.body[0].student_id, 44);
   assert.equal(admin.body[0].game_student_id, '001234');
+  assert.equal(admin.body[0].progress_archived_at, '2026-08-25T00:00:00.000Z');
   assert.equal(admin.body[0].grade_level, 'Grade 3');
   assert.equal(admin.body[0].section, 'Jade');
   assert.equal(admin.body[0].correct_answers, 0);
@@ -165,6 +167,26 @@ test('canonical students remain visible before gameplay through only their authe
   assert.ok(teacherScope?.sql.includes('from public.teacher_student_relationships tsr'));
   assert.ok(otherTeacherScope?.sql.includes('from public.teacher_student_relationships tsr'));
   assert.ok(parentScope?.sql.includes("lower(tsr.relationship_type) = 'parent'"));
+});
+
+test('active Student progress remains visible with a legacy progress archive marker', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    queryHandler = async () => emptyResult;
+    await close(server);
+  });
+
+  queryHandler = async (sql) => {
+    if (isCanonicalProgressQuery(sql)) return resultRows([canonicalZeroGameplayStudent]);
+    return emptyResult;
+  };
+
+  const response = await requestJson(baseUrl, '/api/students/progress?lifecycle=active', { headers: authHeaders('admin') });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.length, 1);
+  assert.equal(response.body[0].student_id, canonicalZeroGameplayStudent.student_id);
+  assert.equal(response.body[0].progress_archived_at, canonicalZeroGameplayStudent.progress_archived_at);
 });
 
 test('Parent/Teacher keeps its teacher and parent scopes distinct for the same canonical child', async (t) => {
