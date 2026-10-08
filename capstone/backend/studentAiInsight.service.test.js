@@ -326,6 +326,47 @@ test('changed evidence regenerates once and subsequent role reads use the refres
   assert.equal(providerCalls, 2);
 });
 
+test('explicit Refresh AI Insight bypasses an unchanged current cache and stores the refreshed output', async () => {
+  const harness = createHarness();
+  let providerCalls = 0;
+  const base = {
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics: metricsFor([1, 1, 1, 0]),
+    actorId: 1,
+    pool: harness.pool,
+  };
+  const initial = await resolveStudentAiInsight({
+    ...base,
+    generateInsight: async () => {
+      providerCalls += 1;
+      return generatedInsight('Original cached analysis.');
+    },
+  });
+  const refreshed = await resolveStudentAiInsight({
+    ...base,
+    forceRefresh: true,
+    generateInsight: async () => {
+      providerCalls += 1;
+      return generatedInsight('Manually refreshed analysis.');
+    },
+  });
+  const reused = await resolveStudentAiInsight({
+    ...base,
+    generateInsight: async () => {
+      providerCalls += 1;
+      return generatedInsight('Must remain cached.');
+    },
+  });
+
+  assert.equal(initial.status, 'generated');
+  assert.equal(refreshed.status, 'regenerated');
+  assert.equal(refreshed.insight.performance_insight, 'Manually refreshed analysis.');
+  assert.equal(reused.status, 'cached');
+  assert.equal(reused.insight.performance_insight, 'Manually refreshed analysis.');
+  assert.equal(providerCalls, 2);
+});
+
 test('provider failure keeps and marks the prior cached insight while canonical metrics remain available', async () => {
   const harness = createHarness();
   harness.setSaved({

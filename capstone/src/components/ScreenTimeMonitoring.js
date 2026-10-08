@@ -240,6 +240,19 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   }, [authReady, isChildView, mode, page, pageSize, queryFilters, refreshToken, user]);
 
   useEffect(() => {
+    if (!authReady || !user) return undefined;
+    const refreshVisibleSessionData = () => {
+      if (document.visibilityState === 'visible') setRefreshToken((current) => current + 1);
+    };
+    const timer = window.setInterval(refreshVisibleSessionData, 15000);
+    document.addEventListener('visibilitychange', refreshVisibleSessionData);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshVisibleSessionData);
+    };
+  }, [authReady, user]);
+
+  useEffect(() => {
     const totalPages = Math.max(1, Number(pagination.pages) || 1);
     if (page > totalPages) setPage(totalPages);
   }, [page, pagination.pages]);

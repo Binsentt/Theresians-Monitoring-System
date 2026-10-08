@@ -10,7 +10,7 @@ const {
 } = require('./studentAnalyticsGrounding.utils');
 
 const input = {
-  grounding_policy_version: 'grounded-claims-v1',
+  grounding_policy_version: GROUNDING_POLICY_VERSION,
   grade: 'Grade 3',
   results_recorded: 5,
   correct_answers: 3,
@@ -27,7 +27,7 @@ const input = {
 };
 
 const validSelection = {
-  grounding_policy_version: 'grounded-claims-v1',
+  grounding_policy_version: GROUNDING_POLICY_VERSION,
   performance_claim_ids: ['overall_accuracy', 'answer_counts', 'current_quest'],
   strength_claim_ids: [],
   weakness_claim_ids: [],
@@ -47,7 +47,7 @@ test('catalog renders exact supported percentage, count, and current quest facts
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(validSelection, catalog);
 
-  assert.equal(GROUNDING_POLICY_VERSION, 'grounded-claims-v1');
+  assert.equal(GROUNDING_POLICY_VERSION, 'grounded-claims-v2');
   assert.match(insight.performance_insight, /60%/);
   assert.match(insight.performance_insight, /3 correct answers and 2 incorrect answers/);
   assert.match(insight.performance_insight, /Current quest: Fraction Forest\./);
@@ -199,7 +199,7 @@ test('duration evidence alone never creates a weakness or recommendation', () =>
   assert.equal(catalog.recommendation.some((claim) => /duration|playtime/i.test(claim.text)), false);
 });
 
-test('an isolated miss above the cautious 75% threshold is not automatically labeled a weakness', () => {
+test('an isolated recorded miss above the cautious 75% threshold gets a mild grounded improvement area', () => {
   const catalog = buildGroundedClaimCatalog({
     ...input,
     results_recorded: 5,
@@ -211,8 +211,15 @@ test('an isolated miss above the cautious 75% threshold is not automatically lab
     topic_performance: [],
   });
 
-  assert.equal(catalog.permittedClaimIds.weakness.includes('overall_consistency_improvement'), false);
-  assert.equal(catalog.permittedClaimIds.recommendation.includes('review_recorded_misses'), false);
+  assert.ok(catalog.permittedClaimIds.weakness.includes('overall_consistency_improvement'));
+  assert.ok(catalog.permittedClaimIds.recommendation.includes('review_recorded_misses'));
+  const insight = renderValidatedClaimSelection(selection({
+    performance_claim_ids: ['answer_counts', 'overall_accuracy'],
+    strength_claim_ids: ['overall_accuracy_strength'],
+    weakness_claim_ids: ['overall_consistency_improvement'],
+  }), catalog);
+  assert.match(insight.weaknesses[0], /one incorrect response/i);
+  assert.match(insight.recommendations[0], /missed question/i);
 });
 
 test('unselected weakness does not derive its recommendation', () => {

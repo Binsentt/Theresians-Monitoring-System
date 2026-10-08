@@ -152,18 +152,17 @@ describe('ManageUsers edit flow', () => {
     await act(async () => root.render(<ManageUsers />));
 
     const pagination = container.querySelector('.manage-users-pagination');
-    const tableContainer = container.querySelector('.table-container');
+    const tableContainer = container.querySelector('.manage-users-main-table').closest('.table-container');
     expect(pagination).not.toBeNull();
     expect(container.textContent).toContain('Page 1 of 2');
-    expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(8);
-    expect(Array.from(container.querySelectorAll('.manage-users-pagination, .table-container'))[0]).toBe(tableContainer);
-    expect(Array.from(container.querySelectorAll('.manage-users-pagination, .table-container')).at(-1)).toBe(pagination);
+    expect(container.querySelectorAll('.manage-users-main-table tbody tr')).toHaveLength(8);
+    expect(tableContainer.nextElementSibling).toBe(pagination);
 
     const next = Array.from(pagination.querySelectorAll('button')).find((button) => button.textContent === 'Next');
     await act(async () => next.click());
 
     expect(container.textContent).toContain('Page 2 of 2');
-    expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(3);
+    expect(container.querySelectorAll('.manage-users-main-table tbody tr')).toHaveLength(3);
     expect(tableContainer.textContent).toContain('Managed User 09');
     expect(tableContainer.textContent).not.toContain('Managed User 01');
   });
@@ -180,7 +179,7 @@ describe('ManageUsers edit flow', () => {
     const search = container.querySelector('input[aria-label="Search Manage Users"]');
     await act(async () => setFieldValue(search, 'Managed User 01'));
     expect(container.textContent).toContain('Users List (1)');
-    expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(1);
+    expect(container.querySelectorAll('.manage-users-main-table tbody tr')).toHaveLength(1);
     expect(container.textContent).toContain('Managed User 01');
 
     await act(async () => setFieldValue(search, ''));
@@ -194,7 +193,7 @@ describe('ManageUsers edit flow', () => {
     await act(async () => next().click());
     await act(async () => setFieldValue(search, 'Parent'));
     expect(container.textContent).toContain('Users List (2)');
-    expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(2);
+    expect(container.querySelectorAll('.manage-users-main-table tbody tr')).toHaveLength(2);
 
     await act(async () => setFieldValue(search, ''));
     expect(container.textContent).toContain('Page 1 of 2');
@@ -233,14 +232,14 @@ describe('ManageUsers edit flow', () => {
     await clickNext();
     expect(container.textContent).toContain('Page 3 of 3');
 
-    const lastPageRow = container.querySelector('.sts-data-table tbody tr');
+    const lastPageRow = container.querySelector('.manage-users-main-table tbody tr');
     await act(async () => lastPageRow.querySelector('.delete-action-btn').click());
     await act(async () => setFieldValue(document.body.querySelector('textarea[name="deletion-reason"]'), 'Pagination lifecycle check'));
     await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue').click());
     await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Delete Account').click());
 
     expect(container.textContent).toContain('Page 2 of 2');
-    expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(8);
+    expect(container.querySelectorAll('.manage-users-main-table tbody tr')).toHaveLength(8);
     expect(container.querySelector('.table-container').textContent).toContain('Managed User 09');
     expect(container.querySelector('.table-container').textContent).not.toContain('Managed User 17');
   });
@@ -268,11 +267,11 @@ describe('ManageUsers edit flow', () => {
     await clickNext();
     expect(container.textContent).toContain('Page 3 of 3');
 
-    await act(async () => container.querySelector('.sts-data-table tbody tr .restore-action-btn').click());
+    await act(async () => container.querySelector('.manage-users-main-table tbody tr .restore-action-btn').click());
     await act(async () => Promise.resolve());
 
     expect(container.textContent).toContain('Page 2 of 2');
-    expect(container.querySelectorAll('.sts-data-table tbody tr')).toHaveLength(8);
+    expect(container.querySelectorAll('.manage-users-main-table tbody tr')).toHaveLength(8);
     expect(container.querySelector('.table-container').textContent).not.toContain('Managed User 17');
   });
 
@@ -560,6 +559,64 @@ describe('ManageUsers edit flow', () => {
     });
   });
 
+  test('allows an active Student to be permanently deleted directly with the existing safeguards', async () => {
+    localStorage.setItem('rememberToken', 'manage-users-token');
+    let visibleStudents = [{
+      id: 55,
+      student_id: '00550001',
+      student_name: 'Active Student',
+      grade_level: 'Grade 3',
+      section: 'Garnet',
+    }];
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).includes('/api/accounts/55?permanent=true') && options.method === 'DELETE') {
+        visibleStudents = [];
+        return Promise.resolve({ ok: true, json: async () => ({ success: true }) });
+      }
+      if (String(url).includes('/api/admin/id-directory')) {
+        return Promise.resolve({ ok: true, json: async () => ({ students: visibleStudents }) });
+      }
+      if (String(url).includes('/api/accounts')) {
+        return Promise.resolve({ ok: true, json: async () => accountsPayload });
+      }
+      if (String(url).includes('/api/sections/registry')) {
+        return Promise.resolve({ ok: true, json: async () => ({ grades: [] }) });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => root.render(<ManageUsers />));
+    const studentSection = container.querySelector('.manage-users-student-accounts');
+    expect(studentSection).toBeTruthy();
+    const row = Array.from(studentSection.querySelectorAll('tbody tr')).find((item) => item.textContent.includes('Active Student'));
+    const permanentDelete = Array.from(row.querySelectorAll('button')).find((button) => button.textContent === 'Delete Permanently');
+    expect(permanentDelete).toBeTruthy();
+
+    await act(async () => permanentDelete.click());
+    expect(document.body.textContent).toContain('This action is irreversible.');
+    const reason = document.body.querySelector('textarea[name="deletion-reason"]');
+    const continueButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue');
+    await act(async () => continueButton.click());
+    expect(document.body.querySelector('#deletion-reason-error')?.textContent).toBe('A reason is required.');
+    await act(async () => setFieldValue(reason, 'Student account cleanup requested.'));
+    await act(async () => continueButton.click());
+
+    expect(document.body.textContent).toContain('Type DELETE to permanently delete this account.');
+    expect(document.body.textContent).not.toContain('this archived account');
+    const confirmation = document.body.querySelector('input[name="permanent-delete-confirmation"]');
+    const confirmButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Permanently Delete Account');
+    await act(async () => confirmButton.click());
+    expect(document.body.querySelector('#delete-confirmation-error')).toBeTruthy();
+    expect(global.fetch.mock.calls.some(([url, options]) => String(url).includes('/api/accounts/55?permanent=true') && options.method === 'DELETE')).toBe(false);
+
+    await act(async () => setFieldValue(confirmation, 'DELETE'));
+    await act(async () => confirmButton.click());
+    const deleteRequest = global.fetch.mock.calls.find(([url, options]) => String(url).includes('/api/accounts/55?permanent=true') && options.method === 'DELETE');
+    expect(deleteRequest).toBeTruthy();
+    expect(JSON.parse(deleteRequest[1].body)).toEqual({ reason: 'Student account cleanup requested.', permanent_confirmation: 'DELETE' });
+    expect(Array.from(studentSection.querySelectorAll('tbody tr')).some((item) => item.textContent.includes('Active Student'))).toBe(false);
+  });
+
   test('marks long user identity cells for contained ellipsis instead of character wrapping', async () => {
     await act(async () => {
       root.render(<ManageUsers />);
@@ -691,7 +748,7 @@ describe('ManageUsers edit flow', () => {
     }));
   });
 
-  test('Admin can review a Teacher class assignment separately from individual student exceptions', async () => {
+  test('Teacher assignment Section is a registry-backed dropdown that resets and preselects with Grade', async () => {
     localStorage.setItem('rememberToken', 'manage-users-token');
     global.fetch = jest.fn((url) => {
       if (String(url).includes('/api/accounts')) {
@@ -701,12 +758,15 @@ describe('ManageUsers edit flow', () => {
         return Promise.resolve({
           ok: true,
           json: async () => ({
-            assignments: [{ id: 71, grade_level: 'Grade 3', section: 'Rizal', section_key: 'rizal' }],
+            assignments: [{ id: 71, grade_level: 'Grade 3', section: 'Garnet', section_key: 'garnet' }],
           }),
         });
       }
-      if (String(url).includes('/api/teacher-student-relationships')) {
-        return Promise.resolve({ ok: true, json: async () => ({ relationships: [] }) });
+      if (String(url).includes('/api/sections/registry')) {
+        return Promise.resolve({ ok: true, json: async () => ({ grades: [
+          { grade_level: 'Grade 3', sections: ['Garnet', 'Jade'] },
+          { grade_level: 'Grade 4', sections: ['Onyx', 'Moonstone'] },
+        ] }) });
       }
       return Promise.reject(new Error(`Unexpected fetch: ${url}`));
     });
@@ -721,14 +781,33 @@ describe('ManageUsers edit flow', () => {
 
     expect(document.body.textContent).toContain('Class Assignments');
     expect(document.body.textContent).toContain('Grade 3');
-    expect(document.body.textContent).toContain('Rizal');
-    expect(document.body.textContent).toContain('Individual Student Exceptions');
+    expect(document.body.textContent).toContain('Garnet');
+    expect(document.body.textContent).not.toMatch(/Individual Student Exceptions|Student Email|Add Student Exception/);
     expect(global.fetch).toHaveBeenCalledWith('/api/teacher-class-assignments?teacherId=7', expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer manage-users-token' }),
     }));
+    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/teacher-student-relationships'), expect.anything());
+
+    const grade = document.body.querySelector('#teacher-assignment-grade');
+    const section = document.body.querySelector('#teacher-assignment-section');
+    expect(section.tagName).toBe('SELECT');
+    expect(section.disabled).toBe(true);
+    await act(async () => setSelectValue(grade, 'Grade 3'));
+    expect(section.disabled).toBe(false);
+    expect(Array.from(section.options).map((option) => option.value)).toEqual(['', 'Garnet', 'Jade']);
+    await act(async () => setSelectValue(section, 'Garnet'));
+    await act(async () => setSelectValue(grade, 'Grade 4'));
+    expect(section.value).toBe('');
+    expect(Array.from(section.options).map((option) => option.value)).toEqual(['', 'Onyx', 'Moonstone']);
+
+    const assignmentRow = Array.from(document.body.querySelectorAll('tr')).find((row) => row.textContent.includes('Garnet'));
+    const editAssignment = Array.from(assignmentRow.querySelectorAll('button')).find((button) => button.textContent === 'Edit');
+    await act(async () => editAssignment.click());
+    expect(grade.value).toBe('Grade 3');
+    expect(section.value).toBe('Garnet');
   });
 
-  test('Admin keeps Parent/Teacher class assignments, teacher exceptions, and linked children distinct', async () => {
+  test('Parent/Teacher preserves linked-child scope without Teacher exception UI or requests', async () => {
     const parentTeacher = {
       id: 11,
       name: 'Parent Teacher User',
@@ -753,17 +832,6 @@ describe('ManageUsers edit flow', () => {
       if (String(url).includes('/api/teacher-class-assignments')) {
         return Promise.resolve({ ok: true, json: async () => ({ assignments: [] }) });
       }
-      if (String(url).includes('/api/teacher-student-relationships')) {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({
-            relationships: [
-              { id: 51, relationship_type: 'teacher', student_name: 'Assigned Exception', game_student_id: '001101' },
-              { id: 52, relationship_type: 'parent', student_name: 'Linked Child', game_student_id: '001102' },
-            ],
-          }),
-        });
-      }
       return Promise.reject(new Error(`Unexpected fetch: ${url}`));
     });
 
@@ -777,10 +845,11 @@ describe('ManageUsers edit flow', () => {
     });
 
     expect(document.body.textContent).toContain('Class Assignments');
-    expect(document.body.textContent).toContain('Individual Student Exceptions');
-    expect(document.body.textContent).toContain('Assigned Exception');
+    expect(document.body.textContent).not.toMatch(/Individual Student Exceptions|Assigned Exception|Student Email|Add Student Exception/);
     expect(document.body.textContent).toContain('Children (1)');
     expect(document.body.textContent).toContain('Linked Child');
+    expect(global.fetch).toHaveBeenCalledWith('/api/accounts/11/children', expect.anything());
+    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/teacher-student-relationships'), expect.anything());
   });
 
   test('Linked Children shows the authoritative Student ID returned by the backend', async () => {

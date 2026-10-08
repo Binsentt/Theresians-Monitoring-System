@@ -78,6 +78,7 @@ describe('ScreenTimeMonitoring', () => {
     container.remove();
     delete global.fetch;
     window.print.mockRestore();
+    jest.useRealTimers();
   });
 
   test('admin all-student view fetches Screen Time Monitoring with parent IDs visible', async () => {
@@ -276,6 +277,55 @@ describe('ScreenTimeMonitoring', () => {
     const totalPlaytimeCard = Array.from(container.querySelectorAll('.screen-time-summary-card'))
       .find((card) => card.querySelector('span')?.textContent === 'Total playtime');
     expect(totalPlaytimeCard.querySelector('strong').textContent).toBe('5 min');
+  });
+
+  test('refreshes active Playing Now session fields from the server while the page remains open', async () => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin User' }));
+    localStorage.setItem('rememberToken', 'remember-token');
+    jest.useFakeTimers();
+    let requestCount = 0;
+    global.fetch = jest.fn(() => {
+      requestCount += 1;
+      const seconds = requestCount === 1 ? 61 : 121;
+      return jsonResponse({
+        data: [{
+          ...playtimePayload.data[0],
+          id: 91,
+          start_time: '2026-06-01T09:00:00.000Z',
+          end_time: null,
+          total_playtime_seconds: seconds,
+          status: 'Playing',
+        }],
+        pagination: { page: 1, limit: 10, total: 1, pages: 1 },
+        summary: { total_records: 1, total_playtime_seconds: seconds, playing_count: 1 },
+      });
+    });
+
+    await act(async () => {
+      root.render(<ScreenTimeMonitoring mode="all" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const row = container.querySelector('.screen-time-table tbody tr');
+    expect(requestCount).toBe(1);
+    expect(row.textContent).toContain('Playing');
+    expect(row.textContent).toContain('1 min');
+    const headerIndex = (label) => Array.from(container.querySelectorAll('.screen-time-table thead th'))
+      .findIndex((header) => header.textContent.trim() === label);
+    expect(row.cells[headerIndex('Start Time')].textContent).not.toBe('-');
+    expect(row.cells[headerIndex('End Time')].textContent).toBe('-');
+
+    await act(async () => {
+      jest.advanceTimersByTime(15000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(requestCount).toBe(2);
+    expect(container.querySelector('.screen-time-table tbody tr').textContent).toContain('2 min');
+    expect(Array.from(container.querySelectorAll('.screen-time-summary-card'))
+      .find((card) => card.querySelector('span')?.textContent === 'Playing now')
+      .querySelector('strong').textContent).toBe('1');
   });
 
   test('prepares the full authorised filtered dataset without changing the visible page', async () => {

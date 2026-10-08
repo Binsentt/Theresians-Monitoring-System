@@ -124,6 +124,7 @@ export default function StudentAnalytics() {
           ...buildAuthHeaders(),
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify({ refresh: true }),
       });
       const data = await response.json();
       if (data?.status === 'insufficient_data' || data?.status === 'no_data') {

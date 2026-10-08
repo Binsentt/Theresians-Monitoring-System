@@ -38,6 +38,8 @@ describe('PrintReportPortal', () => {
     expect(root.querySelectorAll('.printable-table-report')).toHaveLength(1);
     expect(root.textContent).toContain('Top Achievers Report');
     expect(root.textContent).toContain('Records: 1');
+    expect(root.querySelector('.printable-report-footer')).toBeTruthy();
+    expect(root.querySelector('.printable-report-footer').textContent).toContain('End of report');
     expect(root.querySelector('button')).toBeNull();
     expect(printSpy).toHaveBeenCalledTimes(1);
 

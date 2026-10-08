@@ -172,6 +172,7 @@ const {
   restoreParentFamily,
   permanentlyDeleteLegacySixDigitStudents,
   permanentlyDeleteManagedStudent,
+  permanentlyDeleteStudentAccount,
   permanentlyDeleteParentFamily,
   unlinkManagedChild,
 } = require('./familyLifecycle.service');
@@ -1819,11 +1820,13 @@ const normalizeTeacherClassAssignment = (payload = {}) => {
   }
   const sectionResult = normalizeSchoolSection(payload.section, { required: true });
   if (sectionResult.error) return sectionResult;
+  const canonicalSection = resolveCanonicalSection(gradeLevel, sectionResult.section);
+  if (!canonicalSection) return { error: `Section must be a registered section for ${gradeLevel}.` };
 
   return {
     gradeLevel,
-    section: sectionResult.section,
-    sectionKey: sectionResult.sectionKey,
+    section: canonicalSection,
+    sectionKey: normalizeSchoolSection(canonicalSection, { required: true }).sectionKey,
   };
 };
 
@@ -2229,13 +2232,6 @@ const buildTeacherStudentScopePredicate = ({ teacherPlaceholder, studentColumn }
           WHERE tca.teacher_account_id = ${teacherPlaceholder}
             AND tca.grade_level = scoped_student.grade_level
             AND tca.section_key = LOWER(REGEXP_REPLACE(BTRIM(COALESCE(scoped_student.section, '')), '\\s+', ' ', 'g'))
-        )
-        OR EXISTS (
-          SELECT 1
-          FROM public.teacher_student_relationships tsr
-          WHERE tsr.teacher_id = ${teacherPlaceholder}
-            AND tsr.student_id = scoped_student.id
-            AND LOWER(tsr.relationship_type) = 'teacher'
         )
       )
   )
@@ -5053,10 +5049,7 @@ app.get('/api/accounts', requireAccountManagementAdmin, async (req, res) => {
 // exposes only directory fields, never credentials or profile secrets.
 app.get('/api/admin/id-directory', requireAccountManagementAdmin, async (req, res) => {
   try {
-    const archived = String(req.query.archived).toLowerCase() === 'true';
-    const archivePredicate = archived
-      ? 'COALESCE(a.is_archived, false) = true'
-      : 'COALESCE(a.is_archived, false) = false';
+    const archived = false;
     const result = await pool.query(
       `SELECT a.id,
               CASE WHEN LOWER(a.role) = 'student' THEN 'student' ELSE 'teacher' END AS directory_type,
@@ -5083,7 +5076,7 @@ app.get('/api/admin/id-directory', requireAccountManagementAdmin, async (req, re
            AND LOWER(r.relationship_type) = 'parent'
            AND LOWER(parent.role) IN ('parent', 'parent_teacher')
        ) parent_link ON TRUE
-       WHERE ${archivePredicate}
+       WHERE COALESCE(a.is_archived, false) = false
          AND (LOWER(a.role) = 'student' OR LOWER(a.role) = ANY($1::text[]))
        ORDER BY LOWER(a.name), a.id`,
       [TEACHER_DIRECTORY_ROLES]
@@ -5355,7 +5348,8 @@ app.get('/api/teacher-student-relationships', requireAccountManagementAdmin, asy
       `SELECT r.id, r.relationship_type, r.created_at, s.id AS student_id, s.name AS student_name, s.email AS student_email, s.game_student_id
        FROM public.teacher_student_relationships r
        JOIN public.accounts s ON s.id = r.student_id
-       WHERE r.teacher_id = $1`,
+       WHERE r.teacher_id = $1
+         AND LOWER(r.relationship_type) = 'parent'`,
       [teacherId]
     );
 
@@ -5369,12 +5363,17 @@ app.get('/api/teacher-student-relationships', requireAccountManagementAdmin, asy
 app.post('/api/teacher-student-relationships', requireAccountManagementAdmin, async (req, res) => {
   const { teacherId, studentEmail, relationship_type } = req.body;
   try {
+    const normalizedRelationshipType = String(relationship_type || 'parent').trim().toLowerCase();
+    if (normalizedRelationshipType !== 'parent') {
+      return res.status(400).json({ error: 'Only Parent-child relationships can be managed here.' });
+    }
+    if (!String(studentEmail || '').trim()) return res.status(400).json({ error: 'Student email is required.' });
     const resultTeacher = await pool.query('SELECT * FROM accounts WHERE id = $1', [teacherId]);
     if (resultTeacher.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
     const teacher = resultTeacher.rows[0];
     const ownerRole = normalizeAccountRole(teacher.role);
-    if (!accountHasTeacherAccess(ownerRole) && !accountHasParentAccess(ownerRole)) {
-      return res.status(400).json({ error: 'Selected user must be a teacher or parent' });
+    if (!accountHasParentAccess(ownerRole)) {
+      return res.status(400).json({ error: 'Selected user must have Parent access.' });
     }
 
     const resultStudent = await pool.query('SELECT * FROM accounts WHERE LOWER(email) = $1', [studentEmail.toLowerCase().trim()]);
@@ -5384,7 +5383,7 @@ app.post('/api/teacher-student-relationships', requireAccountManagementAdmin, as
 
     const existing = await pool.query(
       'SELECT * FROM public.teacher_student_relationships WHERE teacher_id = $1 AND student_id = $2 AND relationship_type = $3',
-      [teacherId, student.id, relationship_type || 'Parent']
+      [teacherId, student.id, 'Parent']
     );
     if (existing.rows.length > 0) {
       return res.status(409).json({ error: 'Relationship already exists' });
@@ -5394,7 +5393,7 @@ app.post('/api/teacher-student-relationships', requireAccountManagementAdmin, as
       `INSERT INTO public.teacher_student_relationships (teacher_id, student_id, relationship_type)
        VALUES ($1, $2, $3)
        RETURNING *`,
-      [teacherId, student.id, relationship_type || 'Parent']
+      [teacherId, student.id, 'Parent']
     );
 
     res.json({ success: true, relationship: insertResult.rows[0] });
@@ -5409,7 +5408,13 @@ app.delete('/api/teacher-student-relationships/:id', requireAccountManagementAdm
     const relationId = parseInt(req.params.id, 10);
     if (Number.isNaN(relationId)) return res.status(400).json({ error: 'Invalid relationship ID' });
 
-    await pool.query('DELETE FROM public.teacher_student_relationships WHERE id = $1', [relationId]);
+    const result = await pool.query(
+      `DELETE FROM public.teacher_student_relationships
+       WHERE id = $1 AND LOWER(relationship_type) = 'parent'
+       RETURNING id`,
+      [relationId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Parent-child relationship not found.' });
     res.json({ success: true });
   } catch (err) {
     console.error('Delete relationship failed:', err.message);
@@ -8492,7 +8497,7 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
       return res.status(403).json({ error: 'You cannot delete your own account.' });
     }
     const isStudentAccount = accountRole === 'student';
-    if (!isWebsiteManagedAccountRole(accountRole) && !(isStudentAccount && !permanent)) {
+    if (!isWebsiteManagedAccountRole(accountRole) && !isStudentAccount) {
       return res.status(403).json({ error: 'Manage Users can only delete website accounts.' });
     }
     if (accountRole === 'admin') {
@@ -8506,7 +8511,7 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
     if (reasonResult.error) {
       return res.status(400).json({ error: reasonResult.error });
     }
-    if (permanent && !targetAccount.is_archived) {
+    if (permanent && !targetAccount.is_archived && !isStudentAccount) {
       return res.status(409).json({ error: 'Only archived accounts can be permanently deleted.' });
     }
     if (permanent && req.body?.permanent_confirmation !== 'DELETE') {
@@ -8549,6 +8554,14 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
           message: 'Parent family permanently deleted',
           deleted_child_count: familyResult.deletedStudents.length,
         });
+      }
+      if (isStudentAccount) {
+        const deletion = await permanentlyDeleteStudentAccount(pool, id);
+        await writeAdminAuditLog(req.authenticatedUser, 'Delete Account', targetAccount, {
+          ...auditOptions,
+          afterMetadata: { permanently_deleted_student_id: deletion.deletedStudent?.id ?? Number(id) },
+        });
+        return res.json({ success: true, message: 'Student account and owned records permanently deleted' });
       }
       await pool.query('DELETE FROM public.login_otp_device_skips WHERE user_id = $1', [id]);
       await pool.query('DELETE FROM public.accounts WHERE id = $1', [id]);
@@ -11463,6 +11476,7 @@ app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, 
       metrics,
       activityLogs,
       quizSessions,
+      forceRefresh: req.body?.refresh === true,
       actorId: req.authenticatedUser.id,
       pool,
     });

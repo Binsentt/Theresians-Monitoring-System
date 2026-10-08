@@ -1674,3 +1674,62 @@
 [data-theme='dark'] .student-insight-recommendations .student-card-heading h2 {
   color: var(--text-primary, #f8fafc);
 }
+
+[data-theme='dark'] .grounded-ai-analysis .student-dashboard-card {
+  color: #e5edf8;
+  background: #172b45;
+  border-color: #38536f;
+}
+
+[data-theme='dark'] .grounded-ai-analysis .student-insight-card {
+  background: linear-gradient(180deg, #1a304b 0%, #14263d 100%);
+}
+
+[data-theme='dark'] .grounded-ai-analysis .student-card-heading h2,
+[data-theme='dark'] .grounded-ai-analysis .student-card-heading p,
+[data-theme='dark'] .grounded-ai-analysis .grounded-ai-performance-label,
+[data-theme='dark'] .student-insight-guidance-heading h2,
+[data-theme='dark'] .student-insight-guidance-heading p,
+[data-theme='dark'] .grounded-ai-analysis .student-insight-list li,
+[data-theme='dark'] .grounded-ai-analysis .student-insight-list > p,
+[data-theme='dark'] .grounded-ai-analysis .student-insight-highlight,
+[data-theme='dark'] .grounded-ai-analysis .student-insight-copy,
+[data-theme='dark'] .grounded-ai-analysis .grounded-ai-evidence-meta {
+  color: #e5edf8;
+}
+
+[data-theme='dark'] .grounded-ai-analysis .student-insight-copy,
+[data-theme='dark'] .grounded-ai-analysis .grounded-ai-evidence-meta,
+[data-theme='dark'] .grounded-ai-analysis .student-card-heading p,
+[data-theme='dark'] .student-insight-guidance-heading p {
+  color: #bdcbe0;
+}
+
+[data-theme='dark'] .grounded-ai-analysis .student-insight-empty {
+  color: #cbd7e8;
+  background: #203750;
+  border-color: #49627e;
+}
+
+[data-theme='dark'] .grounded-ai-analysis .grounded-ai-status.preliminary {
+  color: #ffdf8a;
+  background: #423717;
+  border-color: #76652d;
+}
+
+[data-theme='dark'] .grounded-ai-analysis .grounded-ai-status.warning {
+  color: #ffc9c5;
+  background: #47272a;
+  border-color: #8c4b50;
+}
+
+[data-theme='dark'] .grounded-ai-analysis .student-insight-action {
+  color: #fff;
+  border-color: #527ed0;
+}
+
+[data-theme='dark'] .grounded-ai-analysis .student-insight-action:hover,
+[data-theme='dark'] .grounded-ai-analysis .student-insight-action:focus-visible {
+  filter: brightness(1.12);
+  outline-color: #a8c7ff;
+}

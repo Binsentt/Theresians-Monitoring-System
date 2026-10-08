@@ -303,6 +303,34 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('Record more gameplay evidence.');
   });
 
+  test('Refresh AI Insight posts an explicit refresh and renders the refreshed response', async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
+        metrics: { validResultCount: 4, accuracy: 75, totalQuestions: 4 },
+        aiInsight: {
+          status: 'cached', valid_result_count: 4,
+          insight: { performance_insight: 'Old cached insight.', strengths: [], weaknesses: [], recommendations: [] },
+        },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        status: 'regenerated', valid_result_count: 4,
+        insight: { performance_insight: 'Updated from Refresh AI Insight.', strengths: [], weaknesses: [], recommendations: [] },
+      }));
+
+    await act(async () => root.render(<StudentAnalytics />));
+    const refresh = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Refresh AI Insight');
+    expect(refresh).toBeTruthy();
+    await act(async () => refresh.click());
+
+    const request = global.fetch.mock.calls.find(([, options]) => options?.method === 'POST');
+    expect(request).toBeTruthy();
+    expect(JSON.parse(request[1].body)).toEqual({ refresh: true });
+    expect(container.textContent).toContain('Updated from Refresh AI Insight.');
+    expect(container.textContent).not.toContain('Old cached insight.');
+    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Refreshing AI insight...')).toBe(false);
+  });
+
   test('offers a dedicated selected-student analytics print report without dashboard controls', async () => {
     global.fetch = jest.fn(() => jsonResponse({
       progress: { student_id: 44, game_student_id: '001234', student_name: 'Ava Santos', grade_level: 'Grade 3', section: 'Section A' },

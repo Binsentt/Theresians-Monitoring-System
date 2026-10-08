@@ -58,6 +58,10 @@ export function PreparedTableReportContent({ report }) {
           )}
         </tbody>
       </table>
+      <footer className="printable-report-footer">
+        <span>End of report</span>
+        <span>Theresian's Quest · {safe.recordCount} records</span>
+      </footer>
     </section>
   );
 }

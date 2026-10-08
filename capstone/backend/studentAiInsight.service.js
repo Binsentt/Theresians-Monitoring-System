@@ -82,6 +82,7 @@ async function resolveStudentAiInsight({
   quizSessions = [],
   actorId = null,
   aiGenerationEnabled = isAiGenerationEnabled(),
+  forceRefresh = false,
   pool,
   generateInsight = generateGroundedStudentInsight,
   onInsightDiagnostics = null,
@@ -111,7 +112,7 @@ async function resolveStudentAiInsight({
       isStale: Boolean(initialCache?.insight) && !isCurrentCache(initialCache, inputFingerprint),
     });
   }
-  if (isCurrentCache(initialCache, inputFingerprint)) {
+  if (!forceRefresh && isCurrentCache(initialCache, inputFingerprint)) {
     return buildCachedState({ baseState, cachedInsight: initialCache });
   }
 
@@ -132,7 +133,7 @@ async function resolveStudentAiInsight({
     await client.query('SELECT pg_advisory_xact_lock($1)', [studentId]);
 
     const lockedCache = await readCachedInsight(client, studentId);
-    if (isCurrentCache(lockedCache, inputFingerprint)) {
+    if (!forceRefresh && isCurrentCache(lockedCache, inputFingerprint)) {
       await client.query('COMMIT');
       transactionStarted = false;
       return buildCachedState({ baseState, cachedInsight: lockedCache });

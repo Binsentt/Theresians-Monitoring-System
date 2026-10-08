@@ -116,7 +116,7 @@ test('includes deterministic per-quest timing and graded evidence in the provide
 
 test('metrics semantics and current difficulty are fingerprinted without changing the grounding policy', () => {
   const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics: { ...metrics, currentDifficulty: 'Easy', totalProgressVerified: false } });
-  assert.equal(input.grounding_policy_version, 'grounded-claims-v1');
+  assert.equal(input.grounding_policy_version, GROUNDING_POLICY_VERSION);
   assert.equal(input.metrics_definition_version, 'student-metrics-v2');
   assert.equal(input.current_difficulty, 'Easy');
   assert.equal(input.total_progress_verified, false);

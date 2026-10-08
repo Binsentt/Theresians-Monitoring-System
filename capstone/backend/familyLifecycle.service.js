@@ -332,6 +332,26 @@ const permanentlyDeleteManagedStudent = async (pool, parentId, studentId, option
   return { managed, deletedStudent: deletedStudents[0] };
 });
 
+const permanentlyDeleteStudentAccount = async (pool, studentId) => withFamilyTransaction(pool, async (client) => {
+  const normalizedStudentId = normalizeId(studentId, 'Student account ID');
+  const result = await client.query(
+    `SELECT id, role, is_archived, game_student_id
+     FROM public.accounts
+     WHERE id = $1
+     FOR UPDATE`,
+    [normalizedStudentId]
+  );
+  const student = result.rows[0];
+  if (!student) throw createFamilyError('Student account not found.', 404);
+  if (normalizeRole(student.role) !== 'student') throw createFamilyError('Selected account must be a Student account.', 400);
+
+  const deletedStudents = await deleteStudentOwnedRecords(client, {
+    studentIds: [normalizedStudentId],
+    parentCode: null,
+  });
+  return { deletedStudent: deletedStudents[0] };
+});
+
 module.exports = {
   assertExclusiveParentOwnership,
   deleteStudentOwnedRecords,
@@ -339,6 +359,7 @@ module.exports = {
   restoreParentFamily,
   permanentlyDeleteLegacySixDigitStudents,
   permanentlyDeleteManagedStudent,
+  permanentlyDeleteStudentAccount,
   permanentlyDeleteParentFamily,
   readManagedChildrenForUpdate,
   unlinkManagedChild,

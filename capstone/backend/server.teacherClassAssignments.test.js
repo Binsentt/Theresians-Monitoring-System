@@ -85,7 +85,7 @@ const canonicalZeroGameplayStudent = {
   student_role: 'student',
   game_student_id: '001234',
   grade_level: 'Grade 3',
-  section: 'Rizal',
+  section: 'Garnet',
   score: null,
   correct_answers: null,
   total_questions: null,
@@ -126,8 +126,8 @@ test('only an Admin can create, update, list, and remove a normalized teacher cl
     id: 71,
     teacher_account_id: 16,
     grade_level: 'Grade 3',
-    section: 'Rizal',
-    section_key: 'rizal',
+    section: 'Garnet',
+    section_key: 'garnet',
   };
   let insertParams = null;
   let duplicateInsert = false;
@@ -148,7 +148,7 @@ test('only an Admin can create, update, list, and remove a normalized teacher cl
       return resultRows([assignment]);
     }
     if (sql.startsWith('update public.teacher_class_assignments')) {
-      return resultRows([{ ...assignment, grade_level: 'Grade 4', section: 'Mabini', section_key: 'mabini' }]);
+      return resultRows([{ ...assignment, grade_level: 'Grade 4', section: 'Onyx', section_key: 'onyx' }]);
     }
     if (sql.startsWith('delete from public.teacher_class_assignments')) return resultRows([assignment]);
     return emptyResult;
@@ -157,7 +157,7 @@ test('only an Admin can create, update, list, and remove a normalized teacher cl
   const nonAdmin = await requestJson(baseUrl, '/api/teacher-class-assignments', {
     method: 'POST',
     headers: authHeaders('teacher'),
-    body: JSON.stringify({ teacherId: 16, grade_level: 'Grade 3', section: 'Rizal' }),
+    body: JSON.stringify({ teacherId: 16, grade_level: 'Grade 3', section: 'Garnet' }),
   });
   assert.equal(nonAdmin.status, 403);
 
@@ -167,17 +167,25 @@ test('only an Admin can create, update, list, and remove a normalized teacher cl
   const created = await requestJson(baseUrl, '/api/teacher-class-assignments', {
     method: 'POST',
     headers: authHeaders('admin'),
-    body: JSON.stringify({ teacherId: 16, grade_level: 'Grade 3', section: '  Rizal  ' }),
+    body: JSON.stringify({ teacherId: 16, grade_level: 'Grade 3', section: '  gArNeT  ' }),
   });
   assert.equal(created.status, 201);
-  assert.equal(created.body.assignment.section, 'Rizal');
-  assert.deepEqual(insertParams.slice(0, 4), [16, 'Grade 3', 'Rizal', 'rizal']);
+  assert.equal(created.body.assignment.section, 'Garnet');
+  assert.deepEqual(insertParams.slice(0, 4), [16, 'Grade 3', 'Garnet', 'garnet']);
+
+  const unregisteredSection = await requestJson(baseUrl, '/api/teacher-class-assignments', {
+    method: 'POST',
+    headers: authHeaders('admin'),
+    body: JSON.stringify({ teacherId: 16, grade_level: 'Grade 3', section: 'Free Text Section' }),
+  });
+  assert.equal(unregisteredSection.status, 400);
+  assert.match(unregisteredSection.body.error, /registered section/i);
 
   duplicateInsert = true;
   const duplicate = await requestJson(baseUrl, '/api/teacher-class-assignments', {
     method: 'POST',
     headers: authHeaders('admin'),
-    body: JSON.stringify({ teacherId: 16, grade_level: 'Grade 3', section: 'rizal' }),
+    body: JSON.stringify({ teacherId: 16, grade_level: 'Grade 3', section: 'Garnet' }),
   });
   assert.equal(duplicate.status, 409);
 
@@ -188,15 +196,15 @@ test('only an Admin can create, update, list, and remove a normalized teacher cl
   const updated = await requestJson(baseUrl, '/api/teacher-class-assignments/71', {
     method: 'PUT',
     headers: authHeaders('admin'),
-    body: JSON.stringify({ grade_level: 'Grade 4', section: 'Mabini' }),
+    body: JSON.stringify({ grade_level: 'Grade 4', section: 'Onyx' }),
   });
   assert.equal(updated.status, 200);
-  assert.equal(updated.body.assignment.section_key, 'mabini');
+  assert.equal(updated.body.assignment.section_key, 'onyx');
 
   const nonAdminUpdate = await requestJson(baseUrl, '/api/teacher-class-assignments/71', {
     method: 'PUT',
     headers: authHeaders('teacher'),
-    body: JSON.stringify({ grade_level: 'Grade 4', section: 'Mabini' }),
+    body: JSON.stringify({ grade_level: 'Grade 4', section: 'Onyx' }),
   });
   assert.equal(nonAdminUpdate.status, 403);
 
@@ -211,6 +219,30 @@ test('only an Admin can create, update, list, and remove a normalized teacher cl
     headers: authHeaders('teacher'),
   });
   assert.equal(nonAdminDelete.status, 403);
+});
+
+test('legacy direct Teacher relationship creation is rejected without touching Parent-child records', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let relationshipWrites = 0;
+  t.after(async () => {
+    queryHandler = async () => emptyResult;
+    await close(server);
+  });
+  queryHandler = async (sql) => {
+    if (sql.startsWith('insert into public.teacher_student_relationships')) relationshipWrites += 1;
+    return emptyResult;
+  };
+
+  const legacyTeacherException = await requestJson(baseUrl, '/api/teacher-student-relationships', {
+    method: 'POST',
+    headers: authHeaders('admin'),
+    body: JSON.stringify({ teacherId: 16, studentEmail: 'student@example.test', relationship_type: 'Teacher' }),
+  });
+
+  assert.equal(legacyTeacherException.status, 400);
+  assert.match(legacyTeacherException.body.error, /only Parent-child relationships/i);
+  assert.equal(relationshipWrites, 0);
 });
 
 test('class assignment grants only the matching teacher automatic canonical zero-gameplay visibility', async (t) => {
@@ -255,8 +287,7 @@ test('class assignment grants only the matching teacher automatic canonical zero
   const teacherScope = observedScopeSql.find((entry) => entry.params.includes(16));
   assert.match(teacherScope.sql, /teacher_class_assignments/);
   assert.match(teacherScope.sql, /tca\.section_key = lower\(regexp_replace\(btrim\(coalesce\(scoped_student\.section, ''\)\), '\\s\+', ' ', 'g'\)\)/);
-  assert.match(teacherScope.sql, /teacher_student_relationships/);
-  assert.match(teacherScope.sql, /lower\(tsr\.relationship_type\) = 'teacher'/);
+  assert.doesNotMatch(teacherScope.sql, /lower\(tsr\.relationship_type\) = 'teacher'/);
 });
 
 test('Parent/Teacher keeps assigned-class teacher scope and parent-child scope isolated', async (t) => {
@@ -292,6 +323,7 @@ test('Parent/Teacher keeps assigned-class teacher scope and parent-child scope i
   assert.equal(parentContext.body.length, 1);
   assert.deepEqual(unrelatedParent.body, []);
   assert.match(teacherScopeSql, /teacher_class_assignments/);
+  assert.doesNotMatch(teacherScopeSql, /lower\(tsr\.relationship_type\) = 'teacher'/);
   assert.doesNotMatch(teacherScopeSql, /lower\(tsr\.relationship_type\) = 'parent'/);
   assert.match(parentScopeSql, /lower\(tsr\.relationship_type\) = 'parent'/);
   assert.doesNotMatch(parentScopeSql, /teacher_class_assignments/);
@@ -333,6 +365,6 @@ test('Teacher-facing analytics, activity, playtime, and student-detail routes sh
   assert.ok(scopedQueries.length >= 5);
   scopedQueries.forEach((sql) => {
     assert.match(sql, /teacher_class_assignments/);
-    assert.match(sql, /teacher_student_relationships/);
+    assert.doesNotMatch(sql, /lower\(tsr\.relationship_type\) = 'teacher'/);
   });
 });

@@ -1,4 +1,4 @@
-const GROUNDING_POLICY_VERSION = 'grounded-claims-v1';
+const GROUNDING_POLICY_VERSION = 'grounded-claims-v2';
 const WEAK_PERFORMANCE_THRESHOLD = 75;
 const MAX_SELECTION_ITEMS = 5;
 const MAX_TOPIC_LABEL_LENGTH = 80;
@@ -122,7 +122,8 @@ function addRecordedPerformanceClaims(catalog, input) {
       category: 'non-performance',
     });
     if (
-      input.accuracy === WEAK_PERFORMANCE_THRESHOLD
+      input.accuracy >= WEAK_PERFORMANCE_THRESHOLD
+      && input.accuracy < 100
       && isNonNegativeInteger(input.incorrect_answers)
       && input.incorrect_answers > 0
     ) {
@@ -137,7 +138,7 @@ function addRecordedPerformanceClaims(catalog, input) {
         id: 'review_recorded_misses',
         supportId: 'overall_consistency_improvement',
         supportCategory: 'weakness',
-        text: 'Review the missed question and practice similar problems to improve consistency.',
+        text: `Review the ${input.incorrect_answers === 1 ? 'missed question' : 'missed questions'} and practice similar problems to improve consistency.`,
       });
     }
   }

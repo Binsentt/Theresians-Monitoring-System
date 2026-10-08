@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const Module = require('node:module');
 const { buildStudentAnalyticsMetrics } = require('./studentAnalyticsMetrics.utils');
 const { buildGroundedInsightInput, buildInsightFingerprint } = require('./studentAnalyticsInsight.utils');
+const { GROUNDING_POLICY_VERSION } = require('./studentAnalyticsGrounding.utils');
 
 const empty = { rows: [] };
 const accountRoles = { admin: 'admin', teacher: 'teacher', parent: 'parent', parentTeacher: 'parent_teacher' };
@@ -156,7 +157,7 @@ test('automatic analytics detail reads return AI_PAUSED with zero outbound provi
   const get = await setup(t, [1, 1, 1, 0], {
     aiGenerationEnabled: 'false',
     providerSelection: {
-      grounding_policy_version: 'grounded-claims-v1',
+      grounding_policy_version: GROUNDING_POLICY_VERSION,
       performance_claim_ids: ['overall_accuracy'],
       strength_claim_ids: [],
       weakness_claim_ids: [],
@@ -174,7 +175,7 @@ test('automatic analytics detail reads return AI_PAUSED with zero outbound provi
 test('authorized detail reads automatically share a preliminary grounded insight for four valid results', async (t) => {
   const get = await setup(t, [1, 1, 1, 0], {
     providerSelection: {
-      grounding_policy_version: 'grounded-claims-v1',
+      grounding_policy_version: GROUNDING_POLICY_VERSION,
       performance_claim_ids: ['results_recorded', 'answer_counts', 'overall_accuracy', 'current_difficulty'],
       strength_claim_ids: ['overall_accuracy_strength', 'difficulty_easy_strength'],
       weakness_claim_ids: [],

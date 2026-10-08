@@ -175,6 +175,7 @@ export function StudentInsightsPanel({ students = [], role = 'admin' }) {
         headers: regenerate
           ? { ...buildAuthHeaders(), 'Content-Type': 'application/json' }
           : buildAuthHeaders(),
+        ...(regenerate ? { body: JSON.stringify({ refresh: true }) } : {}),
       });
       const payload = await response.json().catch(() => ({}));
       if (requestVersion.current !== version) return;

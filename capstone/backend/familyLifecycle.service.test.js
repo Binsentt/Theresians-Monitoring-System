@@ -146,6 +146,47 @@ test('explicit Student deletion removes owned data and releases the Student acco
   assert.ok(sql.includes('commit'));
 });
 
+test('permanent Admin Student deletion cleans only the target Student-owned rows in one transaction', async () => {
+  const { permanentlyDeleteStudentAccount } = require('./familyLifecycle.service');
+  const targetStudent = { id: 44, name: 'Ava Santos', game_student_id: '00123456', role: 'student', is_archived: false };
+  const pool = createPool(async (sql, params) => {
+    if (sql.includes('from public.accounts') && sql.includes('for update')) return { rows: [targetStudent] };
+    if (sql.startsWith('delete from public.accounts')) return { rows: [{ id: 44, game_student_id: '00123456' }] };
+    if (sql.startsWith('delete from public.game_results') || sql.startsWith('delete from public.playtime_sessions')) return { rows: [] };
+    return { rows: [] };
+  });
+
+  const result = await permanentlyDeleteStudentAccount(pool, 44);
+  const deletes = pool.calls.filter(({ sql }) => sql.startsWith('delete from public.'));
+
+  assert.equal(result.deletedStudent.game_student_id, '00123456');
+  assert.deepEqual(deletes.map(({ sql }) => sql.match(/delete from public\.(\w+)/)?.[1]), ['game_results', 'playtime_sessions', 'accounts']);
+  deletes.forEach(({ params }) => {
+    if (params.length) assert.ok(JSON.stringify(params).includes('44'));
+    assert.equal(JSON.stringify(params).includes('45'), false);
+  });
+  assert.ok(pool.calls.some(({ sql }) => sql === 'begin'));
+  assert.ok(pool.calls.some(({ sql }) => sql === 'commit'));
+  assert.equal(pool.calls.some(({ sql }) => sql === 'rollback'), false);
+});
+
+test('permanent Student deletion rejects a non-Student account before removing owned data', async () => {
+  const { permanentlyDeleteStudentAccount } = require('./familyLifecycle.service');
+  const pool = createPool(async (sql) => {
+    if (sql.includes('from public.accounts') && sql.includes('for update')) {
+      return { rows: [{ id: 44, role: 'teacher', is_archived: false }] };
+    }
+    return { rows: [] };
+  });
+
+  await assert.rejects(
+    permanentlyDeleteStudentAccount(pool, 44),
+    (error) => error.statusCode === 400 && /Student account/i.test(error.message)
+  );
+  assert.equal(pool.calls.some(({ sql }) => sql.startsWith('delete from public.')), false);
+  assert.ok(pool.calls.some(({ sql }) => sql === 'rollback'));
+});
+
 
 test('archiving a Parent archives linked Students without deleting their learning data', async () => {
   const { archiveParentFamily } = require('./familyLifecycle.service');
