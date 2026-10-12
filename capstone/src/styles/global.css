@@ -426,3 +426,65 @@ button {
   align-items: center;
   justify-content: center;
 }
+
+
+/* Targeted dark-mode contrast fixes for nested semantic surfaces.
+   These stay scoped to boxes that otherwise keep light-mode backgrounds
+   while dashboard text is promoted to the dark-theme foreground. */
+[data-theme='dark'] .announcement-banner-success {
+  background: rgba(20, 83, 45, 0.72) !important;
+  border-color: rgba(74, 222, 128, 0.42) !important;
+  color: #dcfce7 !important;
+}
+
+[data-theme='dark'] .announcement-banner-error,
+[data-theme='dark'] .al-error {
+  background: rgba(127, 29, 29, 0.68) !important;
+  border-color: rgba(248, 113, 113, 0.42) !important;
+  color: #fee2e2 !important;
+}
+
+[data-theme='dark'] .temporary-password-warning,
+[data-theme='dark'] .temporary-password-settings-warning,
+[data-theme='dark'] .manager-ai-pause-banner,
+[data-theme='dark'] .parent-progress-archived-notice,
+[data-theme='dark'] .grounded-ai-status.preliminary {
+  background: rgba(120, 53, 15, 0.62) !important;
+  border-color: rgba(251, 191, 36, 0.45) !important;
+  color: #fef3c7 !important;
+}
+
+[data-theme='dark'] .grounded-ai-status.warning,
+[data-theme='dark'] .fixed-question-validation-review,
+[data-theme='dark'] .generated-question-card.invalid {
+  background: rgba(127, 29, 29, 0.54) !important;
+  border-color: rgba(248, 113, 113, 0.42) !important;
+  color: #fee2e2 !important;
+}
+
+[data-theme='dark'] .question-preview-add-editor {
+  background: rgba(30, 64, 175, 0.28) !important;
+  border-color: rgba(96, 165, 250, 0.42) !important;
+}
+
+[data-theme='dark'] .manager-status-pill.staged,
+[data-theme='dark'] .manager-status-pill.generating {
+  background: rgba(120, 53, 15, 0.72) !important;
+  color: #fef3c7 !important;
+}
+
+[data-theme='dark'] .manager-status-pill.superseded,
+[data-theme='dark'] .status-tag.offline {
+  background: #374151 !important;
+  color: #e5e7eb !important;
+}
+
+[data-theme='dark'] .manager-status-pill.failed {
+  background: rgba(127, 29, 29, 0.72) !important;
+  color: #fee2e2 !important;
+}
+
+[data-theme='dark'] .status-tag.active {
+  background: #064e3b !important;
+  color: #d1fae5 !important;
+}
