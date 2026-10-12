@@ -41,7 +41,7 @@ describe('usePreparedReportPrint', () => {
     jest.useRealTimers();
   });
 
-  test('prepares rows before opening the read-only print dialog', async () => {
+  test('prepares the complete row set before opening the native print dialog', async () => {
     const printSpy = jest.spyOn(window, 'print').mockImplementation(() => {});
     act(() => root.render(<Harness />));
 
@@ -53,10 +53,8 @@ describe('usePreparedReportPrint', () => {
     expect(printSpy).not.toHaveBeenCalled();
 
     act(() => jest.runAllTimers());
-    expect(document.querySelector('#print-report-settings')).toBeTruthy();
-    expect(printSpy).not.toHaveBeenCalled();
-    act(() => document.querySelector('#print-report-settings button[type="submit"]').click());
-    act(() => jest.runOnlyPendingTimers());
+    expect(document.querySelector('#print-report-root .printable-report-table tbody tr')).toBeTruthy();
+    expect(document.querySelector('#print-report-settings')).toBeNull();
     expect(printSpy).toHaveBeenCalledTimes(1);
     printSpy.mockRestore();
   });
@@ -71,10 +69,8 @@ describe('usePreparedReportPrint', () => {
     });
 
     expect(container.textContent).toContain('Prepared report');
-    act(() => jest.runOnlyPendingTimers());
-    expect(document.querySelector('#print-report-settings')).toBeTruthy();
-    act(() => document.querySelector('#print-report-settings button[type="submit"]').click());
-    act(() => jest.runOnlyPendingTimers());
+    act(() => jest.runAllTimers());
+    expect(document.querySelector('#print-report-settings')).toBeNull();
     expect(document.querySelector('#print-report-root .printable-report-empty')?.textContent).toContain('No data available for the selected authorized scope.');
     expect(printSpy).toHaveBeenCalledTimes(1);
     printSpy.mockRestore();

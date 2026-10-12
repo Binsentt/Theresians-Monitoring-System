@@ -14,34 +14,20 @@ describe('print reporting styles', () => {
     expect(styles).toContain('visibility: visible !important');
   });
 
-  test('formats explicit A4 portrait and landscape sheets with repeated table headers', () => {
-    expect(styles).toContain('@page report-portrait');
-    expect(styles).toContain('@page report-landscape');
-    expect(styles).toContain('size: A4 portrait');
-    expect(styles).toContain('size: A4 landscape');
-    expect(styles).toContain('display: table-header-group');
-    expect(styles).toContain('break-inside: avoid');
-    expect(styles).toContain('.print-sheet-landscape');
-    expect(styles).toContain('.print-sheet-portrait');
-    expect(styles).toContain('.printable-report-empty td');
-  });
-
-  test('provides a measured page grid and fixed 1/2/4-up sheet composition without report scrollbars', () => {
-    expect(styles).toContain('.print-measurement');
-    expect(styles).toContain('grid-template-columns: repeat(var(--sheet-columns, 1), minmax(0, 1fr))');
-    expect(styles).toContain('grid-template-rows: repeat(var(--sheet-rows, 1), minmax(0, 1fr))');
-    expect(styles).toContain('transform: scale(var(--page-scale, 1))');
-    expect(styles).toContain('overflow: visible !important');
-    expect(styles).toContain('.print-sheet-last');
-  });
-
-  test('styles print page selection errors as semantic validation feedback', () => {
-    expect(styles).toMatch(/\.print-settings-validation\s*\{[^}]*color:\s*var\(--error-color,\s*#b91c1c\)/s);
-    expect(styles).toMatch(/\.print-settings-field input\[aria-invalid="true"\]\s*\{[^}]*border-color:\s*var\(--error-color,\s*#b91c1c\)/s);
+  test('delegates page orientation and sheet selection to the browser while preserving natural pagination', () => {
+    expect(styles).toMatch(/@page\s*\{[^}]*size:\s*auto;[^}]*margin:\s*12mm;/s);
+    const printRules = styles.slice(styles.lastIndexOf('@media print'));
+    expect(printRules).toContain('display: table-header-group !important');
+    expect(printRules).toContain('break-inside: avoid');
+    expect(printRules).toContain('.printable-report-empty td');
+    expect(printRules).toContain('break-inside: auto !important');
+    expect(printRules).toContain('height: auto !important');
+    expect(printRules).toContain('overflow: visible !important');
+    expect(printRules).not.toContain('transform:');
   });
 
   test('releases the viewport scroll container so long reports paginate instead of clipping', () => {
-    const printRules = styles.slice(styles.indexOf('@media print'));
+    const printRules = styles.slice(styles.lastIndexOf('@media print'));
 
     expect(printRules).toMatch(/html,\s*body\s*\{[^}]*height:\s*auto\s*!important/s);
     expect(printRules).toMatch(/html,\s*body\s*\{[^}]*overflow:\s*visible\s*!important/s);

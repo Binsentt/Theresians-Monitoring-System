@@ -29,7 +29,6 @@ describe('PrintableTableReport', () => {
         <PrintableTableReport
           title="Top Achievers Report"
           context="Grade 3"
-          orientation="landscape"
           rows={[{ student_name: 'Ava Santos', student_id: '001234', accuracy: 0 }, { student_name: 'Ben Cruz', student_id: '001235', accuracy: null }]}
           columns={[
             { header: 'Student ID', value: (row) => row.student_id },
@@ -45,7 +44,7 @@ describe('PrintableTableReport', () => {
     act(() => jest.runOnlyPendingTimers());
     const report = document.querySelector('#print-report-root .printable-table-report');
     expect(report).toBeTruthy();
-    expect(report.className).toContain('printable-report-landscape');
+    expect(report.className).not.toContain('printable-report-landscape');
     expect(report.textContent).toContain('Records: 2');
     expect(report.querySelectorAll('tbody tr')).toHaveLength(2);
     expect(report.textContent).toContain('0');

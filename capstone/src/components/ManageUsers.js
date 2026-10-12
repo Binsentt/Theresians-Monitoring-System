@@ -49,6 +49,8 @@ const getValidationFieldProps = (errors, field, errorId) => ({
   'aria-describedby': errors[field] ? errorId : undefined,
 });
 
+const isStudentArchived = (student) => student?.is_archived === true;
+
 export default function ManageUsers() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
@@ -323,7 +325,7 @@ export default function ManageUsers() {
         }
         const directoryData = await directoryResponse.json().catch(() => ({}));
         setActiveStudentAccounts(directoryResponse.ok && Array.isArray(directoryData?.students)
-          ? directoryData.students
+          ? directoryData.students.filter((student) => !isStudentArchived(student))
           : []);
       } catch {
         setActiveStudentAccounts([]);
@@ -339,7 +341,7 @@ export default function ManageUsers() {
         }
         const archivedStudentsData = await archivedStudentsResponse.json().catch(() => ({}));
         setArchivedStudentAccounts(archivedStudentsResponse.ok && Array.isArray(archivedStudentsData?.students)
-          ? archivedStudentsData.students
+          ? archivedStudentsData.students.filter(isStudentArchived)
           : []);
       } catch {
         setArchivedStudentAccounts([]);
@@ -1213,7 +1215,7 @@ export default function ManageUsers() {
               columns={reportColumns}
             />
 
-            <section className="manage-users-student-accounts" aria-labelledby="manage-users-student-accounts-title">
+            {!showArchived && <section className="manage-users-student-accounts" aria-labelledby="manage-users-student-accounts-title">
                 <h2 id="manage-users-student-accounts-title">Active Student Accounts ({filteredActiveStudentAccounts.length})</h2>
                 <p>Archive a Student account first. Archived Student accounts can then be permanently deleted.</p>
                 <div className="table-container">
@@ -1266,9 +1268,9 @@ export default function ManageUsers() {
                     <button type="button" className="pagination-btn" onClick={() => setActiveStudentPage((page) => Math.min(paginatedActiveStudentAccounts.totalPages, page + 1))} disabled={paginatedActiveStudentAccounts.currentPage === paginatedActiveStudentAccounts.totalPages}>Next</button>
                   </div>
                 </div>
-            </section>
+            </section>}
 
-            <section className="manage-users-archived-student-accounts" aria-labelledby="manage-users-archived-student-accounts-title">
+            {showArchived && <section className="manage-users-archived-student-accounts" aria-labelledby="manage-users-archived-student-accounts-title">
               <h2 id="manage-users-archived-student-accounts-title">Archived Student Accounts ({filteredArchivedStudentAccounts.length})</h2>
               <p>Permanent deletion removes the selected archived Student account and its owned records.</p>
               <div className="table-container">
@@ -1317,7 +1319,7 @@ export default function ManageUsers() {
                   <button type="button" className="pagination-btn" onClick={() => setArchivedStudentPage((page) => Math.min(paginatedArchivedStudentAccounts.totalPages, page + 1))} disabled={paginatedArchivedStudentAccounts.currentPage === paginatedArchivedStudentAccounts.totalPages}>Next</button>
                 </div>
               </div>
-            </section>
+            </section>}
 
             <ConfirmModal
               open={Boolean(temporaryPasswordTarget)}

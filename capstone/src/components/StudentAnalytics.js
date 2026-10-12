@@ -346,7 +346,6 @@ export default function StudentAnalytics() {
         context={`Student: ${studentName}`}
         rows={preparedRows}
         columns={analyticsPrintColumns}
-        orientation="portrait"
         recordCount={1}
       />
     )}

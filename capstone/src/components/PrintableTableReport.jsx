@@ -6,13 +6,12 @@ export function PrintableTableReport({
   context = '',
   rows = [],
   columns = [],
-  orientation = 'landscape',
   className = '',
   recordCount,
 }) {
   useLayoutEffect(() => {
-    registerPreparedReport({ title, context, rows, columns, orientation, className, recordCount });
-  }, [className, columns, context, orientation, recordCount, rows, title]);
+    registerPreparedReport({ title, context, rows, columns, className, recordCount });
+  }, [className, columns, context, recordCount, rows, title]);
 
   // Only the fully prepared model is registered here. The printable DOM mounts
   // under document.body immediately before printing, not in the live dashboard.

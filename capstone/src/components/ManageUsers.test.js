@@ -656,6 +656,7 @@ describe('ManageUsers edit flow', () => {
     await act(async () => archiveConfirm.click());
 
     expect(global.fetch.mock.calls.some(([url, options]) => String(url).includes('/api/accounts/55') && !String(url).includes('?permanent=true') && options.method === 'DELETE')).toBe(true);
+    await act(async () => Array.from(container.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Show Archived').click());
     const archivedSection = container.querySelector('.manage-users-archived-student-accounts');
     expect(archivedSection).toBeTruthy();
     const archivedRow = Array.from(archivedSection.querySelectorAll('tbody tr')).find((item) => item.textContent.includes('Active Student'));
@@ -682,7 +683,7 @@ describe('ManageUsers edit flow', () => {
     expect(Array.from(archivedSection.querySelectorAll('tbody tr')).some((item) => item.textContent.includes('Active Student'))).toBe(false);
   });
 
-  test('active and archived Student tables paginate independently and search resets both lists', async () => {
+  test('Show Active and Show Archived keep Student pagination and search scoped to one table at a time', async () => {
     const activeStudents = Array.from({ length: 11 }, (_, index) => ({
       id: 200 + index,
       student_id: `00${index}`,
@@ -708,24 +709,30 @@ describe('ManageUsers edit flow', () => {
 
     await act(async () => root.render(<ManageUsers />));
     const activeSection = container.querySelector('.manage-users-student-accounts');
-    const archivedSection = container.querySelector('.manage-users-archived-student-accounts');
+    expect(container.querySelector('.manage-users-archived-student-accounts')).toBeNull();
     expect(activeSection.querySelectorAll('tbody tr')).toHaveLength(8);
-    expect(archivedSection.querySelectorAll('tbody tr')).toHaveLength(8);
 
     await act(async () => activeSection.querySelector('[aria-label="Active Student Accounts pagination"] button:last-child').click());
     expect(activeSection.querySelectorAll('tbody tr')).toHaveLength(3);
-    expect(archivedSection.querySelectorAll('tbody tr')).toHaveLength(8);
 
+    await act(async () => Array.from(container.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Show Archived').click());
+    const archivedSection = container.querySelector('.manage-users-archived-student-accounts');
+    expect(container.querySelector('.manage-users-student-accounts')).toBeNull();
+    expect(archivedSection.querySelectorAll('tbody tr')).toHaveLength(8);
     await act(async () => archivedSection.querySelector('[aria-label="Archived Student Accounts pagination"] button:last-child').click());
     expect(archivedSection.querySelectorAll('tbody tr')).toHaveLength(2);
-    expect(activeSection.querySelectorAll('tbody tr')).toHaveLength(3);
 
     const search = container.querySelector('[aria-label="Search Manage Users"]');
     await act(async () => setFieldValue(search, 'Student 01'));
-    expect(activeSection.textContent).toContain('Page 1 of 1');
     expect(archivedSection.textContent).toContain('Page 1 of 1');
-    expect(activeSection.querySelectorAll('tbody tr')).toHaveLength(1);
     expect(archivedSection.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(container.querySelector('.manage-users-student-accounts')).toBeNull();
+
+    await act(async () => Array.from(container.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Show Active').click());
+    const activeAfterSearch = container.querySelector('.manage-users-student-accounts');
+    expect(activeAfterSearch.textContent).toContain('Page 1 of 2');
+    expect(activeAfterSearch.querySelectorAll('tbody tr')).toHaveLength(8);
+    expect(container.querySelector('.manage-users-archived-student-accounts')).toBeNull();
   });
 
   test('archiving and permanent deletion refresh their own Student list and clamp the last page', async () => {
@@ -764,7 +771,6 @@ describe('ManageUsers edit flow', () => {
 
     await act(async () => root.render(<ManageUsers />));
     const activeSection = container.querySelector('.manage-users-student-accounts');
-    const archivedSection = container.querySelector('.manage-users-archived-student-accounts');
     await act(async () => activeSection.querySelector('[aria-label="Active Student Accounts pagination"] button:last-child').click());
     const activeLastRow = Array.from(activeSection.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Active Student 09'));
     await act(async () => Array.from(activeLastRow.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Archive').click());
@@ -773,18 +779,21 @@ describe('ManageUsers edit flow', () => {
     await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Archive Student').click());
 
     expect(activeSection.textContent).toContain('Page 1 of 1');
-    expect(archivedSection.textContent).toContain('9)');
-    await act(async () => archivedSection.querySelector('[aria-label="Archived Student Accounts pagination"] button:last-child').click());
-    const archivedLastRow = Array.from(archivedSection.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Active Student 09'));
+    expect(container.querySelector('.manage-users-archived-student-accounts')).toBeNull();
+    await act(async () => Array.from(container.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Show Archived').click());
+    const visibleArchivedSection = container.querySelector('.manage-users-archived-student-accounts');
+    expect(visibleArchivedSection.textContent).toContain('9)');
+    await act(async () => visibleArchivedSection.querySelector('[aria-label="Archived Student Accounts pagination"] button:last-child').click());
+    const archivedLastRow = Array.from(visibleArchivedSection.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Active Student 09'));
     await act(async () => Array.from(archivedLastRow.querySelectorAll('button')).find((button) => button.textContent === 'Delete Permanently').click());
     await act(async () => setFieldValue(document.body.querySelector('textarea[name="deletion-reason"]'), 'Permanent cleanup requested.'));
     await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue').click());
     await act(async () => setFieldValue(document.body.querySelector('input[name="permanent-delete-confirmation"]'), 'DELETE'));
     await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Permanently Delete Account').click());
 
-    expect(archivedSection.textContent).toContain('Page 1 of 1');
-    expect(archivedSection.querySelectorAll('tbody tr')).toHaveLength(8);
-    expect(archivedSection.textContent).not.toContain('Active Student 09');
+    expect(visibleArchivedSection.textContent).toContain('Page 1 of 1');
+    expect(visibleArchivedSection.querySelectorAll('tbody tr')).toHaveLength(8);
+    expect(visibleArchivedSection.textContent).not.toContain('Active Student 09');
   });
 
   test('Manage Users print contains the entire filtered account and Student result set, not only visible pages', async () => {
@@ -1450,5 +1459,68 @@ describe('ManageUsers edit flow', () => {
         headers: { 'Content-Type': 'application/json' },
       })
     );
+  });
+
+  test('Show Active and Show Archive display only the matching Student table', async () => {
+    const activeStudent = {
+      id: 301,
+      student_id: 'STU-301',
+      student_name: 'Current Student',
+      grade_level: 'Grade 3',
+      section: 'Garnet',
+      is_archived: false,
+    };
+    const archivedStudent = {
+      id: 302,
+      student_id: 'STU-302',
+      student_name: 'Archived Student',
+      grade_level: 'Grade 4',
+      section: 'Ruby',
+      is_archived: true,
+    };
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/admin/student-accounts?archived=true')) {
+        return Promise.resolve({ ok: true, json: async () => ({ students: [activeStudent, archivedStudent] }) });
+      }
+      if (String(url).includes('/api/admin/id-directory')) {
+        return Promise.resolve({ ok: true, json: async () => ({ students: [activeStudent, archivedStudent] }) });
+      }
+      if (String(url).includes('/api/accounts')) {
+        return Promise.resolve({ ok: true, json: async () => accountsPayload });
+      }
+      if (String(url).includes('/api/sections/registry')) {
+        return Promise.resolve({ ok: true, json: async () => ({ grades: [] }) });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => root.render(<ManageUsers />));
+
+    expect(container.querySelector('.manage-users-main-table')).toBeTruthy();
+    const activeSection = container.querySelector('.manage-users-student-accounts');
+    expect(activeSection).toBeTruthy();
+    expect(activeSection.querySelector('tbody').textContent).toContain('Current Student');
+    expect(activeSection.querySelector('tbody').textContent).not.toContain('Archived Student');
+    expect(container.querySelector('.manage-users-archived-student-accounts')).toBeNull();
+
+    await act(async () => {
+      Array.from(container.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Show Archived').click();
+    });
+
+    expect(container.querySelector('.manage-users-main-table')).toBeTruthy();
+    expect(container.querySelector('.manage-users-student-accounts')).toBeNull();
+    const archivedSection = container.querySelector('.manage-users-archived-student-accounts');
+    expect(archivedSection).toBeTruthy();
+    expect(archivedSection.querySelector('tbody').textContent).toContain('Archived Student');
+    expect(archivedSection.querySelector('tbody').textContent).not.toContain('Current Student');
+    expect(archivedSection.querySelector('button')?.textContent).not.toBe('Archive');
+    expect(archivedSection.textContent).toContain('Delete Permanently');
+
+    await act(async () => {
+      Array.from(container.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Show Active').click();
+    });
+
+    expect(container.querySelector('.manage-users-student-accounts')?.textContent).toContain('Current Student');
+    expect(container.querySelector('.manage-users-archived-student-accounts')).toBeNull();
   });
 });
