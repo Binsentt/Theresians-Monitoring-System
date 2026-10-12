@@ -119,6 +119,11 @@ const deleteStudentOwnedRecords = async (client, { studentIds, parentCode = null
     [ids, parentCode]
   );
   if (ids.length === 0) return [];
+  await client.query(
+    `DELETE FROM public.teacher_student_relationships
+     WHERE student_id = ANY($1::INTEGER[])`,
+    [ids]
+  );
   const deleted = await client.query(
     `DELETE FROM public.accounts
      WHERE id = ANY($1::INTEGER[])

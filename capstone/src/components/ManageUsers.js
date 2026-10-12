@@ -1166,7 +1166,7 @@ export default function ManageUsers() {
                                 >
                                   {regeneratingUserId === u.id ? 'Sending...' : 'Send Temporary Password'}
                                 </button>
-                                <button type="button" className="delete-action-btn manage-user-action-btn" onClick={() => openDeleteDialog(u)}>Delete</button>
+                                <button type="button" className="archive-action-btn manage-user-action-btn" onClick={() => openDeleteDialog(u)}>Archive</button>
                               </>
                             )}
                           </td>
@@ -1364,12 +1364,12 @@ export default function ManageUsers() {
                 <div className="modal-content delete-modal" role="dialog" aria-modal="true" aria-labelledby="account-delete-title" onClick={(e) => e.stopPropagation()}>
                   {!showDeleteConfirmation ? (
                     <>
-                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Delete Permanently' : (isStudentArchiveOperation ? 'Archive Student' : 'Delete Account')}</h2>
+                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Delete Permanently' : (isStudentArchiveOperation ? 'Archive Student' : 'Archive Account')}</h2>
                       <p>{deleteOperation === 'permanent'
                         ? <>You are about to permanently delete <strong>{deletingUser.name || deletingUser.email}</strong>.</>
                         : isStudentArchiveOperation
                           ? <>You are about to archive <strong>{deletingUser.name || deletingUser.email}</strong>. The Student will leave the active directory, but their history will be preserved.</>
-                          : <>You are about to delete <strong>{deletingUser.name || deletingUser.email}</strong> from active users. This account can be restored.</>}</p>
+                          : <>This account will be archived from active users. It can be restored later.</>}</p>
                       {deleteOperation === 'permanent' && <p className="error-text">This action is irreversible.</p>}
                       {deleteOperation === 'permanent' && isParentRole(deletingUser.role) && (
                         <p className="error-text">This also permanently deletes all exclusively owned child Student accounts and their dependent records.</p>
@@ -1407,8 +1407,8 @@ export default function ManageUsers() {
                     </>
                   ) : (
                     <>
-                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Confirm Permanent Delete' : (isStudentArchiveOperation ? 'Confirm Archive Student' : 'Confirm Delete Account')}</h2>
-                      <p>{deleteOperation === 'permanent' ? 'This action is irreversible. Type DELETE to permanently delete this account.' : isStudentArchiveOperation ? 'This removes the Student from active enrollment. The account and its historical records remain available in Archived Student Accounts.' : 'This removes the account from active users. It can be restored later.'}</p>
+                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Confirm Permanent Delete' : (isStudentArchiveOperation ? 'Confirm Archive Student' : 'Confirm Archive Account')}</h2>
+                      <p>{deleteOperation === 'permanent' ? 'This action is irreversible. Type DELETE to permanently delete this account.' : isStudentArchiveOperation ? 'This removes the Student from active enrollment. The account and its historical records remain available in Archived Student Accounts.' : 'This account will be archived and can be restored later.'}</p>
                       {deleteOperation === 'permanent' && (
                         <label className="deletion-reason-label" htmlFor="permanent-delete-confirmation">
                           Type DELETE to confirm permanent deletion.
@@ -1446,7 +1446,7 @@ export default function ManageUsers() {
                           onClick={handleDeleteUser}
                           disabled={deleting}
                         >
-                          {deleting ? (deleteOperation === 'permanent' ? 'Deleting...' : 'Archiving...') : (deleteOperation === 'permanent' ? 'Permanently Delete Account' : (isStudentArchiveOperation ? 'Archive Student' : 'Yes, Delete Account'))}
+                          {deleting ? (deleteOperation === 'permanent' ? 'Deleting...' : 'Archiving...') : (deleteOperation === 'permanent' ? 'Permanently Delete Account' : (isStudentArchiveOperation ? 'Archive Student' : 'Yes, Archive Account'))}
                         </button>
                       </div>
                     </>

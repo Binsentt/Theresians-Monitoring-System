@@ -234,10 +234,10 @@ describe('ManageUsers edit flow', () => {
     expect(container.textContent).toContain('Page 3 of 3');
 
     const lastPageRow = container.querySelector('.manage-users-main-table tbody tr');
-    await act(async () => lastPageRow.querySelector('.delete-action-btn').click());
+    await act(async () => lastPageRow.querySelector('.archive-action-btn').click());
     await act(async () => setFieldValue(document.body.querySelector('textarea[name="deletion-reason"]'), 'Pagination lifecycle check'));
     await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue').click());
-    await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Delete Account').click());
+    await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Archive Account').click());
 
     expect(container.textContent).toContain('Page 2 of 2');
     expect(container.querySelectorAll('.manage-users-main-table tbody tr')).toHaveLength(8);
@@ -315,7 +315,7 @@ describe('ManageUsers edit flow', () => {
     expect(email.getAttribute('aria-describedby')).toBe('edit-email-error');
   });
 
-  test.each(['Edit', 'Delete'])('%s dialog escapes a transformed scrolled page and restores keyboard focus', async (label) => {
+  test.each(['Edit', 'Archive'])('%s dialog escapes a transformed scrolled page and restores keyboard focus', async (label) => {
     container.style.transform = 'translateY(0)';
     container.classList.add('page-content');
     container.scrollTop = 798;
@@ -436,23 +436,46 @@ describe('ManageUsers edit flow', () => {
     expect(document.body.textContent).not.toContain('must-not-render');
   });
 
-  test('uses the compact shared action-button treatment for active users', async () => {
+  test('active Parent, Teacher, and Admin rows use Archive terminology', async () => {
     await act(async () => {
       root.render(<ManageUsers />);
     });
 
-    const targetRow = Array.from(document.body.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Maria Santos'));
-    const actions = targetRow.querySelector('.actions-cell');
-    const actionButtons = Array.from(actions.querySelectorAll('button'));
+    ['Maria Santos', 'Parent User', 'Admin User'].forEach((name) => {
+      const targetRow = Array.from(document.body.querySelectorAll('tbody tr')).find((row) => row.textContent.includes(name));
+      const actions = targetRow.querySelector('.actions-cell');
+      const actionButtons = Array.from(actions.querySelectorAll('button'));
 
-    expect(actions.classList.contains('manage-user-actions')).toBe(true);
-    expect(actionButtons.map((button) => button.textContent)).toEqual(['Edit', 'Send Temporary Password', 'Delete']);
-    actionButtons.forEach((button) => {
-      expect(button.classList.contains('manage-user-action-btn')).toBe(true);
+      expect(actions.classList.contains('manage-user-actions')).toBe(true);
+      expect(actionButtons.map((button) => button.textContent)).toEqual(['Edit', 'Send Temporary Password', 'Archive']);
+      actionButtons.forEach((button) => {
+        expect(button.classList.contains('manage-user-action-btn')).toBe(true);
+      });
+      expect(actionButtons[2].classList.contains('archive-action-btn')).toBe(true);
     });
-    expect(actionButtons[0].classList.contains('semantic-action-edit')).toBe(true);
-    expect(actionButtons[1].classList.contains('semantic-action-amber')).toBe(true);
-    expect(actionButtons[2].classList.contains('delete-action-btn')).toBe(true);
+  });
+
+  test('active account confirmation says Archive and calls the existing archive operation', async () => {
+    await act(async () => root.render(<ManageUsers />));
+    const teacherRow = Array.from(document.body.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Maria Santos'));
+    await act(async () => Array.from(teacherRow.querySelectorAll('button')).find((button) => button.textContent === 'Archive').click());
+
+    expect(document.body.querySelector('#account-delete-title').textContent).toBe('Archive Account');
+    expect(document.body.textContent).toContain('This account will be archived from active users. It can be restored later.');
+    expect(document.body.textContent).not.toContain('delete Maria Santos');
+    await act(async () => setFieldValue(document.body.querySelector('textarea[name="deletion-reason"]'), 'Account archive requested.'));
+    await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue').click());
+
+    expect(document.body.querySelector('#account-delete-title').textContent).toBe('Confirm Archive Account');
+    expect(document.body.textContent).toContain('This account will be archived and can be restored later.');
+    const finalButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Archive Account');
+    expect(finalButton).toBeTruthy();
+    await act(async () => finalButton.click());
+
+    const request = global.fetch.mock.calls.find(([url, options]) => String(url) === '/api/accounts/7' && options.method === 'DELETE');
+    expect(request).toBeTruthy();
+    expect(JSON.parse(request[1].body)).toEqual({ reason: 'Account archive requested.' });
+    expect(document.body.textContent).toContain('User archived successfully!');
   });
 
   test('uses the compact shared action-button treatment for archived-user restore', async () => {
@@ -851,9 +874,9 @@ describe('ManageUsers edit flow', () => {
     expect(currentAccountRow.textContent).toContain('Current Account');
     expect(currentAccountRow.textContent).toContain('Protected');
     expect(currentAccountRow.querySelector('.edit-action-btn')).toBeNull();
-    expect(currentAccountRow.querySelector('.delete-action-btn')).toBeNull();
+    expect(currentAccountRow.querySelector('.archive-action-btn')).toBeNull();
     expect(otherAccountRow.querySelector('.edit-action-btn')).toBeTruthy();
-    expect(otherAccountRow.querySelector('.delete-action-btn')).toBeTruthy();
+    expect(otherAccountRow.querySelector('.archive-action-btn')).toBeTruthy();
   });
 
   test('requires a reason and final confirmation before archiving an account', async () => {
@@ -863,12 +886,12 @@ describe('ManageUsers edit flow', () => {
     });
 
     const targetRow = Array.from(document.body.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Maria Santos'));
-    const deleteButton = targetRow.querySelector('.delete-action-btn');
+    const archiveButton = targetRow.querySelector('.archive-action-btn');
     await act(async () => {
-      deleteButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      archiveButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(document.body.textContent).toContain('Delete Account');
+    expect(document.body.textContent).toContain('Archive Account');
     expect(document.body.textContent).toContain('can be restored');
     expect(document.body.textContent).toContain('Maria Santos');
     expect(document.body.textContent).toContain('Teacher');
@@ -890,8 +913,8 @@ describe('ManageUsers edit flow', () => {
       continueButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(document.body.textContent).toContain('This removes the account from active users. It can be restored later.');
-    const confirmButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Delete Account');
+    expect(document.body.textContent).toContain('This account will be archived and can be restored later.');
+    const confirmButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Yes, Archive Account');
     await act(async () => {
       confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });

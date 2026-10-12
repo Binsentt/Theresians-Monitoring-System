@@ -113,7 +113,8 @@ test('unlinking a wrong existing child removes only the Parent relationship', as
 
 test('explicit Student deletion removes owned data and releases the Student account ID', async () => {
   const { permanentlyDeleteManagedStudent } = require('./familyLifecycle.service');
-  const pool = createPool(async (sql) => {
+  const relationships = [{ teacher_id: 19, student_id: 44 }, { teacher_id: 19, student_id: 45 }];
+  const pool = createPool(async (sql, params) => {
     if (sql.includes('from public.accounts parent') && sql.includes('join public.teacher_student_relationships')) {
       return { rows: [{
         parent_id: 19,
@@ -124,6 +125,13 @@ test('explicit Student deletion removes owned data and releases the Student acco
         student_name: 'Ava Santos',
         game_student_id: '00123456',
       }] };
+    }
+    if (sql.startsWith('delete from public.teacher_student_relationships')) {
+      const deletedStudentIds = new Set(params[0]);
+      for (let index = relationships.length - 1; index >= 0; index -= 1) {
+        if (deletedStudentIds.has(relationships[index].student_id)) relationships.splice(index, 1);
+      }
+      return { rows: [] };
     }
     if (sql.includes('other_parent')) return { rows: [] };
     if (sql.startsWith('delete from public.accounts')) return { rows: [{ id: 44, game_student_id: '00123456' }] };
@@ -136,6 +144,9 @@ test('explicit Student deletion removes owned data and releases the Student acco
   assert.equal(result.deletedStudent.game_student_id, '00123456');
   assert.ok(sql.some((statement) => statement.startsWith('delete from public.game_results')));
   assert.ok(sql.some((statement) => statement.startsWith('delete from public.playtime_sessions')));
+  const relationshipDelete = pool.calls.find(({ sql: statement }) => statement.startsWith('delete from public.teacher_student_relationships'));
+  assert.deepEqual(relationshipDelete.params, [[44]]);
+  assert.deepEqual(relationships, [{ teacher_id: 19, student_id: 45 }]);
   assert.ok(sql.some((statement) => statement.startsWith('delete from public.accounts')));
   const gameResultDelete = pool.calls.find(({ sql: statement }) => statement.startsWith('delete from public.game_results'));
   const playtimeDelete = pool.calls.find(({ sql: statement }) => statement.startsWith('delete from public.playtime_sessions'));
@@ -160,7 +171,12 @@ test('permanent Admin Student deletion cleans only the target Student-owned rows
   const deletes = pool.calls.filter(({ sql }) => sql.startsWith('delete from public.'));
 
   assert.equal(result.deletedStudent.game_student_id, '00123456');
-  assert.deepEqual(deletes.map(({ sql }) => sql.match(/delete from public\.(\w+)/)?.[1]), ['game_results', 'playtime_sessions', 'accounts']);
+  assert.deepEqual(deletes.map(({ sql }) => sql.match(/delete from public\.(\w+)/)?.[1]), [
+    'game_results',
+    'playtime_sessions',
+    'teacher_student_relationships',
+    'accounts',
+  ]);
   deletes.forEach(({ params }) => {
     if (params.length) assert.ok(JSON.stringify(params).includes('44'));
     assert.equal(JSON.stringify(params).includes('45'), false);

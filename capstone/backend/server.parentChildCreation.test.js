@@ -5,11 +5,13 @@ const Module = require('node:module');
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
 const authenticatedAccounts = {
+  1: { id: 1, name: 'Admin User', email: 'admin@example.com', role: 'admin', session_version: 0, is_archived: false },
   19: { id: 19, name: 'Parent User', role: 'parent', parent_id: '112832', session_version: 0, is_archived: false },
   20: { id: 20, name: 'Parent Teacher', role: 'parent_teacher', parent_id: '112833', session_version: 0, is_archived: false },
   16: { id: 16, name: 'Teacher User', role: 'teacher', session_version: 0, is_archived: false },
 };
 const tokenPayloads = {
+  'admin-token': { userId: 1, sessionVersion: 0 },
   'parent-token': { userId: 19, sessionVersion: 0 },
   'parent-teacher-token': { userId: 20, sessionVersion: 0 },
   'teacher-token': { userId: 16, sessionVersion: 0 },
@@ -82,6 +84,52 @@ const validChild = {
   section: 'Jade',
   student_id: '00123456',
 };
+
+test('Parent edit children lists only active linked Students and restores the same relationship', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const parent = { id: 19, name: 'Parent User', email: 'parent@example.com', role: 'parent', parent_id: '112832', is_archived: false };
+  const relationships = [
+    { relationship_id: 7, student_id: 44, student_name: 'Ava Santos', student_email: 'ava@example.com', game_student_id: '00123456', grade_level: 'Grade 3', section: 'Jade', is_archived: false },
+    { relationship_id: 8, student_id: 45, student_name: 'Noah Santos', student_email: 'noah@example.com', game_student_id: '00123457', grade_level: 'Grade 3', section: 'Jade', is_archived: false },
+  ];
+  let managedChildrenSql = '';
+  queryHandler = async (sql) => {
+    if (sql.startsWith('select id, name, email, role, parent_id, is_archived from public.accounts where id = $1')) {
+      return { rows: [parent] };
+    }
+    if (sql.startsWith('select relationship.id as relationship_id')) {
+      managedChildrenSql = sql;
+      const filtersInactiveStudents = sql.includes('coalesce(student.is_archived, false) = false');
+      return { rows: filtersInactiveStudents ? relationships.filter((student) => !student.is_archived) : relationships };
+    }
+    return emptyResult;
+  };
+  t.after(async () => {
+    queryHandler = async () => emptyResult;
+    await close(server);
+  });
+
+  const getChildren = () => requestJson(baseUrl, '/api/accounts/19/children', {
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+  const beforeArchive = await getChildren();
+  assert.equal(beforeArchive.status, 200);
+  assert.deepEqual(beforeArchive.body.children.map((student) => student.student_id), [44, 45]);
+
+  relationships[0].is_archived = true;
+  const whileArchived = await getChildren();
+  assert.equal(whileArchived.status, 200);
+  assert.deepEqual(whileArchived.body.children.map((student) => student.student_id), [45]);
+  assert.equal(relationships.some((relationship) => relationship.relationship_id === 7 && relationship.student_id === 44), true);
+  assert.match(managedChildrenSql, /coalesce\(student\.is_archived, false\) = false/);
+
+  relationships[0].is_archived = false;
+  const afterRestore = await getChildren();
+  assert.equal(afterRestore.status, 200);
+  assert.deepEqual(afterRestore.body.children.map((student) => student.student_id), [44, 45]);
+  assert.equal(afterRestore.body.children.find((student) => student.student_id === 44).relationship_id, 7);
+});
 
 test('Parent child mutation is forbidden while registry reads remain available', async (t) => {
   const server = await listen();

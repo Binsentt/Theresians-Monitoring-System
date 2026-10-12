@@ -4638,6 +4638,7 @@ const getManagedParentChildren = async (queryClient, parentId) => {
      WHERE relationship.teacher_id = $1
        AND LOWER(relationship.relationship_type) = 'parent'
        AND LOWER(student.role) = 'student'
+       AND COALESCE(student.is_archived, false) = false
      ORDER BY student.name, student.id`,
     [parentId]
   );
