@@ -31,7 +31,10 @@ const metrics = {
     medium: { accuracy: 50 },
     hard: { accuracy: null },
   },
-  topicPerformance: [{ topic: 'Fractions', accuracy: 60, correctAnswers: 3, totalQuestions: 5 }],
+  topicPerformance: [
+    { topicId: 'fractions', topic: 'Fractions', gradeLevel: 'Grade 3', accuracy: 60, correctAnswers: 3, incorrectAnswers: 2, totalQuestions: 5 },
+    { topicId: 'multiplication', topic: 'Multiplication', gradeLevel: 'Grade 3', accuracy: 100, correctAnswers: 4, incorrectAnswers: 0, totalQuestions: 4 },
+  ],
   playtimeMinutes: 24,
 };
 
@@ -45,8 +48,8 @@ const jsonResponse = (body, { ok = true, status = 200 } = {}) => ({
 const validSelection = {
   grounding_policy_version: GROUNDING_POLICY_VERSION,
   performance_claim_ids: ['overall_accuracy', 'current_quest'],
-  strength_claim_ids: ['difficulty_easy_strength'],
-  weakness_claim_ids: ['difficulty_normal_weakness'],
+  strength_claim_ids: ['topic_grade_3_multiplication_strength'],
+  weakness_claim_ids: ['topic_grade_3_fractions_weakness'],
 };
 
 const inputFor = () => buildGroundedInsightInput({ gradeLevel: 'Grade 3', metrics });
@@ -56,7 +59,7 @@ test('uses only minimized deterministic facts and policy version in grounded ins
 
   assert.deepEqual(input, {
     grounding_policy_version: GROUNDING_POLICY_VERSION,
-    metrics_definition_version: 'student-metrics-v2',
+    metrics_definition_version: 'student-metrics-v3',
     grade: 'Grade 3',
     results_recorded: 5,
     correct_answers: 3,
@@ -71,7 +74,10 @@ test('uses only minimized deterministic facts and policy version in grounded ins
     current_quest: 'Fraction Forest',
     current_difficulty: null,
     difficulty_accuracy: { easy: 100, medium: 50, hard: null },
-    topic_performance: [{ topic: 'Fractions', accuracy: 60, correct_answers: 3, total_questions: 5 }],
+    topic_performance: [
+      { topic_id: 'fractions', grade_level: 'Grade 3', correct_answers: 3, total_questions: 5 },
+      { topic_id: 'multiplication', grade_level: 'Grade 3', correct_answers: 4, total_questions: 4 },
+    ],
     playtime_minutes: 24,
     quest_evidence: [],
   });
@@ -117,12 +123,51 @@ test('includes deterministic per-quest timing and graded evidence in the provide
 test('metrics semantics and current difficulty are fingerprinted without changing the grounding policy', () => {
   const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics: { ...metrics, currentDifficulty: 'Easy', totalProgressVerified: false } });
   assert.equal(input.grounding_policy_version, GROUNDING_POLICY_VERSION);
-  assert.equal(input.metrics_definition_version, 'student-metrics-v2');
+  assert.equal(input.metrics_definition_version, 'student-metrics-v3');
   assert.equal(input.current_difficulty, 'Easy');
   assert.equal(input.total_progress_verified, false);
   const legacy = { ...input };
   delete legacy.metrics_definition_version;
   assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(legacy));
+});
+
+test('fingerprints canonical Grade-topic answer totals used for refreshed grounded insights', () => {
+  const canonicalMetrics = {
+    ...metrics,
+    topicPerformance: [{
+      topicId: 'subtraction',
+      topic: 'Subtraction',
+      gradeLevel: 'Grade 1',
+      correctAnswers: 2,
+      incorrectAnswers: 3,
+      totalQuestions: 5,
+      accuracy: 40,
+    }],
+  };
+  const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics: canonicalMetrics });
+  const changedTotals = buildGroundedInsightInput({
+    gradeLevel: 'Grade 1',
+    metrics: {
+      ...canonicalMetrics,
+      topicPerformance: [{ ...canonicalMetrics.topicPerformance[0], correctAnswers: 3, incorrectAnswers: 2, accuracy: 60 }],
+    },
+  });
+  const changedGrade = buildGroundedInsightInput({
+    gradeLevel: 'Grade 2',
+    metrics: {
+      ...canonicalMetrics,
+      topicPerformance: [{ ...canonicalMetrics.topicPerformance[0], gradeLevel: 'Grade 2' }],
+    },
+  });
+
+  assert.deepEqual(input.topic_performance, [{
+    topic_id: 'subtraction',
+    grade_level: 'Grade 1',
+    correct_answers: 2,
+    total_questions: 5,
+  }]);
+  assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(changedTotals));
+  assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(changedGrade));
 });
 
 test('uses a mocked claim selection and returns only backend-rendered text', async () => {
@@ -143,7 +188,7 @@ test('uses a mocked claim selection and returns only backend-rendered text', asy
   assert.equal(providerRequest.body.text.format.schema.additionalProperties, false);
   assert.match(insight.performance_insight, /Recorded overall accuracy is 60%/);
   assert.match(insight.performance_insight, /Current quest: Fraction Forest/);
-  assert.deepEqual(insight.strengths, ['Recorded Easy accuracy is 100%, meeting the current positive-evidence boundary.']);
+  assert.deepEqual(insight.strengths, ['Recorded Grade 3 Multiplication accuracy is 100% (4 of 4 correct), meeting the current positive-evidence boundary.']);
   assert.equal(JSON.stringify(insight).includes('85%'), false);
 });
 

@@ -4965,6 +4965,43 @@ app.get('/api/admin/id-directory', requireAccountManagementAdmin, async (req, re
   }
 });
 
+// Manage Users needs a separate archived-Student list for the archive-first
+// lifecycle. Keep this endpoint distinct from the active-only ID Directory.
+app.get('/api/admin/student-accounts', requireAccountManagementAdmin, async (req, res) => {
+  try {
+    const archived = String(req.query.archived || '').toLowerCase() === 'true';
+    const result = await pool.query(
+      `SELECT a.id,
+              a.game_student_id AS student_id,
+              a.name AS student_name,
+              a.grade_level,
+              a.section,
+              a.status,
+              COALESCE(a.is_archived, false) AS is_archived,
+              a.created_at
+       FROM public.accounts a
+       WHERE LOWER(a.role) = 'student'
+         AND COALESCE(a.is_archived, false) = $1
+       ORDER BY LOWER(a.name), a.id`,
+      [archived]
+    );
+
+    res.json({ students: result.rows.map((row) => ({
+      id: row.id,
+      student_id: row.student_id,
+      student_name: row.student_name,
+      grade_level: row.grade_level,
+      section: row.section,
+      status: row.status,
+      is_archived: Boolean(row.is_archived),
+      created_at: row.created_at,
+    })) });
+  } catch (err) {
+    console.error('Fetch Manage Users Student accounts failed:', err.message);
+    res.status(500).json({ error: 'Fetch failed' });
+  }
+});
+
 // --- UPDATED PUT ROUTE (FIXED: Properly handles all fields, includes comprehensive logging) ---
 app.put('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) => {
   const { id } = req.params;
@@ -8357,7 +8394,7 @@ app.delete('/api/accounts/:id', requireAccountManagementAdmin, async (req, res) 
     if (reasonResult.error) {
       return res.status(400).json({ error: reasonResult.error });
     }
-    if (permanent && !targetAccount.is_archived && !isStudentAccount) {
+    if (permanent && !targetAccount.is_archived) {
       return res.status(409).json({ error: 'Only archived accounts can be permanently deleted.' });
     }
     if (permanent && req.body?.permanent_confirmation !== 'DELETE') {

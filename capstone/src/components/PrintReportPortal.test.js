@@ -89,4 +89,23 @@ describe('PrintReportPortal', () => {
     expect(printSpy).toHaveBeenCalledTimes(1);
     printSpy.mockRestore();
   });
+
+  test('renders every filtered reporting row for natural multi-page printing', () => {
+    const rows = Array.from({ length: 53 }, (_, index) => ({ id: index + 1, label: `Filtered row ${index + 1}` }));
+    registerPreparedReport({
+      title: 'Filtered Records',
+      context: 'Search: selected records',
+      rows,
+      recordCount: rows.length,
+      columns: [{ header: 'Record', value: (row) => row.label }],
+    });
+
+    act(() => expect(openPreparedReport()).toBe(true));
+    const report = document.querySelector('#print-report-root .printable-table-report');
+
+    expect(report.querySelectorAll('tbody tr')).toHaveLength(53);
+    expect(report.textContent).toContain('Filtered row 53');
+    expect(report.querySelector('.printable-report-header').textContent).toContain('Records: 53');
+    expect(report.querySelector('.printable-report-footer').textContent).toContain('53 records');
+  });
 });

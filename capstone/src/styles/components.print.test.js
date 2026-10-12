@@ -24,6 +24,15 @@ describe('print reporting styles', () => {
     expect(styles).toContain('.printable-report-empty td');
   });
 
+  test('releases the viewport scroll container so long reports paginate instead of clipping', () => {
+    const printRules = styles.slice(styles.indexOf('@media print'));
+
+    expect(printRules).toMatch(/html,\s*body\s*\{[^}]*height:\s*auto\s*!important/s);
+    expect(printRules).toMatch(/html,\s*body\s*\{[^}]*overflow:\s*visible\s*!important/s);
+    expect(printRules).toMatch(/#print-report-root\s*\{[^}]*max-height:\s*none\s*!important/s);
+    expect(printRules).toMatch(/#print-report-root\s*\{[^}]*overflow:\s*visible\s*!important/s);
+  });
+
   test('gives the four Student Analytics summary cards the full profile width on desktop', () => {
     expect(studentAnalyticsStyles).toMatch(/\.student-profile-meta\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;/s);
     expect(studentAnalyticsStyles).toMatch(/\.student-profile-meta\s*\{[^}]*grid-template-columns:\s*minmax\(/s);

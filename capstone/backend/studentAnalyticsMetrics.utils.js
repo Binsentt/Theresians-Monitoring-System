@@ -2,6 +2,7 @@ const { resolveCurrentDifficulty } = require('./progressScene.utils');
 const { countUniqueCompletedMilestones } = require('./questMilestones.utils');
 const { canonicalPlaytimeSeconds } = require('./playtimeAggregation.utils');
 const { calculateWeightedCompletion, PLAYER_FACING_TASKS } = require('./questGraph.utils');
+const { getTopicById, normalizeScope } = require('./curriculumScopeRegistry');
 
 const CANONICAL_CAMPAIGN_TASK_IDS = new Set(['tutorial', ...PLAYER_FACING_TASKS]);
 
@@ -52,11 +53,20 @@ const normalizeResult = (row = {}) => {
     return null;
   }
 
+  const canonicalScope = normalizeScope({
+    grade_level: row.canonical_grade_level,
+    difficulty: row.canonical_difficulty,
+    topic_id: row.canonical_topic_id,
+  });
+  const canonicalTopic = canonicalScope ? getTopicById(canonicalScope.topic_id) : null;
+
   return {
     correctAnswers,
     totalQuestions,
     difficulty: normalizeDifficulty(row.difficulty),
-    topic: normalizeTopic(row.math_topic ?? row.mathTopic),
+    topicId: canonicalTopic ? canonicalScope.topic_id : null,
+    topic: canonicalTopic?.display_label || null,
+    gradeLevel: canonicalTopic ? canonicalScope.grade_level : null,
     currentMap: normalizeTopic(row.current_map ?? row.currentMap ?? row.map ?? row.map_name),
     mapId: normalizeTopic(row.map_id),
     resultEventId: normalizeTopic(row.result_event_id),
@@ -96,11 +106,18 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
       current.correctAnswers += result.correctAnswers;
       current.totalQuestions += result.totalQuestions;
     }
-    if (result.topic) {
-      const current = topicTotals.get(result.topic) || { correctAnswers: 0, totalQuestions: 0 };
+    if (result.topicId && result.gradeLevel) {
+      const topicKey = `${result.gradeLevel}|${result.topicId}`;
+      const current = topicTotals.get(topicKey) || {
+        topicId: result.topicId,
+        topic: result.topic,
+        gradeLevel: result.gradeLevel,
+        correctAnswers: 0,
+        totalQuestions: 0,
+      };
       current.correctAnswers += result.correctAnswers;
       current.totalQuestions += result.totalQuestions;
-      topicTotals.set(result.topic, current);
+      topicTotals.set(topicKey, current);
     }
     if (result.currentMap) {
       const current = mapTotals.get(result.currentMap) || { correctAnswers: 0, totalQuestions: 0 };
@@ -156,14 +173,17 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
   const playtimeSeconds = canonicalPlaytimeSeconds(playtimeSessions, { includePlaying: false });
   const playtimeMinutes = playtimeSeconds > 0 ? Number((playtimeSeconds / 60).toFixed(2)) : null;
 
-  const topicPerformance = Array.from(topicTotals.entries())
-    .map(([topic, totals]) => ({
-      topic,
+  const topicPerformance = Array.from(topicTotals.values())
+    .map((totals) => ({
+      topicId: totals.topicId,
+      topic: totals.topic,
+      gradeLevel: totals.gradeLevel,
       correctAnswers: totals.correctAnswers,
+      incorrectAnswers: Math.max(0, totals.totalQuestions - totals.correctAnswers),
       totalQuestions: totals.totalQuestions,
       accuracy: toPercentage(totals.correctAnswers, totals.totalQuestions),
     }))
-    .sort((left, right) => left.topic.localeCompare(right.topic));
+    .sort((left, right) => left.gradeLevel.localeCompare(right.gradeLevel) || left.topic.localeCompare(right.topic));
 
   const mapBreakdown = Object.fromEntries(Array.from(mapTotals.entries())
     .map(([map, totals]) => [map, {

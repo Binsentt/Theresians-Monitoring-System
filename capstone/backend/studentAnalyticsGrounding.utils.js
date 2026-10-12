@@ -1,8 +1,9 @@
-const GROUNDING_POLICY_VERSION = 'grounded-claims-v2';
+const GROUNDING_POLICY_VERSION = 'grounded-claims-v3';
 const WEAK_PERFORMANCE_THRESHOLD = 75;
 const MAX_SELECTION_ITEMS = 5;
 const MAX_TOPIC_LABEL_LENGTH = 80;
 const MAX_RENDERED_PERFORMANCE_LENGTH = 900;
+const { SCOPES, getTopicById, normalizeGradeLevel, normalizeTopicId } = require('./curriculumScopeRegistry');
 
 const INSIGHT_VALIDATION_STAGES = Object.freeze({
   RESPONSE_SHAPE_INVALID: 'RESPONSE_SHAPE_INVALID',
@@ -40,24 +41,12 @@ const formatNumber = (value) => {
 
 const formatPercentage = (value) => `${formatNumber(value)}%`;
 
-const asSafeTopicLabel = (value) => {
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim();
-  if (!normalized || normalized.length > MAX_TOPIC_LABEL_LENGTH || /[\r\n\t]/.test(normalized)) return null;
-  return normalized;
-};
-
 const asSafeQuestLabel = (value) => {
   if (typeof value !== 'string') return null;
   const normalized = value.trim();
   if (!normalized || normalized.length > MAX_TOPIC_LABEL_LENGTH || /[\r\n\t]/.test(normalized)) return null;
   return normalized;
 };
-
-const topicSlug = (value) => value
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g, '_')
-  .replace(/^_+|_+$/g, '');
 
 const createCatalog = (input) => ({
   policyVersion: GROUNDING_POLICY_VERSION,
@@ -77,34 +66,6 @@ const addClaim = (catalog, category, claim) => {
 
 const addPerformanceClaim = (catalog, id, text) => addClaim(catalog, 'performance', { id, text });
 
-const addAccuracyClaims = ({ catalog, subjectId, subjectLabel, accuracy, category }) => {
-  if (!isFiniteNumber(accuracy)) return;
-  const accuracyText = formatPercentage(accuracy);
-  const accuracyClaimId = `${subjectId}_accuracy`;
-  if (category === 'performance') {
-    addPerformanceClaim(catalog, accuracyClaimId, `Recorded ${subjectLabel} accuracy is ${accuracyText}.`);
-  }
-
-  if (accuracy >= WEAK_PERFORMANCE_THRESHOLD) {
-    addClaim(catalog, 'strength', {
-      id: `${subjectId}_strength`,
-      text: `Recorded ${subjectLabel} accuracy is ${accuracyText}, meeting the current positive-evidence boundary.`,
-    });
-    return;
-  }
-
-  addClaim(catalog, 'weakness', {
-    id: `${subjectId}_weakness`,
-    text: `Recorded ${subjectLabel} accuracy is ${accuracyText}, below the current ${WEAK_PERFORMANCE_THRESHOLD}% evidence boundary.`,
-  });
-  addClaim(catalog, 'recommendation', {
-    id: `practice_${subjectId}`,
-    supportId: `${subjectId}_weakness`,
-    supportCategory: 'weakness',
-    text: `Provide additional ${subjectLabel} practice based on the recorded ${accuracyText} accuracy.`,
-  });
-};
-
 function addRecordedPerformanceClaims(catalog, input) {
   if (isNonNegativeInteger(input.results_recorded)) {
     addPerformanceClaim(catalog, 'results_recorded', `${input.results_recorded} valid gameplay results are recorded.`);
@@ -114,33 +75,6 @@ function addRecordedPerformanceClaims(catalog, input) {
   }
   if (isFiniteNumber(input.accuracy)) {
     addPerformanceClaim(catalog, 'overall_accuracy', `Recorded overall accuracy is ${formatPercentage(input.accuracy)}.`);
-    addAccuracyClaims({
-      catalog,
-      subjectId: 'overall_accuracy',
-      subjectLabel: 'overall',
-      accuracy: input.accuracy,
-      category: 'non-performance',
-    });
-    if (
-      input.accuracy >= WEAK_PERFORMANCE_THRESHOLD
-      && input.accuracy < 100
-      && isNonNegativeInteger(input.incorrect_answers)
-      && input.incorrect_answers > 0
-    ) {
-      const missText = input.incorrect_answers === 1
-        ? 'One incorrect response was recorded'
-        : `${input.incorrect_answers} incorrect responses were recorded`;
-      addClaim(catalog, 'weakness', {
-        id: 'overall_consistency_improvement',
-        text: `${missText}. Overall performance remains positive, but additional practice may improve consistency.`,
-      });
-      addClaim(catalog, 'recommendation', {
-        id: 'review_recorded_misses',
-        supportId: 'overall_consistency_improvement',
-        supportCategory: 'weakness',
-        text: `Review the ${input.incorrect_answers === 1 ? 'missed question' : 'missed questions'} and practice similar problems to improve consistency.`,
-      });
-    }
   }
   if (isFiniteNumber(input.game_score)) {
     addPerformanceClaim(catalog, 'game_score', `Recorded game score is ${formatNumber(input.game_score)}.`);
@@ -174,40 +108,70 @@ function addDifficultyClaims(catalog, difficultyAccuracy) {
     if (accuracy === null) {
       const noDataId = `difficulty_${id}_no_data`;
       addPerformanceClaim(catalog, noDataId, `No recorded ${label} performance data is available yet.`);
-      addClaim(catalog, 'recommendation', {
-        id: `collect_difficulty_${id}_data`,
-        supportId: noDataId,
-        supportCategory: 'performance',
-        text: `Record more ${label} gameplay to establish performance evidence.`,
-      });
       return;
     }
-    addAccuracyClaims({
-      catalog,
-      subjectId: `difficulty_${id}`,
-      subjectLabel: label,
-      accuracy,
-      category: 'performance',
-    });
+    if (isFiniteNumber(accuracy)) {
+      addPerformanceClaim(catalog, `difficulty_${id}_accuracy`, `Recorded ${label} accuracy is ${formatPercentage(accuracy)}.`);
+    }
   });
 }
 
-function addObservedTopicClaims(catalog, topicPerformance) {
-  if (!Array.isArray(topicPerformance)) return;
-  const seenTopicIds = new Set();
-  topicPerformance.forEach((topic) => {
-    const label = asSafeTopicLabel(topic?.topic);
-    const slug = label ? topicSlug(label) : '';
-    if (!slug || seenTopicIds.has(slug)) return;
-    seenTopicIds.add(slug);
-    addAccuracyClaims({
+function addObservedTopicClaims(catalog, topicPerformance, input) {
+  const seen = new Set();
+  let validTopics = 0;
+  (Array.isArray(topicPerformance) ? topicPerformance : []).forEach((topic) => {
+    const topicId = normalizeTopicId(topic?.topic_id);
+    const gradeLevel = normalizeGradeLevel(topic?.grade_level);
+    const canonicalTopic = topicId ? getTopicById(topicId) : null;
+    const belongsToGrade = Boolean(gradeLevel && topicId && SCOPES.some((scope) => (
+      scope.grade_level === gradeLevel && scope.topic_ids.includes(topicId)
+    )));
+    const correct = topic?.correct_answers;
+    const total = topic?.total_questions;
+    if (!canonicalTopic || !belongsToGrade || !isNonNegativeInteger(correct)
+      || !isNonNegativeInteger(total) || total < 1 || correct > total) return;
+
+    const claimPrefix = `topic_${gradeLevel.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${topicId}`;
+    if (seen.has(claimPrefix)) return;
+    seen.add(claimPrefix);
+    validTopics += 1;
+    const incorrect = total - correct;
+    const accuracy = Number(((correct / total) * 100).toFixed(2));
+    const accuracyText = formatPercentage(accuracy);
+    const subjectLabel = `${gradeLevel} ${canonicalTopic.display_label}`;
+    addPerformanceClaim(
       catalog,
-      subjectId: `topic_${slug}`,
-      subjectLabel: label,
-      accuracy: topic?.accuracy,
-      category: 'performance',
+      `${claimPrefix}_accuracy`,
+      `Recorded ${subjectLabel} accuracy is ${accuracyText} (${correct} of ${total} correct; ${incorrect} incorrect).`
+    );
+
+    if (accuracy >= WEAK_PERFORMANCE_THRESHOLD) {
+      addClaim(catalog, 'strength', {
+        id: `${claimPrefix}_strength`,
+        text: `Recorded ${subjectLabel} accuracy is ${accuracyText} (${correct} of ${total} correct), meeting the current positive-evidence boundary.`,
+      });
+      return;
+    }
+
+    addClaim(catalog, 'weakness', {
+      id: `${claimPrefix}_weakness`,
+      text: `Recorded ${subjectLabel} accuracy is ${accuracyText} (${correct} of ${total} correct; ${incorrect} incorrect), below the current ${WEAK_PERFORMANCE_THRESHOLD}% evidence boundary.`,
+    });
+    addClaim(catalog, 'recommendation', {
+      id: `practice_${claimPrefix}`,
+      supportId: `${claimPrefix}_weakness`,
+      supportCategory: 'weakness',
+      text: `For ${subjectLabel}, review the ${incorrect} recorded incorrect ${incorrect === 1 ? 'answer' : 'answers'} and practice additional ${canonicalTopic.display_label} problems; the recorded result was ${correct} of ${total} correct (${accuracyText}).`,
     });
   });
+
+  if (validTopics === 0 && isNonNegativeInteger(input.incorrect_answers) && input.incorrect_answers > 0) {
+    addPerformanceClaim(
+      catalog,
+      'topic_evidence_unavailable',
+      'Incorrect answers are recorded, but no validated Grade/topic-linked question-set evidence is available to identify a specific math topic weakness.'
+    );
+  }
 }
 
 function freezeCatalog(catalog) {
@@ -239,7 +203,7 @@ function buildGroundedClaimCatalog(input = {}) {
   const catalog = createCatalog(input);
   addRecordedPerformanceClaims(catalog, input);
   addDifficultyClaims(catalog, input.difficulty_accuracy);
-  addObservedTopicClaims(catalog, input.topic_performance);
+  addObservedTopicClaims(catalog, input.topic_performance, input);
   return freezeCatalog(catalog);
 }
 

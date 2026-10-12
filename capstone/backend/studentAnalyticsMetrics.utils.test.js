@@ -30,9 +30,9 @@ test('calculates factual accuracy, difficulty, topic, and playtime from valid re
       total_questions: 99,
     },
     quizSessions: [
-      { score: 1, total_items: 1, difficulty: 'Easy', math_topic: 'Fractions' },
-      { score: 0, total_items: 1, difficulty: 'Normal', math_topic: 'Fractions' },
-      { score: 1, total_items: 1, difficulty: 'Difficult', math_topic: 'Decimals' },
+      { score: 1, total_items: 1, difficulty: 'Easy', math_topic: 'Fractions', canonical_topic_id: 'addition_of_money', canonical_grade_level: 'Grade 3', canonical_difficulty: 'Easy' },
+      { score: 0, total_items: 1, difficulty: 'Normal', math_topic: 'Fractions', canonical_topic_id: 'fractions', canonical_grade_level: 'Grade 3', canonical_difficulty: 'Normal' },
+      { score: 1, total_items: 1, difficulty: 'Difficult', math_topic: 'Decimals', canonical_topic_id: 'multi_step_problem_solving', canonical_grade_level: 'Grade 3', canonical_difficulty: 'Difficult' },
       { score: 3, total_items: 1, difficulty: 'Hard', math_topic: 'Ignored invalid result' },
     ],
     playtimeSessions: [
@@ -51,8 +51,9 @@ test('calculates factual accuracy, difficulty, topic, and playtime from valid re
   assert.equal(metrics.difficultyBreakdown.medium.accuracy, 0);
   assert.equal(metrics.difficultyBreakdown.hard.accuracy, 100);
   assert.deepEqual(metrics.topicPerformance, [
-    { topic: 'Decimals', correctAnswers: 1, totalQuestions: 1, accuracy: 100 },
-    { topic: 'Fractions', correctAnswers: 1, totalQuestions: 2, accuracy: 50 },
+    { topicId: 'addition_of_money', topic: 'Addition of Money', gradeLevel: 'Grade 3', correctAnswers: 1, incorrectAnswers: 0, totalQuestions: 1, accuracy: 100 },
+    { topicId: 'fractions', topic: 'Fractions', gradeLevel: 'Grade 3', correctAnswers: 0, incorrectAnswers: 1, totalQuestions: 1, accuracy: 0 },
+    { topicId: 'multi_step_problem_solving', topic: 'Multi-step Problem Solving', gradeLevel: 'Grade 3', correctAnswers: 1, incorrectAnswers: 0, totalQuestions: 1, accuracy: 100 },
   ]);
   assert.equal(metrics.playtimeMinutes, 20);
   assert.equal(metrics.totalProgress, null);
@@ -200,4 +201,59 @@ test('uses explicit canonical milestone evidence for weighted completion', () =>
   assert.equal(metrics.totalProgressSource, 'canonical_quest_milestones');
   assert.equal(metrics.totalProgress, metrics.questCompletionPercentage);
   assert.ok(metrics.totalProgress > 0);
+});
+
+test('aggregates topic evidence only from canonical Grade and topic question-set metadata', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    quizSessions: [
+      {
+        score: 1,
+        total_items: 4,
+        difficulty: 'Easy',
+        math_topic: 'Misleading free text',
+        canonical_topic_id: 'subtraction',
+        canonical_grade_level: 'Grade 1',
+        canonical_difficulty: 'Easy',
+      },
+      {
+        score: 4,
+        total_items: 4,
+        difficulty: 'Normal',
+        math_topic: 'Subtraction',
+        canonical_topic_id: 'subtraction',
+        canonical_grade_level: 'Grade 2',
+        canonical_difficulty: 'Normal',
+      },
+      {
+        score: 0,
+        total_items: 4,
+        difficulty: 'Easy',
+        math_topic: 'Unvalidated topic',
+        canonical_topic_id: 'not_a_canonical_topic',
+        canonical_grade_level: 'Grade 1',
+        canonical_difficulty: 'Easy',
+      },
+    ],
+  });
+
+  assert.deepEqual(metrics.topicPerformance, [
+    {
+      topicId: 'subtraction',
+      topic: 'Subtraction',
+      gradeLevel: 'Grade 1',
+      correctAnswers: 1,
+      incorrectAnswers: 3,
+      totalQuestions: 4,
+      accuracy: 25,
+    },
+    {
+      topicId: 'subtraction',
+      topic: 'Subtraction',
+      gradeLevel: 'Grade 2',
+      correctAnswers: 4,
+      incorrectAnswers: 0,
+      totalQuestions: 4,
+      accuracy: 100,
+    },
+  ]);
 });

@@ -9,6 +9,7 @@ import logoImage from '../assets/images/STS_Logo.png';
 import {
   buildAccountCreationSuccessModal,
   combineAddressFields,
+  filterStudentAccounts,
   filterUsers,
   formatRoleLabel,
   isParentRole,
@@ -47,6 +48,7 @@ export default function ManageUsers() {
   const [user, setUser] = useState(null);
   const [users, setUsers] = useState([]);
   const [activeStudentAccounts, setActiveStudentAccounts] = useState([]);
+  const [archivedStudentAccounts, setArchivedStudentAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedRole, setSelectedRole] = useState('Parent');
@@ -113,10 +115,18 @@ export default function ManageUsers() {
   const [regeneratingUserId, setRegeneratingUserId] = useState(null);
   const [temporaryPasswordTarget, setTemporaryPasswordTarget] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [activeStudentPage, setActiveStudentPage] = useState(1);
+  const [archivedStudentPage, setArchivedStudentPage] = useState(1);
+  const isStudentArchiveOperation = deleteOperation === 'archive' && normalizeRole(deletingUser?.role) === 'student';
 
   const filteredUsers = filterUsers(users, searchTerm);
   const usersPerPage = 8;
   const paginatedUsers = paginateItems(filteredUsers, currentPage, usersPerPage);
+  const filteredActiveStudentAccounts = filterStudentAccounts(activeStudentAccounts, searchTerm);
+  const filteredArchivedStudentAccounts = filterStudentAccounts(archivedStudentAccounts, searchTerm);
+  const studentAccountsPerPage = 8;
+  const paginatedActiveStudentAccounts = paginateItems(filteredActiveStudentAccounts, activeStudentPage, studentAccountsPerPage);
+  const paginatedArchivedStudentAccounts = paginateItems(filteredArchivedStudentAccounts, archivedStudentPage, studentAccountsPerPage);
   const currentUserId = user?.id !== undefined && user?.id !== null ? String(user.id) : '';
   const currentUserEmail = String(user?.email || '').trim().toLowerCase();
 
@@ -296,10 +306,6 @@ export default function ManageUsers() {
       }
       const data = await response.json();
       setUsers(Array.isArray(data) ? data.filter((account) => isWebsiteManagedRole(account.role)) : []);
-      if (showArchived) {
-        setActiveStudentAccounts([]);
-        return;
-      }
       try {
         const directoryResponse = await fetch(apiUrl('/api/admin/id-directory?archived=false'), {
           headers: buildAuthHeaders(),
@@ -315,6 +321,22 @@ export default function ManageUsers() {
           : []);
       } catch {
         setActiveStudentAccounts([]);
+      }
+      try {
+        const archivedStudentsResponse = await fetch(apiUrl('/api/admin/student-accounts?archived=true'), {
+          headers: buildAuthHeaders(),
+        });
+        if (archivedStudentsResponse.status === 401 || archivedStudentsResponse.status === 403) {
+          clearStoredSession();
+          navigate('/login', { replace: true, state: { sessionExpired: true } });
+          return;
+        }
+        const archivedStudentsData = await archivedStudentsResponse.json().catch(() => ({}));
+        setArchivedStudentAccounts(archivedStudentsResponse.ok && Array.isArray(archivedStudentsData?.students)
+          ? archivedStudentsData.students
+          : []);
+      } catch {
+        setArchivedStudentAccounts([]);
       }
     } catch (error) {
       console.error('Error loading users:', error);
@@ -750,6 +772,8 @@ export default function ManageUsers() {
 
   useEffect(() => {
     setCurrentPage(1);
+    setActiveStudentPage(1);
+    setArchivedStudentPage(1);
   }, [searchTerm, showArchived]);
 
   useEffect(() => {
@@ -757,6 +781,18 @@ export default function ManageUsers() {
       setCurrentPage(paginatedUsers.currentPage);
     }
   }, [currentPage, paginatedUsers.currentPage]);
+
+  useEffect(() => {
+    if (activeStudentPage !== paginatedActiveStudentAccounts.currentPage) {
+      setActiveStudentPage(paginatedActiveStudentAccounts.currentPage);
+    }
+  }, [activeStudentPage, paginatedActiveStudentAccounts.currentPage]);
+
+  useEffect(() => {
+    if (archivedStudentPage !== paginatedArchivedStudentAccounts.currentPage) {
+      setArchivedStudentPage(paginatedArchivedStudentAccounts.currentPage);
+    }
+  }, [archivedStudentPage, paginatedArchivedStudentAccounts.currentPage]);
 
   const handleLogout = async () => {
     await revokeCurrentSession();
@@ -776,11 +812,27 @@ export default function ManageUsers() {
     );
   }
 
-  const reportScope = [showArchived ? 'Archived accounts' : 'Active accounts', searchTerm ? `Search: ${searchTerm}` : '']
+  const reportScope = [showArchived ? 'Archived website accounts' : 'Active website accounts', 'Active and archived Student accounts', searchTerm ? `Search: ${searchTerm}` : '']
     .filter(Boolean)
     .join(' / ');
+  const reportRows = [
+    ...filteredUsers,
+    ...filteredActiveStudentAccounts.map((student) => ({
+      ...student,
+      name: student.student_name,
+      role: 'student',
+      is_archived: false,
+    })),
+    ...filteredArchivedStudentAccounts.map((student) => ({
+      ...student,
+      name: student.student_name,
+      role: 'student',
+      is_archived: true,
+    })),
+  ];
   const reportColumns = [
-    { header: 'User Name', value: (row) => row.name },
+    { header: 'User / Student Name', value: (row) => row.name },
+    { header: 'ID', value: (row) => row.student_id || row.employee_id },
     { header: 'Email', value: (row) => row.email },
     { header: 'Role', value: (row) => formatRoleLabel(row.role) },
     { header: 'Account Status', value: (row) => row.is_archived ? 'Archived' : 'Active' },
@@ -837,7 +889,7 @@ export default function ManageUsers() {
                   </div>
                   <TablePrintButton
                     reportTitle="User List"
-                    reportContext={formatReportContext({ scope: reportScope, recordCount: filteredUsers.length })}
+                    reportContext={formatReportContext({ scope: reportScope, recordCount: reportRows.length })}
                     label="Print User List"
                     showPrintHeading={false}
                   />
@@ -1150,14 +1202,14 @@ export default function ManageUsers() {
             <PrintableTableReport
               title="User List"
               context={reportScope}
-              rows={filteredUsers}
+              rows={reportRows}
+              recordCount={reportRows.length}
               columns={reportColumns}
             />
 
-            {!showArchived && (
-              <section className="manage-users-student-accounts" aria-labelledby="manage-users-student-accounts-title">
-                <h2 id="manage-users-student-accounts-title">Active Student Accounts ({activeStudentAccounts.length})</h2>
-                <p>Permanent deletion removes only the selected Student account and its owned records.</p>
+            <section className="manage-users-student-accounts" aria-labelledby="manage-users-student-accounts-title">
+                <h2 id="manage-users-student-accounts-title">Active Student Accounts ({filteredActiveStudentAccounts.length})</h2>
+                <p>Archive a Student account first. Archived Student accounts can then be permanently deleted.</p>
                 <div className="table-container">
                   <table className="sts-data-table" aria-label="Active Student Accounts">
                     <thead>
@@ -1170,9 +1222,9 @@ export default function ManageUsers() {
                       </tr>
                     </thead>
                     <tbody>
-                      {activeStudentAccounts.length === 0 ? (
+                      {filteredActiveStudentAccounts.length === 0 ? (
                         <tr><td colSpan="5" className="empty-table-msg">No active Student accounts found.</td></tr>
-                      ) : activeStudentAccounts.map((student) => (
+                      ) : paginatedActiveStudentAccounts.pageItems.map((student) => (
                         <tr key={student.id}>
                           <td>{student.student_name || 'No name set'}</td>
                           <td>{student.student_id || 'Not linked'}</td>
@@ -1181,14 +1233,14 @@ export default function ManageUsers() {
                           <td className="actions-cell manage-user-actions no-print">
                             <button
                               type="button"
-                              className="delete-action-btn manage-user-action-btn"
+                              className="archive-action-btn manage-user-action-btn"
                               onClick={() => openDeleteDialog({
                                 id: student.id,
                                 name: student.student_name,
                                 role: 'student',
-                              }, 'permanent')}
+                              }, 'archive')}
                             >
-                              Delete Permanently
+                              Archive
                             </button>
                           </td>
                         </tr>
@@ -1196,8 +1248,70 @@ export default function ManageUsers() {
                     </tbody>
                   </table>
                 </div>
-              </section>
-            )}
+                <div className="manage-users-pagination no-print" aria-label="Active Student Accounts pagination">
+                  <span className="manage-users-pagination-summary">
+                    {paginatedActiveStudentAccounts.totalItems === 0
+                      ? '0 records'
+                      : `Showing ${paginatedActiveStudentAccounts.startIndex + 1} - ${paginatedActiveStudentAccounts.endIndex} of ${paginatedActiveStudentAccounts.totalItems} Students`}
+                  </span>
+                  <div className="manage-users-pagination-controls">
+                    <button type="button" className="pagination-btn" onClick={() => setActiveStudentPage((page) => Math.max(1, page - 1))} disabled={paginatedActiveStudentAccounts.currentPage === 1}>Previous</button>
+                    <span className="pagination-info">Page {paginatedActiveStudentAccounts.currentPage} of {paginatedActiveStudentAccounts.totalPages}</span>
+                    <button type="button" className="pagination-btn" onClick={() => setActiveStudentPage((page) => Math.min(paginatedActiveStudentAccounts.totalPages, page + 1))} disabled={paginatedActiveStudentAccounts.currentPage === paginatedActiveStudentAccounts.totalPages}>Next</button>
+                  </div>
+                </div>
+            </section>
+
+            <section className="manage-users-archived-student-accounts" aria-labelledby="manage-users-archived-student-accounts-title">
+              <h2 id="manage-users-archived-student-accounts-title">Archived Student Accounts ({filteredArchivedStudentAccounts.length})</h2>
+              <p>Permanent deletion removes the selected archived Student account and its owned records.</p>
+              <div className="table-container">
+                <table className="sts-data-table" aria-label="Archived Student Accounts">
+                  <thead>
+                    <tr>
+                      <th>STUDENT NAME</th>
+                      <th>STUDENT ID</th>
+                      <th>GRADE</th>
+                      <th>SECTION</th>
+                      <th className="no-print">ACTIONS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredArchivedStudentAccounts.length === 0 ? (
+                      <tr><td colSpan="5" className="empty-table-msg">No archived Student accounts found.</td></tr>
+                    ) : paginatedArchivedStudentAccounts.pageItems.map((student) => (
+                      <tr key={student.id}>
+                        <td>{student.student_name || 'No name set'}</td>
+                        <td>{student.student_id || 'Not linked'}</td>
+                        <td>{student.grade_level || '—'}</td>
+                        <td>{student.section || '—'}</td>
+                        <td className="actions-cell manage-user-actions no-print">
+                          <button type="button" className="delete-action-btn manage-user-action-btn" onClick={() => openDeleteDialog({
+                            id: student.id,
+                            name: student.student_name,
+                            role: 'student',
+                          }, 'permanent')}>
+                            Delete Permanently
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="manage-users-pagination no-print" aria-label="Archived Student Accounts pagination">
+                <span className="manage-users-pagination-summary">
+                  {paginatedArchivedStudentAccounts.totalItems === 0
+                    ? '0 records'
+                    : `Showing ${paginatedArchivedStudentAccounts.startIndex + 1} - ${paginatedArchivedStudentAccounts.endIndex} of ${paginatedArchivedStudentAccounts.totalItems} Students`}
+                </span>
+                <div className="manage-users-pagination-controls">
+                  <button type="button" className="pagination-btn" onClick={() => setArchivedStudentPage((page) => Math.max(1, page - 1))} disabled={paginatedArchivedStudentAccounts.currentPage === 1}>Previous</button>
+                  <span className="pagination-info">Page {paginatedArchivedStudentAccounts.currentPage} of {paginatedArchivedStudentAccounts.totalPages}</span>
+                  <button type="button" className="pagination-btn" onClick={() => setArchivedStudentPage((page) => Math.min(paginatedArchivedStudentAccounts.totalPages, page + 1))} disabled={paginatedArchivedStudentAccounts.currentPage === paginatedArchivedStudentAccounts.totalPages}>Next</button>
+                </div>
+              </div>
+            </section>
 
             <ConfirmModal
               open={Boolean(temporaryPasswordTarget)}
@@ -1244,10 +1358,12 @@ export default function ManageUsers() {
                 <div className="modal-content delete-modal" role="dialog" aria-modal="true" aria-labelledby="account-delete-title" onClick={(e) => e.stopPropagation()}>
                   {!showDeleteConfirmation ? (
                     <>
-                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Delete Permanently' : 'Delete Account'}</h2>
+                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Delete Permanently' : (isStudentArchiveOperation ? 'Archive Student' : 'Delete Account')}</h2>
                       <p>{deleteOperation === 'permanent'
                         ? <>You are about to permanently delete <strong>{deletingUser.name || deletingUser.email}</strong>.</>
-                        : <>You are about to delete <strong>{deletingUser.name || deletingUser.email}</strong> from active users. This account can be restored.</>}</p>
+                        : isStudentArchiveOperation
+                          ? <>You are about to archive <strong>{deletingUser.name || deletingUser.email}</strong>. The Student will leave the active directory, but their history will be preserved.</>
+                          : <>You are about to delete <strong>{deletingUser.name || deletingUser.email}</strong> from active users. This account can be restored.</>}</p>
                       {deleteOperation === 'permanent' && <p className="error-text">This action is irreversible.</p>}
                       {deleteOperation === 'permanent' && isParentRole(deletingUser.role) && (
                         <p className="error-text">This also permanently deletes all exclusively owned child Student accounts and their dependent records.</p>
@@ -1285,8 +1401,8 @@ export default function ManageUsers() {
                     </>
                   ) : (
                     <>
-                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Confirm Permanent Delete' : 'Confirm Delete Account'}</h2>
-                      <p>{deleteOperation === 'permanent' ? 'This action is irreversible. Type DELETE to permanently delete this account.' : 'This removes the account from active users. It can be restored later.'}</p>
+                      <h2 id="account-delete-title">{deleteOperation === 'permanent' ? 'Confirm Permanent Delete' : (isStudentArchiveOperation ? 'Confirm Archive Student' : 'Confirm Delete Account')}</h2>
+                      <p>{deleteOperation === 'permanent' ? 'This action is irreversible. Type DELETE to permanently delete this account.' : isStudentArchiveOperation ? 'This removes the Student from active enrollment. The account and its historical records remain available in Archived Student Accounts.' : 'This removes the account from active users. It can be restored later.'}</p>
                       {deleteOperation === 'permanent' && (
                         <label className="deletion-reason-label" htmlFor="permanent-delete-confirmation">
                           Type DELETE to confirm permanent deletion.
@@ -1324,7 +1440,7 @@ export default function ManageUsers() {
                           onClick={handleDeleteUser}
                           disabled={deleting}
                         >
-                          {deleting ? 'Deleting...' : (deleteOperation === 'permanent' ? 'Permanently Delete Account' : 'Yes, Delete Account')}
+                          {deleting ? (deleteOperation === 'permanent' ? 'Deleting...' : 'Archiving...') : (deleteOperation === 'permanent' ? 'Permanently Delete Account' : (isStudentArchiveOperation ? 'Archive Student' : 'Yes, Delete Account'))}
                         </button>
                       </div>
                     </>

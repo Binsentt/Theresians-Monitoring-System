@@ -111,6 +111,22 @@ describe('table reporting utilities', () => {
     expect(loadPage).toHaveBeenNthCalledWith(2, { page: 2, limit: 2 });
   });
 
+  test('collects all filtered report rows even when the visible table is paginated', async () => {
+    const filteredRows = Array.from({ length: 53 }, (_, index) => ({ id: index + 1 }));
+    const visiblePageRows = filteredRows.slice(20, 30);
+    const loadPage = jest.fn(async ({ page, limit }) => ({
+      rows: filteredRows.slice((page - 1) * limit, page * limit),
+      pagination: { page, pages: Math.ceil(filteredRows.length / limit), limit, total: filteredRows.length },
+    }));
+
+    const printedRows = await collectAuthorizedReportRows({ loadPage, pageSize: 10 });
+
+    expect(visiblePageRows).toHaveLength(10);
+    expect(printedRows).toHaveLength(53);
+    expect(printedRows.map((row) => row.id)).toEqual(filteredRows.map((row) => row.id));
+    expect(loadPage).toHaveBeenCalledTimes(6);
+  });
+
   test('formats report context from the actual printed row count and active scope', () => {
     expect(formatReportContext({ scope: 'Grade 3 / Section A', recordCount: 12 })).toBe('Grade 3 / Section A · Records: 12');
     expect(formatReportContext({ scope: '', recordCount: 0 })).toBe('Records: 0');

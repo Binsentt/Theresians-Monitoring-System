@@ -2,6 +2,7 @@ import {
   buildAccountCreationSuccessModal,
   canAccessRole,
   combineAddressFields,
+  filterStudentAccounts,
   filterUsers,
   formatRoleLabel,
   getDefaultDashboardRoute,
@@ -29,6 +30,17 @@ describe('manageUsers role helpers', () => {
     expect(normalizeRole('PARENT')).toBe('parent');
     expect(normalizeRole('Parent/Teacher')).toBe('parent_teacher');
     expect(normalizeRole()).toBe('');
+  });
+
+  test('student account search filters name, Student ID, Grade, and Section before pagination', () => {
+    const students = [
+      { id: 1, student_name: 'Alice Rivera', student_id: '00000001', grade_level: 'Grade 3', section: 'Garnet' },
+      { id: 2, student_name: 'Ben Cruz', student_id: '00000002', grade_level: 'Grade 4', section: 'Ruby' },
+    ];
+
+    expect(filterStudentAccounts(students, '00000002').map((student) => student.id)).toEqual([2]);
+    expect(filterStudentAccounts(students, 'Grade 3 Garnet').map((student) => student.id)).toEqual([1]);
+    expect(filterStudentAccounts(students, '').map((student) => student.id)).toEqual([1, 2]);
   });
 
   test('formatRoleLabel returns a readable fallback label', () => {

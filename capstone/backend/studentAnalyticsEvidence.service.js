@@ -30,9 +30,13 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
               gr.map_id, gr.canonical_quest_id, gr.canonical_task_id,
               gr.result_event_id, gr.session_id, gr.percentage, gr.score,
               gr.total_items, gr.played_at, gr.question_set_id,
+              lf.topic_id AS canonical_topic_id,
+              lf.grade_level AS canonical_grade_level,
+              lf.difficulty AS canonical_difficulty,
               gr.question_presented_at, gr.answer_submitted_at, gr.response_time_seconds
        FROM public.game_results gr
        JOIN public.accounts student ON student.id = gr.resolved_student_id
+       LEFT JOIN public.learning_files lf ON lf.id = gr.question_set_id
        WHERE gr.resolved_student_id = ANY($1::INTEGER[])
          AND (student.current_learning_cycle_started_at IS NULL
               OR gr.played_at >= student.current_learning_cycle_started_at)

@@ -15,6 +15,7 @@ const {
   buildClaimSelectionSchema,
   renderValidatedClaimSelection,
 } = require('./studentAnalyticsGrounding.utils');
+const { SCOPES, getTopicById, normalizeGradeLevel, normalizeTopicId } = require('./curriculumScopeRegistry');
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const ANALYTICS_INSIGHT_MODEL = 'gpt-5-mini';
@@ -93,9 +94,32 @@ const buildQuestEvidence = ({ activityLogs = [], quizSessions = [] } = {}) => {
 
 function buildGroundedInsightInput({ gradeLevel, metrics = {}, activityLogs = [], quizSessions = [] } = {}) {
   const difficulty = metrics.difficultyBreakdown || {};
+  const topicPerformance = (Array.isArray(metrics.topicPerformance) ? metrics.topicPerformance : [])
+    .map((topic) => {
+      const topicId = normalizeTopicId(topic?.topicId ?? topic?.topic_id);
+      const canonicalGrade = normalizeGradeLevel(topic?.gradeLevel ?? topic?.grade_level);
+      const canonicalTopic = topicId ? getTopicById(topicId) : null;
+      const belongsToGrade = Boolean(canonicalGrade && topicId && SCOPES.some((scope) => (
+        scope.grade_level === canonicalGrade && scope.topic_ids.includes(topicId)
+      )));
+      const correctAnswers = Number(topic?.correctAnswers ?? topic?.correct_answers);
+      const totalQuestions = Number(topic?.totalQuestions ?? topic?.total_questions);
+      if (!canonicalTopic || !belongsToGrade || !Number.isInteger(correctAnswers)
+        || !Number.isInteger(totalQuestions) || totalQuestions < 1
+        || correctAnswers < 0 || correctAnswers > totalQuestions) return null;
+      return {
+        topic_id: topicId,
+        grade_level: canonicalGrade,
+        correct_answers: correctAnswers,
+        total_questions: totalQuestions,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.grade_level.localeCompare(right.grade_level)
+      || left.topic_id.localeCompare(right.topic_id));
   return {
     grounding_policy_version: GROUNDING_POLICY_VERSION,
-    metrics_definition_version: 'student-metrics-v2',
+    metrics_definition_version: 'student-metrics-v3',
     grade: asText(gradeLevel) || null,
     results_recorded: metrics.validResultCount ?? null,
     correct_answers: metrics.correctAnswers ?? null,
@@ -114,12 +138,7 @@ function buildGroundedInsightInput({ gradeLevel, metrics = {}, activityLogs = []
       medium: difficulty.medium?.accuracy ?? null,
       hard: difficulty.hard?.accuracy ?? null,
     },
-    topic_performance: (Array.isArray(metrics.topicPerformance) ? metrics.topicPerformance : []).map((topic) => ({
-      topic: asText(topic.topic),
-      accuracy: topic.accuracy ?? null,
-      correct_answers: topic.correctAnswers ?? null,
-      total_questions: topic.totalQuestions ?? null,
-    })),
+    topic_performance: topicPerformance,
     playtime_minutes: metrics.playtimeMinutes ?? null,
     quest_evidence: buildQuestEvidence({ activityLogs, quizSessions }),
   };
@@ -290,7 +309,7 @@ async function generateGroundedStudentInsight({
             role: 'system',
             content: [{
               type: 'input_text',
-              text: 'You are an educational analytics interpreter. Select only the permitted claim IDs supported by the supplied deterministic evidence. Return the required JSON selection object only: no prose, no additional properties, no calculated values, no trends, no inferred topics, and no invented quest events. A null difficulty is no recorded data, never a weakness.',
+              text: 'You are an educational analytics interpreter. Select only the permitted claim IDs supported by the supplied deterministic evidence. Return the required JSON selection object only: no prose, no additional properties, no calculated values, no trends, no inferred topics, and no invented quest events. Weaknesses and practice recommendations may only use validated Grade/topic-linked question-set evidence; overall accuracy and difficulty are descriptive evidence, not math-topic weaknesses. A null difficulty is no recorded data, never a weakness.',
             }],
           },
           {

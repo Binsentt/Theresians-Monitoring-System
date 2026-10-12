@@ -1294,6 +1294,14 @@ label {
     box-sizing: border-box;
   }
 
+  html,
+  body {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    overflow-x: visible !important;
+  }
+
   body {
     background: #fff !important;
     color: #111 !important;
@@ -1316,6 +1324,10 @@ label {
   #print-report-root {
     display: block !important;
     width: 100%;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
     padding: 0;
     color: #111 !important;
     background: #fff !important;

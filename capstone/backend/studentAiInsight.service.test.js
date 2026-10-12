@@ -131,6 +131,9 @@ test('five graded answers with two correct and three incorrect produce grounded 
     total_items: 1,
     difficulty: 'Easy',
     math_topic: 'Oakleaf',
+    canonical_topic_id: 'subtraction',
+    canonical_grade_level: 'Grade 1',
+    canonical_difficulty: 'Easy',
     result_event_id: `qa-battle-${index + 1}`,
   }));
   const metrics = buildStudentAnalyticsMetrics({
@@ -152,12 +155,12 @@ test('five graded answers with two correct and three incorrect produce grounded 
     grounding_policy_version: GROUNDING_POLICY_VERSION,
     performance_claim_ids: ['results_recorded', 'answer_counts', 'overall_accuracy'],
     strength_claim_ids: [],
-    weakness_claim_ids: ['overall_accuracy_weakness'],
+    weakness_claim_ids: ['topic_grade_1_subtraction_weakness'],
   }, catalog);
   assert.match(grounded.performance_insight, /40%/);
   assert.match(grounded.weaknesses[0], /40%/);
   assert.deepEqual(grounded.recommendations, [
-    'Provide additional overall practice based on the recorded 40% accuracy.',
+    'For Grade 1 Subtraction, review the 3 recorded incorrect answers and practice additional Subtraction problems; the recorded result was 2 of 5 correct (40%).',
   ]);
 
   const harness = createHarness();

@@ -828,7 +828,8 @@
 
 .edit-action-btn,
 .delete-action-btn,
-.restore-action-btn {
+.restore-action-btn,
+.archive-action-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -852,13 +853,15 @@
 }
 
 .edit-action-btn:hover,
-.restore-action-btn:hover {
+.restore-action-btn:hover,
+.archive-action-btn:hover {
     background-color: #e2e6ea;
     border-color: #adb5bd;
 }
 
 [data-theme='dark'] .edit-action-btn,
-[data-theme='dark'] .restore-action-btn {
+[data-theme='dark'] .restore-action-btn,
+[data-theme='dark'] .archive-action-btn {
   color: white !important;
   background-color: #444 !important;
   border-color: #666 !important;
@@ -878,7 +881,8 @@
 
 .edit-action-btn:disabled,
 .delete-action-btn:disabled,
-.restore-action-btn:disabled {
+.restore-action-btn:disabled,
+.archive-action-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
 }

@@ -332,6 +332,53 @@ test('account management list excludes Godot student accounts', async (t) => {
   assert.equal(response.body.some((account) => account.role === 'student'), false);
 });
 
+test('Manage Users can list archived Student accounts without exposing credential fields', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const authHeaders = authenticateAsAdmin();
+  let listSql = '';
+  let listParams = [];
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  setQueryHandler(async (sql, params) => {
+    if (sql.includes('from public.accounts a') && sql.includes("lower(a.role) = 'student'")) {
+      listSql = sql;
+      listParams = params;
+      return resultRows([{
+        id: 55,
+        student_id: '00550001',
+        student_name: 'Archived Student',
+        grade_level: 'Grade 3',
+        section: 'Garnet',
+        status: 'Offline',
+        is_archived: true,
+        created_at: '2026-01-01T00:00:00.000Z',
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/admin/student-accounts?archived=true', { headers: authHeaders });
+
+  assert.equal(response.status, 200);
+  assert.match(listSql, /coalesce\(a\.is_archived, false\) = \$1/);
+  assert.deepEqual(listParams, [true]);
+  assert.deepEqual(response.body.students, [{
+    id: 55,
+    student_id: '00550001',
+    student_name: 'Archived Student',
+    grade_level: 'Grade 3',
+    section: 'Garnet',
+    status: 'Offline',
+    is_archived: true,
+    created_at: '2026-01-01T00:00:00.000Z',
+  }]);
+  assert.equal(JSON.stringify(response.body).toLowerCase().includes('password'), false);
+});
+
 test('account management rejects creating student accounts', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -394,7 +441,7 @@ test('account management rejects updating student game accounts', async (t) => {
   assert.equal(updatedAccount, false);
 });
 
-test('account management keeps generic permanent deletion blocked for Student game accounts', async (t) => {
+test('account management requires Students to be archived before permanent deletion', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   let deletedAccount = false;
@@ -423,8 +470,8 @@ test('account management keeps generic permanent deletion blocked for Student ga
     body: JSON.stringify({ reason: 'Student permanently deleted.', permanent_confirmation: 'DELETE' }),
   });
 
-  assert.equal(response.status, 403);
-  assert.match(response.body.error, /website accounts/i);
+  assert.equal(response.status, 409);
+  assert.match(response.body.error, /only archived accounts/i);
   assert.equal(deletedAccount, false);
 });
 
@@ -1285,6 +1332,7 @@ test('permanent account deletion requires an archived account and typed DELETE c
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   let targetArchived = false;
+  let targetRole = 'teacher';
   let permanentlyDeleted = false;
 
   t.after(async () => {
@@ -1308,7 +1356,7 @@ test('permanent account deletion requires an archived account and typed DELETE c
       return resultRows([{
         id: Number(params[0]),
         email: 'archived.teacher@example.com',
-        role: 'teacher',
+        role: targetRole,
         is_archived: targetArchived,
       }]);
     }
@@ -1331,6 +1379,7 @@ test('permanent account deletion requires an archived account and typed DELETE c
   assert.equal(permanentlyDeleted, false);
 
   targetArchived = true;
+  targetRole = 'teacher';
   const missingTypedConfirmation = await requestJson(baseUrl, '/api/accounts/42?permanent=true', {
     method: 'DELETE',
     headers,

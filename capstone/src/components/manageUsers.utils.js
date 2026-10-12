@@ -58,6 +58,12 @@ export const filterUsers = (users, searchTerm, roleFilter) => {
   });
 };
 
+export const filterStudentAccounts = (students, searchTerm) => (
+  (Array.isArray(students) ? students : []).filter((student) => matchesTableSearch(student, searchTerm, [
+    'student_name', 'student_id', 'grade_level', 'section', 'status',
+  ]))
+);
+
 export const paginateItems = (items, currentPage, pageSize) => {
   const safePageSize = Math.max(1, Number(pageSize) || 1);
   const totalItems = Array.isArray(items) ? items.length : 0;

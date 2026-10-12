@@ -138,6 +138,7 @@ describe('ManageUsers edit flow', () => {
 
   afterEach(() => {
     act(() => clearPreparedReport());
+    jest.useRealTimers();
     act(() => {
       root.unmount();
     });
@@ -330,7 +331,7 @@ describe('ManageUsers edit flow', () => {
     const report = document.querySelector('#print-report-root .printable-table-report');
     expect(report.querySelectorAll('tbody tr')).toHaveLength(3);
     expect(Array.from(report.querySelectorAll('th')).map((header) => header.textContent)).toEqual([
-      'User Name', 'Email', 'Role', 'Account Status',
+      'User / Student Name', 'ID', 'Email', 'Role', 'Account Status',
     ]);
     expect(report.textContent).not.toContain('Parent ID');
     expect(report.textContent).not.toContain('Mobile Number');
@@ -559,7 +560,7 @@ describe('ManageUsers edit flow', () => {
     });
   });
 
-  test('allows an active Student to be permanently deleted directly with the existing safeguards', async () => {
+  test('active Students can only be archived first, then permanently deleted from the archived list', async () => {
     localStorage.setItem('rememberToken', 'manage-users-token');
     let visibleStudents = [{
       id: 55,
@@ -568,10 +569,20 @@ describe('ManageUsers edit flow', () => {
       grade_level: 'Grade 3',
       section: 'Garnet',
     }];
+    let archivedStudents = [];
     global.fetch = jest.fn((url, options = {}) => {
       if (String(url).includes('/api/accounts/55?permanent=true') && options.method === 'DELETE') {
         visibleStudents = [];
+        archivedStudents = [];
         return Promise.resolve({ ok: true, json: async () => ({ success: true }) });
+      }
+      if (String(url).includes('/api/accounts/55') && options.method === 'DELETE') {
+        archivedStudents = [{ ...visibleStudents[0], is_archived: true }];
+        visibleStudents = [];
+        return Promise.resolve({ ok: true, json: async () => ({ success: true }) });
+      }
+      if (String(url).includes('/api/admin/student-accounts?archived=true')) {
+        return Promise.resolve({ ok: true, json: async () => ({ students: archivedStudents }) });
       }
       if (String(url).includes('/api/admin/id-directory')) {
         return Promise.resolve({ ok: true, json: async () => ({ students: visibleStudents }) });
@@ -589,20 +600,32 @@ describe('ManageUsers edit flow', () => {
     const studentSection = container.querySelector('.manage-users-student-accounts');
     expect(studentSection).toBeTruthy();
     const row = Array.from(studentSection.querySelectorAll('tbody tr')).find((item) => item.textContent.includes('Active Student'));
-    const permanentDelete = Array.from(row.querySelectorAll('button')).find((button) => button.textContent === 'Delete Permanently');
-    expect(permanentDelete).toBeTruthy();
+    expect(Array.from(row.querySelectorAll('button')).map((button) => button.textContent.trim())).toContain('Archive');
+    expect(row.textContent).not.toContain('Delete Permanently');
 
-    await act(async () => permanentDelete.click());
-    expect(document.body.textContent).toContain('This action is irreversible.');
+    await act(async () => Array.from(row.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Archive').click());
     const reason = document.body.querySelector('textarea[name="deletion-reason"]');
     const continueButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue');
     await act(async () => continueButton.click());
     expect(document.body.querySelector('#deletion-reason-error')?.textContent).toBe('A reason is required.');
-    await act(async () => setFieldValue(reason, 'Student account cleanup requested.'));
+    await act(async () => setFieldValue(reason, 'Student archive requested.'));
     await act(async () => continueButton.click());
+    const archiveConfirm = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Archive Student');
+    await act(async () => archiveConfirm.click());
 
+    expect(global.fetch.mock.calls.some(([url, options]) => String(url).includes('/api/accounts/55') && !String(url).includes('?permanent=true') && options.method === 'DELETE')).toBe(true);
+    const archivedSection = container.querySelector('.manage-users-archived-student-accounts');
+    expect(archivedSection).toBeTruthy();
+    const archivedRow = Array.from(archivedSection.querySelectorAll('tbody tr')).find((item) => item.textContent.includes('Active Student'));
+    const permanentDelete = Array.from(archivedRow.querySelectorAll('button')).find((button) => button.textContent === 'Delete Permanently');
+    expect(permanentDelete).toBeTruthy();
+
+    await act(async () => permanentDelete.click());
+    expect(document.body.textContent).toContain('This action is irreversible.');
+    const permanentReason = document.body.querySelector('textarea[name="deletion-reason"]');
+    await act(async () => setFieldValue(permanentReason, 'Student account cleanup requested.'));
+    await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue').click());
     expect(document.body.textContent).toContain('Type DELETE to permanently delete this account.');
-    expect(document.body.textContent).not.toContain('this archived account');
     const confirmation = document.body.querySelector('input[name="permanent-delete-confirmation"]');
     const confirmButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Permanently Delete Account');
     await act(async () => confirmButton.click());
@@ -614,7 +637,144 @@ describe('ManageUsers edit flow', () => {
     const deleteRequest = global.fetch.mock.calls.find(([url, options]) => String(url).includes('/api/accounts/55?permanent=true') && options.method === 'DELETE');
     expect(deleteRequest).toBeTruthy();
     expect(JSON.parse(deleteRequest[1].body)).toEqual({ reason: 'Student account cleanup requested.', permanent_confirmation: 'DELETE' });
-    expect(Array.from(studentSection.querySelectorAll('tbody tr')).some((item) => item.textContent.includes('Active Student'))).toBe(false);
+    expect(Array.from(archivedSection.querySelectorAll('tbody tr')).some((item) => item.textContent.includes('Active Student'))).toBe(false);
+  });
+
+  test('active and archived Student tables paginate independently and search resets both lists', async () => {
+    const activeStudents = Array.from({ length: 11 }, (_, index) => ({
+      id: 200 + index,
+      student_id: `00${index}`,
+      student_name: `Active Student ${String(index + 1).padStart(2, '0')}`,
+      grade_level: 'Grade 3',
+      section: 'Garnet',
+    }));
+    const archivedStudents = Array.from({ length: 10 }, (_, index) => ({
+      id: 300 + index,
+      student_id: `10${index}`,
+      student_name: `Archived Student ${String(index + 1).padStart(2, '0')}`,
+      grade_level: 'Grade 4',
+      section: 'Ruby',
+      is_archived: true,
+    }));
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/admin/student-accounts?archived=true')) return Promise.resolve({ ok: true, json: async () => ({ students: archivedStudents }) });
+      if (String(url).includes('/api/admin/id-directory')) return Promise.resolve({ ok: true, json: async () => ({ students: activeStudents }) });
+      if (String(url).includes('/api/accounts')) return Promise.resolve({ ok: true, json: async () => accountsPayload });
+      if (String(url).includes('/api/sections/registry')) return Promise.resolve({ ok: true, json: async () => ({ grades: [] }) });
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => root.render(<ManageUsers />));
+    const activeSection = container.querySelector('.manage-users-student-accounts');
+    const archivedSection = container.querySelector('.manage-users-archived-student-accounts');
+    expect(activeSection.querySelectorAll('tbody tr')).toHaveLength(8);
+    expect(archivedSection.querySelectorAll('tbody tr')).toHaveLength(8);
+
+    await act(async () => activeSection.querySelector('[aria-label="Active Student Accounts pagination"] button:last-child').click());
+    expect(activeSection.querySelectorAll('tbody tr')).toHaveLength(3);
+    expect(archivedSection.querySelectorAll('tbody tr')).toHaveLength(8);
+
+    await act(async () => archivedSection.querySelector('[aria-label="Archived Student Accounts pagination"] button:last-child').click());
+    expect(archivedSection.querySelectorAll('tbody tr')).toHaveLength(2);
+    expect(activeSection.querySelectorAll('tbody tr')).toHaveLength(3);
+
+    const search = container.querySelector('[aria-label="Search Manage Users"]');
+    await act(async () => setFieldValue(search, 'Student 01'));
+    expect(activeSection.textContent).toContain('Page 1 of 1');
+    expect(archivedSection.textContent).toContain('Page 1 of 1');
+    expect(activeSection.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(archivedSection.querySelectorAll('tbody tr')).toHaveLength(1);
+  });
+
+  test('archiving and permanent deletion refresh their own Student list and clamp the last page', async () => {
+    let activeStudents = Array.from({ length: 9 }, (_, index) => ({
+      id: 500 + index,
+      student_id: `050${index}`,
+      student_name: `Active Student ${String(index + 1).padStart(2, '0')}`,
+      grade_level: 'Grade 3',
+      section: 'Garnet',
+    }));
+    let archivedStudents = Array.from({ length: 8 }, (_, index) => ({
+      id: 600 + index,
+      student_id: `060${index}`,
+      student_name: `Archived Student ${String(index + 1).padStart(2, '0')}`,
+      grade_level: 'Grade 4',
+      section: 'Ruby',
+      is_archived: true,
+    }));
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).includes('/api/accounts/508?permanent=true') && options.method === 'DELETE') {
+        archivedStudents = archivedStudents.filter((student) => student.id !== 508);
+        return Promise.resolve({ ok: true, json: async () => ({ success: true }) });
+      }
+      if (String(url).includes('/api/accounts/508') && options.method === 'DELETE') {
+        const [student] = activeStudents.filter((entry) => entry.id === 508);
+        activeStudents = activeStudents.filter((entry) => entry.id !== 508);
+        archivedStudents = [...archivedStudents, { ...student, is_archived: true }];
+        return Promise.resolve({ ok: true, json: async () => ({ success: true }) });
+      }
+      if (String(url).includes('/api/admin/student-accounts?archived=true')) return Promise.resolve({ ok: true, json: async () => ({ students: archivedStudents }) });
+      if (String(url).includes('/api/admin/id-directory')) return Promise.resolve({ ok: true, json: async () => ({ students: activeStudents }) });
+      if (String(url).includes('/api/accounts')) return Promise.resolve({ ok: true, json: async () => accountsPayload });
+      if (String(url).includes('/api/sections/registry')) return Promise.resolve({ ok: true, json: async () => ({ grades: [] }) });
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => root.render(<ManageUsers />));
+    const activeSection = container.querySelector('.manage-users-student-accounts');
+    const archivedSection = container.querySelector('.manage-users-archived-student-accounts');
+    await act(async () => activeSection.querySelector('[aria-label="Active Student Accounts pagination"] button:last-child').click());
+    const activeLastRow = Array.from(activeSection.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Active Student 09'));
+    await act(async () => Array.from(activeLastRow.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Archive').click());
+    await act(async () => setFieldValue(document.body.querySelector('textarea[name="deletion-reason"]'), 'Student archive requested.'));
+    await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue').click());
+    await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Archive Student').click());
+
+    expect(activeSection.textContent).toContain('Page 1 of 1');
+    expect(archivedSection.textContent).toContain('9)');
+    await act(async () => archivedSection.querySelector('[aria-label="Archived Student Accounts pagination"] button:last-child').click());
+    const archivedLastRow = Array.from(archivedSection.querySelectorAll('tbody tr')).find((row) => row.textContent.includes('Active Student 09'));
+    await act(async () => Array.from(archivedLastRow.querySelectorAll('button')).find((button) => button.textContent === 'Delete Permanently').click());
+    await act(async () => setFieldValue(document.body.querySelector('textarea[name="deletion-reason"]'), 'Permanent cleanup requested.'));
+    await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Continue').click());
+    await act(async () => setFieldValue(document.body.querySelector('input[name="permanent-delete-confirmation"]'), 'DELETE'));
+    await act(async () => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Permanently Delete Account').click());
+
+    expect(archivedSection.textContent).toContain('Page 1 of 1');
+    expect(archivedSection.querySelectorAll('tbody tr')).toHaveLength(8);
+    expect(archivedSection.textContent).not.toContain('Active Student 09');
+  });
+
+  test('Manage Users print contains the entire filtered account and Student result set, not only visible pages', async () => {
+    jest.useFakeTimers();
+    const managedAccounts = buildManagedAccounts(11);
+    const activeStudents = Array.from({ length: 9 }, (_, index) => ({
+      id: 400 + index,
+      student_id: `004${index}`,
+      student_name: `Print Student ${index + 1}`,
+      grade_level: 'Grade 3',
+      section: 'Garnet',
+    }));
+    global.fetch = jest.fn((url) => {
+      if (String(url).includes('/api/admin/student-accounts?archived=true')) return Promise.resolve({ ok: true, json: async () => ({ students: [] }) });
+      if (String(url).includes('/api/admin/id-directory')) return Promise.resolve({ ok: true, json: async () => ({ students: activeStudents }) });
+      if (String(url).includes('/api/accounts')) return Promise.resolve({ ok: true, json: async () => managedAccounts });
+      if (String(url).includes('/api/sections/registry')) return Promise.resolve({ ok: true, json: async () => ({ grades: [] }) });
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    await act(async () => root.render(<ManageUsers />));
+    expect(container.querySelectorAll('.manage-users-main-table tbody tr')).toHaveLength(8);
+    expect(container.querySelector('.manage-users-student-accounts tbody').querySelectorAll('tr')).toHaveLength(8);
+
+    const printSpy = jest.spyOn(window, 'print').mockImplementation(() => {});
+    await act(async () => container.querySelector('[aria-label="Print User List"]').click());
+    const report = document.querySelector('#print-report-root .printable-table-report');
+    expect(report).toBeTruthy();
+    expect(report.querySelectorAll('tbody tr')).toHaveLength(20);
+    expect(report.textContent).toContain('Records: 20');
+    act(() => jest.runOnlyPendingTimers());
+    printSpy.mockRestore();
   });
 
   test('marks long user identity cells for contained ellipsis instead of character wrapping', async () => {

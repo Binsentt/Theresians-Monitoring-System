@@ -344,7 +344,7 @@ test('permanently deleting one Student removes its directory row and leaves the 
   assert.deepEqual(relationships.map((relationship) => relationship.student_id), [45]);
 });
 
-test('Admin can permanently delete an active Student directly and only removes that Student owned rows', async (t) => {
+test('Admin must archive a Student before permanent deletion and only removes that Student owned rows', async (t) => {
   reset();
   let accounts = [
     { id: 44, email: 'deleted@example.test', role: 'student', game_student_id: '00440001', name: 'Deleted Student', is_archived: false },
@@ -358,6 +358,11 @@ test('Admin can permanently delete an active Student directly and only removes t
     }
     if (sql.includes('from public.accounts') && sql.includes('for update')) {
       return resultRows(accounts.filter((account) => account.id === Number(params[0])));
+    }
+    if (sql.startsWith('update public.accounts set is_archived = true')) {
+      const account = accounts.find((entry) => entry.id === Number(params[0]));
+      if (account) account.is_archived = true;
+      return resultRows(account ? [{ ...account, status: 'Offline' }] : []);
     }
     if (sql.startsWith('delete from public.game_results')) {
       gameResultStudentIds.splice(0, gameResultStudentIds.length, ...gameResultStudentIds.filter((id) => id !== params[0][0]));
@@ -388,6 +393,23 @@ test('Admin can permanently delete an active Student directly and only removes t
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => { reset(); await close(server); });
+
+  const activeDelete = await requestWithOptions(baseUrl, '/api/accounts/44?permanent=true', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer admin' },
+    body: JSON.stringify({ reason: 'Student account lifecycle cleanup.', permanent_confirmation: 'DELETE' }),
+  });
+  assert.equal(activeDelete.status, 409);
+  assert.deepEqual(gameResultStudentIds, [44, 45]);
+  assert.deepEqual(playtimeStudentIds, [44, 45]);
+
+  const archived = await requestWithOptions(baseUrl, '/api/accounts/44', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer admin' },
+    body: JSON.stringify({ reason: 'Student archive requested.' }),
+  });
+  assert.equal(archived.status, 200);
+  assert.deepEqual((await requestJson(baseUrl, '/api/admin/id-directory', { Authorization: 'Bearer admin' })).body.students.map((student) => student.student_id), ['00450001']);
 
   const deleted = await requestWithOptions(baseUrl, '/api/accounts/44?permanent=true', {
     method: 'DELETE',
