@@ -1229,6 +1229,13 @@ label {
 }
 
 .printable-table-report {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 9pt;
+  line-height: 1.28;
   color: #111827;
   background: #fff;
 }
@@ -1263,6 +1270,210 @@ label {
   font-style: italic;
 }
 
+.printable-report-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  color: #111827;
+  font-size: 9pt;
+}
+
+.printable-report-table th,
+.printable-report-table td {
+  padding: 0.38rem 0.42rem;
+  border: 1px solid #6b7280;
+  background: #fff;
+  color: #111827;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.printable-report-table th {
+  background: #e5e7eb;
+  font-weight: 700;
+}
+
+.print-settings-backdrop {
+  position: fixed;
+  z-index: 2147482000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.62);
+}
+
+.print-settings-dialog {
+  width: min(100%, 34rem);
+  max-height: min(90vh, 48rem);
+  overflow: auto;
+  padding: 1.35rem;
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 0.9rem;
+  background: var(--surface-color, #fff);
+  color: var(--text-primary, #1f2937);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.3);
+}
+
+.print-settings-heading,
+.print-settings-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.print-settings-eyebrow {
+  color: var(--text-muted, #64748b);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.print-settings-heading h2 {
+  margin: 0.2rem 0;
+  color: var(--text-primary, #1f2937);
+  font-size: 1.35rem;
+}
+
+.print-settings-heading p,
+.print-settings-page-count,
+.print-settings-hint {
+  margin: 0;
+  color: var(--text-secondary, #475569);
+  font-size: 0.9rem;
+}
+
+.print-settings-close {
+  width: 2.2rem;
+  height: 2.2rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--text-secondary, #475569);
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+
+.print-settings-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.25rem 0;
+}
+
+.print-settings-field {
+  display: grid;
+  align-content: start;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.print-settings-field label {
+  color: var(--text-primary, #1f2937);
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.print-settings-field select,
+.print-settings-field input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 0.5rem;
+  background: var(--input-background, var(--surface-color, #fff));
+  color: var(--text-primary, #1f2937);
+  font: inherit;
+}
+
+.print-settings-field input[aria-invalid="true"] {
+  border-color: var(--error-color, #b91c1c);
+  box-shadow: 0 0 0 1px var(--error-color, #b91c1c);
+}
+
+.print-settings-custom-pages {
+  grid-column: 1 / -1;
+}
+
+.print-settings-validation {
+  margin: 0.75rem 0 0;
+  color: var(--error-color, #b91c1c);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.print-settings-actions {
+  justify-content: flex-end;
+  margin-top: 1.2rem;
+}
+
+.print-settings-actions button {
+  min-height: 42px;
+  padding: 0.55rem 1rem;
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 0.5rem;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.print-settings-cancel {
+  background: var(--surface-color, #fff);
+  color: var(--text-primary, #1f2937);
+}
+
+.print-settings-submit {
+  border-color: var(--primary-color, #2563eb) !important;
+  background: var(--primary-color, #2563eb);
+  color: #fff;
+}
+
+.print-measurement {
+  position: fixed;
+  z-index: -1;
+  top: 0;
+  left: -100000px;
+  visibility: hidden;
+  height: 273mm;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.print-sheet-stack {
+  display: none;
+}
+
+.print-sheet {
+  display: none;
+}
+
+.print-sheet-grid {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  grid-template-columns: repeat(var(--sheet-columns, 1), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--sheet-rows, 1), minmax(0, 1fr));
+}
+
+.print-page-slot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.print-logical-page {
+  width: var(--content-width);
+  height: var(--content-height);
+  transform: scale(var(--page-scale, 1));
+  transform-origin: center center;
+}
+
 @media (max-width: 640px) {
   .table-report-controls,
   .student-profile-report-actions {
@@ -1274,19 +1485,14 @@ label {
   }
 }
 
-@page {
+@page report-portrait {
   size: A4 portrait;
-  margin: 14mm;
+  margin: 0;
 }
 
-@page landscape-report {
+@page report-landscape {
   size: A4 landscape;
-  margin: 12mm;
-}
-
-@page portrait-report {
-  size: A4 portrait;
-  margin: 14mm;
+  margin: 0;
 }
 
 @media print {
@@ -1312,7 +1518,9 @@ label {
   }
 
   #root,
-  .print-only {
+  .print-only,
+  #print-report-root .print-settings-backdrop,
+  #print-report-root .print-measurement {
     display: none !important;
   }
 
@@ -1322,6 +1530,7 @@ label {
   }
 
   #print-report-root {
+    position: static !important;
     display: block !important;
     width: 100%;
     height: auto !important;
@@ -1333,22 +1542,58 @@ label {
     background: #fff !important;
   }
 
+  #print-report-root .print-sheet-stack {
+    display: block !important;
+    visibility: visible !important;
+  }
+
+  #print-report-root .print-sheet {
+    position: relative;
+    display: block !important;
+    width: 210mm;
+    height: 297mm;
+    padding: 12mm;
+    overflow: hidden;
+    color: #111 !important;
+    background: #fff !important;
+    page: report-portrait;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  #print-report-root .print-sheet-landscape {
+    width: 297mm;
+    height: 210mm;
+    page: report-landscape;
+  }
+
+  #print-report-root .print-sheet-portrait {
+    page: report-portrait;
+  }
+
+  #print-report-root .print-sheet-last {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  #print-report-root .print-sheet-grid,
+  #print-report-root .print-page-slot,
+  #print-report-root .print-logical-page {
+    visibility: visible !important;
+  }
+
   #print-report-root .printable-table-report {
-    position: static;
-    width: 100%;
+    position: relative;
+    width: var(--content-width, 100%);
+    height: 100%;
+    min-height: 0;
     padding: 0;
     overflow: visible !important;
     color: #111 !important;
     background: #fff !important;
     box-shadow: none !important;
-  }
-
-  .printable-report-landscape {
-    page: landscape-report;
-  }
-
-  .printable-report-portrait {
-    page: portrait-report;
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   .no-print,
@@ -1365,35 +1610,13 @@ label {
         display: none !important;
       }
 
-  #print-report-root .printable-table-report table {
-    width: 100%;
-    border-collapse: collapse;
-    color: #111 !important;
-    font-size: 9pt;
-  }
-
   #print-report-root .printable-table-report thead {
     display: table-header-group;
   }
 
-  #print-report-root .printable-table-report tr {
+  #print-report-root .printable-report-table tr {
     break-inside: avoid;
     page-break-inside: avoid;
-  }
-
-  #print-report-root .printable-table-report th,
-  #print-report-root .printable-table-report td {
-    padding: 0.38rem 0.42rem;
-    border: 1px solid #6b7280 !important;
-    background: #fff !important;
-    color: #111 !important;
-    text-align: left;
-    vertical-align: top;
-  }
-
-  #print-report-root .printable-table-report th {
-    font-weight: 700;
-    background: #e5e7eb !important;
   }
 
   #print-report-root .printable-report-empty td {
@@ -1428,11 +1651,15 @@ label {
   #print-report-root .printable-report-footer {
     display: flex;
     justify-content: space-between;
-    margin-top: 0.7rem;
+    margin-top: auto;
     padding-top: 0.35rem;
     border-top: 1px solid #9ca3af;
     color: #4b5563 !important;
     font-size: 8pt;
+  }
+
+  #print-report-root .printable-report-table {
+    flex: 0 0 auto;
   }
 
 

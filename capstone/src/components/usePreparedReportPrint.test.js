@@ -2,6 +2,7 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { usePreparedReportPrint } from './usePreparedReportPrint';
 import { PrintableTableReport } from './PrintableTableReport';
+import { clearPreparedReport } from './PrintReportPortal';
 
 function Harness() {
   const { preparedRows, hasPreparedReport, preparing, prepareAndPrint } = usePreparedReportPrint();
@@ -35,6 +36,7 @@ describe('usePreparedReportPrint', () => {
 
   afterEach(() => {
     act(() => root.unmount());
+    act(() => clearPreparedReport());
     container.remove();
     jest.useRealTimers();
   });
@@ -51,6 +53,10 @@ describe('usePreparedReportPrint', () => {
     expect(printSpy).not.toHaveBeenCalled();
 
     act(() => jest.runAllTimers());
+    expect(document.querySelector('#print-report-settings')).toBeTruthy();
+    expect(printSpy).not.toHaveBeenCalled();
+    act(() => document.querySelector('#print-report-settings button[type="submit"]').click());
+    act(() => jest.runOnlyPendingTimers());
     expect(printSpy).toHaveBeenCalledTimes(1);
     printSpy.mockRestore();
   });
@@ -65,7 +71,10 @@ describe('usePreparedReportPrint', () => {
     });
 
     expect(container.textContent).toContain('Prepared report');
-    act(() => jest.runAllTimers());
+    act(() => jest.runOnlyPendingTimers());
+    expect(document.querySelector('#print-report-settings')).toBeTruthy();
+    act(() => document.querySelector('#print-report-settings button[type="submit"]').click());
+    act(() => jest.runOnlyPendingTimers());
     expect(document.querySelector('#print-report-root .printable-report-empty')?.textContent).toContain('No data available for the selected authorized scope.');
     expect(printSpy).toHaveBeenCalledTimes(1);
     printSpy.mockRestore();

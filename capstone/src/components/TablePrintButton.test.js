@@ -27,7 +27,7 @@ describe('TablePrintButton', () => {
     jest.useRealTimers();
   });
 
-  test('keeps the live control accessible without rendering a duplicate printable heading', () => {
+  test('opens print settings first and prints only after explicit confirmation', () => {
     const printSpy = jest.spyOn(window, 'print').mockImplementation(() => {});
 
     act(() => {
@@ -38,8 +38,11 @@ describe('TablePrintButton', () => {
     expect(container.querySelector('.print-only')).toBeNull();
     act(() => {
       container.querySelector('button').click();
-      jest.runAllTimers();
     });
+    expect(document.querySelector('#print-report-settings')).toBeTruthy();
+    expect(printSpy).not.toHaveBeenCalled();
+    act(() => document.querySelector('#print-report-settings button[type="submit"]').click());
+    act(() => jest.runOnlyPendingTimers());
     expect(printSpy).toHaveBeenCalledTimes(1);
 
     printSpy.mockRestore();
