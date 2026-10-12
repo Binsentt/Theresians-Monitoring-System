@@ -227,7 +227,7 @@ export default function StudentProgress() {
           {loading ? (
             <div className="loading-state">Loading performance data...</div>
           ) : error ? (
-            <div className="fallback-note">{error}</div>
+            <div className="fallback-note validation-error-text">{error}</div>
           ) : filteredStudents.length === 0 ? (
             <div className="empty-state">{hasActiveStudentFilters ? 'No student records match the current filter.' : 'No student records are available yet.'}</div>
           ) : (

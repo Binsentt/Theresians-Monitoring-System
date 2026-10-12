@@ -42,6 +42,7 @@ export default function ResetPassword() {
   const [confirmError, setConfirmError] = useState('');
   const [confirmTouched, setConfirmTouched] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
+  const [statusTone, setStatusTone] = useState('info');
   const requestInFlightRef = useRef(false);
   const emailInputRef = useRef(null);
   const otpInputRef = useRef(null);
@@ -101,13 +102,16 @@ export default function ResetPassword() {
       const data = await response.json().catch(() => ({}));
 
       if (response.ok) {
+        setStatusTone('success');
         setStatusMessage(data.message || 'If an eligible account matches this email, recovery instructions will be sent.');
         setStep(2);
       } else {
+        setStatusTone('error');
         setStatusMessage(data.error || 'Recovery service is temporarily unavailable. Please try again later.');
       }
     } catch (error) {
       console.error('Error:', error);
+      setStatusTone('error');
       setStatusMessage('Recovery service is unavailable. Please try again later.');
     } finally {
       requestInFlightRef.current = false;
@@ -133,6 +137,7 @@ export default function ResetPassword() {
 
     requestInFlightRef.current = true;
     setLoading(true);
+    setStatusTone('info');
     setStatusMessage('Checking verification code…');
     try {
       const response = await fetch(apiUrl('/api/reset-password/verify'), {
@@ -149,13 +154,16 @@ export default function ResetPassword() {
       const data = await response.json().catch(() => ({}));
 
       if (response.ok) {
+        setStatusTone('success');
         setStatusMessage('Password updated successfully. You can now log in with your new password.');
         navigate('/login');
       } else {
+        setStatusTone('error');
         setStatusMessage(data.error || 'Invalid or expired verification code.');
       }
     } catch (error) {
       console.error('Error:', error);
+      setStatusTone('error');
       setStatusMessage('Recovery service is unavailable. Please try again later.');
     } finally {
       requestInFlightRef.current = false;
@@ -178,7 +186,7 @@ export default function ResetPassword() {
 
           <h3 className="login-title-sts forgot-password-title">Reset Password</h3>
 
-          {statusMessage && <div className="sts-field-status" role="status" aria-live="polite">{statusMessage}</div>}
+          {statusMessage && <div className={`sts-field-status status-${statusTone}`} role="status" aria-live="polite">{statusMessage}</div>}
 
           {step === 1 ? (
             <div className="forgot-password-step">

@@ -240,7 +240,7 @@ export default function StudentAnalytics() {
       {loading ? (
         <div className="loading-state">Loading student details...</div>
       ) : error ? (
-        <div className="fallback-note">{error}</div>
+        <div className="fallback-note validation-error-text">{error}</div>
       ) : (
         <>
           <section className="student-profile-card">

@@ -270,7 +270,7 @@ export default function ParentDashboard() {
 
             {error && (
               <ContentSection>
-                <div className="fallback-note">{error}</div>
+                <div className="fallback-note validation-error-text">{error}</div>
               </ContentSection>
             )}
           </PageContent>

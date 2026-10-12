@@ -43,6 +43,12 @@ import {
 } from './adminParentChildren.utils';
 import '../styles/manageusers.css';
 
+const getValidationFieldProps = (errors, field, errorId) => ({
+  className: `sts-input${errors[field] ? ' error' : ''}`,
+  'aria-invalid': Boolean(errors[field]),
+  'aria-describedby': errors[field] ? errorId : undefined,
+});
+
 export default function ManageUsers() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
@@ -921,7 +927,7 @@ export default function ManageUsers() {
                     <option value="Admin">Admin</option>
                   </select>
                 </div>
-                <form onSubmit={handleAddUser} className="sts-form">
+                <form onSubmit={handleAddUser} className="sts-form" noValidate>
                   <div className="form-group">
                     <label>First Name: *</label>
                     <input
@@ -930,9 +936,9 @@ export default function ManageUsers() {
                       value={newUser.firstName}
                       onChange={(e) => handleAddFormChange('firstName', e.target.value)}
                       onBlur={() => handleAddFormBlur('firstName')}
-                      className="sts-input"
+                      {...getValidationFieldProps(addErrors, 'firstName', 'add-first-name-error')}
                     />
-                    {addErrors.firstName && <p className="error-text">{addErrors.firstName}</p>}
+                    {addErrors.firstName && <p id="add-first-name-error" className="error-text" role="alert">{addErrors.firstName}</p>}
                   </div>
 
                   <div className="form-group">
@@ -943,9 +949,9 @@ export default function ManageUsers() {
                       value={newUser.middleName}
                       onChange={(e) => handleAddFormChange('middleName', e.target.value)}
                       onBlur={() => handleAddFormBlur('middleName')}
-                      className="sts-input"
+                      {...getValidationFieldProps(addErrors, 'middleName', 'add-middle-name-error')}
                     />
-                    {addErrors.middleName && <p className="error-text">{addErrors.middleName}</p>}
+                    {addErrors.middleName && <p id="add-middle-name-error" className="error-text" role="alert">{addErrors.middleName}</p>}
                   </div>
 
                   <div className="form-group">
@@ -956,9 +962,9 @@ export default function ManageUsers() {
                       value={newUser.lastName}
                       onChange={(e) => handleAddFormChange('lastName', e.target.value)}
                       onBlur={() => handleAddFormBlur('lastName')}
-                      className="sts-input"
+                      {...getValidationFieldProps(addErrors, 'lastName', 'add-last-name-error')}
                     />
-                    {addErrors.lastName && <p className="error-text">{addErrors.lastName}</p>}
+                    {addErrors.lastName && <p id="add-last-name-error" className="error-text" role="alert">{addErrors.lastName}</p>}
                   </div>
 
                   <div className="form-group">
@@ -969,14 +975,14 @@ export default function ManageUsers() {
                       value={newUser.email}
                       onChange={(e) => handleAddFormChange('email', e.target.value)}
                       onBlur={() => handleAddFormBlur('email')}
-                      className="sts-input"
+                      {...getValidationFieldProps(addErrors, 'email', 'add-email-error')}
                     />
-                    {addErrors.email && <p className="error-text">{addErrors.email}</p>}
+                    {addErrors.email && <p id="add-email-error" className="error-text" role="alert">{addErrors.email}</p>}
                   </div>
 
                   <div className="form-group">
                     <label>Temporary Password:</label>
-                    <div className="profile-static-field" style={{ padding: '12px 14px', background: '#f8fafc', borderRadius: '4px', border: '1px solid #d1d5db' }}>
+                    <div className="manage-users-temp-password-info">
                       A strong temporary password will be generated and emailed automatically.
                     </div>
                   </div>
@@ -991,9 +997,9 @@ export default function ManageUsers() {
                       onBlur={() => handleAddFormBlur('mobile_number')}
                       inputMode="numeric"
                       maxLength={11}
-                      className="sts-input"
+                      {...getValidationFieldProps(addErrors, 'mobile_number', 'add-mobile-error')}
                     />
-                    {addErrors.mobile_number && <p className="error-text">{addErrors.mobile_number}</p>}
+                    {addErrors.mobile_number && <p id="add-mobile-error" className="error-text" role="alert">{addErrors.mobile_number}</p>}
                   </div>
 
                   <div className="form-group">
@@ -1036,9 +1042,9 @@ export default function ManageUsers() {
                       value={newUser.birthday}
                       onChange={(e) => handleAddFormChange('birthday', e.target.value)}
                       onBlur={() => handleAddFormBlur('birthday')}
-                      className="sts-input"
+                      {...getValidationFieldProps(addErrors, 'birthday', 'add-birthday-error')}
                     />
-                    {addErrors.birthday && <p className="error-text">{addErrors.birthday}</p>}
+                    {addErrors.birthday && <p id="add-birthday-error" className="error-text" role="alert">{addErrors.birthday}</p>}
                   </div>
 
                   <div className="form-group">
@@ -1046,13 +1052,13 @@ export default function ManageUsers() {
                     <select
                       value={newUser.gender}
                       onChange={(e) => handleAddFormChange('gender', e.target.value)}
-                      className="sts-input"
+                      {...getValidationFieldProps(addErrors, 'gender', 'add-gender-error')}
                     >
                       <option value="">Select Gender</option>
                       <option value="Male">Male</option>
                       <option value="Female">Female</option>
                     </select>
-                    {addErrors.gender && <p className="error-text">{addErrors.gender}</p>}
+                    {addErrors.gender && <p id="add-gender-error" className="error-text" role="alert">{addErrors.gender}</p>}
                   </div>
 
                   {isTeacherRole(selectedRole) && (
@@ -1064,11 +1070,11 @@ export default function ManageUsers() {
                         value={newUser.employee_id}
                         onChange={(e) => handleAddFormChange('employee_id', e.target.value)}
                         onBlur={() => handleAddFormBlur('employee_id')}
-                        className="sts-input"
+                        {...getValidationFieldProps(addErrors, 'employee_id', 'add-employee-id-error')}
                         inputMode="numeric"
                         maxLength={10}
                       />
-                      {addErrors.employee_id && <p className="error-text">{addErrors.employee_id}</p>}
+                      {addErrors.employee_id && <p id="add-employee-id-error" className="error-text" role="alert">{addErrors.employee_id}</p>}
                     </div>
                   )}
 
@@ -1455,7 +1461,7 @@ export default function ManageUsers() {
               <div className="modal-overlay" onClick={() => !updating && setEditingUser(null)}>
                 <div className="modal-content edit-user-modal" role="dialog" aria-modal="true" aria-labelledby="edit-user-title" onClick={(e) => e.stopPropagation()}>
                   <h2 id="edit-user-title" className="edit-user-modal-title">Edit User</h2>
-                  <form onSubmit={handleUpdateUser} className="sts-form edit-user-form">
+                  <form onSubmit={handleUpdateUser} className="sts-form edit-user-form" noValidate>
                     <div className="form-group">
                       <label>First Name: *</label>
                       <input
@@ -1463,9 +1469,9 @@ export default function ManageUsers() {
                         value={editForm.firstName}
                         onChange={(e) => handleEditFormChange('firstName', e.target.value)}
                         onBlur={() => handleEditFormBlur('firstName')}
-                        className="sts-input"
+                        {...getValidationFieldProps(editErrors, 'firstName', 'edit-first-name-error')}
                       />
-                      {editErrors.firstName && <p className="error-text">{editErrors.firstName}</p>}
+                      {editErrors.firstName && <p id="edit-first-name-error" className="error-text" role="alert">{editErrors.firstName}</p>}
                     </div>
 
                     <div className="form-group">
@@ -1475,9 +1481,9 @@ export default function ManageUsers() {
                         value={editForm.middleName}
                         onChange={(e) => handleEditFormChange('middleName', e.target.value)}
                         onBlur={() => handleEditFormBlur('middleName')}
-                        className="sts-input"
+                        {...getValidationFieldProps(editErrors, 'middleName', 'edit-middle-name-error')}
                       />
-                      {editErrors.middleName && <p className="error-text">{editErrors.middleName}</p>}
+                      {editErrors.middleName && <p id="edit-middle-name-error" className="error-text" role="alert">{editErrors.middleName}</p>}
                     </div>
 
                     <div className="form-group">
@@ -1487,9 +1493,9 @@ export default function ManageUsers() {
                         value={editForm.lastName}
                         onChange={(e) => handleEditFormChange('lastName', e.target.value)}
                         onBlur={() => handleEditFormBlur('lastName')}
-                        className="sts-input"
+                        {...getValidationFieldProps(editErrors, 'lastName', 'edit-last-name-error')}
                       />
-                      {editErrors.lastName && <p className="error-text">{editErrors.lastName}</p>}
+                      {editErrors.lastName && <p id="edit-last-name-error" className="error-text" role="alert">{editErrors.lastName}</p>}
                     </div>
 
                     <div className="form-group">
@@ -1499,14 +1505,14 @@ export default function ManageUsers() {
                         value={editForm.email}
                         onChange={(e) => handleEditFormChange('email', e.target.value)}
                         onBlur={() => handleEditFormBlur('email')}
-                        className="sts-input"
+                        {...getValidationFieldProps(editErrors, 'email', 'edit-email-error')}
                       />
-                      {editErrors.email && <p className="error-text">{editErrors.email}</p>}
+                      {editErrors.email && <p id="edit-email-error" className="error-text" role="alert">{editErrors.email}</p>}
                     </div>
 
                     <div className="form-group">
                       <label>Role:</label>
-                      <div className="profile-static-field" style={{ padding: '12px 14px', background: '#f8fafc', borderRadius: '4px', border: '1px solid #d1d5db' }}>
+                        <div className="profile-static-field manage-user-readonly-value">
                         {formatRoleLabel(editingUser.role)}
                       </div>
                     </div>
@@ -1519,18 +1525,18 @@ export default function ManageUsers() {
                           value={editForm.employee_id}
                           onChange={(e) => handleEditFormChange('employee_id', e.target.value)}
                           onBlur={() => handleEditFormBlur('employee_id')}
-                          className="sts-input"
+                          {...getValidationFieldProps(editErrors, 'employee_id', 'edit-employee-id-error')}
                           inputMode="numeric"
                           maxLength={10}
                         />
-                        {editErrors.employee_id && <p className="error-text">{editErrors.employee_id}</p>}
+                        {editErrors.employee_id && <p id="edit-employee-id-error" className="error-text" role="alert">{editErrors.employee_id}</p>}
                       </div>
                     )}
 
                     {isParentRole(editingUser.role) && (
                       <div className="form-group">
                         <label>Parent ID:</label>
-                        <div className="profile-static-field" style={{ padding: '12px 14px', background: '#f8fafc', borderRadius: '4px', border: '1px solid #d1d5db' }}>
+                        <div className="profile-static-field manage-user-readonly-value">
                           {editingUser.parent_id || 'Not generated yet'}
                         </div>
                       </div>
@@ -1545,9 +1551,9 @@ export default function ManageUsers() {
                         onBlur={() => handleEditFormBlur('mobile_number')}
                         inputMode="numeric"
                         maxLength={11}
-                        className="sts-input"
+                        {...getValidationFieldProps(editErrors, 'mobile_number', 'edit-mobile-error')}
                       />
-                      {editErrors.mobile_number && <p className="error-text">{editErrors.mobile_number}</p>}
+                      {editErrors.mobile_number && <p id="edit-mobile-error" className="error-text" role="alert">{editErrors.mobile_number}</p>}
                     </div>
 
                     <div className="form-group">
@@ -1587,9 +1593,9 @@ export default function ManageUsers() {
                         value={editForm.birthday}
                         onChange={(e) => handleEditFormChange('birthday', e.target.value)}
                         onBlur={() => handleEditFormBlur('birthday')}
-                        className="sts-input"
+                        {...getValidationFieldProps(editErrors, 'birthday', 'edit-birthday-error')}
                       />
-                      {editErrors.birthday && <p className="error-text">{editErrors.birthday}</p>}
+                      {editErrors.birthday && <p id="edit-birthday-error" className="error-text" role="alert">{editErrors.birthday}</p>}
                     </div>
 
                     <div className="form-group">
@@ -1597,13 +1603,13 @@ export default function ManageUsers() {
                       <select
                         value={editForm.gender}
                         onChange={(e) => handleEditFormChange('gender', e.target.value)}
-                        className="sts-input"
+                        {...getValidationFieldProps(editErrors, 'gender', 'edit-gender-error')}
                       >
                         <option value="">Select Gender</option>
                         <option value="Male">Male</option>
                         <option value="Female">Female</option>
                       </select>
-                      {editErrors.gender && <p className="error-text">{editErrors.gender}</p>}
+                      {editErrors.gender && <p id="edit-gender-error" className="error-text" role="alert">{editErrors.gender}</p>}
                     </div>
 
                     {isTeacherRole(editingUser.role) && (

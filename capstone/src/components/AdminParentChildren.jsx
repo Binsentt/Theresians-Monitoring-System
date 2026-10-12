@@ -8,7 +8,16 @@ import {
 } from '../utils/validation.utils';
 import { createAdminChildDraft } from './adminParentChildren.utils';
 
-const ErrorText = ({ children }) => children ? <span className="error-text" role="alert">{children}</span> : null;
+const ErrorText = ({ children, id }) => children ? <span id={id} className="error-text" role="alert">{children}</span> : null;
+const childValidationProps = (rowErrors, field, errorId, additionalError = false, additionalErrorId = '') => {
+  const invalid = Boolean(rowErrors[field] || additionalError);
+  const descriptions = [rowErrors[field] ? errorId : '', additionalError ? additionalErrorId : ''].filter(Boolean);
+  return {
+    className: `sts-input${invalid ? ' error' : ''}`,
+    'aria-invalid': invalid,
+    'aria-describedby': descriptions.length ? descriptions.join(' ') : undefined,
+  };
+};
 const EMPTY_HEADERS = Object.freeze({});
 
 const localIdError = (operation, studentId) => {
@@ -144,7 +153,8 @@ export default function AdminParentChildren({
         const isExisting = child.operation === 'existing';
         const sections = getSectionsForGrade(sectionRegistry, child.gradeLevel);
         const eligibilityState = eligibility[child.clientId || String(index)] || { status: 'idle', error: '' };
-        const eligibilityErrorId = `admin-child-${index}-student-id-error`;
+        const errorId = (field) => `admin-child-${index}-${field}-error`;
+        const eligibilityErrorId = `admin-child-${index}-student-id-eligibility-error`;
         return (
           <fieldset className="admin-parent-child-card" key={child.clientId || index}>
             <legend>Child {childNumber}</legend>
@@ -163,7 +173,7 @@ export default function AdminParentChildren({
               <label htmlFor={`admin-child-${index}-operation`}>Student setup *</label>
               <select
                 id={`admin-child-${index}-operation`}
-                className="sts-input"
+                {...childValidationProps(rowErrors, 'operation', errorId('operation'))}
                 aria-label={`Child ${childNumber} account action`}
                 value={child.operation}
                 onChange={(event) => {
@@ -175,41 +185,41 @@ export default function AdminParentChildren({
                 <option value="existing">Existing Student</option>
                 <option value="link">Link Existing Student</option>
               </select>
-              <ErrorText>{rowErrors.operation}</ErrorText>
+              <ErrorText id={errorId('operation')}>{rowErrors.operation}</ErrorText>
             </div>
 
             {!isLink && (
               <>
                 <div className="form-group">
                   <label htmlFor={`admin-child-${index}-first-name`}>First Name *</label>
-                  <input id={`admin-child-${index}-first-name`} className="sts-input" aria-label={`Child ${childNumber} first name`} value={child.firstName} onChange={(event) => updateChild(index, { firstName: event.target.value })} />
-                  <ErrorText>{rowErrors.firstName}</ErrorText>
+                  <input id={`admin-child-${index}-first-name`} {...childValidationProps(rowErrors, 'firstName', errorId('first-name'))} aria-label={`Child ${childNumber} first name`} value={child.firstName} onChange={(event) => updateChild(index, { firstName: event.target.value })} />
+                  <ErrorText id={errorId('first-name')}>{rowErrors.firstName}</ErrorText>
                 </div>
                 <div className="form-group">
                   <label htmlFor={`admin-child-${index}-middle-initial`}>Middle Initial</label>
-                  <input id={`admin-child-${index}-middle-initial`} className="sts-input" aria-label={`Child ${childNumber} middle initial`} maxLength={2} value={child.middleInitial} onChange={(event) => updateChild(index, { middleInitial: event.target.value })} />
-                  <ErrorText>{rowErrors.middleInitial}</ErrorText>
+                  <input id={`admin-child-${index}-middle-initial`} {...childValidationProps(rowErrors, 'middleInitial', errorId('middle-initial'))} aria-label={`Child ${childNumber} middle initial`} maxLength={2} value={child.middleInitial} onChange={(event) => updateChild(index, { middleInitial: event.target.value })} />
+                  <ErrorText id={errorId('middle-initial')}>{rowErrors.middleInitial}</ErrorText>
                 </div>
                 <div className="form-group">
                   <label htmlFor={`admin-child-${index}-last-name`}>Last Name *</label>
-                  <input id={`admin-child-${index}-last-name`} className="sts-input" aria-label={`Child ${childNumber} last name`} value={child.lastName} onChange={(event) => updateChild(index, { lastName: event.target.value })} />
-                  <ErrorText>{rowErrors.lastName}</ErrorText>
+                  <input id={`admin-child-${index}-last-name`} {...childValidationProps(rowErrors, 'lastName', errorId('last-name'))} aria-label={`Child ${childNumber} last name`} value={child.lastName} onChange={(event) => updateChild(index, { lastName: event.target.value })} />
+                  <ErrorText id={errorId('last-name')}>{rowErrors.lastName}</ErrorText>
                 </div>
                 <div className="form-group">
                   <label htmlFor={`admin-child-${index}-grade`}>Grade *</label>
-                  <select id={`admin-child-${index}-grade`} className="sts-input" aria-label={`Child ${childNumber} grade`} value={child.gradeLevel} onChange={(event) => updateChild(index, { gradeLevel: event.target.value, section: '' })}>
+                  <select id={`admin-child-${index}-grade`} {...childValidationProps(rowErrors, 'gradeLevel', errorId('grade'))} aria-label={`Child ${childNumber} grade`} value={child.gradeLevel} onChange={(event) => updateChild(index, { gradeLevel: event.target.value, section: '' })}>
                     <option value="">Select Grade</option>
                     {PARENT_CHILD_GRADE_OPTIONS.map((grade) => <option key={grade} value={grade}>{grade}</option>)}
                   </select>
-                  <ErrorText>{rowErrors.gradeLevel}</ErrorText>
+                  <ErrorText id={errorId('grade')}>{rowErrors.gradeLevel}</ErrorText>
                 </div>
                 <div className="form-group">
                   <label htmlFor={`admin-child-${index}-section`}>Section *</label>
-                  <select id={`admin-child-${index}-section`} className="sts-input" aria-label={`Child ${childNumber} section`} value={child.section} disabled={!child.gradeLevel || sections.length === 0} onChange={(event) => updateChild(index, { section: event.target.value })}>
+                  <select id={`admin-child-${index}-section`} {...childValidationProps(rowErrors, 'section', errorId('section'))} aria-label={`Child ${childNumber} section`} value={child.section} disabled={!child.gradeLevel || sections.length === 0} onChange={(event) => updateChild(index, { section: event.target.value })}>
                     <option value="">Select Section</option>
                     {sections.map((section) => <option key={section} value={section}>{section}</option>)}
                   </select>
-                  <ErrorText>{rowErrors.section}</ErrorText>
+                  <ErrorText id={errorId('section')}>{rowErrors.section}</ErrorText>
                 </div>
               </>
             )}
@@ -250,22 +260,26 @@ export default function AdminParentChildren({
                 )}
                 <input
                   id={`admin-child-${index}-student-id`}
-                  className="sts-input"
+                  {...childValidationProps(
+                    rowErrors,
+                    'studentId',
+                    errorId('student-id'),
+                    eligibilityState.status === 'error',
+                    eligibilityErrorId,
+                  )}
                   aria-label={`Child ${childNumber} Student ID`}
                   inputMode="text"
                   maxLength={9}
                   placeholder={isExisting ? '17000087 or 17-000087' : '8-digit Student ID'}
                   value={child.studentId}
                   onChange={(event) => updateChild(index, { studentId: event.target.value.replace(/[^0-9-]/g, '').slice(0, 9) })}
-                  aria-invalid={eligibilityState.status === 'error' ? 'true' : undefined}
-                  aria-describedby={eligibilityState.status === 'error' ? eligibilityErrorId : undefined}
                 />
                 <span className="field-help">
                   {isExisting
                     ? 'Enter the 8-digit school Student ID; the dash is optional.'
                     : 'Only Students without an active Parent relationship can be linked.'}
                 </span>
-                <ErrorText>{rowErrors.studentId}</ErrorText>
+                <ErrorText id={errorId('student-id')}>{rowErrors.studentId}</ErrorText>
                 {eligibilityState.status === 'pending' && <span className="field-help" role="status">Checking Student ID...</span>}
                 {eligibilityState.status === 'valid' && <span className="field-help admin-child-availability-success" role="status">Student ID is available.</span>}
                 {eligibilityState.status === 'error' && <span id={eligibilityErrorId} className="error-text" role="alert">{eligibilityState.error}</span>}

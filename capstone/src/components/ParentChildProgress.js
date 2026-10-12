@@ -494,7 +494,7 @@ export default function ParentChildProgress() {
                         {childDetailsLoading ? (
                           <div className="fallback-note">Loading quiz sessions...</div>
                         ) : childDetailsError ? (
-                          <div className="fallback-note">{childDetailsError}</div>
+                          <div className="fallback-note validation-error-text">{childDetailsError}</div>
                         ) : quizSessions.length === 0 ? (
                           <div className="fallback-note">No quiz sessions recorded for this child.</div>
                         ) : (
@@ -538,7 +538,7 @@ export default function ParentChildProgress() {
                           <p>Topics attempted and best recorded quiz scores.</p>
                         </div>
                         {topicDetailsError ? (
-                          <div className="fallback-note">{topicDetailsError}</div>
+                          <div className="fallback-note validation-error-text">{topicDetailsError}</div>
                         ) : topicCoverage.length === 0 ? (
                           <div className="fallback-note">No topic results recorded for this child.</div>
                         ) : (
@@ -596,7 +596,7 @@ export default function ParentChildProgress() {
 
             {error && !loading && (
               <ContentSection>
-                <div className="fallback-note">{error}</div>
+                <div className="fallback-note validation-error-text">{error}</div>
               </ContentSection>
             )}
           </PageContent>

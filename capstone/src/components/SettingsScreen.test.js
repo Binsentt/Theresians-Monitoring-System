@@ -281,6 +281,7 @@ describe('SettingsScreen dashboard layout', () => {
     await act(async () => {
       editProfileButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
+    expect(document.body.querySelector('.profile-form').noValidate).toBe(true);
     const mobile = document.body.querySelector('input[placeholder="09XXXXXXXXX"]');
     await act(async () => {
       setInputValue(mobile, '0917-123-4567');

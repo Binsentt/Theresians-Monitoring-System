@@ -627,7 +627,7 @@ export default function SettingsScreen() {
                   </div>
                 </div>
               ) : (
-                <form onSubmit={handleUpdateProfile} className="profile-form">
+                <form onSubmit={handleUpdateProfile} className="profile-form" noValidate>
                   <div className="form-group">
                     <label>First Name *</label>
                     <input

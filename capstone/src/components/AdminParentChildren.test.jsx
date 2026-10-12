@@ -15,7 +15,10 @@ describe('AdminParentChildren', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
-    global.fetch = jest.fn();
+    global.fetch = jest.fn((url) => Promise.resolve({
+      ok: true,
+      json: async () => String(url).includes('/api/admin/id-directory') ? { students: [] } : {},
+    }));
   });
 
   afterEach(async () => {
@@ -95,7 +98,12 @@ describe('AdminParentChildren', () => {
   test('validates a locally valid Student ID against authoritative ownership and exposes the result inline', async () => {
     let value = [{ ...createAdminChildDraft('row-1'), operation: 'link', studentId: '00123456' }];
     const validationStates = [];
-    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ available: true, student_id: '00123456', operation: 'link' }) });
+    global.fetch.mockImplementation((url) => Promise.resolve({
+      ok: true,
+      json: async () => String(url).includes('/api/admin/id-directory')
+        ? { students: [] }
+        : { available: true, student_id: '00123456', operation: 'link' },
+    }));
 
     await act(async () => root.render(
       <AdminParentChildren
@@ -114,8 +122,9 @@ describe('AdminParentChildren', () => {
       await Promise.resolve();
     });
 
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-    expect(global.fetch.mock.calls[0][0]).toContain('/api/accounts/student-link-eligibility?student_id=00123456&operation=link');
+    const eligibilityCalls = global.fetch.mock.calls.filter(([url]) => String(url).includes('/student-link-eligibility'));
+    expect(eligibilityCalls).toHaveLength(1);
+    expect(eligibilityCalls[0][0]).toContain('/api/accounts/student-link-eligibility?student_id=00123456&operation=link');
     expect(container.textContent).toContain('Student ID is available');
     expect(validationStates.at(-1)).toEqual({ pending: false, isValid: true });
   });
@@ -123,13 +132,19 @@ describe('AdminParentChildren', () => {
   test('shows the single-Parent ownership error and ignores a stale earlier validation response', async () => {
     let value = [{ ...createAdminChildDraft('row-1'), operation: 'link', studentId: '00123456' }];
     let resolveFirst;
-    global.fetch
-      .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }))
-      .mockResolvedValueOnce({
+    global.fetch.mockImplementation((url) => {
+      if (String(url).includes('/api/admin/id-directory')) {
+        return Promise.resolve({ ok: true, json: async () => ({ students: [] }) });
+      }
+      if (String(url).includes('student_id=00123456')) {
+        return new Promise((resolve) => { resolveFirst = resolve; });
+      }
+      return Promise.resolve({
         ok: false,
         status: 409,
         json: async () => ({ error: 'This Student is already linked to a Parent account.' }),
       });
+    });
     const onChange = (next) => { value = next; };
     const render = async () => act(async () => root.render(
       <AdminParentChildren value={value} onChange={onChange} sectionRegistry={registry} errors={[]} authHeaders={{ Authorization: 'Bearer admin' }} />
@@ -161,7 +176,35 @@ describe('AdminParentChildren', () => {
       <AdminParentChildren value={value} onChange={() => {}} sectionRegistry={registry} errors={[]} authHeaders={{ Authorization: 'Bearer admin' }} />
     ));
     await act(async () => { jest.advanceTimersByTime(300); });
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes('/student-link-eligibility'))).toBe(false);
     expect(container.textContent).toContain('Student ID must be 8 digits.');
+    const studentId = container.querySelector('input[aria-label="Child 1 Student ID"]');
+    expect(studentId.classList.contains('error')).toBe(true);
+    expect(studentId.getAttribute('aria-invalid')).toBe('true');
+    expect(studentId.getAttribute('aria-describedby')).toBe('admin-child-0-student-id-eligibility-error');
+    expect(container.querySelector('#admin-child-0-student-id-eligibility-error').classList.contains('error-text')).toBe(true);
+  });
+
+  test('links Parent-child required-field errors to red validation text and invalid controls', async () => {
+    const value = [createAdminChildDraft('row-1')];
+    await act(async () => root.render(
+      <AdminParentChildren
+        value={value}
+        onChange={() => {}}
+        sectionRegistry={registry}
+        errors={[{ firstName: 'Please fill out this field.', gradeLevel: 'Please select a Grade.' }]}
+      />
+    ));
+
+    const firstName = container.querySelector('#admin-child-0-first-name');
+    const grade = container.querySelector('#admin-child-0-grade');
+    const firstNameError = container.querySelector('#admin-child-0-first-name-error');
+    expect(firstName.classList.contains('error')).toBe(true);
+    expect(firstName.getAttribute('aria-invalid')).toBe('true');
+    expect(firstName.getAttribute('aria-describedby')).toBe('admin-child-0-first-name-error');
+    expect(firstNameError.classList.contains('error-text')).toBe(true);
+    expect(grade.classList.contains('error')).toBe(true);
+    expect(grade.getAttribute('aria-invalid')).toBe('true');
+    expect(container.querySelector('#admin-child-0-grade-error').classList.contains('error-text')).toBe(true);
   });
 });

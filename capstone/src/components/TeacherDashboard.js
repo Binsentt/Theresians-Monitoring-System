@@ -142,7 +142,7 @@ export default function TeacherDashboard() {
               actions={<button className="btn-primary" type="button" onClick={() => navigate('/teacher/student-progress')}>View Student Progress</button>}
             >
               {error ? (
-                <InfoCard variant="info"><p>{error}</p></InfoCard>
+                <InfoCard variant="info"><p className="validation-error-text" role="alert">{error}</p></InfoCard>
               ) : students.length === 0 ? (
                 <InfoCard variant="info"><p>No assigned students are available yet.</p></InfoCard>
               ) : (

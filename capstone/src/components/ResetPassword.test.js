@@ -89,6 +89,25 @@ describe('ResetPassword auth theme integration', () => {
       })
     );
     expect(container.textContent).toContain('Code sent to:');
+    expect(container.querySelector('.sts-field-status').classList.contains('status-success')).toBe(true);
+  });
+
+  test('renders recovery request failures with error styling and keeps success separate', async () => {
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: false,
+      json: async () => ({ error: 'Recovery service is temporarily unavailable.' }),
+    }));
+    await act(async () => root.render(<ResetPassword />));
+    await setInputValue(container.querySelector('input[type="email"]'), 'teacher@example.com');
+    await act(async () => {
+      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'SEND VERIFICATION CODE').click();
+      await Promise.resolve();
+    });
+
+    const status = container.querySelector('.sts-field-status');
+    expect(status.textContent).toContain('Recovery service is temporarily unavailable.');
+    expect(status.classList.contains('status-error')).toBe(true);
+    expect(status.classList.contains('status-success')).toBe(false);
   });
 
   test('shows strength feedback and blocks a too-short recovery password before the request', async () => {

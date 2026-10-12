@@ -142,6 +142,12 @@
   box-shadow: 0 24px 64px rgba(15, 23, 42, 0.28);
 }
 
+[data-theme='dark'] .parent-add-child-modal {
+  background: var(--panel-bg, #1e293b);
+  border-color: var(--border-color, #374151);
+  color: var(--text-primary, #f1f5f9);
+}
+
 .parent-add-child-heading {
   display: flex;
   align-items: flex-start;
@@ -208,6 +214,18 @@
   box-sizing: border-box;
   width: 100%;
   min-height: 42px;
+}
+
+[data-theme='dark'] .parent-add-child-form input,
+[data-theme='dark'] .parent-add-child-form select {
+  background: var(--bg-secondary, #0f1720);
+  border-color: var(--border-color, #374151);
+  color: var(--text-primary, #f1f5f9);
+}
+
+[data-theme='dark'] .parent-add-child-heading p,
+[data-theme='dark'] .parent-add-child-form .field-help {
+  color: var(--text-muted, #94a3b8);
 }
 
 .parent-add-child-student-id,

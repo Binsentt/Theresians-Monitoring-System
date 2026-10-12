@@ -36,6 +36,7 @@
   --success-color: #16a34a;
   --warning-color: #d97706;
   --error-color: #dc2626;
+  --validation-error-color: #b91c1c;
   --info-color: #2563eb;
   --accent-color: #2563eb;
   --accent-bg: rgba(37, 99, 235, 0.1);
@@ -198,6 +199,7 @@ th {
   --header-bg: #0f1720;
   --text-primary: #f1f5f9;
   --text-muted: #94a3b8;
+  --validation-error-color: #f87171;
   --border-color: #374151;
   --card-shadow: rgba(0,0,0,0.6);
   --accent-bg: rgba(37, 99, 235, 0.2);
@@ -425,4 +427,105 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Shared semantic validation text colors. Keep this after the legacy dark
+   dashboard text rule so errors stay red without recoloring helper/success copy. */
+.validation-error-text,
+.error-text,
+.field-error,
+.sts-field-error,
+.sts-field-status.status-error,
+.id-directory-error,
+.id-directory-field-error,
+.activity-log-reset-error,
+.learning-cycle-reset-error,
+.manager-inline-error,
+.screen-time-error,
+.parent-add-child-request-error,
+.announcement-status-error,
+.notification-error,
+.error-message,
+.al-error,
+.ta-error {
+  color: var(--validation-error-color, #b91c1c) !important;
+}
+
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .validation-error-text,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .error-text,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .field-error,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .sts-field-error,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .sts-field-status.status-error,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .id-directory-error,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .id-directory-field-error,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .activity-log-reset-error,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .learning-cycle-reset-error,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .manager-inline-error,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .screen-time-error,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .parent-add-child-request-error,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .announcement-status-error,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .notification-error,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .error-message,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .al-error,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .ta-error,
+[data-theme='dark'] .settings-container .settings-main .validation-error-text,
+[data-theme='dark'] .settings-container .settings-main .error-text,
+[data-theme='dark'] .settings-container .settings-main .field-error,
+[data-theme='dark'] .settings-container .settings-main .sts-field-error,
+[data-theme='dark'] .settings-container .settings-main .sts-field-status.status-error,
+[data-theme='dark'] .settings-container .settings-main .id-directory-error,
+[data-theme='dark'] .settings-container .settings-main .id-directory-field-error,
+[data-theme='dark'] .settings-container .settings-main .activity-log-reset-error,
+[data-theme='dark'] .settings-container .settings-main .learning-cycle-reset-error,
+[data-theme='dark'] .settings-container .settings-main .manager-inline-error,
+[data-theme='dark'] .settings-container .settings-main .screen-time-error,
+[data-theme='dark'] .settings-container .settings-main .parent-add-child-request-error,
+[data-theme='dark'] .settings-container .settings-main .announcement-status-error,
+[data-theme='dark'] .settings-container .settings-main .notification-error,
+[data-theme='dark'] .settings-container .settings-main .error-message,
+[data-theme='dark'] .settings-container .settings-main .al-error,
+[data-theme='dark'] .settings-container .settings-main .ta-error {
+  color: var(--validation-error-color, #f87171) !important;
+}
+
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .field-help,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .field-helper,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .edit-user-helper-text,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .generated-credential-label,
+[data-theme='dark'] .dashboard-sts-container .sts-main-panel .manage-users-temp-password-info,
+[data-theme='dark'] .settings-container .settings-main .field-help,
+[data-theme='dark'] .settings-container .settings-main .field-helper,
+[data-theme='dark'] .settings-container .settings-main .edit-user-helper-text,
+[data-theme='dark'] .settings-container .settings-main .generated-credential-label,
+[data-theme='dark'] .settings-container .settings-main .manage-users-temp-password-info {
+  color: var(--text-muted, #94a3b8) !important;
+}
+
+/* Invalid controls use the same red token as their associated message. */
+input[aria-invalid='true'],
+select[aria-invalid='true'],
+textarea[aria-invalid='true'],
+input.error,
+select.error,
+textarea.error,
+.announcement-composer .announcement-field-invalid,
+.sts-input-error,
+.input-error,
+.activity-log-reset-input.error {
+  border-color: var(--validation-error-color, #b91c1c) !important;
+  box-shadow: 0 0 0 1px var(--validation-error-color, #b91c1c);
+}
+
+[data-theme='dark'] input:not([type='checkbox']):not([type='radio'])[aria-invalid='true'],
+[data-theme='dark'] select[aria-invalid='true'],
+[data-theme='dark'] textarea[aria-invalid='true'],
+[data-theme='dark'] input:not([type='checkbox']):not([type='radio']).error,
+[data-theme='dark'] select.error,
+[data-theme='dark'] textarea.error,
+[data-theme='dark'] .announcement-composer .announcement-field-invalid,
+[data-theme='dark'] .sts-input-error,
+[data-theme='dark'] .input-error,
+[data-theme='dark'] .activity-log-reset-input.error {
+  border-color: var(--validation-error-color, #f87171) !important;
+  box-shadow: 0 0 0 1px var(--validation-error-color, #f87171);
 }

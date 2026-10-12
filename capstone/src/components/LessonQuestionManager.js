@@ -1913,7 +1913,7 @@ export default function LessonQuestionManager() {
             {showUploadForm && (
               <ModalPortal onClose={() => setShowUploadForm(false)}>
               <div className="manager-modal-backdrop" role="presentation" onMouseDown={() => setShowUploadForm(false)}>
-                <form className="manager-modal drive-upload-modal" onSubmit={handleUpload} role="dialog" aria-modal="true" aria-labelledby="upload-file-title" onMouseDown={(event) => event.stopPropagation()}>
+                <form className="manager-modal drive-upload-modal" onSubmit={handleUpload} noValidate role="dialog" aria-modal="true" aria-labelledby="upload-file-title" onMouseDown={(event) => event.stopPropagation()}>
                   <div className="manager-modal-header">
                     <h2 id="upload-file-title">Upload File</h2>
                     <button type="button" className="icon-button" aria-label="Cancel upload" onClick={() => setShowUploadForm(false)}>x</button>

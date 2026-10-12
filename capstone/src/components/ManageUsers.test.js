@@ -296,6 +296,25 @@ describe('ManageUsers edit flow', () => {
     expect(document.body.querySelector('input[value="maria@gmail.com"]')).toBeTruthy();
   });
 
+  test('Edit User exposes invalid field border and linked validation text', async () => {
+    await act(async () => root.render(<ManageUsers />));
+    const editButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Edit');
+    await act(async () => editButton.click());
+
+    const email = document.body.querySelector('input[value="maria@gmail.com"]');
+    await act(async () => {
+      setFieldValue(email, 'invalid-email');
+      email.dispatchEvent(new Event('blur', { bubbles: true }));
+    });
+
+    const error = document.body.querySelector('#edit-email-error');
+    expect(error).not.toBeNull();
+    expect(error.classList.contains('error-text')).toBe(true);
+    expect(email.classList.contains('error')).toBe(true);
+    expect(email.getAttribute('aria-invalid')).toBe('true');
+    expect(email.getAttribute('aria-describedby')).toBe('edit-email-error');
+  });
+
   test.each(['Edit', 'Delete'])('%s dialog escapes a transformed scrolled page and restores keyboard focus', async (label) => {
     container.style.transform = 'translateY(0)';
     container.classList.add('page-content');
@@ -1174,6 +1193,7 @@ describe('ManageUsers edit flow', () => {
     });
 
     const form = document.body.querySelector('form');
+    expect(form.noValidate).toBe(true);
     const inputs = form.querySelectorAll('input');
     await act(async () => {
       setFieldValue(inputs[0], 'Paula');
@@ -1213,6 +1233,7 @@ describe('ManageUsers edit flow', () => {
 
     const email = document.body.querySelector('input[placeholder="user@gmail.com"]');
     const mobile = document.body.querySelector('input[placeholder="09123456789"]');
+    expect(document.body.querySelector('form').noValidate).toBe(true);
     await act(async () => {
       setFieldValue(email, 'not-an-email');
       email.dispatchEvent(new Event('blur', { bubbles: true }));
@@ -1222,6 +1243,14 @@ describe('ManageUsers edit flow', () => {
 
     expect(document.body.textContent).toContain('Please enter a valid email address.');
     expect(document.body.textContent).toContain('Mobile number must be in the format 09XXXXXXXXX.');
+    expect(email.classList.contains('error')).toBe(true);
+    expect(email.getAttribute('aria-invalid')).toBe('true');
+    expect(email.getAttribute('aria-describedby')).toBe('add-email-error');
+    expect(document.body.querySelector('#add-email-error').classList.contains('error-text')).toBe(true);
+    expect(mobile.classList.contains('error')).toBe(true);
+    expect(mobile.getAttribute('aria-invalid')).toBe('true');
+    expect(mobile.getAttribute('aria-describedby')).toBe('add-mobile-error');
+    expect(document.body.querySelector('#add-mobile-error').classList.contains('error-text')).toBe(true);
 
     await act(async () => {
       document.body.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));

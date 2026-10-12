@@ -388,7 +388,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
           Showing {activities.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} - {Math.min((currentPage - 1) * itemsPerPage + activities.length, pagination.total || activities.length)} of {pagination.total || activities.length} records
         </span>
       </div>
-      {reportError && <p className="fallback-note no-print">{reportError}</p>}
+      {reportError && <p className="fallback-note validation-error-text no-print">{reportError}</p>}
 
       {activities.length === 0 ? (
         <div className="al-empty">

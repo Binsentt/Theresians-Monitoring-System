@@ -691,6 +691,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(countField.max).toBe('50');
     expect(countField.step).toBe('1');
     expect(countField.placeholder).toBe('Enter question count');
+    expect(getUploadModal().noValidate).toBe(true);
     await act(async () => {
       setFieldValue(countField, '50');
     });
