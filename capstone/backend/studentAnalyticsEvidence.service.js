@@ -26,7 +26,7 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
   if (rows.length === 0) return [];
   const studentIds = [...new Set(rows.map((row) => Number(row.student_id)))];
   const results = await queryClient.query(
-      `SELECT gr.resolved_student_id, gr.id, gr.math_topic, gr.difficulty, gr.current_map,
+      `SELECT gr.resolved_student_id, gr.id, gr.question_id, gr.math_topic, gr.difficulty, gr.current_map,
               gr.map_id, gr.canonical_quest_id, gr.canonical_task_id,
               gr.result_event_id, gr.session_id, gr.percentage, gr.score,
               gr.total_items, gr.played_at, gr.question_set_id,
@@ -34,12 +34,18 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
               lf.grade_level AS canonical_grade_level,
               lf.difficulty AS canonical_difficulty,
               lf.math_topic AS canonical_math_topic,
+              result_question.id AS resolved_question_id,
+              result_question.topic_id AS exact_question_topic_id,
+              result_question.math_topic AS exact_question_math_topic,
               question_topics.topic_ids AS question_topic_ids,
               question_topics.math_topics AS question_math_topics,
               gr.question_presented_at, gr.answer_submitted_at, gr.response_time_seconds
        FROM public.game_results gr
        JOIN public.accounts student ON student.id = gr.resolved_student_id
        LEFT JOIN public.learning_files lf ON lf.id = gr.question_set_id
+       LEFT JOIN public.questions result_question
+         ON result_question.id = gr.question_id
+        AND result_question.learning_file_id = gr.question_set_id
        LEFT JOIN LATERAL (
          SELECT COALESCE(
                   ARRAY_AGG(DISTINCT NULLIF(BTRIM(q.topic_id), ''))

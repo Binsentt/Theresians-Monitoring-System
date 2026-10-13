@@ -89,6 +89,18 @@ test('startup schema creates game_results for future game integration', async ()
     schemaStatements.some((sql) => sql.includes('game_results_question_set_id_fkey') && sql.includes('on delete restrict')),
     'game_results question_set_id should use a restrictive foreign key so permanent deletion cannot race historical result insertion'
   );
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('add column if not exists question_id integer')),
+    'game_results should add nullable exact question traceability without rewriting existing results'
+  );
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('idx_game_results_question_id')),
+    'exact question lookup should be indexed for analytics and integrity checks'
+  );
+  assert.ok(
+    schemaStatements.some((sql) => sql.includes('game_results_question_set_question_fkey') && sql.includes('on delete restrict')),
+    'exact result question and question-set pair should be constrained to the same canonical question row'
+  );
 });
 
 test('startup schema keeps nullable canonical topic IDs for learning files and questions', async () => {

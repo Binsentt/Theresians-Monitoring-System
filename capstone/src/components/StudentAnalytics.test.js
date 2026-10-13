@@ -308,7 +308,7 @@ describe('StudentAnalytics defensive rendering', () => {
     global.fetch = jest.fn()
       .mockResolvedValueOnce(jsonResponse({
         progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
-        metrics: { validResultCount: 4, accuracy: 75, totalQuestions: 4, correctAnswers: 3, incorrectAnswers: 1, gameScore: 3 },
+        metrics: { validResultCount: 4, topicLinkedEvidenceCount: 0, accuracy: 75, totalQuestions: 4, correctAnswers: 3, incorrectAnswers: 1, gameScore: 3 },
         aiInsight: {
           status: 'cached', valid_result_count: 4, generated_at: '2026-10-12T06:30:00.000Z',
           insight: { performance_insight: 'Old cached insight.', strengths: [], weaknesses: [], recommendations: [] },
@@ -341,7 +341,7 @@ describe('StudentAnalytics defensive rendering', () => {
         evidence_snapshot: {
           progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1', section: 'Section A', current_quest: 'New committed quest', current_location: 'Deepest Forest' },
           metrics: {
-            validResultCount: 8, accuracy: 37.5, totalQuestions: 8, correctAnswers: 3, incorrectAnswers: 5,
+            validResultCount: 8, topicLinkedEvidenceCount: 7, accuracy: 37.5, totalQuestions: 8, correctAnswers: 3, incorrectAnswers: 5,
             gameScore: 3, completedQuests: 2, currentQuest: 'New committed quest', currentDifficulty: 'Normal',
             difficultyBreakdown: { easy: { accuracy: 25 }, medium: { accuracy: 40 }, hard: { accuracy: null } },
             topicPerformance: [
@@ -374,6 +374,7 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(metricValue('Completed Quests')).toBe('2');
     expect(container.textContent).toContain('Grade 1 Addition');
     expect(container.textContent).toContain('Grade 1 Subtraction');
+    expect(container.textContent).toContain('Topic-linked evidence: 7 of 8 recorded answers');
     expect(container.textContent).not.toContain('Unvalidated guessed topic');
     expect(container.textContent).not.toContain(new Date('2026-10-12T06:30:00.000Z').toLocaleString());
     expect(container.querySelector('.student-topic-performance-table')).toBeTruthy();

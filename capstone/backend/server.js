@@ -89,6 +89,7 @@ const {
   CANONICAL_GRADES,
   getPublicRegistrySnapshot,
   getTopicById,
+  isValidScope,
   normalizeDifficulty,
   normalizeGradeLevel,
   normalizeTopicId,
@@ -400,9 +401,11 @@ const ensureSchema = async () => {
       percentage DECIMAL(5, 2) NOT NULL,
       played_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       question_set_id INTEGER,
+      question_id INTEGER,
       is_unlinked BOOLEAN NOT NULL DEFAULT true
     );`);
     await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS question_set_id INTEGER');
+    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS question_id INTEGER');
     await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS playtime_session_id INTEGER');
     await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS current_map TEXT');
     await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS result_event_id VARCHAR(200)');
@@ -421,6 +424,7 @@ const ensureSchema = async () => {
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_parent_id ON public.game_results(parent_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_resolved_student_id ON public.game_results(resolved_student_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_question_set_id ON public.game_results(question_set_id)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_question_id ON public.game_results(question_id) WHERE question_id IS NOT NULL');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_playtime_session_id ON public.game_results(playtime_session_id)');
     await pool.query(`CREATE TABLE IF NOT EXISTS public.playtime_deletion_tombstones (
       id BIGSERIAL PRIMARY KEY,
@@ -697,6 +701,30 @@ const ensureSchema = async () => {
         AND source IN ('restored_import', 'client_provided')`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_questions_grade_difficulty_topic ON public.questions(grade_level, difficulty, math_topic)');
     await pool.query('CREATE INDEX IF NOT EXISTS questions_learning_file_topic_id_index ON public.questions(learning_file_id, topic_id) WHERE topic_id IS NOT NULL');
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS questions_id_learning_file_id_unique ON public.questions(id, learning_file_id)');
+    await pool.query(`DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'game_results_question_set_question_fkey'
+          AND conrelid = 'public.game_results'::regclass
+      ) THEN
+        ALTER TABLE public.game_results
+          ADD CONSTRAINT game_results_question_set_question_fkey
+          FOREIGN KEY (question_id, question_set_id)
+          REFERENCES public.questions(id, learning_file_id)
+          ON DELETE RESTRICT;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'game_results_question_requires_set_check'
+          AND conrelid = 'public.game_results'::regclass
+      ) THEN
+        ALTER TABLE public.game_results
+          ADD CONSTRAINT game_results_question_requires_set_check
+          CHECK (question_id IS NULL OR question_set_id IS NOT NULL);
+      END IF;
+    END $$;`);
   } catch (err) {
     console.error('Schema initialization failed:', err.message);
     throw err;
@@ -1942,19 +1970,77 @@ const resolveScopeId = (value) => {
   return Number.isNaN(parsed) ? NaN : parsed;
 };
 
-const resolveGameResultQuestionSet = async ({ rawQuestionSetId, gradeLevel, difficulty, queryClient = pool }) => {
-  if (rawQuestionSetId === undefined || rawQuestionSetId === null || rawQuestionSetId === '') {
-    return { questionSetId: null };
+const parseStrictPositiveId = (value, label) => {
+  const serialized = String(value ?? '').trim();
+  if (!/^[1-9]\d*$/.test(serialized)) return { error: `${label} must be a positive integer.` };
+  const id = Number(serialized);
+  return Number.isSafeInteger(id) ? { id } : { error: `${label} must be a positive integer.` };
+};
+
+const resolveCanonicalStoredQuestionTopic = ({ gradeLevel, difficulty, topicId, mathTopic }) => {
+  const scope = resolveQuestionPoolScope({ grade_level: gradeLevel, difficulty });
+  if (!scope) return null;
+  const serializedTopicId = String(topicId || '').trim();
+  const resolvedTopicId = serializedTopicId
+    ? normalizeTopicId(serializedTopicId)
+    : resolveLegacyDisplayTopic(scope.grade_level, scope.difficulty, mathTopic);
+  return resolvedTopicId && isValidScope(scope.grade_level, scope.difficulty, resolvedTopicId)
+    ? resolvedTopicId
+    : null;
+};
+
+const resolveGameResultQuestionSet = async ({
+  rawQuestionSetId,
+  rawQuestionId,
+  rawTopicId,
+  gradeLevel,
+  difficulty,
+  queryClient = pool,
+}) => {
+  const hasQuestionId = rawQuestionId !== undefined && rawQuestionId !== null && rawQuestionId !== '';
+  const hasQuestionSetId = rawQuestionSetId !== undefined && rawQuestionSetId !== null && rawQuestionSetId !== '';
+  const hasTopicId = rawTopicId !== undefined && rawTopicId !== null && rawTopicId !== '';
+  if (!hasQuestionId && !hasQuestionSetId) {
+    return hasTopicId
+      ? { error: 'topic_id requires a server-linked question_id and question_set_id.' }
+      : { questionSetId: null, questionId: null, topicId: null };
   }
 
-  // Do not let parseInt coerce values such as "77junk" into a valid question-set ID.
-  const serializedQuestionSetId = String(rawQuestionSetId).trim();
-  if (!/^[1-9]\d*$/.test(serializedQuestionSetId)) {
+  let questionId = null;
+  let questionEvidence = null;
+  if (hasQuestionId) {
+    const parsedQuestionId = parseStrictPositiveId(rawQuestionId, 'question_id');
+    if (parsedQuestionId.error) return parsedQuestionId;
+    questionId = parsedQuestionId.id;
+    const questionResult = await queryClient.query(
+      `SELECT q.id, q.learning_file_id AS question_set_id,
+              q.grade_level AS question_grade_level, q.difficulty AS question_difficulty,
+              q.topic_id AS question_topic_id, q.math_topic AS question_math_topic,
+              lf.grade_level, lf.difficulty, lf.topic_id, lf.math_topic, lf.publish_status
+       FROM public.questions q
+       JOIN public.learning_files lf ON lf.id = q.learning_file_id
+       WHERE q.id = $1
+       LIMIT 1
+       FOR KEY SHARE OF q, lf`,
+      [questionId]
+    );
+    questionEvidence = questionResult.rows[0];
+    if (!questionEvidence) return { error: 'Question was not found in a canonical question set.' };
+  }
+
+  let questionSetId = null;
+  if (hasQuestionSetId) {
+    const parsedQuestionSetId = parseStrictPositiveId(rawQuestionSetId, 'question_set_id');
+    if (parsedQuestionSetId.error) return parsedQuestionSetId;
+    questionSetId = parsedQuestionSetId.id;
+  } else if (questionEvidence) {
+    questionSetId = Number(questionEvidence.question_set_id);
+  }
+  if (!Number.isSafeInteger(questionSetId) || questionSetId <= 0) {
     return { error: 'question_set_id must be a positive integer.' };
   }
-  const questionSetId = Number(serializedQuestionSetId);
-  if (!Number.isSafeInteger(questionSetId)) {
-    return { error: 'question_set_id must be a positive integer.' };
+  if (questionEvidence && Number(questionEvidence.question_set_id) !== questionSetId) {
+    return { error: 'question_id does not belong to the submitted question_set_id.' };
   }
 
   const result = await queryClient.query(
@@ -1973,17 +2059,48 @@ const resolveGameResultQuestionSet = async ({ rawQuestionSetId, gradeLevel, diff
     return { error: 'Question set is not an active or replaced production set.' };
   }
 
-  const submittedScope = resolveQuestionPoolScope({
-    grade_level: gradeLevel,
-    difficulty,
-  });
+  const submittedScope = resolveQuestionPoolScope({ grade_level: gradeLevel, difficulty });
   const storedScope = resolveQuestionPoolScope(questionSet);
   const matchingScope = submittedScope && storedScope
     && submittedScope.grade_level === storedScope.grade_level
     && submittedScope.difficulty === storedScope.difficulty;
   if (!matchingScope) return { error: 'Question set does not match the submitted result scope.' };
 
-  return { questionSetId };
+  if (!questionEvidence) return { questionSetId, questionId: null, topicId: null };
+
+  const exactQuestionScope = resolveQuestionPoolScope({
+    grade_level: questionEvidence.question_grade_level || questionSet.grade_level,
+    difficulty: questionEvidence.question_difficulty || questionSet.difficulty,
+  });
+  if (!exactQuestionScope
+    || exactQuestionScope.grade_level !== storedScope.grade_level
+    || exactQuestionScope.difficulty !== storedScope.difficulty) {
+    return { error: 'Question metadata does not match its canonical Grade and Difficulty.' };
+  }
+
+  const questionTopicId = resolveCanonicalStoredQuestionTopic({
+    gradeLevel: storedScope.grade_level,
+    difficulty: storedScope.difficulty,
+    topicId: questionEvidence.question_topic_id,
+    mathTopic: questionEvidence.question_math_topic,
+  });
+  const fileTopicId = resolveCanonicalStoredQuestionTopic({
+    gradeLevel: storedScope.grade_level,
+    difficulty: storedScope.difficulty,
+    topicId: questionSet.topic_id,
+    mathTopic: questionSet.math_topic,
+  });
+  if (questionTopicId && fileTopicId && questionTopicId !== fileTopicId) {
+    return { error: 'Question topic metadata does not match its canonical question set.' };
+  }
+  const canonicalTopicId = questionTopicId || fileTopicId;
+  if (hasTopicId) {
+    const submittedTopicId = normalizeTopicId(rawTopicId);
+    if (!submittedTopicId || !canonicalTopicId || submittedTopicId !== canonicalTopicId) {
+      return { error: 'topic_id does not match the canonical question metadata.' };
+    }
+  }
+  return { questionSetId, questionId, topicId: canonicalTopicId || null };
 };
 
 const resolveParentScopeId = (value) => resolveScopeId(value);
@@ -3480,27 +3597,53 @@ const getGameQuestions = async (scope = {}) => {
   const questionSetId = await resolveGameQuestionSetId(scope);
   if (!questionSetId) return [];
   const result = await pool.query(
-    `SELECT q.*
+    `SELECT q.*, lf.id AS question_set_id,
+            lf.grade_level AS canonical_grade_level,
+            lf.difficulty AS canonical_difficulty,
+            lf.topic_id AS canonical_topic_id,
+            lf.math_topic AS canonical_math_topic
      FROM public.questions q
+     JOIN public.learning_files lf ON lf.id = q.learning_file_id
      WHERE q.learning_file_id = $1
        AND q.published = true
      ORDER BY q.created_at DESC`,
     [questionSetId]
   );
-  return result.rows.map((row) => ({
-    id: row.id,
-    learning_file_id: row.learning_file_id,
-    question_set_id: row.learning_file_id,
-    question: row.question,
-    options: row.options,
-    correct_answer: row.correct_answer,
-    grade: row.grade_level,
-    grade_level: row.grade_level,
-    difficulty: normalizeDifficultyValue(row.difficulty),
-    topic_id: row.topic_id || null,
-    math_topic: row.math_topic || null,
-    source: row.source,
-  }));
+  return result.rows.map((row) => {
+    const gradeLevel = normalizeGradeLevel(row.canonical_grade_level);
+    const difficulty = normalizeDifficultyValue(row.canonical_difficulty);
+    const questionTopicId = resolveCanonicalStoredQuestionTopic({
+      gradeLevel,
+      difficulty,
+      topicId: row.topic_id,
+      mathTopic: row.math_topic,
+    });
+    const fileTopicId = resolveCanonicalStoredQuestionTopic({
+      gradeLevel,
+      difficulty,
+      topicId: row.canonical_topic_id,
+      mathTopic: row.canonical_math_topic,
+    });
+    const topicId = questionTopicId && fileTopicId && questionTopicId !== fileTopicId
+      ? null
+      : questionTopicId || fileTopicId || null;
+    return {
+      id: row.id,
+      question_id: row.id,
+      learning_file_id: row.question_set_id || row.learning_file_id,
+      question_set_id: row.question_set_id || row.learning_file_id,
+      question: row.question,
+      options: row.options,
+      correct_answer: row.correct_answer,
+      grade: gradeLevel,
+      grade_level: gradeLevel,
+      difficulty,
+      topic_id: topicId,
+      canonical_topic_id: topicId,
+      math_topic: (topicId && getTopicById(topicId)?.display_label) || row.math_topic || row.canonical_math_topic || null,
+      source: row.source,
+    };
+  });
 };
 
 const finalizeFileUploadRecord = async (fileId) => {
@@ -7721,6 +7864,7 @@ app.post('/api/game/result', async (req, res) => {
   const playtimeSessionId = resolvePositiveInteger(req.body?.playtime_session_id);
   const playtimeSessionCredential = String(req.body?.playtime_session_credential || '').trim();
   const hasSuppliedLearningCycleVersion = Object.prototype.hasOwnProperty.call(req.body || {}, 'learning_cycle_version');
+  const hasSubmittedQuestionId = req.body?.question_id !== undefined && req.body?.question_id !== null && req.body?.question_id !== '';
   const suppliedLearningCycleVersion = Number(req.body?.learning_cycle_version);
   const hasSuppliedResultEventId = Object.prototype.hasOwnProperty.call(req.body || {}, 'result_event_id');
   const resultEventId = normalizeCanonicalGameActivityKey(req.body?.result_event_id);
@@ -7768,6 +7912,9 @@ app.post('/api/game/result', async (req, res) => {
     || !Number.isInteger(scoreValue) || !Number.isInteger(totalItemsValue)
     || totalItemsValue <= 0 || scoreValue < 0 || scoreValue > totalItemsValue || percentage === null) {
     return res.status(400).json({ error: 'score and total_items must be valid quiz totals.' });
+  }
+  if (hasSubmittedQuestionId && totalItemsValue !== 1) {
+    return res.status(400).json({ error: 'question_id may only be recorded for a single-question result.' });
   }
   if (Number.isNaN(playtimeSessionId) || !playtimeSessionId || !playtimeSessionCredential) {
     return res.status(400).json({ error: 'An active playtime session is required to save a game result.' });
@@ -7914,6 +8061,8 @@ app.post('/api/game/result', async (req, res) => {
 
     const questionSetResolution = await resolveGameResultQuestionSet({
       rawQuestionSetId: req.body?.question_set_id,
+      rawQuestionId: req.body?.question_id,
+      rawTopicId: req.body?.topic_id,
       gradeLevel: resultGradeLevel,
       difficulty,
       queryClient: resultClient,
@@ -7938,7 +8087,7 @@ app.post('/api/game/result', async (req, res) => {
          playtime_session_id, is_unlinked, current_map, result_event_id,
          telemetry_contract_version, quest_graph_version, session_id, map_id,
          canonical_quest_id, canonical_task_id, canonical_battle_id, canonical_milestone_id,
-         question_presented_at, answer_submitted_at, response_time_seconds
+         question_presented_at, answer_submitted_at, response_time_seconds, question_id
         ) VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9,
          GREATEST(
@@ -7950,7 +8099,7 @@ app.post('/api/game/result', async (req, res) => {
              '-infinity'::TIMESTAMPTZ
            )
          ), $11, $12, $13,
-         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26
+         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
         )
         ON CONFLICT (resolved_student_id, result_event_id)
         WHERE resolved_student_id IS NOT NULL AND result_event_id IS NOT NULL
@@ -7962,7 +8111,9 @@ app.post('/api/game/result', async (req, res) => {
         resolvedStudentId,
         resultGradeLevel || null,
         difficulty,
-        math_topic || null,
+        questionSetResolution.topicId
+          ? getTopicById(questionSetResolution.topicId)?.display_label || null
+          : math_topic || null,
         Math.round(scoreValue),
         Math.round(totalItemsValue),
         percentage,
@@ -7983,6 +8134,7 @@ app.post('/api/game/result', async (req, res) => {
         questionPresentedAt,
         answerSubmittedAt,
         responseTimeSeconds,
+        questionSetResolution.questionId,
       ]
     );
     if (resolvedStudentId && persistedResult.rows.length) {

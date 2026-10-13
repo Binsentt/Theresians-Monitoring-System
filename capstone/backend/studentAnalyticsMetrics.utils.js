@@ -54,8 +54,14 @@ const resolveLinkedQuestionSetScope = (row) => {
   if (row.question_set_id === null || row.question_set_id === undefined || row.question_set_id === '') return null;
   const gradeLevel = row.canonical_grade_level;
   const difficulty = row.canonical_difficulty;
-  const questionTopicIds = distinctNonEmptyStrings(row.question_topic_ids);
-  const questionLabels = distinctNonEmptyStrings(row.question_math_topics);
+  const hasExactQuestionId = row.question_id !== null && row.question_id !== undefined && row.question_id !== '';
+  if (hasExactQuestionId && String(row.resolved_question_id) !== String(row.question_id)) return null;
+  const questionTopicIds = hasExactQuestionId
+    ? distinctNonEmptyStrings([row.exact_question_topic_id])
+    : distinctNonEmptyStrings(row.question_topic_ids);
+  const questionLabels = hasExactQuestionId
+    ? distinctNonEmptyStrings([row.exact_question_math_topic])
+    : distinctNonEmptyStrings(row.question_math_topics);
   if (questionTopicIds.some((topicId) => !getTopicById(topicId)) || questionTopicIds.length > 1) return null;
 
   const resolvedQuestionLabels = questionLabels.map((label) => resolveLegacyDisplayTopic(gradeLevel, difficulty, label));
@@ -121,6 +127,9 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
   // the authoritative graded items rather than database rows so preliminary-AI
   // thresholds and "Recorded Results" stay truthful for both payload shapes.
   const validResultCount = validResults.reduce((total, result) => total + result.totalQuestions, 0);
+  const topicLinkedEvidenceCount = validResults
+    .filter((result) => result.topicId && result.gradeLevel)
+    .reduce((total, result) => total + result.totalQuestions, 0);
   const difficultyBreakdown = emptyDifficultyBreakdown();
   const topicTotals = new Map();
   const mapTotals = new Map();
@@ -230,6 +239,7 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
   return {
     answerSource: hasResultHistory ? 'game_results' : 'no_graded_answers',
     validResultCount,
+    topicLinkedEvidenceCount,
     correctAnswers,
     incorrectAnswers,
     totalQuestions,

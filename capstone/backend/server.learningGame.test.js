@@ -2053,6 +2053,11 @@ test('Godot question endpoint returns one active Grade and Difficulty set while 
         difficulty: 'Easy',
         topic_id: 'basic_addition',
         math_topic: 'Basic Addition',
+        canonical_grade_level: 'Grade 1',
+        canonical_difficulty: 'Easy',
+        canonical_topic_id: 'basic_addition',
+        canonical_math_topic: 'Basic Addition',
+        question_set_id: 83,
         source: 'fixed',
         published: true,
       }]);
@@ -2084,6 +2089,10 @@ test('Godot question endpoint returns one active Grade and Difficulty set while 
   assert.equal(response.body.learning_files[0].math_topic, 'Basic Addition');
   assert.equal(response.body.questions[0].topic_id, 'basic_addition');
   assert.equal(response.body.questions[0].learning_file_id, 83);
+  assert.equal(response.body.questions[0].question_id, 501);
+  assert.equal(response.body.questions[0].question_set_id, 83);
+  assert.equal(response.body.questions[0].grade_level, 'Grade 1');
+  assert.equal(response.body.questions[0].difficulty, 'Easy');
   assert.deepEqual(response.body.scope, {
     grade_level: 'Grade 1',
     difficulty: 'Easy',

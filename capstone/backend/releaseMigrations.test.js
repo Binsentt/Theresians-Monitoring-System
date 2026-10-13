@@ -6,8 +6,18 @@ const test = require('node:test');
 const { applyReleaseMigrations } = require('./releaseMigrations');
 const { RELEASE_MIGRATIONS } = require('./releaseMigrations');
 
-test('release manifest includes migration 024 for legacy six-digit Student cleanup', () => {
-  assert.deepEqual(RELEASE_MIGRATIONS.at(-1), { version: 24, file: '024_remove_legacy_six_digit_students.sql' });
+test('release manifest includes migration 025 for exact game-result question traceability', () => {
+  assert.deepEqual(RELEASE_MIGRATIONS.at(-1), { version: 25, file: '025_add_game_result_question_traceability.sql' });
+});
+
+test('question traceability migration is nullable, referential, and performs no historical guess or backfill', () => {
+  const sql = fs.readFileSync(path.join(__dirname, 'migrations', '025_add_game_result_question_traceability.sql'), 'utf8');
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS question_id INTEGER/i);
+  assert.match(sql, /FOREIGN KEY \(question_id, question_set_id\)/i);
+  assert.match(sql, /REFERENCES public\.questions\(id, learning_file_id\)/i);
+  assert.match(sql, /ON DELETE RESTRICT/i);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_game_results_question_id/i);
+  assert.doesNotMatch(sql, /UPDATE\s+public\.game_results/i);
 });
 
 test('legacy Student cleanup migration only targets exact six-digit Student IDs and removes dependent runtime data', () => {

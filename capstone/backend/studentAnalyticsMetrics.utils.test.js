@@ -270,10 +270,53 @@ test('many valid incorrect results without linked topic metadata are counted but
   const metrics = buildStudentAnalyticsMetrics({ quizSessions });
 
   assert.equal(metrics.validResultCount, 95);
+  assert.equal(metrics.topicLinkedEvidenceCount, 0);
   assert.ok(metrics.incorrectAnswers > 0);
   assert.deepEqual(metrics.topicPerformance, []);
   assert.equal(metrics.unmappedTopicIncorrectAnswers, metrics.incorrectAnswers);
   assert.equal(metrics.topicEvidenceStatus, 'topic_metadata_unavailable');
+});
+
+test('exact question linkage attributes only that canonical question topic and counts linked answers', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    quizSessions: [
+      {
+        question_id: 501,
+        resolved_question_id: 501,
+        question_set_id: 83,
+        exact_question_topic_id: 'basic_addition',
+        exact_question_math_topic: 'Basic Addition',
+        question_topic_ids: ['addition', 'subtraction'],
+        question_math_topics: ['Addition', 'Subtraction'],
+        canonical_grade_level: 'Grade 1',
+        canonical_difficulty: 'Easy',
+        score: 0,
+        total_items: 1,
+        difficulty: 'Easy',
+        math_topic: 'Untrusted client label',
+      },
+      {
+        question_id: 502,
+        resolved_question_id: null,
+        question_set_id: 83,
+        question_topic_ids: ['addition'],
+        question_math_topics: ['Addition'],
+        canonical_grade_level: 'Grade 1',
+        canonical_difficulty: 'Easy',
+        score: 0,
+        total_items: 1,
+        difficulty: 'Easy',
+        math_topic: 'Addition',
+      },
+    ],
+  });
+
+  assert.equal(metrics.validResultCount, 2);
+  assert.equal(metrics.topicLinkedEvidenceCount, 1);
+  assert.deepEqual(metrics.topicPerformance.map(({ topicId, totalQuestions }) => ({ topicId, totalQuestions })), [
+    { topicId: 'basic_addition', totalQuestions: 1 },
+  ]);
+  assert.equal(metrics.unmappedTopicQuestionCount, 1);
 });
 
 test('duplicate committed result event IDs do not double-count unlinked topic misses', () => {

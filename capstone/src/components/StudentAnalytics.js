@@ -364,7 +364,13 @@ export default function StudentAnalytics() {
           <section className="student-dashboard-card student-topic-performance" aria-labelledby="student-topic-performance-title">
             <div className="student-card-heading">
               <span className="student-card-icon blue"><Layers size={20} aria-hidden="true" /></span>
-              <div><h2 id="student-topic-performance-title">Topic Performance</h2><p>Validated current-cycle Mathematics topics only.</p></div>
+              <div>
+                <h2 id="student-topic-performance-title">Topic Performance</h2>
+                <p>Validated current-cycle Mathematics topics only.</p>
+                <p className="student-topic-evidence-summary" aria-live="polite">
+                  Topic-linked evidence: {formatCount(metrics?.topicLinkedEvidenceCount)} of {formatCount(metrics?.validResultCount)} recorded answers
+                </p>
+              </div>
             </div>
             {topicRows.length > 0 ? (
               <div className="student-topic-performance-table-wrap">

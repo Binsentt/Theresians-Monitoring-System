@@ -210,9 +210,9 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(insertedValues[10], null);
     assert.equal(insertedValues[11], GAME_RESULT_SESSION_ID);
     assert.equal(insertedValues[12], false);
-    assert.match(insertedSql, /\$26\s*\)/);
-    assert.deepEqual(insertedValues.slice(23), [null, null, null]);
-    assert.equal(insertedValues.length, 26);
+    assert.match(insertedSql, /\$27\s*\)/);
+    assert.deepEqual(insertedValues.slice(23), [null, null, null, null]);
+    assert.equal(insertedValues.length, 27);
   });
 
   await t.test('rejects impossible graded totals before persisting leaderboard evidence', async () => {
@@ -435,6 +435,112 @@ test('parent game results routes and access middleware', async (t) => {
     assert.equal(insertedValues[10], 77);
     assert.equal(insertedValues[11], GAME_RESULT_SESSION_ID);
     assert.equal(insertedValues[12], false);
+  });
+
+  await t.test('stores exact question linkage and canonical topic resolved from server records', async () => {
+    let insertedValues = null;
+    setQueryHandler(async (sql, params) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+        return resultRows([{ id: 19, parent_id: '123456' }]);
+      }
+      if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
+      }
+      if (sql.includes('from public.questions q') && sql.includes('join public.learning_files lf')) {
+        assert.deepEqual(params, [501]);
+        return resultRows([{
+          id: 501, question_set_id: 77,
+          question_grade_level: 'Grade 3', question_difficulty: 'Medium',
+          question_topic_id: 'fractions', question_math_topic: 'Fractions',
+          grade_level: 'Grade 3', difficulty: 'Medium', topic_id: 'fractions',
+          math_topic: 'Fractions', publish_status: 'active',
+        }]);
+      }
+      if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
+        return resultRows([{
+          id: 77, grade_level: 'Grade 3', difficulty: 'Medium', topic_id: 'fractions',
+          math_topic: 'Fractions', publish_status: 'active',
+        }]);
+      }
+      if (sql.startsWith('insert into public.game_results')) {
+        insertedValues = params;
+        return emptyResult;
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456', student_id: '001234', student_name: 'Ava Santos',
+        grade_level: 'Grade 3', difficulty: 'Normal', topic_id: 'fractions',
+        question_id: 501, question_set_id: 77, score: 0, total_items: 1,
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(insertedValues[5], 'Fractions');
+    assert.equal(insertedValues[10], 77);
+    assert.equal(insertedValues[26], 501);
+  });
+
+  await t.test('rejects an exact question ID paired with another question set', async () => {
+    let inserted = false;
+    setQueryHandler(async (sql) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) return resultRows([{ id: 19, parent_id: '123456' }]);
+      if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
+      if (sql.includes('from public.questions q') && sql.includes('join public.learning_files lf')) {
+        return resultRows([{ id: 501, question_set_id: 77, grade_level: 'Grade 3', difficulty: 'Medium', topic_id: 'fractions', math_topic: 'Fractions', publish_status: 'active' }]);
+      }
+      if (sql.startsWith('insert into public.game_results')) inserted = true;
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456', student_id: '001234', student_name: 'Ava Santos',
+        grade_level: 'Grade 3', difficulty: 'Normal', question_id: 501, question_set_id: 78,
+        score: 0, total_items: 1,
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.match(response.body.error, /does not belong/i);
+    assert.equal(inserted, false);
+  });
+
+  await t.test('rejects a client topic ID that conflicts with exact canonical question metadata', async () => {
+    let inserted = false;
+    setQueryHandler(async (sql) => {
+      if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) return resultRows([{ id: 19, parent_id: '123456' }]);
+      if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
+      if (sql.includes('from public.questions q') && sql.includes('join public.learning_files lf')) {
+        return resultRows([{
+          id: 501, question_set_id: 77, question_grade_level: 'Grade 3', question_difficulty: 'Medium',
+          question_topic_id: 'fractions', question_math_topic: 'Fractions', grade_level: 'Grade 3',
+          difficulty: 'Medium', topic_id: 'fractions', math_topic: 'Fractions', publish_status: 'active',
+        }]);
+      }
+      if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
+        return resultRows([{ id: 77, grade_level: 'Grade 3', difficulty: 'Medium', topic_id: 'fractions', math_topic: 'Fractions', publish_status: 'active' }]);
+      }
+      if (sql.startsWith('insert into public.game_results')) inserted = true;
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/game/result', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: '123456', student_id: '001234', student_name: 'Ava Santos',
+        grade_level: 'Grade 3', difficulty: 'Normal', topic_id: 'multiplication',
+        question_id: 501, question_set_id: 77, score: 0, total_items: 1,
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.match(response.body.error, /topic_id does not match/i);
+    assert.equal(inserted, false);
   });
 
   await t.test('uses the linked child name and grade instead of caller-supplied result metadata', async () => {

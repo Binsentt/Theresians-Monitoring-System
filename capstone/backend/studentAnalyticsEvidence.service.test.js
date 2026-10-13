@@ -37,6 +37,9 @@ test('joins committed game results to their canonical question-set Grade/topic b
 
   const resultQuery = queries.find((entry) => entry.sql.startsWith('SELECT gr.'));
   assert.match(resultQuery.sql, /LEFT JOIN public\.learning_files lf ON lf\.id = gr\.question_set_id/i);
+  assert.match(resultQuery.sql, /LEFT JOIN public\.questions result_question ON result_question\.id = gr\.question_id AND result_question\.learning_file_id = gr\.question_set_id/i);
+  assert.match(resultQuery.sql, /result_question\.id AS resolved_question_id/i);
+  assert.match(resultQuery.sql, /result_question\.topic_id AS exact_question_topic_id/i);
   assert.match(resultQuery.sql, /lf\.topic_id AS canonical_topic_id/i);
   assert.match(resultQuery.sql, /lf\.grade_level AS canonical_grade_level/i);
   assert.deepEqual(evidence[0].metrics.topicPerformance, [{
@@ -48,6 +51,7 @@ test('joins committed game results to their canonical question-set Grade/topic b
     totalQuestions: 5,
     accuracy: 40,
   }]);
+  assert.equal(evidence[0].metrics.topicLinkedEvidenceCount, 5);
 });
 
 test('recovers a missing question-set topic ID only from that linked file canonical Grade and topic label', async () => {
@@ -157,6 +161,7 @@ test('does not infer a topic from client text when result has no question-set li
   assert.deepEqual(evidence[0].metrics.topicPerformance, []);
   assert.equal(evidence[0].metrics.topicEvidenceStatus, 'topic_metadata_unavailable');
   assert.equal(evidence[0].metrics.unmappedTopicIncorrectAnswers, 5);
+  assert.equal(evidence[0].metrics.topicLinkedEvidenceCount, 0);
 });
 
 test('does not assign an aggregate result to one topic when linked question metadata is mixed', async () => {
