@@ -59,8 +59,10 @@ test('uses only minimized deterministic facts and policy version in grounded ins
 
   assert.deepEqual(input, {
     grounding_policy_version: GROUNDING_POLICY_VERSION,
-    metrics_definition_version: 'student-metrics-v3',
+    metrics_definition_version: 'student-metrics-v4',
     grade: 'Grade 3',
+    learning_cycle_version: null,
+    learning_cycle_started_at: null,
     results_recorded: 5,
     correct_answers: 3,
     incorrect_answers: 2,
@@ -78,6 +80,8 @@ test('uses only minimized deterministic facts and policy version in grounded ins
       { topic_id: 'fractions', grade_level: 'Grade 3', correct_answers: 3, total_questions: 5 },
       { topic_id: 'multiplication', grade_level: 'Grade 3', correct_answers: 4, total_questions: 4 },
     ],
+    unmapped_topic_incorrect_answers: 0,
+    topic_evidence_status: 'weaknesses_identified',
     playtime_minutes: 24,
     quest_evidence: [],
   });
@@ -123,7 +127,7 @@ test('includes deterministic per-quest timing and graded evidence in the provide
 test('metrics semantics and current difficulty are fingerprinted without changing the grounding policy', () => {
   const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics: { ...metrics, currentDifficulty: 'Easy', totalProgressVerified: false } });
   assert.equal(input.grounding_policy_version, GROUNDING_POLICY_VERSION);
-  assert.equal(input.metrics_definition_version, 'student-metrics-v3');
+  assert.equal(input.metrics_definition_version, 'student-metrics-v4');
   assert.equal(input.current_difficulty, 'Easy');
   assert.equal(input.total_progress_verified, false);
   const legacy = { ...input };
@@ -168,6 +172,47 @@ test('fingerprints canonical Grade-topic answer totals used for refreshed ground
   }]);
   assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(changedTotals));
   assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(changedGrade));
+});
+
+test('grounds topics only for the student current Grade and fingerprints learning-cycle boundaries', () => {
+  const scopedMetrics = {
+    ...metrics,
+    incorrectAnswers: 4,
+    topicPerformance: [
+      { topicId: 'addition', gradeLevel: 'Grade 1', correctAnswers: 1, totalQuestions: 5 },
+      { topicId: 'fractions', gradeLevel: 'Grade 3', correctAnswers: 0, totalQuestions: 5 },
+    ],
+  };
+  const currentCycle = buildGroundedInsightInput({
+    gradeLevel: 'Grade 1',
+    metrics: scopedMetrics,
+    learningCycleVersion: 7,
+    learningCycleStartedAt: '2026-10-01T00:00:00.000Z',
+  });
+  const nextCycle = buildGroundedInsightInput({
+    gradeLevel: 'Grade 1',
+    metrics: scopedMetrics,
+    learningCycleVersion: 8,
+    learningCycleStartedAt: '2026-10-13T00:00:00.000Z',
+  });
+
+  assert.deepEqual(currentCycle.topic_performance, [
+    { topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 1, total_questions: 5 },
+  ]);
+  assert.equal(currentCycle.topic_evidence_status, 'weaknesses_identified');
+  assert.notEqual(buildInsightFingerprint(currentCycle), buildInsightFingerprint(nextCycle));
+});
+
+test('deduplicates repeated committed result events in per-quest grounded evidence', () => {
+  const quizSessions = [
+    { canonical_task_id: 'oakleaf-bandits', result_event_id: 'same-result', score: 0, total_items: 1 },
+    { canonical_task_id: 'oakleaf-bandits', result_event_id: 'same-result', score: 0, total_items: 1 },
+    { canonical_task_id: 'oakleaf-bandits', result_event_id: 'different-result', score: 1, total_items: 1 },
+  ];
+  const [quest] = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics, quizSessions }).quest_evidence;
+  assert.equal(quest.total_questions, 2);
+  assert.equal(quest.correct_answers, 1);
+  assert.equal(quest.incorrect_answers, 1);
 });
 
 test('uses a mocked claim selection and returns only backend-rendered text', async () => {

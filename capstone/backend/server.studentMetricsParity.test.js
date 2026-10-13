@@ -177,7 +177,7 @@ test('authorized detail reads automatically share a preliminary grounded insight
     providerSelection: {
       grounding_policy_version: GROUNDING_POLICY_VERSION,
       performance_claim_ids: ['results_recorded', 'answer_counts', 'overall_accuracy', 'current_difficulty'],
-      strength_claim_ids: ['overall_accuracy_strength', 'difficulty_easy_strength'],
+      strength_claim_ids: [],
       weakness_claim_ids: [],
     },
   });
@@ -192,6 +192,7 @@ test('authorized detail reads automatically share a preliminary grounded insight
   assert.equal(admin.aiInsight.status, 'generated');
   assert.equal(admin.aiInsight.data_level, 'limited_data');
   assert.equal(admin.aiInsight.preliminary, true);
+  assert.equal(admin.aiInsight.topic_evidence_status, 'topic_metadata_unavailable');
   assert.equal(teacher.aiInsight.status, 'cached');
   assert.deepEqual(parent.aiInsight.insight, admin.aiInsight.insight);
   assert.equal(get.providerCallCount(), 1);
@@ -241,7 +242,12 @@ test('detail and AI reuse the same complete evidence fingerprint after 500 resul
     completedMilestones: fixture.milestones,
   });
   fixture.cached = {
-    input_fingerprint: buildInsightFingerprint(buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics })),
+    input_fingerprint: buildInsightFingerprint(buildGroundedInsightInput({
+      gradeLevel: 'Grade 1',
+      metrics,
+      learningCycleVersion: fixture.progress.current_learning_cycle_version,
+      learningCycleStartedAt: fixture.progress.current_learning_cycle_started_at,
+    })),
     insight: { performance_insight: 'Backend-rendered cached claim.', strengths: [], weaknesses: [], recommendations: [] },
     generated_at: '2026-09-07T00:00:00.000Z', stale_at: null,
   };
@@ -250,6 +256,8 @@ test('detail and AI reuse the same complete evidence fingerprint after 500 resul
   const generated = await get('/api/student-progress/44/ai-insight', 'admin', 'POST');
   assert.equal(generated.status, 'cached');
   assert.deepEqual(generated.insight, detail.aiInsight.insight);
+  assert.deepEqual(generated.evidence_snapshot.metrics, detail.metrics);
+  assert.equal(generated.evidence_snapshot.progress.student_id, detail.progress.student_id);
 });
 
 test('Parent children and Student detail use canonical account Grade and matching answer facts', async (t) => {
@@ -313,7 +321,12 @@ for (const nextCycleAnswers of [[0, 0], []]) {
         completedMilestones: fixture.milestones,
       });
       fixture.cached = {
-        input_fingerprint: buildInsightFingerprint(buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics: expected })),
+      input_fingerprint: buildInsightFingerprint(buildGroundedInsightInput({
+        gradeLevel: 'Grade 1',
+        metrics: expected,
+        learningCycleVersion: fixture.progress.current_learning_cycle_version,
+        learningCycleStartedAt: fixture.progress.current_learning_cycle_started_at,
+      })),
         insight: { performance_insight: 'Recorded overall accuracy is 60%.', strengths: [], weaknesses: [], recommendations: [] },
         generated_at: '2026-09-07T00:00:00.000Z', stale_at: null,
       };

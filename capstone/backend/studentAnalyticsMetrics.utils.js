@@ -2,7 +2,7 @@ const { resolveCurrentDifficulty } = require('./progressScene.utils');
 const { countUniqueCompletedMilestones } = require('./questMilestones.utils');
 const { canonicalPlaytimeSeconds } = require('./playtimeAggregation.utils');
 const { calculateWeightedCompletion, PLAYER_FACING_TASKS } = require('./questGraph.utils');
-const { getTopicById, normalizeScope } = require('./curriculumScopeRegistry');
+const { getTopicById, normalizeScope, resolveLegacyDisplayTopic } = require('./curriculumScopeRegistry');
 
 const CANONICAL_CAMPAIGN_TASK_IDS = new Set(['tutorial', ...PLAYER_FACING_TASKS]);
 
@@ -46,6 +46,30 @@ const normalizeDifficulty = (value) => {
 
 const normalizeTopic = (value) => String(value || '').trim();
 
+const distinctNonEmptyStrings = (values) => [...new Set((Array.isArray(values) ? values : [])
+  .map((value) => String(value ?? '').trim())
+  .filter(Boolean))];
+
+const resolveLinkedQuestionSetScope = (row) => {
+  if (row.question_set_id === null || row.question_set_id === undefined || row.question_set_id === '') return null;
+  const gradeLevel = row.canonical_grade_level;
+  const difficulty = row.canonical_difficulty;
+  const questionTopicIds = distinctNonEmptyStrings(row.question_topic_ids);
+  const questionLabels = distinctNonEmptyStrings(row.question_math_topics);
+  if (questionTopicIds.some((topicId) => !getTopicById(topicId)) || questionTopicIds.length > 1) return null;
+
+  const resolvedQuestionLabels = questionLabels.map((label) => resolveLegacyDisplayTopic(gradeLevel, difficulty, label));
+  if (resolvedQuestionLabels.some((topicId) => !topicId) || new Set(resolvedQuestionLabels).size > 1) return null;
+
+  const fileLabel = String(row.canonical_math_topic || '').trim();
+  const fileLabelTopicId = fileLabel ? resolveLegacyDisplayTopic(gradeLevel, difficulty, fileLabel) : null;
+  if (fileLabel && !fileLabelTopicId) return null;
+
+  const sources = [questionTopicIds[0], resolvedQuestionLabels[0], fileLabelTopicId].filter(Boolean);
+  if (sources.length === 0 || new Set(sources).size !== 1) return null;
+  return normalizeScope({ grade_level: gradeLevel, difficulty, topic_id: sources[0] });
+};
+
 const normalizeResult = (row = {}) => {
   const totalQuestions = toNonNegativeInteger(row.total_items ?? row.totalItems);
   const correctAnswers = toNonNegativeInteger(row.score);
@@ -58,15 +82,16 @@ const normalizeResult = (row = {}) => {
     difficulty: row.canonical_difficulty,
     topic_id: row.canonical_topic_id,
   });
-  const canonicalTopic = canonicalScope ? getTopicById(canonicalScope.topic_id) : null;
+  const linkedScope = canonicalScope || resolveLinkedQuestionSetScope(row);
+  const canonicalTopic = linkedScope ? getTopicById(linkedScope.topic_id) : null;
 
   return {
     correctAnswers,
     totalQuestions,
     difficulty: normalizeDifficulty(row.difficulty),
-    topicId: canonicalTopic ? canonicalScope.topic_id : null,
+    topicId: canonicalTopic ? linkedScope.topic_id : null,
     topic: canonicalTopic?.display_label || null,
-    gradeLevel: canonicalTopic ? canonicalScope.grade_level : null,
+    gradeLevel: canonicalTopic ? linkedScope.grade_level : null,
     currentMap: normalizeTopic(row.current_map ?? row.currentMap ?? row.map ?? row.map_name),
     mapId: normalizeTopic(row.map_id),
     resultEventId: normalizeTopic(row.result_event_id),
@@ -184,6 +209,15 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
       accuracy: toPercentage(totals.correctAnswers, totals.totalQuestions),
     }))
     .sort((left, right) => left.gradeLevel.localeCompare(right.gradeLevel) || left.topic.localeCompare(right.topic));
+  const unmappedTopicQuestionCount = validResults
+    .filter((result) => !result.topicId)
+    .reduce((total, result) => total + result.totalQuestions, 0);
+  const unmappedTopicIncorrectAnswers = validResults
+    .filter((result) => !result.topicId)
+    .reduce((total, result) => total + result.totalQuestions - result.correctAnswers, 0);
+  const topicEvidenceStatus = topicPerformance.length > 0
+    ? 'topic_metadata_available'
+    : (unmappedTopicIncorrectAnswers > 0 ? 'topic_metadata_unavailable' : 'no_topic_evidence');
 
   const mapBreakdown = Object.fromEntries(Array.from(mapTotals.entries())
     .map(([map, totals]) => [map, {
@@ -217,6 +251,9 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
     currentDifficulty: currentDifficulty === 'Unknown' ? null : currentDifficulty,
     difficultyBreakdown,
     topicPerformance,
+    unmappedTopicQuestionCount,
+    unmappedTopicIncorrectAnswers,
+    topicEvidenceStatus,
     mapBreakdown,
     playtimeMinutes,
     playtimeSeconds: playtimeSeconds > 0 ? playtimeSeconds : null,

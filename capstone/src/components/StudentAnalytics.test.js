@@ -315,6 +315,10 @@ describe('StudentAnalytics defensive rendering', () => {
       }))
       .mockResolvedValueOnce(jsonResponse({
         status: 'regenerated', valid_result_count: 4,
+        evidence_snapshot: {
+          progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
+          metrics: { validResultCount: 5, accuracy: 40, totalQuestions: 5, correctAnswers: 2, incorrectAnswers: 3 },
+        },
         insight: { performance_insight: 'Updated from Refresh AI Insight.', strengths: [], weaknesses: [], recommendations: [] },
       }));
 
@@ -327,6 +331,8 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(request).toBeTruthy();
     expect(JSON.parse(request[1].body)).toEqual({ refresh: true });
     expect(container.textContent).toContain('Updated from Refresh AI Insight.');
+    expect(container.textContent).toContain('40%');
+    expect(container.textContent).toContain('2');
     expect(container.textContent).not.toContain('Old cached insight.');
     expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Refreshing AI insight...')).toBe(false);
   });

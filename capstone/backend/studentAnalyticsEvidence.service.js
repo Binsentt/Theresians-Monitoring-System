@@ -33,10 +33,27 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
               lf.topic_id AS canonical_topic_id,
               lf.grade_level AS canonical_grade_level,
               lf.difficulty AS canonical_difficulty,
+              lf.math_topic AS canonical_math_topic,
+              question_topics.topic_ids AS question_topic_ids,
+              question_topics.math_topics AS question_math_topics,
               gr.question_presented_at, gr.answer_submitted_at, gr.response_time_seconds
        FROM public.game_results gr
        JOIN public.accounts student ON student.id = gr.resolved_student_id
        LEFT JOIN public.learning_files lf ON lf.id = gr.question_set_id
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(
+                  ARRAY_AGG(DISTINCT NULLIF(BTRIM(q.topic_id), ''))
+                    FILTER (WHERE NULLIF(BTRIM(q.topic_id), '') IS NOT NULL),
+                  ARRAY[]::TEXT[]
+                ) AS topic_ids,
+                COALESCE(
+                  ARRAY_AGG(DISTINCT NULLIF(BTRIM(q.math_topic), ''))
+                    FILTER (WHERE NULLIF(BTRIM(q.math_topic), '') IS NOT NULL),
+                  ARRAY[]::TEXT[]
+                ) AS math_topics
+         FROM public.questions q
+         WHERE q.learning_file_id = gr.question_set_id
+       ) question_topics ON gr.question_set_id IS NOT NULL
        WHERE gr.resolved_student_id = ANY($1::INTEGER[])
          AND (student.current_learning_cycle_started_at IS NULL
               OR gr.played_at >= student.current_learning_cycle_started_at)

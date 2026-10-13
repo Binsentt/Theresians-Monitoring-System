@@ -10,6 +10,8 @@ const {
 } = require('./aiRuntimePolicy');
 const {
   GROUNDING_POLICY_VERSION,
+  MIN_TOPIC_ATTEMPTS_FOR_WEAKNESS,
+  WEAK_PERFORMANCE_THRESHOLD,
   INSIGHT_VALIDATION_STAGES,
   buildGroundedClaimCatalog,
   buildClaimSelectionSchema,
@@ -32,6 +34,7 @@ const asText = (value) => String(value || '').trim();
 
 const buildQuestEvidence = ({ activityLogs = [], quizSessions = [] } = {}) => {
   const groups = new Map();
+  const seenResultEventIds = new Set();
   const getGroup = (taskId) => {
     const canonicalTaskId = asText(taskId).toLowerCase();
     if (!canonicalTaskId) return null;
@@ -63,6 +66,9 @@ const buildQuestEvidence = ({ activityLogs = [], quizSessions = [] } = {}) => {
     }
   });
   (Array.isArray(quizSessions) ? quizSessions : []).forEach((row) => {
+    const eventId = asText(row?.result_event_id);
+    if (eventId && seenResultEventIds.has(eventId)) return;
+    if (eventId) seenResultEventIds.add(eventId);
     const group = getGroup(row?.canonical_task_id);
     const score = Number(row?.score);
     const total = Number(row?.total_items ?? row?.totalItems);
@@ -92,8 +98,16 @@ const buildQuestEvidence = ({ activityLogs = [], quizSessions = [] } = {}) => {
     .sort((left, right) => left.canonical_task_id.localeCompare(right.canonical_task_id));
 };
 
-function buildGroundedInsightInput({ gradeLevel, metrics = {}, activityLogs = [], quizSessions = [] } = {}) {
+function buildGroundedInsightInput({
+  gradeLevel,
+  learningCycleVersion = null,
+  learningCycleStartedAt = null,
+  metrics = {},
+  activityLogs = [],
+  quizSessions = [],
+} = {}) {
   const difficulty = metrics.difficultyBreakdown || {};
+  const studentGrade = normalizeGradeLevel(gradeLevel);
   const topicPerformance = (Array.isArray(metrics.topicPerformance) ? metrics.topicPerformance : [])
     .map((topic) => {
       const topicId = normalizeTopicId(topic?.topicId ?? topic?.topic_id);
@@ -106,7 +120,8 @@ function buildGroundedInsightInput({ gradeLevel, metrics = {}, activityLogs = []
       const totalQuestions = Number(topic?.totalQuestions ?? topic?.total_questions);
       if (!canonicalTopic || !belongsToGrade || !Number.isInteger(correctAnswers)
         || !Number.isInteger(totalQuestions) || totalQuestions < 1
-        || correctAnswers < 0 || correctAnswers > totalQuestions) return null;
+        || correctAnswers < 0 || correctAnswers > totalQuestions
+        || (studentGrade && canonicalGrade !== studentGrade)) return null;
       return {
         topic_id: topicId,
         grade_level: canonicalGrade,
@@ -117,10 +132,30 @@ function buildGroundedInsightInput({ gradeLevel, metrics = {}, activityLogs = []
     .filter(Boolean)
     .sort((left, right) => left.grade_level.localeCompare(right.grade_level)
       || left.topic_id.localeCompare(right.topic_id));
+  const hasSupportedWeakness = topicPerformance.some((topic) => (
+    topic.total_questions >= MIN_TOPIC_ATTEMPTS_FOR_WEAKNESS
+    && (topic.correct_answers / topic.total_questions) * 100 < WEAK_PERFORMANCE_THRESHOLD
+  ));
+  const hasInsufficientTopicSample = topicPerformance.some((topic) => (
+    topic.total_questions < MIN_TOPIC_ATTEMPTS_FOR_WEAKNESS
+    && (topic.correct_answers / topic.total_questions) * 100 < WEAK_PERFORMANCE_THRESHOLD
+  ));
+  const topicEvidenceStatus = hasSupportedWeakness
+    ? 'weaknesses_identified'
+    : topicPerformance.length === 0 && Number(metrics.incorrectAnswers || 0) > 0
+      ? 'topic_metadata_unavailable'
+      : hasInsufficientTopicSample
+        ? 'insufficient_topic_attempts'
+        : topicPerformance.length > 0
+          ? 'no_supported_weakness'
+          : 'no_topic_evidence';
   return {
     grounding_policy_version: GROUNDING_POLICY_VERSION,
-    metrics_definition_version: 'student-metrics-v3',
-    grade: asText(gradeLevel) || null,
+    metrics_definition_version: 'student-metrics-v4',
+    grade: studentGrade,
+    learning_cycle_version: Number.isInteger(Number(learningCycleVersion)) && learningCycleVersion !== null
+      ? Number(learningCycleVersion) : null,
+    learning_cycle_started_at: asText(learningCycleStartedAt) || null,
     results_recorded: metrics.validResultCount ?? null,
     correct_answers: metrics.correctAnswers ?? null,
     incorrect_answers: metrics.incorrectAnswers ?? null,
@@ -139,6 +174,9 @@ function buildGroundedInsightInput({ gradeLevel, metrics = {}, activityLogs = []
       hard: difficulty.hard?.accuracy ?? null,
     },
     topic_performance: topicPerformance,
+    unmapped_topic_incorrect_answers: Number.isInteger(metrics.unmappedTopicIncorrectAnswers)
+      ? metrics.unmappedTopicIncorrectAnswers : 0,
+    topic_evidence_status: topicEvidenceStatus,
     playtime_minutes: metrics.playtimeMinutes ?? null,
     quest_evidence: buildQuestEvidence({ activityLogs, quizSessions }),
   };

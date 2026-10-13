@@ -257,3 +257,34 @@ test('aggregates topic evidence only from canonical Grade and topic question-set
     },
   ]);
 });
+
+test('many valid incorrect results without linked topic metadata are counted but reported as topic metadata unavailable', () => {
+  const quizSessions = Array.from({ length: 95 }, (_, index) => ({
+    score: index % 2,
+    total_items: 1,
+    difficulty: 'Easy',
+    math_topic: 'Addition',
+    question_set_id: null,
+    result_event_id: `unlinked-result-${index + 1}`,
+  }));
+  const metrics = buildStudentAnalyticsMetrics({ quizSessions });
+
+  assert.equal(metrics.validResultCount, 95);
+  assert.ok(metrics.incorrectAnswers > 0);
+  assert.deepEqual(metrics.topicPerformance, []);
+  assert.equal(metrics.unmappedTopicIncorrectAnswers, metrics.incorrectAnswers);
+  assert.equal(metrics.topicEvidenceStatus, 'topic_metadata_unavailable');
+});
+
+test('duplicate committed result event IDs do not double-count unlinked topic misses', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    quizSessions: [
+      { result_event_id: 'same-event', score: 0, total_items: 1, math_topic: 'Addition' },
+      { result_event_id: 'same-event', score: 0, total_items: 1, math_topic: 'Addition' },
+    ],
+  });
+
+  assert.equal(metrics.validResultCount, 1);
+  assert.equal(metrics.incorrectAnswers, 1);
+  assert.equal(metrics.unmappedTopicIncorrectAnswers, 1);
+});

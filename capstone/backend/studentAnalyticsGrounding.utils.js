@@ -1,5 +1,6 @@
-const GROUNDING_POLICY_VERSION = 'grounded-claims-v3';
+const GROUNDING_POLICY_VERSION = 'grounded-claims-v4';
 const WEAK_PERFORMANCE_THRESHOLD = 75;
+const MIN_TOPIC_ATTEMPTS_FOR_WEAKNESS = 5;
 const MAX_SELECTION_ITEMS = 5;
 const MAX_TOPIC_LABEL_LENGTH = 80;
 const MAX_RENDERED_PERFORMANCE_LENGTH = 900;
@@ -51,6 +52,7 @@ const asSafeQuestLabel = (value) => {
 const createCatalog = (input) => ({
   policyVersion: GROUNDING_POLICY_VERSION,
   providerEvidence: input,
+  topicEvidenceStatus: 'no_topic_evidence',
   performance: [],
   strength: [],
   weakness: [],
@@ -119,7 +121,10 @@ function addDifficultyClaims(catalog, difficultyAccuracy) {
 function addObservedTopicClaims(catalog, topicPerformance, input) {
   const seen = new Set();
   let validTopics = 0;
-  (Array.isArray(topicPerformance) ? topicPerformance : []).forEach((topic) => {
+  let lowAttemptTopics = 0;
+  let supportedWeaknesses = 0;
+  const studentGrade = normalizeGradeLevel(input.grade);
+  const candidates = (Array.isArray(topicPerformance) ? topicPerformance : []).map((topic) => {
     const topicId = normalizeTopicId(topic?.topic_id);
     const gradeLevel = normalizeGradeLevel(topic?.grade_level);
     const canonicalTopic = topicId ? getTopicById(topicId) : null;
@@ -129,14 +134,28 @@ function addObservedTopicClaims(catalog, topicPerformance, input) {
     const correct = topic?.correct_answers;
     const total = topic?.total_questions;
     if (!canonicalTopic || !belongsToGrade || !isNonNegativeInteger(correct)
-      || !isNonNegativeInteger(total) || total < 1 || correct > total) return;
+      || !isNonNegativeInteger(total) || total < 1 || correct > total
+      || (studentGrade && gradeLevel !== studentGrade)) return null;
+    return {
+      topicId,
+      gradeLevel,
+      canonicalTopic,
+      correct,
+      total,
+      incorrect: total - correct,
+      accuracy: Number(((correct / total) * 100).toFixed(2)),
+    };
+  }).filter(Boolean).sort((left, right) => left.accuracy - right.accuracy
+    || right.incorrect - left.incorrect
+    || right.total - left.total
+    || left.topicId.localeCompare(right.topicId));
+
+  candidates.forEach(({ topicId, gradeLevel, canonicalTopic, correct, total, incorrect, accuracy }) => {
 
     const claimPrefix = `topic_${gradeLevel.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${topicId}`;
     if (seen.has(claimPrefix)) return;
     seen.add(claimPrefix);
     validTopics += 1;
-    const incorrect = total - correct;
-    const accuracy = Number(((correct / total) * 100).toFixed(2));
     const accuracyText = formatPercentage(accuracy);
     const subjectLabel = `${gradeLevel} ${canonicalTopic.display_label}`;
     addPerformanceClaim(
@@ -153,6 +172,17 @@ function addObservedTopicClaims(catalog, topicPerformance, input) {
       return;
     }
 
+    if (total < MIN_TOPIC_ATTEMPTS_FOR_WEAKNESS) {
+      lowAttemptTopics += 1;
+      addPerformanceClaim(
+        catalog,
+        `${claimPrefix}_insufficient_attempts`,
+        `Recorded ${subjectLabel} accuracy is ${accuracyText} from ${total} attempt${total === 1 ? '' : 's'}; there are not enough attempts (at least ${MIN_TOPIC_ATTEMPTS_FOR_WEAKNESS} are needed) to identify a topic weakness.`
+      );
+      return;
+    }
+
+    supportedWeaknesses += 1;
     addClaim(catalog, 'weakness', {
       id: `${claimPrefix}_weakness`,
       text: `Recorded ${subjectLabel} accuracy is ${accuracyText} (${correct} of ${total} correct; ${incorrect} incorrect), below the current ${WEAK_PERFORMANCE_THRESHOLD}% evidence boundary.`,
@@ -172,12 +202,22 @@ function addObservedTopicClaims(catalog, topicPerformance, input) {
       'Incorrect answers are recorded, but no validated Grade/topic-linked question-set evidence is available to identify a specific math topic weakness.'
     );
   }
+  catalog.topicEvidenceStatus = supportedWeaknesses > 0
+    ? 'weaknesses_identified'
+    : validTopics === 0 && isNonNegativeInteger(input.incorrect_answers) && input.incorrect_answers > 0
+      ? 'topic_metadata_unavailable'
+      : lowAttemptTopics > 0
+        ? 'insufficient_topic_attempts'
+        : validTopics > 0
+          ? 'no_supported_weakness'
+          : 'no_topic_evidence';
 }
 
 function freezeCatalog(catalog) {
   const freezeEntries = (entries) => Object.freeze(entries.slice());
   const frozen = {
     policyVersion: catalog.policyVersion,
+    topicEvidenceStatus: catalog.topicEvidenceStatus,
     providerEvidence: Object.freeze({ ...catalog.providerEvidence }),
     performance: freezeEntries(catalog.performance),
     strength: freezeEntries(catalog.strength),
@@ -231,8 +271,7 @@ function buildClaimSelectionSchema(catalog) {
       performance_claim_ids: arraySchemaFor(catalog.permittedClaimIds.performance, 1),
       strength_claim_ids: arraySchemaFor(catalog.permittedClaimIds.strength),
       weakness_claim_ids: arraySchemaFor(
-        catalog.permittedClaimIds.weakness,
-        catalog.permittedClaimIds.weakness.length > 0 ? 1 : 0
+        catalog.permittedClaimIds.weakness
       ),
     },
   };
@@ -362,7 +401,17 @@ function renderGroup(ids, catalog, category, separator = '\n') {
 
 function renderValidatedClaimSelection(selection, catalog) {
   const groups = validateClaimSelection(selection, catalog);
-  const performanceInsight = renderGroup(groups.performance_claim_ids, catalog, 'performance', ' ');
+  const performanceClaims = groups.performance_claim_ids.map((id) => findClaim(catalog, 'performance', id));
+  if (catalog.topicEvidenceStatus === 'topic_metadata_unavailable') {
+    const missingTopicClaim = findClaim(catalog, 'performance', 'topic_evidence_unavailable');
+    if (missingTopicClaim) performanceClaims.push(missingTopicClaim);
+  } else if (catalog.topicEvidenceStatus === 'insufficient_topic_attempts') {
+    const insufficientClaim = catalog.performance.find((claim) => /_insufficient_attempts$/.test(claim.id));
+    if (insufficientClaim) performanceClaims.push(insufficientClaim);
+  }
+  const performanceInsight = [...new Map(performanceClaims.map((claim) => [claim.id, claim])).values()]
+    .map((claim) => claim.text)
+    .join(' ');
   if (!performanceInsight || performanceInsight.length > MAX_RENDERED_PERFORMANCE_LENGTH) {
     throw new GroundingValidationError(
       'Grounding rendered performance insight is invalid.',
@@ -386,12 +435,18 @@ function renderValidatedClaimSelection(selection, catalog) {
       summary: facts.length ? `Recorded evidence: ${facts.join('; ')}.` : 'No graded or timing evidence is recorded for this task yet.',
     };
   }).filter((quest) => quest.canonical_task_id);
+  const deterministicWeaknessIds = catalog.weakness.map((claim) => claim.id);
+  const deterministicRecommendationIds = deriveSupportedRecommendationIds({
+    performance_claim_ids: groups.performance_claim_ids,
+    weakness_claim_ids: deterministicWeaknessIds,
+  }, catalog);
   return {
+    topic_evidence_status: catalog.topicEvidenceStatus,
     performance_insight: performanceInsight,
     strengths: renderGroup(groups.strength_claim_ids, catalog, 'strength'),
-    weaknesses: renderGroup(groups.weakness_claim_ids, catalog, 'weakness'),
+    weaknesses: renderGroup(deterministicWeaknessIds, catalog, 'weakness'),
     recommendations: renderGroup(
-      deriveSupportedRecommendationIds(groups, catalog),
+      deterministicRecommendationIds,
       catalog,
       'recommendation'
     ),
@@ -402,6 +457,7 @@ function renderValidatedClaimSelection(selection, catalog) {
 module.exports = {
   GROUNDING_POLICY_VERSION,
   WEAK_PERFORMANCE_THRESHOLD,
+  MIN_TOPIC_ATTEMPTS_FOR_WEAKNESS,
   INSIGHT_VALIDATION_STAGES,
   GroundingValidationError,
   buildGroundedClaimCatalog,

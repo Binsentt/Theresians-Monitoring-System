@@ -11098,9 +11098,12 @@ app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, 
     }, pool);
     if (!evidence) return res.status(404).json({ error: 'Student progress not found' });
     const { progress, metrics, activityLogs, quizSessions } = evidence;
+    const progressSnapshot = withStudentAnalyticsAliases(evidence);
     const aiInsight = await resolveStudentAiInsight({
       studentId,
       gradeLevel: progress.grade_level,
+      learningCycleVersion: progress.current_learning_cycle_version,
+      learningCycleStartedAt: progress.current_learning_cycle_started_at,
       metrics,
       activityLogs,
       quizSessions,
@@ -11108,7 +11111,10 @@ app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, 
       actorId: req.authenticatedUser.id,
       pool,
     });
-    return res.status(aiInsight.status === 'no_data' ? 422 : 200).json(aiInsight);
+    return res.status(aiInsight.status === 'no_data' ? 422 : 200).json({
+      ...aiInsight,
+      evidence_snapshot: { progress: progressSnapshot, metrics },
+    });
   } catch (err) {
     console.error('Generate grounded student insight failed:', err.message);
     return res.status(500).json({ error: 'Failed to generate grounded AI insight' });
@@ -11151,6 +11157,8 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
     const aiInsight = await resolveStudentAiInsight({
       studentId,
       gradeLevel: progress.grade_level,
+      learningCycleVersion: progress.current_learning_cycle_version,
+      learningCycleStartedAt: progress.current_learning_cycle_started_at,
       metrics,
       activityLogs: evidence.activityLogs,
       quizSessions: evidence.quizSessions,

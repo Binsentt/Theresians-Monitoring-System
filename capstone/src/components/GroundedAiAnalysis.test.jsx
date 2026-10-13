@@ -127,6 +127,20 @@ describe('GroundedAiAnalysis', () => {
     expect(container.querySelector('button')).toBeNull();
   });
 
+  test('explains when recorded misses cannot be assigned to a validated topic', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis aiInsight={{
+        status: 'generated',
+        topic_evidence_status: 'topic_metadata_unavailable',
+        insight: { performance_insight: 'Recorded answers include mistakes.', strengths: [], weaknesses: [], recommendations: [] },
+      }} />
+    ));
+
+    expect(container.textContent).toContain('Recorded incorrect answers are available, but their question sets are not linked to validated Mathematics topics.');
+    expect(container.textContent).toContain('Topic-specific recommendations require linked, validated Mathematics topic evidence.');
+    expect(container.textContent).not.toContain('No supported weakness is identified from the recorded evidence.');
+  });
+
   test('shows explicit weakness and recommendation cards plus a generate action when insight is not generated yet', async () => {
     const onRefresh = jest.fn();
     await act(async () => root.render(

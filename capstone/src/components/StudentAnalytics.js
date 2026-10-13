@@ -127,15 +127,19 @@ export default function StudentAnalytics() {
         body: JSON.stringify({ refresh: true }),
       });
       const data = await response.json();
+      const { evidence_snapshot: evidenceSnapshot, ...insightState } = data || {};
+      if (evidenceSnapshot?.progress) setProgress(evidenceSnapshot.progress);
+      if (evidenceSnapshot?.metrics) setMetrics(evidenceSnapshot.metrics);
+      const nextInsightState = Object.keys(insightState).length > 0 ? insightState : data;
       if (data?.status === 'insufficient_data' || data?.status === 'no_data') {
-        setAiInsight(data);
+        setAiInsight(nextInsightState);
         return;
       }
       if (!response.ok) {
         setInsightError(data?.error || 'Grounded AI Insights are unavailable right now.');
         return;
       }
-      setAiInsight(data);
+      setAiInsight(nextInsightState);
     } catch (err) {
       console.error('Grounded insight request failed:', err);
       setInsightError('Grounded AI Insights are unavailable right now.');

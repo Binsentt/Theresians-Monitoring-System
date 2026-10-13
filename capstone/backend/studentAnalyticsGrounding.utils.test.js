@@ -50,13 +50,17 @@ test('catalog renders exact supported percentage, count, and current quest facts
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(validSelection, catalog);
 
-  assert.equal(GROUNDING_POLICY_VERSION, 'grounded-claims-v3');
+  assert.equal(GROUNDING_POLICY_VERSION, 'grounded-claims-v4');
   assert.match(insight.performance_insight, /60%/);
   assert.match(insight.performance_insight, /3 correct answers and 2 incorrect answers/);
   assert.match(insight.performance_insight, /Current quest: Fraction Forest\./);
   assert.deepEqual(insight.strengths, []);
-  assert.deepEqual(insight.weaknesses, []);
-  assert.deepEqual(insight.recommendations, []);
+  assert.deepEqual(insight.weaknesses, [
+    'Recorded Grade 3 Fractions accuracy is 60% (3 of 5 correct; 2 incorrect), below the current 75% evidence boundary.',
+  ]);
+  assert.deepEqual(insight.recommendations, [
+    'For Grade 3 Fractions, review the 2 recorded incorrect answers and practice additional Fractions problems; the recorded result was 3 of 5 correct (60%).',
+  ]);
 });
 
 test('difficulty remains descriptive while canonical Grade-topic evidence supports weaknesses', () => {
@@ -75,14 +79,14 @@ test('difficulty remains descriptive while canonical Grade-topic evidence suppor
   assert.deepEqual(insight.recommendations, ['For Grade 3 Fractions, review the 2 recorded incorrect answers and practice additional Fractions problems; the recorded result was 3 of 5 correct (60%).']);
 });
 
-test('difficulty no-data remains descriptive and does not create a topic recommendation', () => {
+test('difficulty no-data remains descriptive while topic recommendation uses recorded evidence', () => {
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(selection({
     performance_claim_ids: ['difficulty_difficult_no_data'],
   }), catalog);
 
-  assert.deepEqual(insight.weaknesses, []);
-  assert.deepEqual(insight.recommendations, []);
+  assert.equal(insight.weaknesses.length, 1);
+  assert.equal(insight.recommendations.length, 1);
   assert.match(insight.performance_insight, /No recorded Difficult performance data is available yet/);
 });
 
@@ -208,14 +212,16 @@ test('an isolated recorded miss without topic linkage does not invent a subject 
   assert.deepEqual(catalog.recommendation, []);
 });
 
-test('unselected weakness does not derive its recommendation', () => {
+test('recorded topic weaknesses and matching recommendations do not depend on provider selection', () => {
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(selection({
     performance_claim_ids: ['overall_accuracy'],
     weakness_claim_ids: [],
   }), catalog);
 
-  assert.deepEqual(insight.recommendations, []);
+  assert.equal(insight.weaknesses.length, 1);
+  assert.equal(insight.recommendations.length, 1);
+  assert.equal(insight.topic_evidence_status, 'weaknesses_identified');
 });
 
 test('selected weakness deterministically enables its matching topic recommendation', () => {
@@ -228,13 +234,106 @@ test('selected weakness deterministically enables its matching topic recommendat
   assert.deepEqual(insight.recommendations, ['For Grade 3 Fractions, review the 2 recorded incorrect answers and practice additional Fractions problems; the recorded result was 3 of 5 correct (60%).']);
 });
 
-test('unselected supporting performance claim does not derive a recommendation', () => {
+test('topic weaknesses and recommendations are deterministic even when provider selects none', () => {
+  const gradeOneInput = {
+    ...input,
+    grade: 'Grade 1',
+    difficulty_accuracy: { easy: 20, medium: 90, hard: null },
+    topic_performance: [
+      { topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 3, total_questions: 10 },
+      { topic_id: 'subtraction', grade_level: 'Grade 1', correct_answers: 9, total_questions: 10 },
+    ],
+  };
+  const catalog = buildGroundedClaimCatalog(gradeOneInput);
+  const insight = renderValidatedClaimSelection({
+    grounding_policy_version: GROUNDING_POLICY_VERSION,
+    performance_claim_ids: ['results_recorded', 'answer_counts', 'overall_accuracy'],
+    strength_claim_ids: [],
+    weakness_claim_ids: [],
+  }, catalog);
+
+  assert.deepEqual(insight.weaknesses, [
+    'Recorded Grade 1 Addition accuracy is 30% (3 of 10 correct; 7 incorrect), below the current 75% evidence boundary.',
+  ]);
+  assert.deepEqual(insight.recommendations, [
+    'For Grade 1 Addition, review the 7 recorded incorrect answers and practice additional Addition problems; the recorded result was 3 of 10 correct (30%).',
+  ]);
+  assert.equal(insight.weaknesses.some((value) => /Easy|overall accuracy/i.test(value)), false);
+});
+
+test('multiple supported weak topics are ordered by topic accuracy and strong topics stay out', () => {
+  const catalog = buildGroundedClaimCatalog({
+    ...input,
+    grade: 'Grade 1',
+    topic_performance: [
+      { topic_id: 'multiplication', grade_level: 'Grade 1', correct_answers: 9, total_questions: 10 },
+      { topic_id: 'subtraction', grade_level: 'Grade 1', correct_answers: 11, total_questions: 20 },
+      { topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 3, total_questions: 10 },
+    ],
+  });
+  const insight = renderValidatedClaimSelection({
+    grounding_policy_version: GROUNDING_POLICY_VERSION,
+    performance_claim_ids: ['results_recorded'],
+    strength_claim_ids: [],
+    weakness_claim_ids: [],
+  }, catalog);
+
+  assert.match(insight.weaknesses[0], /Addition accuracy is 30%/);
+  assert.match(insight.weaknesses[1], /Subtraction accuracy is 55%/);
+  assert.equal(insight.weaknesses.some((value) => /Multiplication/.test(value)), false);
+  assert.match(insight.recommendations[0], /practice additional Addition problems/);
+  assert.match(insight.recommendations[1], /practice additional Subtraction problems/);
+});
+
+test('low topic accuracy with fewer than five attempts is reported as insufficient, not as a weakness', () => {
+  const catalog = buildGroundedClaimCatalog({
+    ...input,
+    grade: 'Grade 1',
+    topic_performance: [
+      { topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 0, total_questions: 1 },
+    ],
+  });
+  const insight = renderValidatedClaimSelection({
+    grounding_policy_version: GROUNDING_POLICY_VERSION,
+    performance_claim_ids: ['results_recorded'],
+    strength_claim_ids: [],
+    weakness_claim_ids: [],
+  }, catalog);
+
+  assert.deepEqual(insight.weaknesses, []);
+  assert.deepEqual(insight.recommendations, []);
+  assert.equal(insight.topic_evidence_status, 'insufficient_topic_attempts');
+  assert.ok(insight.performance_insight.includes('not enough attempts'));
+});
+
+test('incorrect answers without canonical topic metadata return an explicit evidence-gap state', () => {
+  const catalog = buildGroundedClaimCatalog({
+    ...input,
+    grade: 'Grade 1',
+    incorrect_answers: 12,
+    topic_performance: [],
+    topic_evidence_status: 'topic_metadata_unavailable',
+  });
+  const insight = renderValidatedClaimSelection({
+    grounding_policy_version: GROUNDING_POLICY_VERSION,
+    performance_claim_ids: ['topic_evidence_unavailable'],
+    strength_claim_ids: [],
+    weakness_claim_ids: [],
+  }, catalog);
+
+  assert.equal(insight.topic_evidence_status, 'topic_metadata_unavailable');
+  assert.match(insight.performance_insight, /incorrect answers are recorded, but no validated Grade\/topic-linked/i);
+  assert.deepEqual(insight.weaknesses, []);
+  assert.deepEqual(insight.recommendations, []);
+});
+
+test('deterministic topic recommendation does not depend on selected performance claims', () => {
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(selection({
     performance_claim_ids: ['overall_accuracy'],
   }), catalog);
 
-  assert.deepEqual(insight.recommendations, []);
+  assert.equal(insight.recommendations.length, 1);
 });
 
 test('multiple topic recommendations are unique and deterministic', () => {
@@ -251,18 +350,18 @@ test('multiple topic recommendations are unique and deterministic', () => {
   }), catalog);
 
   assert.deepEqual(insight.recommendations, [
-    'For Grade 3 Fractions, review the 2 recorded incorrect answers and practice additional Fractions problems; the recorded result was 3 of 5 correct (60%).',
     'For Grade 3 Division, review the 3 recorded incorrect answers and practice additional Division problems; the recorded result was 2 of 5 correct (40%).',
+    'For Grade 3 Fractions, review the 2 recorded incorrect answers and practice additional Fractions problems; the recorded result was 3 of 5 correct (60%).',
   ]);
 });
 
-test('no supported recommendation still produces a valid grounded insight', () => {
+test('supported topic recommendation remains present in a valid grounded insight', () => {
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(selection({
     performance_claim_ids: ['results_recorded'],
   }), catalog);
 
-  assert.deepEqual(insight.recommendations, []);
+  assert.equal(insight.recommendations.length, 1);
 });
 
 test('provider recommendation claim IDs are rejected as an unsupported output property', () => {
@@ -288,7 +387,7 @@ test('dynamic provider schema allows only catalog ids and no free-text propertie
   assert.equal(schema.properties.performance_claim_ids.items.enum.includes('improving_accuracy'), false);
   assert.equal(schema.properties.strength_claim_ids.items.enum.includes('topic_grade_3_multiplication_strength'), true);
   assert.equal(schema.properties.weakness_claim_ids.items.enum.includes('difficulty_difficult_weakness'), false);
-  assert.equal(schema.properties.weakness_claim_ids.minItems, 1);
+  assert.equal(schema.properties.weakness_claim_ids.minItems, 0);
   assert.equal(Object.prototype.hasOwnProperty.call(schema.properties, 'recommendation_claim_ids'), false);
 });
 

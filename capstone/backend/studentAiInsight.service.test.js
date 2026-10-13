@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const { resolveStudentAiInsight: resolveStudentAiInsightWithPolicy } = require('./studentAiInsight.service');
 const { buildStudentAnalyticsMetrics } = require('./studentAnalyticsMetrics.utils');
+const { buildGroundedInsightInput, buildInsightFingerprint } = require('./studentAnalyticsInsight.utils');
 const {
   buildGroundedClaimCatalog,
   renderValidatedClaimSelection,
@@ -196,6 +197,38 @@ test('five graded answers with two correct and three incorrect produce grounded 
   assert.equal(providerCalls, 1);
 });
 
+test('current canonical topic evidence refreshes cached weakness and recommendation text without provider availability', async () => {
+  const harness = createHarness();
+  const metrics = {
+    ...metricsFor([0, 0, 0, 1, 1]),
+    topicPerformance: [{
+      topicId: 'subtraction', topic: 'Subtraction', gradeLevel: 'Grade 1',
+      correctAnswers: 2, incorrectAnswers: 3, totalQuestions: 5, accuracy: 40,
+    }],
+  };
+  const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics });
+  harness.setSaved({
+    input_fingerprint: buildInsightFingerprint(input),
+    insight: generatedInsight('Older insight.'),
+    generated_at: '2026-09-09T00:00:00.000Z',
+    stale_at: null,
+  });
+  let providerCalls = 0;
+  const state = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics,
+    pool: harness.pool,
+    generateInsight: async () => { providerCalls += 1; return generatedInsight('unused'); },
+  });
+
+  assert.equal(state.status, 'cached');
+  assert.equal(providerCalls, 0);
+  assert.equal(state.topic_evidence_status, 'weaknesses_identified');
+  assert.match(state.insight.weaknesses[0], /Grade 1 Subtraction accuracy is 40%/);
+  assert.match(state.insight.recommendations[0], /review the 3 recorded incorrect answers/);
+});
+
 test('paused insight with no cache returns a stable state without provider, transaction, or write', async () => {
   const harness = createHarness();
   let providerCalls = 0;
@@ -365,6 +398,8 @@ test('explicit Refresh AI Insight bypasses an unchanged current cache and stores
   assert.equal(initial.status, 'generated');
   assert.equal(refreshed.status, 'regenerated');
   assert.equal(refreshed.insight.performance_insight, 'Manually refreshed analysis.');
+  const upsert = harness.calls.find(({ sql }) => sql.includes('insert into public.student_ai_insights'));
+  assert.match(upsert.sql, /generated_at = greatest\(clock_timestamp\(\), existing\.generated_at \+ interval '1 millisecond'\)/);
   assert.equal(reused.status, 'cached');
   assert.equal(reused.insight.performance_insight, 'Manually refreshed analysis.');
   assert.equal(providerCalls, 2);
@@ -390,7 +425,11 @@ test('provider failure keeps and marks the prior cached insight while canonical 
 
   assert.equal(state.status, 'unavailable');
   assert.equal(state.is_stale, true);
-  assert.deepEqual(state.insight, before.insight);
+  assert.equal(state.insight.performance_insight, before.insight.performance_insight);
+  assert.deepEqual(state.insight.weaknesses, []);
+  assert.deepEqual(state.insight.recommendations, []);
+  assert.equal(state.insight.topic_evidence_status, 'topic_metadata_unavailable');
+  assert.equal(state.topic_evidence_status, 'topic_metadata_unavailable');
   assert.deepEqual(harness.getSaved(), before);
   assert.ok(harness.calls.some(({ sql }) => sql === 'rollback'));
 });

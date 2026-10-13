@@ -1,4 +1,8 @@
 const {
+  buildGroundedClaimCatalog,
+  deriveSupportedRecommendationIds,
+} = require('./studentAnalyticsGrounding.utils');
+const {
   buildGroundedInsightInput,
   buildInsightFingerprint,
   generateGroundedStudentInsight,
@@ -45,38 +49,67 @@ const isCurrentCache = (cachedInsight, inputFingerprint) => Boolean(
   && !cachedInsight.stale_at
 );
 
-const buildCachedState = ({ baseState, cachedInsight }) => ({
+const buildCurrentTopicEvidence = (input) => {
+  const catalog = buildGroundedClaimCatalog(input);
+  const weaknessIds = catalog.weakness.map((claim) => claim.id);
+  const recommendationIds = deriveSupportedRecommendationIds({
+    performance_claim_ids: [],
+    weakness_claim_ids: weaknessIds,
+  }, catalog);
+  return {
+    topicEvidenceStatus: catalog.topicEvidenceStatus,
+    weaknesses: weaknessIds.map((id) => catalog.weakness.find((claim) => claim.id === id).text),
+    recommendations: recommendationIds.map((id) => catalog.recommendation.find((claim) => claim.id === id).text),
+  };
+};
+
+const applyCurrentTopicEvidence = (insight, topicEvidence) => {
+  if (!insight || typeof insight !== 'object' || Array.isArray(insight)) return insight;
+  return {
+    ...insight,
+    topic_evidence_status: topicEvidence.topicEvidenceStatus,
+    weaknesses: topicEvidence.weaknesses,
+    recommendations: topicEvidence.recommendations,
+  };
+};
+
+const buildCachedState = ({ baseState, cachedInsight, topicEvidence }) => ({
   ...baseState,
+  topic_evidence_status: topicEvidence.topicEvidenceStatus,
   status: 'cached',
   is_stale: false,
   generated_at: cachedInsight.generated_at || null,
-  insight: cachedInsight.insight,
+  insight: applyCurrentTopicEvidence(cachedInsight.insight, topicEvidence),
 });
 
-const buildUnavailableState = ({ baseState, cachedInsight }) => ({
+const buildUnavailableState = ({ baseState, cachedInsight, topicEvidence }) => ({
   ...baseState,
+  topic_evidence_status: topicEvidence.topicEvidenceStatus,
   status: 'unavailable',
   is_stale: Boolean(cachedInsight?.insight),
   generated_at: cachedInsight?.generated_at || null,
-  insight: cachedInsight?.insight,
+  insight: applyCurrentTopicEvidence(cachedInsight?.insight, topicEvidence),
   message: cachedInsight?.insight
     ? 'New evidence is available, but the insight service is unavailable. The prior insight is shown as stale.'
     : 'Grounded AI Insights are unavailable right now. Recorded analytics remain available.',
 });
 
-const buildPausedState = ({ baseState, cachedInsight, isStale = Boolean(cachedInsight?.insight) }) => ({
+const buildPausedState = ({ baseState, cachedInsight, topicEvidence, isStale = Boolean(cachedInsight?.insight) }) => ({
   ...baseState,
+  topic_evidence_status: topicEvidence.topicEvidenceStatus,
   status: 'paused',
   code: AI_PAUSED_CODE,
   is_stale: isStale,
   generated_at: cachedInsight?.generated_at || null,
-  insight: cachedInsight?.insight || null,
+  insight: applyCurrentTopicEvidence(cachedInsight?.insight, topicEvidence) || null,
   message: AI_PAUSED_MESSAGE,
 });
 
 async function resolveStudentAiInsight({
   studentId,
   gradeLevel,
+  learningCycleVersion = null,
+  learningCycleStartedAt = null,
   metrics = {},
   activityLogs = [],
   quizSessions = [],
@@ -96,24 +129,34 @@ async function resolveStudentAiInsight({
   if (baseState.data_level === 'no_data') {
     return {
       ...baseState,
+      topic_evidence_status: metrics.topicEvidenceStatus || 'no_topic_evidence',
       status: 'no_data',
       is_stale: false,
       message: 'No valid gameplay results are available for grounded AI analysis yet.',
     };
   }
 
-  const input = buildGroundedInsightInput({ gradeLevel, metrics, activityLogs, quizSessions });
+  const input = buildGroundedInsightInput({
+    gradeLevel,
+    metrics,
+    activityLogs,
+    quizSessions,
+    learningCycleVersion,
+    learningCycleStartedAt,
+  });
+  const topicEvidence = buildCurrentTopicEvidence(input);
   const inputFingerprint = buildInsightFingerprint(input);
   const initialCache = await readCachedInsight(pool, studentId);
   if (!aiGenerationEnabled) {
     return buildPausedState({
       baseState,
       cachedInsight: initialCache,
+      topicEvidence,
       isStale: Boolean(initialCache?.insight) && !isCurrentCache(initialCache, inputFingerprint),
     });
   }
   if (!forceRefresh && isCurrentCache(initialCache, inputFingerprint)) {
-    return buildCachedState({ baseState, cachedInsight: initialCache });
+    return buildCachedState({ baseState, cachedInsight: initialCache, topicEvidence });
   }
 
   const client = await pool.connect();
@@ -136,7 +179,7 @@ async function resolveStudentAiInsight({
     if (!forceRefresh && isCurrentCache(lockedCache, inputFingerprint)) {
       await client.query('COMMIT');
       transactionStarted = false;
-      return buildCachedState({ baseState, cachedInsight: lockedCache });
+      return buildCachedState({ baseState, cachedInsight: lockedCache, topicEvidence });
     }
 
     let insight;
@@ -155,21 +198,23 @@ async function resolveStudentAiInsight({
       if (logger && typeof logger.error === 'function') {
         logger.error('Automatic grounded student insight unavailable:', error?.code || error?.message || 'unknown error');
       }
-      return buildUnavailableState({ baseState, cachedInsight: lockedCache || initialCache });
+      return buildUnavailableState({ baseState, cachedInsight: lockedCache || initialCache, topicEvidence });
     }
+
+    insight = applyCurrentTopicEvidence(insight, topicEvidence);
 
     persistenceAttempted = true;
     const savedResult = await client.query(
-      `INSERT INTO public.student_ai_insights (
+      `INSERT INTO public.student_ai_insights AS existing (
          student_id, input_fingerprint, insight, generated_by, generated_at, stale_at, updated_at
-       ) VALUES ($1, $2, $3::jsonb, $4, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP)
+       ) VALUES ($1, $2, $3::jsonb, $4, clock_timestamp(), NULL, clock_timestamp())
        ON CONFLICT (student_id) DO UPDATE
        SET input_fingerprint = EXCLUDED.input_fingerprint,
            insight = EXCLUDED.insight,
            generated_by = EXCLUDED.generated_by,
-           generated_at = CURRENT_TIMESTAMP,
+           generated_at = GREATEST(clock_timestamp(), existing.generated_at + INTERVAL '1 millisecond'),
            stale_at = NULL,
-           updated_at = CURRENT_TIMESTAMP
+           updated_at = clock_timestamp()
        RETURNING insight, generated_at`,
       [studentId, inputFingerprint, JSON.stringify(insight), actorId]
     );
@@ -182,6 +227,7 @@ async function resolveStudentAiInsight({
     });
     return {
       ...baseState,
+      topic_evidence_status: topicEvidence.topicEvidenceStatus,
       status: lockedCache || initialCache ? 'regenerated' : 'generated',
       is_stale: false,
       generated_at: savedResult.rows[0]?.generated_at || null,
