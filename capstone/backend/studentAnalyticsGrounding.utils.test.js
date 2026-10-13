@@ -50,7 +50,7 @@ test('catalog renders exact supported percentage, count, and current quest facts
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(validSelection, catalog);
 
-  assert.equal(GROUNDING_POLICY_VERSION, 'grounded-claims-v4');
+  assert.equal(GROUNDING_POLICY_VERSION, 'grounded-claims-v5');
   assert.match(insight.performance_insight, /60%/);
   assert.match(insight.performance_insight, /3 correct answers and 2 incorrect answers/);
   assert.match(insight.performance_insight, /Current quest: Fraction Forest\./);
@@ -285,12 +285,12 @@ test('multiple supported weak topics are ordered by topic accuracy and strong to
   assert.match(insight.recommendations[1], /practice additional Subtraction problems/);
 });
 
-test('low topic accuracy with fewer than five attempts is reported as insufficient, not as a weakness', () => {
+test('low topic accuracy with fewer than five attempts is still a supported weakness with limited evidence', () => {
   const catalog = buildGroundedClaimCatalog({
     ...input,
     grade: 'Grade 1',
     topic_performance: [
-      { topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 0, total_questions: 1 },
+      { topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 1, total_questions: 4 },
     ],
   });
   const insight = renderValidatedClaimSelection({
@@ -300,10 +300,11 @@ test('low topic accuracy with fewer than five attempts is reported as insufficie
     weakness_claim_ids: [],
   }, catalog);
 
-  assert.deepEqual(insight.weaknesses, []);
-  assert.deepEqual(insight.recommendations, []);
-  assert.equal(insight.topic_evidence_status, 'insufficient_topic_attempts');
-  assert.ok(insight.performance_insight.includes('not enough attempts'));
+  assert.equal(insight.weaknesses.length, 1);
+  assert.match(insight.weaknesses[0], /Grade 1 Addition accuracy is 25% \(1 of 4 correct; 3 incorrect\)/);
+  assert.match(insight.weaknesses[0], /limited evidence/i);
+  assert.match(insight.recommendations[0], /Grade 1 Addition/);
+  assert.equal(insight.topic_evidence_status, 'weaknesses_identified');
 });
 
 test('incorrect answers without canonical topic metadata return an explicit evidence-gap state', () => {

@@ -678,6 +678,17 @@
   gap: 14px;
 }
 
+.student-topic-performance-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.student-topic-performance-table {
+  width: 100%;
+  min-width: 560px;
+  margin: 0;
+}
+
 .student-progress-row,
 .student-difficulty-row {
   display: grid;

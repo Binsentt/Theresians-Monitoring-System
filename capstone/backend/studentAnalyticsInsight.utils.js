@@ -10,7 +10,6 @@ const {
 } = require('./aiRuntimePolicy');
 const {
   GROUNDING_POLICY_VERSION,
-  MIN_TOPIC_ATTEMPTS_FOR_WEAKNESS,
   WEAK_PERFORMANCE_THRESHOLD,
   INSIGHT_VALIDATION_STAGES,
   buildGroundedClaimCatalog,
@@ -133,22 +132,15 @@ function buildGroundedInsightInput({
     .sort((left, right) => left.grade_level.localeCompare(right.grade_level)
       || left.topic_id.localeCompare(right.topic_id));
   const hasSupportedWeakness = topicPerformance.some((topic) => (
-    topic.total_questions >= MIN_TOPIC_ATTEMPTS_FOR_WEAKNESS
-    && (topic.correct_answers / topic.total_questions) * 100 < WEAK_PERFORMANCE_THRESHOLD
-  ));
-  const hasInsufficientTopicSample = topicPerformance.some((topic) => (
-    topic.total_questions < MIN_TOPIC_ATTEMPTS_FOR_WEAKNESS
-    && (topic.correct_answers / topic.total_questions) * 100 < WEAK_PERFORMANCE_THRESHOLD
+    (topic.correct_answers / topic.total_questions) * 100 < WEAK_PERFORMANCE_THRESHOLD
   ));
   const topicEvidenceStatus = hasSupportedWeakness
     ? 'weaknesses_identified'
     : topicPerformance.length === 0 && Number(metrics.incorrectAnswers || 0) > 0
       ? 'topic_metadata_unavailable'
-      : hasInsufficientTopicSample
-        ? 'insufficient_topic_attempts'
-        : topicPerformance.length > 0
-          ? 'no_supported_weakness'
-          : 'no_topic_evidence';
+      : topicPerformance.length > 0
+        ? 'no_supported_weakness'
+        : 'no_topic_evidence';
   return {
     grounding_policy_version: GROUNDING_POLICY_VERSION,
     metrics_definition_version: 'student-metrics-v4',

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3,
   BookOpen,
@@ -66,10 +66,12 @@ export default function StudentAnalytics() {
   const [metrics, setMetrics] = useState(null);
   const [aiInsight, setAiInsight] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [insightLoading, setInsightLoading] = useState(false);
   const [error, setError] = useState('');
   const [insightError, setInsightError] = useState('');
   const [userRole, setUserRole] = useState('admin');
+  const refreshInFlight = useRef(false);
   const { preparedRows, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
 
   const loadDetail = async () => {
@@ -114,8 +116,13 @@ export default function StudentAnalytics() {
   };
 
   const generateInsight = async () => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
     const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
     setInsightLoading(true);
+    setRefreshing(true);
+    setLoading(true);
+    setError('');
     setInsightError('');
     try {
       const response = await fetch(buildInsightUrl(buildStudentProgressDetailUrl(studentId, loggedInUser?.role)), {
@@ -127,23 +134,26 @@ export default function StudentAnalytics() {
         body: JSON.stringify({ refresh: true }),
       });
       const data = await response.json();
+      const supportedEmptyStates = ['insufficient_data', 'no_data'];
+      if (!response.ok && !supportedEmptyStates.includes(data?.status)) {
+        throw new Error(data?.error || 'Unable to refresh student progress.');
+      }
       const { evidence_snapshot: evidenceSnapshot, ...insightState } = data || {};
-      if (evidenceSnapshot?.progress) setProgress(evidenceSnapshot.progress);
-      if (evidenceSnapshot?.metrics) setMetrics(evidenceSnapshot.metrics);
+      if (!evidenceSnapshot?.progress || !evidenceSnapshot?.metrics) {
+        throw new Error('The refreshed Student Progress snapshot was incomplete.');
+      }
+      setProgress(evidenceSnapshot.progress);
+      setMetrics(evidenceSnapshot.metrics);
       const nextInsightState = Object.keys(insightState).length > 0 ? insightState : data;
-      if (data?.status === 'insufficient_data' || data?.status === 'no_data') {
-        setAiInsight(nextInsightState);
-        return;
-      }
-      if (!response.ok) {
-        setInsightError(data?.error || 'Grounded AI Insights are unavailable right now.');
-        return;
-      }
       setAiInsight(nextInsightState);
+      setInsightError('');
     } catch (err) {
       console.error('Grounded insight request failed:', err);
-      setInsightError('Grounded AI Insights are unavailable right now.');
+      setError(err?.message || 'Unable to refresh student progress.');
     } finally {
+      refreshInFlight.current = false;
+      setRefreshing(false);
+      setLoading(false);
       setInsightLoading(false);
     }
   };
@@ -182,12 +192,30 @@ export default function StudentAnalytics() {
     { label: 'Quest Completion', value: toNullableNumber(metrics?.questCompletionPercentage), tone: 'orange' },
   ];
   const insightMessage = insightError || aiInsight?.message || 'Generate an insight only when you want an interpretation of the recorded metrics.';
-  const topicRows = useMemo(() => Object.entries(metrics?.topicPerformance || metrics?.topic_breakdown || {})
-    .map(([topic, value]) => ({
-      topic: safeDisplayText(topic, ''),
-      accuracy: toNullableNumber(value?.accuracy ?? value),
-    }))
-    .filter((row) => row.topic), [metrics]);
+  const topicRows = useMemo(() => (Array.isArray(metrics?.topicPerformance) ? metrics.topicPerformance : [])
+    .map((value) => {
+      const topicId = safeDisplayText(value?.topicId ?? value?.topic_id, '');
+      const topicLabel = safeDisplayText(value?.topic, '');
+      const gradeLabel = safeDisplayText(value?.gradeLevel ?? value?.grade_level, '');
+      const correct = toNullableNumber(value?.correctAnswers ?? value?.correct_answers);
+      const attempts = toNullableNumber(value?.totalQuestions ?? value?.total_questions);
+      const incorrect = attempts !== null && correct !== null ? attempts - correct : null;
+      if (!topicId || !topicLabel || !gradeLabel
+        || !Number.isInteger(correct) || correct < 0
+        || !Number.isInteger(attempts) || attempts < 1 || correct > attempts) return null;
+      return {
+        topic: `${gradeLabel} ${topicLabel}`,
+        correct,
+        incorrect,
+        attempts,
+        accuracy: Number(((correct / attempts) * 100).toFixed(2)),
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.accuracy - right.accuracy
+      || right.incorrect - left.incorrect
+      || right.attempts - left.attempts
+      || left.topic.localeCompare(right.topic)), [metrics]);
   const reportSummary = [
     { label: 'Correct Answers', value: formatCount(metrics?.correctAnswers) },
     { label: 'Incorrect Answers', value: formatCount(metrics?.incorrectAnswers) },
@@ -242,7 +270,9 @@ export default function StudentAnalytics() {
       </button>
 
       {loading ? (
-        <div className="loading-state">Loading student details...</div>
+        <div className="loading-state" role="status" aria-live="polite">
+          {refreshing ? 'Refreshing student progress...' : 'Loading student details...'}
+        </div>
       ) : error ? (
         <div className="fallback-note validation-error-text">{error}</div>
       ) : (
@@ -329,6 +359,37 @@ export default function StudentAnalytics() {
                 ))}
               </div>
             </div>
+          </section>
+
+          <section className="student-dashboard-card student-topic-performance" aria-labelledby="student-topic-performance-title">
+            <div className="student-card-heading">
+              <span className="student-card-icon blue"><Layers size={20} aria-hidden="true" /></span>
+              <div><h2 id="student-topic-performance-title">Topic Performance</h2><p>Validated current-cycle Mathematics topics only.</p></div>
+            </div>
+            {topicRows.length > 0 ? (
+              <div className="student-topic-performance-table-wrap">
+                <table className="student-progress-table student-topic-performance-table">
+                  <thead><tr>
+                    <th scope="col">Topic</th>
+                    <th scope="col">Correct</th>
+                    <th scope="col">Incorrect</th>
+                    <th scope="col">Attempts</th>
+                    <th scope="col">Accuracy</th>
+                  </tr></thead>
+                  <tbody>{topicRows.map((row) => (
+                    <tr key={row.topic}>
+                      <td>{row.topic}</td>
+                      <td>{formatCount(row.correct)}</td>
+                      <td>{formatCount(row.incorrect)}</td>
+                      <td>{formatCount(row.attempts)}</td>
+                      <td>{formatPercent(row.accuracy)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="student-data-unavailable">No validated current-cycle Mathematics topic evidence is available.</p>
+            )}
           </section>
 
           <GroundedAiAnalysis

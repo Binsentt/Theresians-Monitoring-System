@@ -303,38 +303,100 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('Record more gameplay evidence.');
   });
 
-  test('Refresh AI Insight posts an explicit refresh and renders the refreshed response', async () => {
+  test('Refresh AI Insight replaces the whole page from one fresh snapshot and blocks repeat interaction', async () => {
+    let resolveRefresh;
     global.fetch = jest.fn()
       .mockResolvedValueOnce(jsonResponse({
         progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
-        metrics: { validResultCount: 4, accuracy: 75, totalQuestions: 4 },
+        metrics: { validResultCount: 4, accuracy: 75, totalQuestions: 4, correctAnswers: 3, incorrectAnswers: 1, gameScore: 3 },
         aiInsight: {
-          status: 'cached', valid_result_count: 4,
+          status: 'cached', valid_result_count: 4, generated_at: '2026-10-12T06:30:00.000Z',
           insight: { performance_insight: 'Old cached insight.', strengths: [], weaknesses: [], recommendations: [] },
         },
       }))
-      .mockResolvedValueOnce(jsonResponse({
-        status: 'regenerated', valid_result_count: 4,
-        evidence_snapshot: {
-          progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
-          metrics: { validResultCount: 5, accuracy: 40, totalQuestions: 5, correctAnswers: 2, incorrectAnswers: 3 },
-        },
-        insight: { performance_insight: 'Updated from Refresh AI Insight.', strengths: [], weaknesses: [], recommendations: [] },
-      }));
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
 
     await act(async () => root.render(<StudentAnalytics />));
     const refresh = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Refresh AI Insight');
     expect(refresh).toBeTruthy();
-    await act(async () => refresh.click());
+    await act(async () => {
+      refresh.click();
+      refresh.click();
+    });
 
     const request = global.fetch.mock.calls.find(([, options]) => options?.method === 'POST');
     expect(request).toBeTruthy();
     expect(JSON.parse(request[1].body)).toEqual({ refresh: true });
-    expect(container.textContent).toContain('Updated from Refresh AI Insight.');
-    expect(container.textContent).toContain('40%');
-    expect(container.textContent).toContain('2');
+    expect(container.textContent).toContain('Refreshing student progress...');
+    expect(container.querySelector('.student-metrics-grid')).toBeFalsy();
+    expect(container.querySelector('.student-insight-action')).toBeFalsy();
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+
+    const refreshedAt = '2026-10-13T06:30:00.000Z';
+    await act(async () => resolveRefresh({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: 'regenerated', valid_result_count: 8, generated_at: refreshedAt,
+        evidence_snapshot: {
+          progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1', section: 'Section A', current_quest: 'New committed quest', current_location: 'Deepest Forest' },
+          metrics: {
+            validResultCount: 8, accuracy: 37.5, totalQuestions: 8, correctAnswers: 3, incorrectAnswers: 5,
+            gameScore: 3, completedQuests: 2, currentQuest: 'New committed quest', currentDifficulty: 'Normal',
+            difficultyBreakdown: { easy: { accuracy: 25 }, medium: { accuracy: 40 }, hard: { accuracy: null } },
+            topicPerformance: [
+              { topicId: 'addition', topic: 'Addition', gradeLevel: 'Grade 1', correctAnswers: 1, incorrectAnswers: 3, totalQuestions: 4, accuracy: 25 },
+              { topicId: 'subtraction', topic: 'Subtraction', gradeLevel: 'Grade 1', correctAnswers: 2, incorrectAnswers: 8, totalQuestions: 10, accuracy: 20 },
+              { topic: 'Unvalidated guessed topic', gradeLevel: 'Grade 1', correctAnswers: 0, totalQuestions: 1, accuracy: 0 },
+            ],
+          },
+        },
+        insight: {
+          performance_insight: 'Updated from the latest committed results.',
+          strengths: [],
+          weaknesses: ['Grade 1 Subtraction is now the weakest topic.'],
+          recommendations: ['Practice Grade 1 Subtraction.'],
+        },
+      }),
+    }));
+
     expect(container.textContent).not.toContain('Old cached insight.');
-    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Refreshing AI insight...')).toBe(false);
+    expect(container.textContent).toContain('Updated from the latest committed results.');
+    expect(container.textContent).toContain('New committed quest');
+    expect(container.textContent).toContain('Deepest Forest');
+    expect(container.textContent).toContain('38%');
+    expect(container.textContent).toContain('5');
+    const metricValue = (label) => Array.from(container.querySelectorAll('.student-metric-card'))
+      .find((card) => card.textContent.includes(label))?.querySelector('strong')?.textContent;
+    expect(metricValue('Correct Answers')).toBe('3');
+    expect(metricValue('Incorrect Answers')).toBe('5');
+    expect(metricValue('Game Score')).toBe('3');
+    expect(metricValue('Completed Quests')).toBe('2');
+    expect(container.textContent).toContain('Grade 1 Addition');
+    expect(container.textContent).toContain('Grade 1 Subtraction');
+    expect(container.textContent).not.toContain('Unvalidated guessed topic');
+    expect(container.textContent).not.toContain(new Date('2026-10-12T06:30:00.000Z').toLocaleString());
+    expect(container.querySelector('.student-topic-performance-table')).toBeTruthy();
+    expect(container.textContent).toContain(new Date(refreshedAt).toLocaleString());
+    expect(container.textContent).not.toContain('Refreshing student progress...');
+  });
+
+  test('shows a page-level failure state when a full refresh cannot provide a complete snapshot', async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
+        metrics: { validResultCount: 4, accuracy: 75, totalQuestions: 4, correctAnswers: 3, incorrectAnswers: 1 },
+        aiInsight: { status: 'cached', insight: { performance_insight: 'Existing insight.', strengths: [], weaknesses: [], recommendations: [] } },
+      }))
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ status: 'regenerated', insight: {} }) });
+
+    await act(async () => root.render(<StudentAnalytics />));
+    const refresh = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Refresh AI Insight');
+    await act(async () => refresh.click());
+
+    expect(container.textContent).toContain('The refreshed Student Progress snapshot was incomplete.');
+    expect(container.querySelector('.student-metrics-grid')).toBeFalsy();
+    expect(container.textContent).not.toContain('Refreshing student progress...');
   });
 
   test('offers a dedicated selected-student analytics print report without dashboard controls', async () => {

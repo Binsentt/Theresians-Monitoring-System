@@ -6,6 +6,8 @@ const {
   buildGroundedClaimCatalog,
   renderValidatedClaimSelection,
 } = require('./studentAnalyticsGrounding.utils');
+const { buildStudentAnalyticsMetrics } = require('./studentAnalyticsMetrics.utils');
+const { buildGroundedInsightInput } = require('./studentAnalyticsInsight.utils');
 
 const baseInput = {
   grounding_policy_version: GROUNDING_POLICY_VERSION,
@@ -29,12 +31,13 @@ test('weakness and recommendation are grounded in the exact canonical Grade-topi
 
   assert.deepEqual(catalog.permittedClaimIds.weakness, ['topic_grade_1_subtraction_weakness']);
   assert.deepEqual(catalog.permittedClaimIds.recommendation, ['practice_topic_grade_1_subtraction']);
+  assert.equal(catalog.permittedClaimIds.strength.includes('topic_grade_2_multiplication_strength'), false);
   assert.equal(catalog.permittedClaimIds.weakness.some((id) => id.includes('difficulty') || id.includes('overall')), false);
 
   const insight = renderValidatedClaimSelection({
     grounding_policy_version: GROUNDING_POLICY_VERSION,
     performance_claim_ids: ['topic_grade_1_subtraction_accuracy'],
-    strength_claim_ids: ['topic_grade_1_multiplication_strength', 'topic_grade_2_multiplication_strength'],
+    strength_claim_ids: ['topic_grade_1_multiplication_strength'],
     weakness_claim_ids: ['topic_grade_1_subtraction_weakness'],
   }, catalog);
 
@@ -66,4 +69,81 @@ test('free-text legacy math topic cannot create a canonical weakness', () => {
 
   assert.deepEqual(catalog.weakness, []);
   assert.deepEqual(catalog.recommendation, []);
+});
+
+test('95 committed results with validated Grade-topic links surface the weakest topic, not difficulty', () => {
+  const linkedResults = (topicId, difficulty, correctCount, totalCount, prefix) => Array.from(
+    { length: totalCount },
+    (_, index) => ({
+      score: index < correctCount ? 1 : 0,
+      total_items: 1,
+      difficulty,
+      question_set_id: `${prefix}-question-set`,
+      canonical_topic_id: topicId,
+      canonical_grade_level: 'Grade 1',
+      canonical_difficulty: difficulty,
+      result_event_id: `${prefix}-result-${index + 1}`,
+    }),
+  );
+  const unlinkedResults = Array.from({ length: 81 }, (_, index) => ({
+    score: 0,
+    total_items: 1,
+    difficulty: 'Easy',
+    math_topic: 'Addition',
+    question_set_id: null,
+    result_event_id: `unlinked-result-${index + 1}`,
+  }));
+  const quizSessions = [
+    ...linkedResults('addition', 'Normal', 1, 4, 'addition'),
+    ...linkedResults('subtraction', 'Easy', 9, 10, 'subtraction'),
+    ...unlinkedResults,
+  ];
+  const metrics = buildStudentAnalyticsMetrics({ quizSessions });
+  const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics });
+  const catalog = buildGroundedClaimCatalog(input);
+  const insight = renderValidatedClaimSelection({
+    grounding_policy_version: GROUNDING_POLICY_VERSION,
+    performance_claim_ids: catalog.permittedClaimIds.performance.slice(0, 1),
+    strength_claim_ids: [],
+    weakness_claim_ids: [],
+  }, catalog);
+
+  assert.equal(metrics.validResultCount, 95);
+  assert.equal(metrics.difficultyBreakdown.easy.accuracy < 75, true);
+  assert.deepEqual(metrics.topicPerformance.map(({ topicId }) => topicId), ['addition', 'subtraction']);
+  assert.match(insight.weaknesses[0], /Grade 1 Addition accuracy is 25%/);
+  assert.match(insight.weaknesses[0], /limited evidence/i);
+  assert.match(insight.recommendations[0], /Grade 1 Addition/);
+  assert.equal(insight.weaknesses.some((text) => /Easy|Normal|Difficult/i.test(text)), false);
+  assert.equal(insight.weaknesses.some((text) => /Subtraction/.test(text)), false);
+});
+
+test('95 unlinked committed results remain counted but cannot infer a weakness from legacy math-topic text', () => {
+  const quizSessions = Array.from({ length: 95 }, (_, index) => ({
+    score: index % 2,
+    total_items: 1,
+    difficulty: 'Easy',
+    math_topic: 'Addition',
+    question_set_id: null,
+    result_event_id: `unlinked-result-${index + 1}`,
+  }));
+  const metrics = buildStudentAnalyticsMetrics({ quizSessions });
+  const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics });
+  const catalog = buildGroundedClaimCatalog(input);
+  const insight = renderValidatedClaimSelection({
+    grounding_policy_version: GROUNDING_POLICY_VERSION,
+    performance_claim_ids: ['topic_evidence_unavailable'],
+    strength_claim_ids: [],
+    weakness_claim_ids: [],
+  }, catalog);
+
+  assert.equal(metrics.validResultCount, 95);
+  assert.ok(metrics.incorrectAnswers > 0);
+  assert.deepEqual(metrics.topicPerformance, []);
+  assert.equal(input.topic_evidence_status, 'topic_metadata_unavailable');
+  assert.equal(insight.topic_evidence_status, 'topic_metadata_unavailable');
+  assert.match(insight.performance_insight, /no validated Grade\/topic-linked question-set evidence/i);
+  assert.deepEqual(insight.weaknesses, []);
+  assert.deepEqual(insight.recommendations, []);
+  assert.equal(insight.weaknesses.some((text) => /Addition|Easy/.test(text)), false);
 });

@@ -136,8 +136,8 @@ describe('GroundedAiAnalysis', () => {
       }} />
     ));
 
-    expect(container.textContent).toContain('Recorded incorrect answers are available, but their question sets are not linked to validated Mathematics topics.');
-    expect(container.textContent).toContain('Topic-specific recommendations require linked, validated Mathematics topic evidence.');
+    expect(container.textContent).toContain('Recorded incorrect answers exist, but the questions are not linked to enough validated Mathematics topic information to identify a specific weakness.');
+    expect(container.textContent).toContain('Topic-specific recommendations cannot be generated until those recorded questions are linked to validated Mathematics topics.');
     expect(container.textContent).not.toContain('No supported weakness is identified from the recorded evidence.');
   });
 

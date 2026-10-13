@@ -111,10 +111,8 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
           description="Areas where the recorded results show that the student may need more mathematics practice."
           emptyMessage={insight
             ? topicEvidenceStatus === 'topic_metadata_unavailable'
-              ? 'Recorded incorrect answers are available, but their question sets are not linked to validated Mathematics topics.'
-              : topicEvidenceStatus === 'insufficient_topic_attempts'
-                ? 'The recorded topic results have fewer than five attempts; more evidence is needed before identifying a weakness.'
-                : 'No supported weakness is identified from the recorded evidence.'
+              ? 'Recorded incorrect answers exist, but the questions are not linked to enough validated Mathematics topic information to identify a specific weakness.'
+              : 'No supported weakness is identified from the recorded evidence.'
             : 'Generate the AI insight to identify evidence-backed weaknesses.'}
         />
         <InsightList
@@ -126,10 +124,8 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
           description="Recommended next steps linked to the recorded weaknesses and evidence gaps."
           emptyMessage={insight
             ? topicEvidenceStatus === 'topic_metadata_unavailable'
-              ? 'Topic-specific recommendations require linked, validated Mathematics topic evidence.'
-              : topicEvidenceStatus === 'insufficient_topic_attempts'
-                ? 'Topic-specific recommendations will be available after at least five attempts provide enough evidence.'
-                : 'No additional recommendation is supported by the current recorded evidence.'
+              ? 'Topic-specific recommendations cannot be generated until those recorded questions are linked to validated Mathematics topics.'
+              : 'No additional recommendation is supported by the current recorded evidence.'
             : 'Generate the AI insight to show recommended next steps.'}
         />
       </div>
