@@ -1,6 +1,5 @@
 import {
   filterDirectoryRows,
-  formatDirectoryStatus,
   formatDirectoryDate,
 } from './idDirectory.utils';
 
@@ -43,14 +42,12 @@ describe('ID Directory helpers', () => {
     }, 'student')).toEqual([dashed]);
   });
 
-  test('formats archived status truthfully and preserves date display', () => {
-    expect(formatDirectoryStatus({ status: 'Active', is_archived: true })).toBe('Archived');
-    expect(formatDirectoryStatus({ status: 'Offline', is_archived: false })).toBe('Offline');
+  test('preserves date display without exposing Teacher presence status in ID Directory search', () => {
     expect(formatDirectoryDate('2025-01-02T00:00:00.000Z')).not.toBe('—');
     expect(formatDirectoryDate(null)).toBe('—');
   });
 
-  test('filters teachers by ID, name, email, role, and status', () => {
+  test('filters teachers by ID, name, email, and role but ignores account presence status', () => {
     const teachers = [{
       teacher_id: 'T-1001',
       teacher_name: 'Maria Cruz',
@@ -61,5 +58,6 @@ describe('ID Directory helpers', () => {
     expect(filterDirectoryRows(teachers, {
       id: 't-1001', name: 'maria', email: 'example.com', role: 'parent_teacher', status: 'offline',
     }, 'teacher')).toEqual(teachers);
+    expect(filterDirectoryRows(teachers, 'offline', 'teacher')).toEqual([]);
   });
 });

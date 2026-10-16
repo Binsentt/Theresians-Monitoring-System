@@ -155,7 +155,9 @@ test('game progress stores scene metadata and uses scene-derived difficulty', as
   assert.ok(progressValues.includes('city_of_knowledge.tscn'));
   assert.ok(progressValues.includes('city_of_knowledge'));
   assert.ok(progressValues.includes('Normal'));
+  assert.equal(progressValues[2], null, 'client Grade must not fill a missing canonical profile Grade');
   assert.equal(activityValues[9], 'Normal');
+  assert.equal(activityValues[2], null, 'activity Grade must remain sourced from the Student profile');
 });
 
 test('game progress persists linked child identity, grade, and section from the canonical profile', async (t) => {
@@ -249,6 +251,94 @@ test('game progress resolves an eight-digit public Student ID without converting
 
   assert.equal(response.status, 201);
   assert.deepEqual(linkedStudentValues, [19, '00123456']);
+});
+
+test('game progress cannot create an unknown Student or repair an unlinked Student relationship', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const writes = [];
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  let existingStudent = false;
+  setQueryHandler(async (sql) => {
+    if (['begin', 'rollback', 'commit'].includes(sql)) return emptyResult;
+    if (sql.startsWith('select id, name, parent_id from public.accounts')) {
+      return resultRows([{ id: 19, name: 'Parent User', parent_id: '123456' }]);
+    }
+    if (sql.startsWith('select s.* from public.accounts s join public.teacher_student_relationships')) return emptyResult;
+    if (sql.startsWith('select * from public.accounts where game_student_id = $1')) {
+      return existingStudent ? resultRows([{ id: 45, role: 'student', game_student_id: '00123456' }]) : emptyResult;
+    }
+    if (/^(insert|update|delete)\b/.test(sql)) writes.push(sql);
+    return emptyResult;
+  });
+
+  const payload = {
+    parent_id: '123456',
+    student_id: '00123456',
+    student_name: 'Ava Santos',
+    grade_level: 'Grade 3',
+    current_quest: 'Tutorial',
+    score: 1,
+    correct_answers: 1,
+    total_questions: 1,
+  };
+
+  const unknown = await requestJson(baseUrl, '/api/game/progress', {
+    method: 'POST', body: JSON.stringify(payload),
+  });
+  assert.equal(unknown.status, 404);
+  assert.match(unknown.body.error, /student profile/i);
+  assert.deepEqual(writes, []);
+
+  existingStudent = true;
+  const unlinked = await requestJson(baseUrl, '/api/game/progress', {
+    method: 'POST', body: JSON.stringify(payload),
+  });
+  assert.equal(unlinked.status, 403);
+  assert.equal(unlinked.body.error, 'Student is not linked to this parent.');
+  assert.deepEqual(writes, [], 'the legacy endpoint must not create accounts, relationships, or progress');
+});
+
+test('game progress rejects an archived Student without restoring or relinking the account', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const writes = [];
+  let archivedAccountChecked = false;
+  t.after(async () => {
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  setQueryHandler(async (sql) => {
+    if (['begin', 'rollback', 'commit'].includes(sql)) return emptyResult;
+    if (sql.startsWith('select id, name, parent_id from public.accounts')) {
+      return resultRows([{ id: 19, name: 'Parent User', parent_id: '123456' }]);
+    }
+    if (sql.startsWith('select s.* from public.accounts s join public.teacher_student_relationships')) return emptyResult;
+    if (sql.startsWith('select * from public.accounts where game_student_id = $1')) {
+      archivedAccountChecked = true;
+      return resultRows([{ id: 45, role: 'student', game_student_id: '00123456', is_archived: true }]);
+    }
+    if (/^(insert|update|delete)\b/.test(sql)) writes.push(sql);
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/game/progress', {
+    method: 'POST',
+    body: JSON.stringify({
+      parent_id: '123456', student_id: '00123456', student_name: 'Ava Santos', grade_level: 'Grade 3',
+      current_quest: 'Tutorial', score: 1, correct_answers: 1, total_questions: 1,
+    }),
+  });
+
+  assert.equal(response.status, 403);
+  assert.equal(response.body.error, 'Student is not linked to this parent.');
+  assert.equal(archivedAccountChecked, true);
+  assert.deepEqual(writes, [], 'archived Student accounts and Parent links must not be mutated by legacy sync');
 });
 
 test('game progress never creates a missing legacy six-digit Student ID', async (t) => {

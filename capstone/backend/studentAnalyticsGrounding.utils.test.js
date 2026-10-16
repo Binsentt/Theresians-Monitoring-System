@@ -23,8 +23,8 @@ const input = {
   current_quest: 'Fraction Forest',
   difficulty_accuracy: { easy: 100, medium: 50, hard: null },
   topic_performance: [
-    { topic_id: 'fractions', grade_level: 'Grade 3', correct_answers: 3, total_questions: 5 },
-    { topic_id: 'multiplication', grade_level: 'Grade 3', correct_answers: 4, total_questions: 4 },
+    { canonical_task_id: 'oakleaf-bandits', topic_id: 'fractions', grade_level: 'Grade 3', correct_answers: 3, total_questions: 5 },
+    { canonical_task_id: 'oakleaf-bandits', topic_id: 'multiplication', grade_level: 'Grade 3', correct_answers: 4, total_questions: 4 },
   ],
   playtime_minutes: 24,
 };
@@ -50,33 +50,33 @@ test('catalog renders exact supported percentage, count, and current quest facts
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(validSelection, catalog);
 
-  assert.equal(GROUNDING_POLICY_VERSION, 'grounded-claims-v5');
+  assert.equal(GROUNDING_POLICY_VERSION, 'grounded-claims-v6');
   assert.match(insight.performance_insight, /60%/);
   assert.match(insight.performance_insight, /3 correct answers and 2 incorrect answers/);
   assert.match(insight.performance_insight, /Current quest: Fraction Forest\./);
   assert.deepEqual(insight.strengths, []);
   assert.deepEqual(insight.weaknesses, [
-    'Recorded Grade 3 Fractions accuracy is 60% (3 of 5 correct; 2 incorrect), below the current 75% evidence boundary.',
+    'Fractions — Oakleaf Bandits: 2 of 5 answers were incorrect (60% accuracy). This is below the current 75% evidence boundary.',
   ]);
   assert.deepEqual(insight.recommendations, [
-    'For Grade 3 Fractions, review the 2 recorded incorrect answers and practice additional Fractions problems; the recorded result was 3 of 5 correct (60%).',
+    'Practice Grade 3 Fractions, especially the types missed during Oakleaf Bandits. Review the 2 recorded incorrect answers before retrying similar questions (3 of 5 correct; 60% accuracy).',
   ]);
 });
 
 test('difficulty remains descriptive while canonical Grade-topic evidence supports weaknesses', () => {
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(selection({
-    performance_claim_ids: ['difficulty_easy_accuracy', 'difficulty_normal_accuracy', 'topic_grade_3_fractions_accuracy'],
-    strength_claim_ids: ['topic_grade_3_multiplication_strength'],
-    weakness_claim_ids: ['topic_grade_3_fractions_weakness'],
+    performance_claim_ids: ['difficulty_easy_accuracy', 'difficulty_normal_accuracy', 'quest_oakleaf_bandits_topic_grade_3_fractions_accuracy'],
+    strength_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_multiplication_strength'],
+    weakness_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_fractions_weakness'],
   }), catalog);
 
   assert.match(insight.performance_insight, /Easy accuracy is 100%/);
   assert.match(insight.performance_insight, /Normal accuracy is 50%/);
-  assert.match(insight.performance_insight, /Grade 3 Fractions accuracy is 60%/);
-  assert.deepEqual(insight.strengths, ['Recorded Grade 3 Multiplication accuracy is 100% (4 of 4 correct), meeting the current positive-evidence boundary.']);
-  assert.deepEqual(insight.weaknesses, ['Recorded Grade 3 Fractions accuracy is 60% (3 of 5 correct; 2 incorrect), below the current 75% evidence boundary.']);
-  assert.deepEqual(insight.recommendations, ['For Grade 3 Fractions, review the 2 recorded incorrect answers and practice additional Fractions problems; the recorded result was 3 of 5 correct (60%).']);
+  assert.match(insight.performance_insight, /Fractions — Oakleaf Bandits accuracy is 60%/);
+  assert.deepEqual(insight.strengths, ['Recorded Multiplication — Oakleaf Bandits accuracy is 100% (4 of 4 correct), meeting the current positive-evidence boundary.']);
+  assert.deepEqual(insight.weaknesses, ['Fractions — Oakleaf Bandits: 2 of 5 answers were incorrect (60% accuracy). This is below the current 75% evidence boundary.']);
+  assert.deepEqual(insight.recommendations, ['Practice Grade 3 Fractions, especially the types missed during Oakleaf Bandits. Review the 2 recorded incorrect answers before retrying similar questions (3 of 5 correct; 60% accuracy).']);
 });
 
 test('difficulty no-data remains descriptive while topic recommendation uses recorded evidence', () => {
@@ -127,7 +127,7 @@ test('positive topic evidence does not turn overall misses or difficulty into we
     incorrect_answers: 1,
     accuracy: 80,
     difficulty_accuracy: { easy: 80, medium: null, hard: null },
-    topic_performance: [{ topic_id: 'fractions', grade_level: 'Grade 3', correct_answers: 4, total_questions: 5 }],
+    topic_performance: [{ canonical_task_id: 'oakleaf-bandits', topic_id: 'fractions', grade_level: 'Grade 3', correct_answers: 4, total_questions: 5 }],
   });
   const insight = renderValidatedClaimSelection({
     grounding_policy_version: GROUNDING_POLICY_VERSION,
@@ -140,7 +140,7 @@ test('positive topic evidence does not turn overall misses or difficulty into we
     ],
     strength_claim_ids: [
       'completed_quests_strength',
-      'topic_grade_3_fractions_strength',
+      'quest_oakleaf_bandits_topic_grade_3_fractions_strength',
     ],
     weakness_claim_ids: [],
   }, catalog);
@@ -155,11 +155,11 @@ test('selected weakness deterministically enables its matching recommendation', 
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(selection({
     performance_claim_ids: ['overall_accuracy'],
-    weakness_claim_ids: ['topic_grade_3_fractions_weakness'],
+    weakness_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_fractions_weakness'],
   }), catalog);
 
   assert.deepEqual(insight.recommendations, [
-    'For Grade 3 Fractions, review the 2 recorded incorrect answers and practice additional Fractions problems; the recorded result was 3 of 5 correct (60%).',
+    'Practice Grade 3 Fractions, especially the types missed during Oakleaf Bandits. Review the 2 recorded incorrect answers before retrying similar questions (3 of 5 correct; 60% accuracy).',
   ]);
 });
 
@@ -177,7 +177,7 @@ test('overall accuracy with one recorded miss is not mislabeled as a math-topic 
 
   assert.deepEqual(catalog.weakness, []);
   assert.deepEqual(catalog.recommendation, []);
-  assert.ok(catalog.performance.some((claim) => /no validated Grade\/topic-linked/i.test(claim.text)));
+  assert.ok(catalog.performance.some((claim) => /no validated Grade\/topic\/task-linked/i.test(claim.text)));
 });
 
 test('duration evidence alone never creates a weakness or recommendation', () => {
@@ -227,11 +227,11 @@ test('recorded topic weaknesses and matching recommendations do not depend on pr
 test('selected weakness deterministically enables its matching topic recommendation', () => {
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(selection({
-    performance_claim_ids: ['topic_grade_3_fractions_accuracy'],
-    weakness_claim_ids: ['topic_grade_3_fractions_weakness'],
+    performance_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_fractions_accuracy'],
+    weakness_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_fractions_weakness'],
   }), catalog);
 
-  assert.deepEqual(insight.recommendations, ['For Grade 3 Fractions, review the 2 recorded incorrect answers and practice additional Fractions problems; the recorded result was 3 of 5 correct (60%).']);
+  assert.deepEqual(insight.recommendations, ['Practice Grade 3 Fractions, especially the types missed during Oakleaf Bandits. Review the 2 recorded incorrect answers before retrying similar questions (3 of 5 correct; 60% accuracy).']);
 });
 
 test('topic weaknesses and recommendations are deterministic even when provider selects none', () => {
@@ -240,8 +240,8 @@ test('topic weaknesses and recommendations are deterministic even when provider 
     grade: 'Grade 1',
     difficulty_accuracy: { easy: 20, medium: 90, hard: null },
     topic_performance: [
-      { topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 3, total_questions: 10 },
-      { topic_id: 'subtraction', grade_level: 'Grade 1', correct_answers: 9, total_questions: 10 },
+      { canonical_task_id: 'oakleaf-bandits', topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 3, total_questions: 10 },
+      { canonical_task_id: 'oakleaf-bandits', topic_id: 'subtraction', grade_level: 'Grade 1', correct_answers: 9, total_questions: 10 },
     ],
   };
   const catalog = buildGroundedClaimCatalog(gradeOneInput);
@@ -253,10 +253,10 @@ test('topic weaknesses and recommendations are deterministic even when provider 
   }, catalog);
 
   assert.deepEqual(insight.weaknesses, [
-    'Recorded Grade 1 Addition accuracy is 30% (3 of 10 correct; 7 incorrect), below the current 75% evidence boundary.',
+    'Addition — Oakleaf Bandits: 7 of 10 answers were incorrect (30% accuracy). This is below the current 75% evidence boundary.',
   ]);
   assert.deepEqual(insight.recommendations, [
-    'For Grade 1 Addition, review the 7 recorded incorrect answers and practice additional Addition problems; the recorded result was 3 of 10 correct (30%).',
+    'Practice Grade 1 Addition, especially the types missed during Oakleaf Bandits. Review the 7 recorded incorrect answers before retrying similar questions (3 of 10 correct; 30% accuracy).',
   ]);
   assert.equal(insight.weaknesses.some((value) => /Easy|overall accuracy/i.test(value)), false);
 });
@@ -266,9 +266,9 @@ test('multiple supported weak topics are ordered by topic accuracy and strong to
     ...input,
     grade: 'Grade 1',
     topic_performance: [
-      { topic_id: 'multiplication', grade_level: 'Grade 1', correct_answers: 9, total_questions: 10 },
-      { topic_id: 'subtraction', grade_level: 'Grade 1', correct_answers: 11, total_questions: 20 },
-      { topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 3, total_questions: 10 },
+      { canonical_task_id: 'oakleaf-bandits', topic_id: 'multiplication', grade_level: 'Grade 1', correct_answers: 9, total_questions: 10 },
+      { canonical_task_id: 'oakleaf-bandits', topic_id: 'subtraction', grade_level: 'Grade 1', correct_answers: 11, total_questions: 20 },
+      { canonical_task_id: 'oakleaf-bandits', topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 3, total_questions: 10 },
     ],
   });
   const insight = renderValidatedClaimSelection({
@@ -278,11 +278,11 @@ test('multiple supported weak topics are ordered by topic accuracy and strong to
     weakness_claim_ids: [],
   }, catalog);
 
-  assert.match(insight.weaknesses[0], /Addition accuracy is 30%/);
-  assert.match(insight.weaknesses[1], /Subtraction accuracy is 55%/);
+  assert.match(insight.weaknesses[0], /Addition — Oakleaf Bandits.*30%/);
+  assert.match(insight.weaknesses[1], /Subtraction — Oakleaf Bandits.*55%/);
   assert.equal(insight.weaknesses.some((value) => /Multiplication/.test(value)), false);
-  assert.match(insight.recommendations[0], /practice additional Addition problems/);
-  assert.match(insight.recommendations[1], /practice additional Subtraction problems/);
+  assert.match(insight.recommendations[0], /Practice Grade 1 Addition.*Oakleaf Bandits/);
+  assert.match(insight.recommendations[1], /Practice Grade 1 Subtraction.*Oakleaf Bandits/);
 });
 
 test('low topic accuracy with fewer than five attempts is still a supported weakness with limited evidence', () => {
@@ -290,7 +290,7 @@ test('low topic accuracy with fewer than five attempts is still a supported weak
     ...input,
     grade: 'Grade 1',
     topic_performance: [
-      { topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 1, total_questions: 4 },
+      { canonical_task_id: 'oakleaf-bandits', topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 1, total_questions: 4 },
     ],
   });
   const insight = renderValidatedClaimSelection({
@@ -301,9 +301,9 @@ test('low topic accuracy with fewer than five attempts is still a supported weak
   }, catalog);
 
   assert.equal(insight.weaknesses.length, 1);
-  assert.match(insight.weaknesses[0], /Grade 1 Addition accuracy is 25% \(1 of 4 correct; 3 incorrect\)/);
+  assert.match(insight.weaknesses[0], /Addition — Oakleaf Bandits: 3 of 4 answers were incorrect/);
   assert.match(insight.weaknesses[0], /limited evidence/i);
-  assert.match(insight.recommendations[0], /Grade 1 Addition/);
+  assert.match(insight.recommendations[0], /Practice Grade 1 Addition.*Oakleaf Bandits/);
   assert.equal(insight.topic_evidence_status, 'weaknesses_identified');
 });
 
@@ -323,7 +323,7 @@ test('incorrect answers without canonical topic metadata return an explicit evid
   }, catalog);
 
   assert.equal(insight.topic_evidence_status, 'topic_metadata_unavailable');
-  assert.match(insight.performance_insight, /incorrect answers are recorded, but no validated Grade\/topic-linked/i);
+  assert.match(insight.performance_insight, /incorrect answers are recorded, but no validated Grade\/topic\/task-linked/i);
   assert.deepEqual(insight.weaknesses, []);
   assert.deepEqual(insight.recommendations, []);
 });
@@ -341,18 +341,18 @@ test('multiple topic recommendations are unique and deterministic', () => {
   const catalog = buildGroundedClaimCatalog({
     ...input,
     topic_performance: [
-      { topic_id: 'fractions', grade_level: 'Grade 3', correct_answers: 3, total_questions: 5 },
-      { topic_id: 'division', grade_level: 'Grade 3', correct_answers: 2, total_questions: 5 },
+      { canonical_task_id: 'oakleaf-bandits', topic_id: 'fractions', grade_level: 'Grade 3', correct_answers: 3, total_questions: 5 },
+      { canonical_task_id: 'pinehill-bandits', topic_id: 'division', grade_level: 'Grade 3', correct_answers: 2, total_questions: 5 },
     ],
   });
   const insight = renderValidatedClaimSelection(selection({
-    performance_claim_ids: ['topic_grade_3_fractions_accuracy', 'topic_grade_3_division_accuracy'],
-    weakness_claim_ids: ['topic_grade_3_fractions_weakness', 'topic_grade_3_division_weakness'],
+    performance_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_fractions_accuracy', 'quest_pinehill_bandits_topic_grade_3_division_accuracy'],
+    weakness_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_fractions_weakness', 'quest_pinehill_bandits_topic_grade_3_division_weakness'],
   }), catalog);
 
   assert.deepEqual(insight.recommendations, [
-    'For Grade 3 Division, review the 3 recorded incorrect answers and practice additional Division problems; the recorded result was 2 of 5 correct (40%).',
-    'For Grade 3 Fractions, review the 2 recorded incorrect answers and practice additional Fractions problems; the recorded result was 3 of 5 correct (60%).',
+    'Practice Grade 3 Division, especially the types missed during Pinehill Bandits. Review the 3 recorded incorrect answers before retrying similar questions (2 of 5 correct; 40% accuracy).',
+    'Practice Grade 3 Fractions, especially the types missed during Oakleaf Bandits. Review the 2 recorded incorrect answers before retrying similar questions (3 of 5 correct; 60% accuracy).',
   ]);
 });
 
@@ -386,7 +386,7 @@ test('dynamic provider schema allows only catalog ids and no free-text propertie
   assert.deepEqual(schema.properties.grounding_policy_version.enum, [GROUNDING_POLICY_VERSION]);
   assert.equal(schema.properties.performance_claim_ids.items.enum.includes('overall_accuracy'), true);
   assert.equal(schema.properties.performance_claim_ids.items.enum.includes('improving_accuracy'), false);
-  assert.equal(schema.properties.strength_claim_ids.items.enum.includes('topic_grade_3_multiplication_strength'), true);
+  assert.equal(schema.properties.strength_claim_ids.items.enum.includes('quest_oakleaf_bandits_topic_grade_3_multiplication_strength'), true);
   assert.equal(schema.properties.weakness_claim_ids.items.enum.includes('difficulty_difficult_weakness'), false);
   assert.equal(schema.properties.weakness_claim_ids.minItems, 0);
   assert.equal(Object.prototype.hasOwnProperty.call(schema.properties, 'recommendation_claim_ids'), false);

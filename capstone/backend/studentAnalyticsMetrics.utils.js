@@ -1,7 +1,13 @@
 const { resolveCurrentDifficulty } = require('./progressScene.utils');
 const { countUniqueCompletedMilestones } = require('./questMilestones.utils');
 const { canonicalPlaytimeSeconds } = require('./playtimeAggregation.utils');
-const { calculateWeightedCompletion, PLAYER_FACING_TASKS } = require('./questGraph.utils');
+const {
+  calculateJourneyProgress,
+  calculateWeightedCompletion,
+  canonicalTaskDisplayLabel,
+  QUEST_GRAPH_VERSION,
+  PLAYER_FACING_TASKS,
+} = require('./questGraph.utils');
 const { getTopicById, normalizeScope, resolveLegacyDisplayTopic } = require('./curriculumScopeRegistry');
 
 const CANONICAL_CAMPAIGN_TASK_IDS = new Set(['tutorial', ...PLAYER_FACING_TASKS]);
@@ -101,7 +107,9 @@ const normalizeResult = (row = {}) => {
     currentMap: normalizeTopic(row.current_map ?? row.currentMap ?? row.map ?? row.map_name),
     mapId: normalizeTopic(row.map_id),
     resultEventId: normalizeTopic(row.result_event_id),
-    canonicalTaskId: normalizeTopic(row.canonical_task_id),
+    canonicalTaskId: (!row.quest_graph_version || row.quest_graph_version === QUEST_GRAPH_VERSION)
+      && PLAYER_FACING_TASKS.includes(normalizeTopic(row.canonical_task_id).toLowerCase())
+      ? normalizeTopic(row.canonical_task_id).toLowerCase() : null,
     isPerQuestion: totalQuestions === 1 && (correctAnswers === 0 || correctAnswers === 1),
   };
 };
@@ -112,7 +120,9 @@ const emptyDifficultyBreakdown = () => ({
   hard: { correctAnswers: 0, totalQuestions: 0, accuracy: null },
 });
 
-function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playtimeSessions = [], completedMilestones = null } = {}) {
+function buildStudentAnalyticsMetrics({
+  progress = {}, quizSessions = [], playtimeSessions = [], completedMilestones = null, activityLogs = [],
+} = {}) {
   const seenResultEventIds = new Set();
   const validResults = (Array.isArray(quizSessions) ? quizSessions : [])
     .map(normalizeResult)
@@ -132,6 +142,7 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
     .reduce((total, result) => total + result.totalQuestions, 0);
   const difficultyBreakdown = emptyDifficultyBreakdown();
   const topicTotals = new Map();
+  const questTopicTotals = new Map();
   const mapTotals = new Map();
 
   validResults.forEach((result) => {
@@ -152,6 +163,21 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
       current.correctAnswers += result.correctAnswers;
       current.totalQuestions += result.totalQuestions;
       topicTotals.set(topicKey, current);
+    }
+    if (result.topicId && result.gradeLevel && result.canonicalTaskId) {
+      const questTopicKey = `${result.gradeLevel}|${result.canonicalTaskId}|${result.topicId}`;
+      const current = questTopicTotals.get(questTopicKey) || {
+        canonicalTaskId: result.canonicalTaskId,
+        taskLabel: canonicalTaskDisplayLabel(result.canonicalTaskId),
+        topicId: result.topicId,
+        topic: result.topic,
+        gradeLevel: result.gradeLevel,
+        correctAnswers: 0,
+        totalQuestions: 0,
+      };
+      current.correctAnswers += result.correctAnswers;
+      current.totalQuestions += result.totalQuestions;
+      questTopicTotals.set(questTopicKey, current);
     }
     if (result.currentMap) {
       const current = mapTotals.get(result.currentMap) || { correctAnswers: 0, totalQuestions: 0 };
@@ -202,7 +228,56 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
   // result history is authoritative; legacy progress.score may use old point
   // formulas and must not leak into this metric.
   const gameScore = correctAnswers;
-  const currentQuest = normalizeTopic(progress.current_quest) || null;
+  const canonicalTaskIds = new Set(PLAYER_FACING_TASKS);
+  const canonicalActivityRows = (Array.isArray(activityLogs) ? activityLogs : [])
+    .map((row) => ({
+      ...row,
+      taskId: normalizeTopic(row?.canonical_task_id).toLowerCase(),
+      timestamp: row?.completed_at || row?.started_at || row?.activity_timestamp || null,
+    }))
+    .filter((row) => canonicalTaskIds.has(row.taskId))
+    .filter((row) => !row.quest_graph_version || row.quest_graph_version === QUEST_GRAPH_VERSION)
+    .filter((row) => row.is_player_facing !== false)
+    .sort((left, right) => String(left.timestamp || '').localeCompare(String(right.timestamp || '')));
+  const latestCanonicalActivity = [...canonicalActivityRows].reverse().find((row) => (
+    String(row.canonical_activity_id || '').trim().toLowerCase() === 'task_triggered'
+  )) || canonicalActivityRows.at(-1) || null;
+  const latestCanonicalResult = validResults
+    .filter((result) => result.canonicalTaskId)
+    .at(-1) || null;
+  const persistedCanonicalTaskId = [
+    progress.current_canonical_task_id,
+    progress.current_task_id,
+    progress.canonical_task_id,
+  ]
+    .map((taskId) => normalizeTopic(taskId).toLowerCase())
+    .find((taskId) => CANONICAL_CAMPAIGN_TASK_IDS.has(taskId)) || null;
+  const currentCanonicalTaskId = persistedCanonicalTaskId
+    || latestCanonicalActivity?.taskId
+    || latestCanonicalResult?.canonicalTaskId
+    || null;
+  const activityQuest = normalizeTopic(latestCanonicalActivity?.current_quest);
+  const persistedQuest = normalizeTopic(progress.current_quest);
+  const hasPersistedQuest = persistedQuest && !/^n\/?a$/i.test(persistedQuest);
+  const currentQuest = persistedCanonicalTaskId
+    ? canonicalTaskDisplayLabel(persistedCanonicalTaskId)
+    : hasPersistedQuest
+      ? persistedQuest
+      : latestCanonicalActivity
+        ? (activityQuest && !/^n\/?a$/i.test(activityQuest)
+          ? activityQuest : canonicalTaskDisplayLabel(currentCanonicalTaskId))
+        : latestCanonicalResult
+          ? canonicalTaskDisplayLabel(currentCanonicalTaskId)
+          : null;
+  const currentQuestSource = persistedCanonicalTaskId
+    ? 'canonical_current_progress_task'
+    : hasPersistedQuest
+      ? 'persisted_progress'
+      : latestCanonicalActivity
+        ? 'canonical_current_cycle_activity'
+        : latestCanonicalResult
+          ? 'canonical_current_cycle_result'
+          : 'unavailable';
   const currentDifficulty = resolveCurrentDifficulty(progress);
   const playtimeSeconds = canonicalPlaytimeSeconds(playtimeSessions, { includePlaying: false });
   const playtimeMinutes = playtimeSeconds > 0 ? Number((playtimeSeconds / 60).toFixed(2)) : null;
@@ -218,15 +293,54 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
       accuracy: toPercentage(totals.correctAnswers, totals.totalQuestions),
     }))
     .sort((left, right) => left.gradeLevel.localeCompare(right.gradeLevel) || left.topic.localeCompare(right.topic));
+  const questTopicPerformance = Array.from(questTopicTotals.values())
+    .map((totals) => ({
+      ...totals,
+      incorrectAnswers: Math.max(0, totals.totalQuestions - totals.correctAnswers),
+      accuracy: toPercentage(totals.correctAnswers, totals.totalQuestions),
+    }))
+    .sort((left, right) => left.accuracy - right.accuracy
+      || right.incorrectAnswers - left.incorrectAnswers
+      || right.totalQuestions - left.totalQuestions
+      || left.gradeLevel.localeCompare(right.gradeLevel)
+      || left.canonicalTaskId.localeCompare(right.canonicalTaskId)
+      || left.topic.localeCompare(right.topic));
   const unmappedTopicQuestionCount = validResults
     .filter((result) => !result.topicId)
     .reduce((total, result) => total + result.totalQuestions, 0);
   const unmappedTopicIncorrectAnswers = validResults
     .filter((result) => !result.topicId)
     .reduce((total, result) => total + result.totalQuestions - result.correctAnswers, 0);
-  const topicEvidenceStatus = topicPerformance.length > 0
+  const questTopicLinkedEvidenceCount = questTopicPerformance
+    .reduce((total, result) => total + result.totalQuestions, 0);
+  const unmappedQuestTopicQuestionCount = Math.max(0, totalQuestions - questTopicLinkedEvidenceCount);
+  const unmappedQuestTopicIncorrectAnswers = validResults
+    .filter((result) => !result.canonicalTaskId || !result.topicId || !result.gradeLevel)
+    .reduce((total, result) => total + result.totalQuestions - result.correctAnswers, 0);
+  const topicEvidenceStatus = totalQuestions > 0 && incorrectAnswers === 0
+    ? 'perfect_recorded_results'
+    : questTopicPerformance.length > 0 && unmappedQuestTopicIncorrectAnswers > 0
+      ? 'topic_metadata_partial'
+      : questTopicPerformance.length > 0
     ? 'topic_metadata_available'
-    : (unmappedTopicIncorrectAnswers > 0 ? 'topic_metadata_unavailable' : 'no_topic_evidence');
+    : (incorrectAnswers > 0 ? 'topic_metadata_unavailable' : 'no_topic_evidence');
+
+  const canonicalCompletedIds = canonicalCompletedTaskIds || (Array.isArray(completedMilestones)
+    ? completedMilestones
+      .filter((row) => row?.player_facing !== false)
+      .map((row) => row?.canonical_task_id || row?.canonical_milestone_id || row?.task_id || row?.milestone_id)
+      .filter((taskId) => canonicalTaskIds.has(String(taskId || '').trim().toLowerCase()))
+    : []);
+  const reachedTaskIds = [
+    ...canonicalActivityRows.map((row) => row.taskId),
+    ...validResults.map((result) => result.canonicalTaskId).filter(Boolean),
+  ];
+  if (currentCanonicalTaskId) reachedTaskIds.push(currentCanonicalTaskId);
+  const totalProgress = calculateJourneyProgress({
+    completedTaskIds: canonicalCompletedIds || [],
+    reachedTaskIds,
+    currentTaskId: currentCanonicalTaskId,
+  });
 
   const mapBreakdown = Object.fromEntries(Array.from(mapTotals.entries())
     .map(([map, totals]) => [map, {
@@ -247,20 +361,26 @@ function buildStudentAnalyticsMetrics({ progress = {}, quizSessions = [], playti
     gameScore,
     // The preserved legacy client percentage has no verified full-game milestone
     // denominator. Keep it traceable without presenting it as game completion.
-    totalProgress: hasCanonicalMilestoneState ? calculateWeightedCompletion(canonicalCompletedTaskIds || []) : null,
+    totalProgress,
     reportedTotalProgress: totalProgressValue === null ? null : Number(totalProgressValue.toFixed(2)),
-    totalProgressSource: hasCanonicalMilestoneState ? 'canonical_quest_milestones' : 'unavailable',
-    totalProgressVerified: hasCanonicalMilestoneState,
-    totalProgressUnavailableReason: hasCanonicalMilestoneState ? null : 'full_game_milestones_unverified',
+    totalProgressSource: totalProgress !== null ? 'canonical_quest_journey_position' : 'unavailable',
+    totalProgressVerified: totalProgress !== null,
+    totalProgressUnavailableReason: totalProgress !== null ? null : 'no_canonical_journey_evidence',
     completedQuests,
     // There is no authoritative total-quest denominator in the current data model.
     questCompletionPercentage: hasCanonicalMilestoneState
       ? calculateWeightedCompletion(canonicalCompletedTaskIds || [])
       : null,
     currentQuest,
+    currentQuestSource,
+    currentCanonicalTaskId,
     currentDifficulty: currentDifficulty === 'Unknown' ? null : currentDifficulty,
     difficultyBreakdown,
     topicPerformance,
+    questTopicPerformance,
+    questTopicLinkedEvidenceCount,
+    unmappedQuestTopicQuestionCount,
+    unmappedQuestTopicIncorrectAnswers,
     unmappedTopicQuestionCount,
     unmappedTopicIncorrectAnswers,
     topicEvidenceStatus,

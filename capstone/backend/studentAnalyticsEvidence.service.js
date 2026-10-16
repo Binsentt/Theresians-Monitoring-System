@@ -27,7 +27,7 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
   const studentIds = [...new Set(rows.map((row) => Number(row.student_id)))];
   const results = await queryClient.query(
       `SELECT gr.resolved_student_id, gr.id, gr.question_id, gr.math_topic, gr.difficulty, gr.current_map,
-              gr.map_id, gr.canonical_quest_id, gr.canonical_task_id,
+              gr.map_id, gr.canonical_quest_id, gr.canonical_task_id, gr.quest_graph_version,
               gr.result_event_id, gr.session_id, gr.percentage, gr.score,
               gr.total_items, gr.played_at, gr.question_set_id,
               lf.topic_id AS canonical_topic_id,
@@ -42,6 +42,9 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
               gr.question_presented_at, gr.answer_submitted_at, gr.response_time_seconds
        FROM public.game_results gr
        JOIN public.accounts student ON student.id = gr.resolved_student_id
+       LEFT JOIN public.playtime_sessions result_session
+         ON result_session.id = gr.session_id
+        AND result_session.student_id = gr.resolved_student_id
        LEFT JOIN public.learning_files lf ON lf.id = gr.question_set_id
        LEFT JOIN public.questions result_question
          ON result_question.id = gr.question_id
@@ -63,6 +66,11 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
        WHERE gr.resolved_student_id = ANY($1::INTEGER[])
          AND (student.current_learning_cycle_started_at IS NULL
               OR gr.played_at >= student.current_learning_cycle_started_at)
+         AND (gr.session_id IS NULL
+              OR (result_session.id IS NOT NULL
+                  AND COALESCE(result_session.learning_cycle_version, student.current_learning_cycle_version, 0)
+                 = COALESCE(student.current_learning_cycle_version, 0))
+             )
        ORDER BY gr.played_at ASC NULLS LAST, gr.id ASC`,
       [studentIds]
     );
@@ -92,12 +100,21 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
     `SELECT al.student_id, al.activity_event_id, al.canonical_activity_id,
             al.canonical_quest_id, al.canonical_task_id, al.canonical_milestone_id,
             al.map_id, al.current_quest, al.activity_description,
-            al.started_at, al.completed_at, al.duration_seconds, al.activity_timestamp
+            al.started_at, al.completed_at, al.duration_seconds, al.activity_timestamp,
+            al.quest_graph_version, al.is_player_facing,
+            session.learning_cycle_version AS session_learning_cycle_version
        FROM public.activity_logs al
        JOIN public.accounts student ON student.id = al.student_id
+       LEFT JOIN public.playtime_sessions session
+         ON session.id = al.session_id
+        AND session.student_id = al.student_id
       WHERE al.student_id = ANY($1::INTEGER[])
         AND (student.current_learning_cycle_started_at IS NULL
              OR COALESCE(al.completed_at, al.started_at, al.activity_timestamp) >= student.current_learning_cycle_started_at)
+        AND (al.session_id IS NULL
+             OR (session.id IS NOT NULL
+                 AND COALESCE(session.learning_cycle_version, student.current_learning_cycle_version, 0)
+                    = COALESCE(student.current_learning_cycle_version, 0)))
       ORDER BY COALESCE(al.completed_at, al.started_at, al.activity_timestamp) ASC NULLS LAST, al.id ASC`,
     [studentIds]
   );
@@ -126,7 +143,9 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
     const playtimeSessions = playtimeByStudent.get(Number(progress.student_id)) || [];
     const completedMilestones = milestonesByStudent.get(Number(progress.student_id)) || [];
     const activityLogs = activitiesByStudent.get(Number(progress.student_id)) || [];
-    const metrics = buildStudentAnalyticsMetrics({ progress, quizSessions, playtimeSessions, completedMilestones });
+    const metrics = buildStudentAnalyticsMetrics({
+      progress, quizSessions, playtimeSessions, completedMilestones, activityLogs,
+    });
     return { progress, quizSessions, playtimeSessions, completedMilestones, activityLogs, metrics };
   });
 }

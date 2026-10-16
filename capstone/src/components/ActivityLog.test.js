@@ -252,6 +252,20 @@ describe('ActivityLog table', () => {
     expect(container.textContent).toContain('Child');
     expect(container.textContent).toContain('Ava Santos');
     expect(requestedActivityUrls.length).toBeGreaterThan(0);
+
+    // The initial Parent view intentionally includes all linked children. Make
+    // an explicit child selection before asserting the child-specific request.
+    expect(requestedActivityUrls[0]).not.toContain('student_id=');
+    const childFilter = container.querySelector('#child-filter');
+    expect(childFilter).not.toBeNull();
+    requestedActivityUrls.length = 0;
+    await act(async () => {
+      childFilter.value = '44';
+      childFilter.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(requestedActivityUrls.length).toBeGreaterThan(0);
     expect(requestedActivityUrls.every((url) => url.includes('student_id=44'))).toBe(true);
     expect(requestedActivityUrls.every((url) => url.includes('scope=parent'))).toBe(true);
     expect(requestedActivityUrls.every((url) => !url.includes('parent_id=19'))).toBe(true);
@@ -336,11 +350,19 @@ describe('ActivityLog table', () => {
 
     const dialog = document.body.querySelector('[role="dialog"]');
     expect(dialog.parentElement.parentElement).toBe(document.body);
-    expect(dialog.textContent).toContain('Only Student quest-activity records shown in this view will be deleted.');
+    expect(dialog.textContent).toContain('This will permanently delete all Student quest-activity records across all Students; current filters do not limit this reset.');
     expect(dialog.textContent).toContain('Accounts, Student progress, saves, results, playtime, questions, publications, relationships, assignments, and audit logs are not affected.');
     const confirmation = dialog.querySelector('input[name="activity-log-reset-confirmation"]');
     expect(confirmation).not.toBeNull();
     const confirmButton = Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent === 'Reset Activity Log');
+    expect(confirmButton.disabled).toBe(true);
+
+    const resetRequestCountBeforeInvalidSubmit = global.fetch.mock.calls.filter(([url]) => String(url) === '/api/activity-logs/reset').length;
+    await act(async () => {
+      dialog.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    expect(global.fetch.mock.calls.filter(([url]) => String(url) === '/api/activity-logs/reset')).toHaveLength(resetRequestCountBeforeInvalidSubmit);
     expect(confirmButton.disabled).toBe(true);
 
     await act(async () => {
@@ -382,11 +404,28 @@ describe('ActivityLog table', () => {
     const dialog = document.body.querySelector('[role="dialog"]');
     const confirmation = dialog.querySelector('input[name="activity-log-reset-confirmation"]');
     const cancel = Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent === 'Cancel');
+    const confirmButton = Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent === 'Reset Activity Log');
 
     expect(document.activeElement).toBe(confirmation);
+    expect(confirmButton.disabled).toBe(true);
+    expect(Array.from(dialog.querySelectorAll('input:not(:disabled), button:not(:disabled)'))).toEqual([confirmation, cancel]);
     act(() => {
       cancel.focus();
       cancel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    });
+    expect(document.activeElement).toBe(confirmation);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      valueSetter.call(confirmation, 'RESET');
+      confirmation.dispatchEvent(new Event('input', { bubbles: true }));
+      confirmation.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(confirmButton.disabled).toBe(false);
+    expect(Array.from(dialog.querySelectorAll('input:not(:disabled), button:not(:disabled)'))).toEqual([confirmation, cancel, confirmButton]);
+    act(() => {
+      confirmButton.focus();
+      confirmButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
     });
     expect(document.activeElement).toBe(confirmation);
 

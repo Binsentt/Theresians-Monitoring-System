@@ -4,6 +4,7 @@ const http = require('node:http');
 const Module = require('node:module');
 const { buildStudentAnalyticsMetrics } = require('./studentAnalyticsMetrics.utils');
 const { buildGroundedInsightInput, buildInsightFingerprint } = require('./studentAnalyticsInsight.utils');
+const { GROUNDING_POLICY_VERSION } = require('./studentAnalyticsGrounding.utils');
 
 const emptyResult = { rows: [] };
 let queryHandler = async () => emptyResult;
@@ -130,9 +131,18 @@ const protectedAnalyticsRoutes = [
   '/api/parent/children/44/topics',
 ];
 
-const successfulAnalyticsQuery = async (sql) => {
-  if (sql.startsWith('select 1') && sql.includes('from public.teacher_student_relationships')) {
-    return resultRows([{ linked: true }]);
+const successfulAnalyticsQuery = async (sql, params = []) => {
+  if (sql.startsWith('select 1') && sql.includes('from public.accounts child')
+    && sql.includes('from public.teacher_class_assignments tca')) {
+    assert.match(sql, /tca\.teacher_account_id = \$1/);
+    assert.match(sql, /tca\.grade_level = scoped_student\.grade_level/);
+    assert.match(sql, /tca\.section_key = lower\(regexp_replace\(btrim\(coalesce\(scoped_student\.section/);
+    assert.doesNotMatch(sql, /relationship_type\)? = 'teacher'/);
+    return resultRows([2, 3].includes(params[0]) && params[1] === 44 ? [{ linked: true }] : []);
+  }
+  if (sql.startsWith('select 1') && sql.includes('from public.teacher_student_relationships')
+    && sql.includes("lower(tsr.relationship_type) = 'parent'")) {
+    return resultRows([3, 4].includes(params[0]) && params[1] === 44 ? [{ linked: true }] : []);
   }
   if (sql.startsWith('select count(*)') && sql.includes('from public.activity_logs')) {
     return resultRows([{ total: 0 }]);
@@ -298,7 +308,15 @@ test('grounded insight endpoint returns a current cache without another provider
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const originalFetch = global.fetch;
-  t.after(async () => { global.fetch = originalFetch; reset(); await close(server); });
+  const originalAiGenerationEnabled = process.env.AI_GENERATION_ENABLED;
+  process.env.AI_GENERATION_ENABLED = 'false';
+  t.after(async () => {
+    global.fetch = originalFetch;
+    if (originalAiGenerationEnabled === undefined) delete process.env.AI_GENERATION_ENABLED;
+    else process.env.AI_GENERATION_ENABLED = originalAiGenerationEnabled;
+    reset();
+    await close(server);
+  });
 
   const progress = {
     student_id: 44,
@@ -351,7 +369,10 @@ test('grounded insight endpoint returns a current cache without another provider
   assert.equal(response.body.status, 'paused');
   assert.equal(response.body.code, 'AI_PAUSED');
   assert.equal(response.body.is_stale, false);
-  assert.deepEqual(response.body.insight, cachedInsight);
+  assert.deepEqual(response.body.insight, {
+    ...cachedInsight,
+    topic_evidence_status: 'topic_metadata_unavailable',
+  });
 });
 
 test('grounded insight treats four valid results as preliminary and generates once', async (t) => {
@@ -415,10 +436,10 @@ test('grounded insight treats four valid results as preliminary and generates on
       status: 200,
       headers: { get: () => null },
       json: async () => ({ output_text: JSON.stringify({
-        grounding_policy_version: 'grounded-claims-v1',
+        grounding_policy_version: GROUNDING_POLICY_VERSION,
         performance_claim_ids: ['results_recorded', 'overall_accuracy'],
         strength_claim_ids: [],
-        weakness_claim_ids: ['overall_accuracy_weakness'],
+        weakness_claim_ids: [],
       }) }),
     };
   };
@@ -435,6 +456,9 @@ test('grounded insight treats four valid results as preliminary and generates on
   assert.equal(response.body.valid_result_count, 4);
   assert.equal(response.body.sufficient_result_count, 5);
   assert.equal(providerCalls, 1);
+  assert.equal(response.body.insight.topic_evidence_status, 'topic_metadata_unavailable');
+  assert.deepEqual(response.body.insight.weaknesses, []);
+  assert.deepEqual(response.body.insight.recommendations, []);
 });
 
 test('invalid grounded provider output is not cached and deterministic progress remains available', async (t) => {
@@ -493,7 +517,7 @@ test('invalid grounded provider output is not cached and deterministic progress 
       status: 200,
       headers: { get: () => null },
       json: async () => ({ output_text: JSON.stringify({
-        grounding_policy_version: 'grounded-claims-v1',
+        grounding_policy_version: GROUNDING_POLICY_VERSION,
         performance_claim_ids: ['invented_85_percent'],
         strength_claim_ids: [],
         weakness_claim_ids: [],
@@ -582,10 +606,10 @@ test('valid grounded output caches by fingerprint and regenerates a stale entry'
       status: 200,
       headers: { get: () => null },
       json: async () => ({ output_text: JSON.stringify({
-        grounding_policy_version: 'grounded-claims-v1',
+        grounding_policy_version: GROUNDING_POLICY_VERSION,
         performance_claim_ids: ['overall_accuracy'],
-        strength_claim_ids: ['difficulty_easy_strength'],
-        weakness_claim_ids: ['difficulty_normal_weakness'],
+        strength_claim_ids: [],
+        weakness_claim_ids: [],
       }) }),
     };
   };
@@ -610,6 +634,12 @@ test('valid grounded output caches by fingerprint and regenerates a stale entry'
   assert.equal(providerCalls, 2);
   assert.equal(regenerated.status, 200);
   assert.equal(regenerated.body.status, 'regenerated');
+  for (const response of [generated, cached, regenerated]) {
+    assert.equal(response.body.insight.topic_evidence_status, 'topic_metadata_unavailable');
+    assert.deepEqual(response.body.insight.strengths, []);
+    assert.deepEqual(response.body.insight.weaknesses, []);
+    assert.deepEqual(response.body.insight.recommendations, []);
+  }
 });
 
 test('Parent/Teacher may use separate authenticated teacher and parent contexts', async (t) => {

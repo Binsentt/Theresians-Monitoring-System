@@ -179,7 +179,7 @@ test('parent game results routes and access middleware', async (t) => {
         return resultRows([{ id: 19, parent_id: '123456' }]);
       }
       if (sql.includes('from public.accounts s') && sql.includes('teacher_student_relationships r')) {
-        return resultRows([{ id: 44 }]);
+        return resultRows([{ id: 44, grade_level: 'Grade 3' }]);
       }
       if (sql.startsWith('insert into public.game_results')) {
         insertedSql = String(rawSql);
@@ -287,7 +287,7 @@ test('parent game results routes and access middleware', async (t) => {
         && sql.includes('r.student_id = $2')
       ) {
         assert.deepEqual(params, [19, 44]);
-        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
       }
       if (sql.startsWith('insert into public.game_results')) {
         insertedValues = params;
@@ -326,7 +326,7 @@ test('parent game results routes and access middleware', async (t) => {
       }
       if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
         assert.deepEqual(params, [19, '001234']);
-        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
       }
       if (sql.startsWith('insert into public.game_results')) {
         insertedValues = params;
@@ -363,7 +363,7 @@ test('parent game results routes and access middleware', async (t) => {
       }
       if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
         assert.deepEqual(params, [19, '00123456']);
-        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
       }
       if (sql.startsWith('insert into public.game_results')) {
         insertedValues = params;
@@ -393,7 +393,7 @@ test('parent game results routes and access middleware', async (t) => {
         return resultRows([{ id: 19, parent_id: '123456' }]);
       }
       if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
-        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
       }
       if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
         questionSetChecked = true;
@@ -624,7 +624,7 @@ test('parent game results routes and access middleware', async (t) => {
         return resultRows([{ id: 19, parent_id: '123456' }]);
       }
       if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
-        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
       }
       if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
         return resultRows([{
@@ -666,7 +666,7 @@ test('parent game results routes and access middleware', async (t) => {
         return resultRows([{ id: 19, parent_id: '123456' }]);
       }
       if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
-        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
       }
       if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
         questionSetLookup = true;
@@ -701,7 +701,7 @@ test('parent game results routes and access middleware', async (t) => {
         return resultRows([{ id: 19, parent_id: '123456' }]);
       }
       if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
-        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
       }
       if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) return emptyResult;
       if (sql.startsWith('insert into public.game_results')) insertedGameResult = true;
@@ -733,7 +733,7 @@ test('parent game results routes and access middleware', async (t) => {
         return resultRows([{ id: 19, parent_id: '123456' }]);
       }
       if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
-        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
       }
       if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
         return resultRows([{
@@ -773,7 +773,7 @@ test('parent game results routes and access middleware', async (t) => {
         return resultRows([{ id: 19, parent_id: '123456' }]);
       }
       if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
-        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
       }
       if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
         assert.doesNotMatch(sql, /deleted_at\s+is\s+null/i);
@@ -872,7 +872,7 @@ test('parent game results routes and access middleware', async (t) => {
         return resultRows([{ id: 19, parent_id: '123456', name: 'Parent User' }]);
       }
       if (sql.includes('from public.accounts s') && sql.includes('teacher_student_relationships r')) {
-        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
       }
       if (sql.includes('from public.student_game_progress') && sql.includes('where student_id = $1')) {
         return emptyResult;
@@ -954,7 +954,7 @@ test('parent game results routes and access middleware', async (t) => {
         return resultRows([{ id: 19, parent_id: '123456' }]);
       }
       if (sql.includes('from public.accounts s') && sql.includes('teacher_student_relationships r')) {
-        return resultRows([{ id: 44, name: 'Ava Santos' }]);
+        return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
       }
       if (sql.startsWith('insert into public.game_results')) {
         insertedValues = params;
@@ -1170,10 +1170,10 @@ test('parent game results routes and access middleware', async (t) => {
 
     assert.equal(response.status, 200);
     assert.equal(response.body.children[0].accuracy, 80);
-    assert.equal(response.body.children[0].completion_percentage, 0);
+    assert.equal(response.body.children[0].completion_percentage, null);
     assert.equal(response.body.children[0].metrics.reportedTotalProgress, 42);
     assert.equal(response.body.children[1].accuracy, null);
-    assert.equal(response.body.children[1].completion_percentage, 0);
+    assert.equal(response.body.children[1].completion_percentage, null);
     assert.match(childrenSql, /coalesce\(nullif\(a\.grade_level, ''\), p\.grade_level\) as grade_level/);
     assert.match(childrenSql, /then nullif\(a\.section, ''\)/);
   });
@@ -1230,8 +1230,11 @@ test('parent game results routes and access middleware', async (t) => {
     setQueryHandler(async (sql, params) => {
       if (sql.includes('from public.accounts a') && sql.includes('left join lateral')) {
         assert.equal(params[0], 16);
-        assert.match(sql, /tsr\.teacher_id = \$1/);
-        assert.match(sql, /lower\(tsr\.relationship_type\) = 'teacher'/);
+        assert.match(sql, /scoped_student\.id = a\.id/);
+        assert.match(sql, /tca\.teacher_account_id = \$1/);
+        assert.match(sql, /tca\.grade_level = scoped_student\.grade_level/);
+        assert.match(sql, /tca\.section_key = lower\(regexp_replace\(btrim\(coalesce\(scoped_student\.section/);
+        assert.doesNotMatch(sql, /relationship_type\)? = 'teacher'/);
         return resultRows([
           { student_id: 44, student_name: 'Ava Santos', score: 90, accuracy_rate: 90, progress_percentage: 80 },
           { student_id: 45, student_name: 'Noah Santos', score: 70, accuracy_rate: 70, progress_percentage: 60 },
@@ -1259,7 +1262,11 @@ test('parent game results routes and access middleware', async (t) => {
           sql,
           /order by progress_percentage desc nulls last, game_score desc nulls last, correct_answers desc nulls last, quests_completed desc nulls last, student_id asc/
         );
-        assert.match(sql, /tsr\.teacher_id = \$1/);
+        assert.match(sql, /scoped_student\.id = p\.student_id/);
+        assert.match(sql, /tca\.teacher_account_id = \$1/);
+        assert.match(sql, /tca\.grade_level = scoped_student\.grade_level/);
+        assert.match(sql, /tca\.section_key = lower\(regexp_replace\(btrim\(coalesce\(scoped_student\.section/);
+        assert.doesNotMatch(sql, /relationship_type\)? = 'teacher'/);
         return resultRows([
           {
             id: 70,
@@ -1273,6 +1280,11 @@ test('parent game results routes and access middleware', async (t) => {
             total_questions: 15,
             accuracy_rate: '80.00',
             progress_percentage: '90.00',
+            completion_has_canonical_milestones: true,
+            completion_weighted_percentage: '90.00',
+            completion_activity_evidence: null,
+            completion_current_learning_cycle_version: 0,
+            completion_current_learning_cycle_started_at: null,
             quests_completed: '4',
             total_play_time: 600,
           },
@@ -1361,6 +1373,73 @@ test('parent game results routes and access middleware', async (t) => {
   await t.test('game profile validation supports more than one linked child and returns truthful Parent/Student relationship errors', async () => {
     await verifyGameProfileMultipleChildren(baseUrl);
   });
+});
+
+test('game result cannot establish academic metadata from a client Grade when the linked Student Grade is incomplete', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    useDefaultGameResultLease = true;
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  const incompleteProfiles = [
+    { label: 'blank', grade_level: '' },
+    { label: 'whitespace', grade_level: '   ' },
+    { label: 'null', grade_level: null },
+    { label: 'missing' },
+    { label: 'unsupported', grade_level: 'Grade 7' },
+  ];
+  for (const profile of incompleteProfiles) {
+    for (const exactQuestion of [false, true]) {
+      await t.test(`${profile.label} canonical Grade rejects ${exactQuestion ? 'linked question' : 'legacy aggregate'} client metadata`, async () => {
+        const writes = [];
+        setQueryHandler(async (sql, params) => {
+          if (sql.includes('from public.accounts') && sql.includes('where parent_id = $1')) {
+            return resultRows([{ id: 19, parent_id: '123456' }]);
+          }
+          if (sql.includes('s.game_student_id = $2') && sql.includes('teacher_student_relationships r')) {
+            return resultRows([{ id: 44, name: 'Canonical Student', ...profile }]);
+          }
+          // Canonical question records really match the client-selected Grade;
+          // that must not let a question set establish the Student's own Grade.
+          if (sql.includes('from public.questions q') && sql.includes('join public.learning_files lf')) {
+            return resultRows([{
+              id: 501, question_set_id: 77,
+              question_grade_level: 'Grade 3', question_difficulty: 'Normal',
+              question_topic_id: 'fractions', question_math_topic: 'Fractions',
+              grade_level: 'Grade 3', difficulty: 'Normal', topic_id: 'fractions',
+              math_topic: 'Fractions', publish_status: 'active',
+            }]);
+          }
+          if (sql.includes('from public.learning_files') && sql.includes('where id = $1')) {
+            return resultRows([{
+              id: 77, grade_level: 'Grade 3', difficulty: 'Normal', topic_id: 'fractions',
+              math_topic: 'Fractions', publish_status: 'active',
+            }]);
+          }
+          if (/^(insert|update|delete)\b/.test(sql)) writes.push({ sql, params });
+          return emptyResult;
+        });
+
+        const response = await requestJson(baseUrl, '/api/game/result', {
+          method: 'POST',
+          body: JSON.stringify({
+            parent_id: '123456', student_id: '001234', student_name: 'Untrusted client name',
+            grade_level: 'Grade 3', difficulty: 'Normal', math_topic: 'Fractions',
+            score: 0, total_items: 1,
+            ...(exactQuestion ? { question_id: 501, question_set_id: 77, topic_id: 'fractions' } : {}),
+          }),
+        });
+
+        assert.equal(response.status, 409);
+        assert.equal(response.body.code, 'CANONICAL_GRADE_REQUIRED');
+        assert.match(response.body.error, /canonical grade/i);
+        assert.deepEqual(writes, [], 'No progress, result, account, or AI-cache mutation is allowed');
+      });
+    }
+  }
 });
 
 test('game profile check accepts a linked canonical child with a null Section', async (t) => {
@@ -1479,7 +1558,7 @@ test('game result endpoint rejects missing, expired, and forged playtime leases'
       return resultRows([{ id: 19, parent_id: '123456' }]);
     }
     if (sql.includes('from public.accounts s') && sql.includes('teacher_student_relationships r')) {
-      return resultRows([{ id: 44, name: 'Ava Santos' }]);
+      return resultRows([{ id: 44, name: 'Ava Santos', grade_level: 'Grade 3' }]);
     }
     if (sql.includes('from public.playtime_sessions') && sql.includes('expires_at > now()')) {
       return emptyResult;

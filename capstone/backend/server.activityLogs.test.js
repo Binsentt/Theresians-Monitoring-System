@@ -142,6 +142,76 @@ test('activity log API accepts Godot session aliases and scoped child filters', 
     assert.ok(insertedValues.includes('2026-05-27T08:30:00.000Z'));
   });
 
+  await t.test('persists stable Game event identity and acknowledges a retry without another row', async () => {
+    let insertCount = 0;
+    let insertedSql = '';
+    let firstValues = null;
+    setQueryHandler(async (sql, params, rawSql) => {
+      if (sql.startsWith('insert into public.activity_logs')) {
+        insertCount += 1;
+        insertedSql = String(rawSql);
+        firstValues ||= params;
+        return resultRows(insertCount === 1 ? [{ id: 90, student_id: 44 }] : []);
+      }
+      if (sql.startsWith('select * from public.activity_logs') && params[1] === 'cycle-4:oakleaf-bandits:trigger:v1') {
+        return resultRows([{ id: 90, student_id: 44, activity_event_id: params[1] }]);
+      }
+      return emptyResult;
+    });
+
+    const payload = {
+      student_id: 44,
+      student_name: 'Ava Santos',
+      current_quest: 'Oakleaf Bandits',
+      activity_description: 'Task Triggered',
+      canonical_task_id: 'oakleaf-bandits',
+      event_key: 'cycle-4:oakleaf-bandits:trigger:v1',
+      activity_event_id: 'cycle-4:oakleaf-bandits:trigger:v1',
+    };
+    const first = await requestJson(baseUrl, '/api/activity-logs', { method: 'POST', body: JSON.stringify(payload) });
+    const retry = await requestJson(baseUrl, '/api/activity-logs', { method: 'POST', body: JSON.stringify(payload) });
+
+    assert.equal(first.status, 201);
+    assert.equal(retry.status, 200);
+    assert.equal(retry.body.duplicate, true);
+    assert.equal(insertCount, 2);
+    assert.match(insertedSql, /activity_event_id/i);
+    assert.match(insertedSql, /event_key/i);
+    assert.match(insertedSql, /on conflict\s+\(student_id,\s*activity_event_id\)[\s\S]+do nothing/i);
+    assert.ok(firstValues.includes('cycle-4:oakleaf-bandits:trigger:v1'));
+    assert.ok(firstValues.includes('oakleaf-bandits'));
+  });
+
+  await t.test('uses the same conservative legacy duplicate collapse for Activity Log rows and pagination counts', async () => {
+    let listSql = '';
+    let countSql = '';
+    setQueryHandler(async (sql, _params, rawSql) => {
+      if (sql.startsWith('select al.id')) {
+        listSql = String(rawSql);
+        return resultRows([]);
+      }
+      if (sql.startsWith('select count(*) as total')) {
+        countSql = String(rawSql);
+        return resultRows([{ total: 4 }]);
+      }
+      return emptyResult;
+    });
+
+    const response = await requestJson(baseUrl, '/api/activity-logs?limit=10', {
+      headers: { Authorization: 'Bearer admin-token' },
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.pagination.total, 4);
+    for (const sql of [listSql, countSql]) {
+      assert.match(sql, /row_number\(\) over/i);
+      assert.match(sql, /activity_event_id/i);
+      assert.match(sql, /event_key/i);
+      assert.match(sql, /canonical_task_id/i);
+      assert.match(sql, /legacy_duplicate_rank\s*=\s*1/i);
+    }
+  });
+
   await t.test('keeps parent activity requests scoped to the selected child', async () => {
     let mainQuery = '';
     let mainParams = [];

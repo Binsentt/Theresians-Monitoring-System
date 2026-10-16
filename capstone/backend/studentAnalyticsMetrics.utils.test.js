@@ -152,7 +152,7 @@ test('legacy progress percentage is not presented as graded accuracy', () => {
   assert.equal(metrics.totalProgress, null);
   assert.equal(metrics.totalProgressVerified, false);
   assert.equal(metrics.reportedTotalProgress, 75);
-  assert.equal(metrics.totalProgressUnavailableReason, 'full_game_milestones_unverified');
+  assert.equal(metrics.totalProgressUnavailableReason, 'no_canonical_journey_evidence');
 });
 
 test('uses unique canonical milestones for quest count while accuracy stays N/A without graded answers', () => {
@@ -198,7 +198,7 @@ test('uses explicit canonical milestone evidence for weighted completion', () =>
   });
   assert.equal(metrics.completedQuests, 2);
   assert.equal(metrics.totalProgressVerified, true);
-  assert.equal(metrics.totalProgressSource, 'canonical_quest_milestones');
+  assert.equal(metrics.totalProgressSource, 'canonical_quest_journey_position');
   assert.equal(metrics.totalProgress, metrics.questCompletionPercentage);
   assert.ok(metrics.totalProgress > 0);
 });
@@ -330,4 +330,89 @@ test('duplicate committed result event IDs do not double-count unlinked topic mi
   assert.equal(metrics.validResultCount, 1);
   assert.equal(metrics.incorrectAnswers, 1);
   assert.equal(metrics.unmappedTopicIncorrectAnswers, 1);
+});
+
+test('recovers a missing or placeholder Current Quest from the latest canonical activity in this cycle', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    progress: { current_quest: 'N/A', current_learning_cycle_version: 4 },
+    activityLogs: [
+      { canonical_task_id: 'oakleaf-bandits', current_quest: null, activity_timestamp: '2026-09-10T10:00:00.000Z' },
+      { canonical_task_id: 'oakleaf-boss-bandit', current_quest: null, activity_timestamp: '2026-09-10T10:05:00.000Z' },
+    ],
+  });
+
+  assert.equal(metrics.currentQuest, 'Oakleaf Boss Bandit');
+  assert.equal(metrics.currentQuestSource, 'canonical_current_cycle_activity');
+  assert.ok(metrics.totalProgress > 0);
+  assert.equal(metrics.totalProgressSource, 'canonical_quest_journey_position');
+});
+
+test('prefers canonical current progress task state over later historical activity and result evidence', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    progress: {
+      current_task_id: 'pinehill-bandits',
+      current_quest: 'N/A',
+      current_learning_cycle_version: 4,
+    },
+    activityLogs: [
+      { canonical_task_id: 'oakleaf-bandits', current_quest: 'Oakleaf Bandits', activity_timestamp: '2026-09-10T10:00:00.000Z' },
+    ],
+    quizSessions: [
+      { canonical_task_id: 'deep-forest-bandits', quest_graph_version: 'oakleaf-city-pinehill-v1', score: 1, total_items: 1 },
+    ],
+  });
+
+  assert.equal(metrics.currentQuest, 'Pinehill Bandits');
+  assert.equal(metrics.currentCanonicalTaskId, 'pinehill-bandits');
+  assert.equal(metrics.currentQuestSource, 'canonical_current_progress_task');
+});
+
+test('uses reached and completed canonical tasks for journey position without trusting client percentages', () => {
+  const stage = (taskId, completed = []) => buildStudentAnalyticsMetrics({
+    progress: { progress_percentage: 99 },
+    activityLogs: [{ canonical_task_id: taskId, activity_timestamp: '2026-09-10T10:00:00.000Z' }],
+    completedMilestones: completed.map((canonical_task_id) => ({ canonical_task_id, player_facing: true })),
+  });
+  const earlyOakleaf = stage('go-to-teachers-house');
+  const oakleafBandits = stage('oakleaf-bandits', ['go-to-teachers-house']);
+  const citySchool = stage('go-to-school', ['go-to-teachers-house', 'oakleaf-bandits']);
+  const forest = stage('deep-forest-bandits', ['go-to-school']);
+  const pinehill = stage('pinehill-bandits', ['deep-forest-bandits']);
+  const finalTeacher = stage('final-teacher', ['pinehill-bandits']);
+  const ending = buildStudentAnalyticsMetrics({
+    completedMilestones: [
+      { canonical_task_id: 'tutorial', player_facing: true },
+      ...require('./questGraph.utils').PLAYER_FACING_TASKS.map((canonical_task_id) => ({ canonical_task_id, player_facing: true })),
+    ],
+  });
+
+  assert.ok(earlyOakleaf.totalProgress > 0);
+  assert.ok(earlyOakleaf.totalProgress < oakleafBandits.totalProgress);
+  assert.ok(oakleafBandits.totalProgress < citySchool.totalProgress);
+  assert.ok(citySchool.totalProgress < forest.totalProgress);
+  assert.ok(forest.totalProgress < pinehill.totalProgress);
+  assert.ok(pinehill.totalProgress < finalTeacher.totalProgress);
+  assert.ok(finalTeacher.totalProgress < 100);
+  assert.equal(ending.totalProgress, 100);
+  assert.notEqual(earlyOakleaf.totalProgress, 99);
+  assert.equal(finalTeacher.totalProgressVerified, true);
+});
+
+test('groups validated question evidence by canonical task and topic for quest-grounded guidance', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    quizSessions: [
+      { score: 1, total_items: 4, canonical_task_id: 'oakleaf-bandits', canonical_grade_level: 'Grade 1', canonical_difficulty: 'Normal', canonical_topic_id: 'addition' },
+      { score: 2, total_items: 4, canonical_task_id: 'pinehill-bandits', canonical_grade_level: 'Grade 1', canonical_difficulty: 'Normal', canonical_topic_id: 'addition' },
+      { score: 0, total_items: 1, canonical_task_id: 'not-a-canonical-task', canonical_grade_level: 'Grade 1', canonical_difficulty: 'Normal', canonical_topic_id: 'addition' },
+    ],
+  });
+
+  assert.deepEqual(metrics.questTopicPerformance.map(({ canonicalTaskId, topicId, correctAnswers, totalQuestions }) => ({
+    canonicalTaskId, topicId, correctAnswers, totalQuestions,
+  })), [
+    { canonicalTaskId: 'oakleaf-bandits', topicId: 'addition', correctAnswers: 1, totalQuestions: 4 },
+    { canonicalTaskId: 'pinehill-bandits', topicId: 'addition', correctAnswers: 2, totalQuestions: 4 },
+  ]);
+  assert.equal(metrics.topicLinkedEvidenceCount, 9);
+  assert.equal(metrics.questTopicLinkedEvidenceCount, 8);
 });

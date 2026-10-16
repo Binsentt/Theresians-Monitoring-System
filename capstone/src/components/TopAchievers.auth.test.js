@@ -122,19 +122,38 @@ describe('Top Achievers authenticated analytics requests', () => {
     expect(container.textContent).toContain('Student 1');
   });
 
-  test('does not render zero-percent metric bars when the backend has no metric data', async () => {
+  test.each([
+    ['Admin', AdminTopAchievers, 'admin'],
+    ['Teacher', TeacherTopAchievers, 'teacher'],
+  ])('%s leaderboard renders unavailable completion as N/A without a zero-percent bar', async (_roleName, Component, role) => {
     global.fetch = jest.fn(() => jsonResponse([{
       ...leaderboardRows[0],
       completion_percentage: null,
+      progress_percentage: 0,
       accuracy: null,
+    }]));
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: role === 'admin' ? 1 : 16, role }));
+    localStorage.setItem('token', 'top-achievers-token');
+
+    await act(async () => root.render(<Component />));
+
+    expect(container.querySelector('.progress-text')?.textContent).toBe('N/A');
+    expect(container.querySelectorAll('.progress-fill, .accuracy-fill')).toHaveLength(0);
+  });
+
+  test('observed zero completion remains distinct from unavailable completion', async () => {
+    global.fetch = jest.fn(() => jsonResponse([{
+      ...leaderboardRows[0],
+      completion_percentage: 0,
+      progress_percentage: 0,
     }]));
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin' }));
     localStorage.setItem('token', 'top-achievers-token');
 
     await act(async () => root.render(<AdminTopAchievers />));
 
-    expect(container.textContent).toContain('No Data');
-    expect(container.querySelectorAll('.progress-fill, .accuracy-fill')).toHaveLength(0);
+    expect(container.querySelector('.progress-text')?.textContent).toBe('0.0%');
+    expect(container.querySelector('.progress-fill')?.style.width).toBe('0%');
   });
 
   test('renders the canonical integer Game Score instead of Accuracy in the visible ranking', async () => {

@@ -17,6 +17,8 @@ const {
   renderValidatedClaimSelection,
 } = require('./studentAnalyticsGrounding.utils');
 const { SCOPES, getTopicById, normalizeGradeLevel, normalizeTopicId } = require('./curriculumScopeRegistry');
+const { canonicalTaskDisplayLabel, PLAYER_FACING_TASKS } = require('./questGraph.utils');
+const CANONICAL_TASK_SET = new Set(['tutorial', ...PLAYER_FACING_TASKS]);
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const ANALYTICS_INSIGHT_MODEL = 'gpt-5-mini';
@@ -36,10 +38,10 @@ const buildQuestEvidence = ({ activityLogs = [], quizSessions = [] } = {}) => {
   const seenResultEventIds = new Set();
   const getGroup = (taskId) => {
     const canonicalTaskId = asText(taskId).toLowerCase();
-    if (!canonicalTaskId) return null;
+    if (!CANONICAL_TASK_SET.has(canonicalTaskId)) return null;
     if (!groups.has(canonicalTaskId)) groups.set(canonicalTaskId, {
       canonical_task_id: canonicalTaskId,
-      label: canonicalTaskId.replace(/[-_.]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()),
+      label: canonicalTaskDisplayLabel(canonicalTaskId),
       map_id: null,
       duration_seconds: null,
       correct_answers: 0,
@@ -53,9 +55,9 @@ const buildQuestEvidence = ({ activityLogs = [], quizSessions = [] } = {}) => {
     return groups.get(canonicalTaskId);
   };
   (Array.isArray(activityLogs) ? activityLogs : []).forEach((row) => {
-    const group = getGroup(row?.canonical_task_id || row?.canonical_activity_id);
+    const group = getGroup(row?.canonical_task_id);
     if (!group) return;
-    const label = asText(row?.activity_description || row?.current_quest);
+    const label = asText(row?.current_quest);
     if (label) group.label = label;
     const mapId = asText(row?.map_id);
     if (mapId) group.map_id = mapId;
@@ -107,40 +109,54 @@ function buildGroundedInsightInput({
 } = {}) {
   const difficulty = metrics.difficultyBreakdown || {};
   const studentGrade = normalizeGradeLevel(gradeLevel);
-  const topicPerformance = (Array.isArray(metrics.topicPerformance) ? metrics.topicPerformance : [])
+  const questTopicPerformance = (Array.isArray(metrics.questTopicPerformance) ? metrics.questTopicPerformance : [])
     .map((topic) => {
       const topicId = normalizeTopicId(topic?.topicId ?? topic?.topic_id);
-      const canonicalGrade = normalizeGradeLevel(topic?.gradeLevel ?? topic?.grade_level);
+      const gradeLevel = normalizeGradeLevel(topic?.gradeLevel ?? topic?.grade_level);
+      const canonicalTaskId = String(topic?.canonicalTaskId ?? topic?.canonical_task_id ?? '').trim().toLowerCase();
       const canonicalTopic = topicId ? getTopicById(topicId) : null;
-      const belongsToGrade = Boolean(canonicalGrade && topicId && SCOPES.some((scope) => (
-        scope.grade_level === canonicalGrade && scope.topic_ids.includes(topicId)
+      const canonicalTaskLabel = PLAYER_FACING_TASKS.includes(canonicalTaskId)
+        ? canonicalTaskDisplayLabel(canonicalTaskId) : null;
+      const belongsToGrade = Boolean(gradeLevel && topicId && SCOPES.some((scope) => (
+        scope.grade_level === gradeLevel && scope.topic_ids.includes(topicId)
       )));
       const correctAnswers = Number(topic?.correctAnswers ?? topic?.correct_answers);
       const totalQuestions = Number(topic?.totalQuestions ?? topic?.total_questions);
-      if (!canonicalTopic || !belongsToGrade || !Number.isInteger(correctAnswers)
+      if (!canonicalTopic || !canonicalTaskLabel || !belongsToGrade || !Number.isInteger(correctAnswers)
         || !Number.isInteger(totalQuestions) || totalQuestions < 1
         || correctAnswers < 0 || correctAnswers > totalQuestions
-        || (studentGrade && canonicalGrade !== studentGrade)) return null;
+        || (studentGrade && gradeLevel !== studentGrade)) return null;
       return {
         topic_id: topicId,
-        grade_level: canonicalGrade,
+        grade_level: gradeLevel,
+        canonical_task_id: canonicalTaskId,
+        task_label: canonicalTaskLabel,
         correct_answers: correctAnswers,
         total_questions: totalQuestions,
       };
     })
     .filter(Boolean)
     .sort((left, right) => left.grade_level.localeCompare(right.grade_level)
+      || left.canonical_task_id.localeCompare(right.canonical_task_id)
       || left.topic_id.localeCompare(right.topic_id));
-  const hasSupportedWeakness = topicPerformance.some((topic) => (
+  const hasSupportedWeakness = questTopicPerformance.some((topic) => (
     (topic.correct_answers / topic.total_questions) * 100 < WEAK_PERFORMANCE_THRESHOLD
   ));
-  const topicEvidenceStatus = hasSupportedWeakness
-    ? 'weaknesses_identified'
-    : topicPerformance.length === 0 && Number(metrics.incorrectAnswers || 0) > 0
-      ? 'topic_metadata_unavailable'
-      : topicPerformance.length > 0
-        ? 'no_supported_weakness'
-        : 'no_topic_evidence';
+  const totalQuestions = Number.isInteger(metrics.totalQuestions) ? metrics.totalQuestions : 0;
+  const incorrectAnswers = Number.isInteger(metrics.incorrectAnswers) ? metrics.incorrectAnswers : 0;
+  const questTopicLinkedEvidenceCount = Number.isInteger(metrics.questTopicLinkedEvidenceCount)
+    ? metrics.questTopicLinkedEvidenceCount : questTopicPerformance.reduce((sum, topic) => sum + topic.total_questions, 0);
+  const hasQuestTopicMetadataGap = incorrectAnswers > 0
+    && (questTopicPerformance.length === 0 || questTopicLinkedEvidenceCount < totalQuestions);
+  const topicEvidenceStatus = totalQuestions > 0 && incorrectAnswers === 0
+    ? 'perfect_recorded_results'
+    : hasQuestTopicMetadataGap
+      ? (questTopicPerformance.length > 0 ? 'topic_metadata_partial' : 'topic_metadata_unavailable')
+      : hasSupportedWeakness
+        ? 'weaknesses_identified'
+        : questTopicPerformance.length > 0
+          ? 'no_supported_weakness'
+          : 'no_topic_evidence';
   return {
     grounding_policy_version: GROUNDING_POLICY_VERSION,
     metrics_definition_version: 'student-metrics-v4',
@@ -165,7 +181,13 @@ function buildGroundedInsightInput({
       medium: difficulty.medium?.accuracy ?? null,
       hard: difficulty.hard?.accuracy ?? null,
     },
-    topic_performance: topicPerformance,
+    topic_performance: questTopicPerformance,
+    topic_linked_evidence_count: metrics.topicLinkedEvidenceCount ?? 0,
+    quest_topic_linked_evidence_count: questTopicLinkedEvidenceCount,
+    unmapped_quest_topic_incorrect_answers: Number.isInteger(metrics.unmappedQuestTopicIncorrectAnswers)
+      ? metrics.unmappedQuestTopicIncorrectAnswers
+      : (questTopicLinkedEvidenceCount < totalQuestions ? Math.max(0, incorrectAnswers) : 0),
+    total_questions: totalQuestions,
     unmapped_topic_incorrect_answers: Number.isInteger(metrics.unmappedTopicIncorrectAnswers)
       ? metrics.unmappedTopicIncorrectAnswers : 0,
     topic_evidence_status: topicEvidenceStatus,

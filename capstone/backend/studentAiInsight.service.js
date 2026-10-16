@@ -29,6 +29,10 @@ const buildBaseState = (metrics = {}) => {
     valid_result_count: validResultCount,
     sufficient_result_count: SUFFICIENT_INSIGHT_RESULT_COUNT,
     preliminary: dataLevel === 'limited_data',
+    total_question_count: Number.isInteger(metrics.totalQuestions) ? metrics.totalQuestions : 0,
+    topic_linked_evidence_count: Number.isInteger(metrics.topicLinkedEvidenceCount) ? metrics.topicLinkedEvidenceCount : 0,
+    quest_topic_linked_evidence_count: Number.isInteger(metrics.questTopicLinkedEvidenceCount)
+      ? metrics.questTopicLinkedEvidenceCount : 0,
   };
 };
 

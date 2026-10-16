@@ -166,9 +166,9 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
   };
 
   const validateResetConfirmation = (value) => {
-    const normalized = String(value || '').trim();
-    if (!normalized) return 'Please fill out this field.';
-    if (normalized !== 'RESET') return 'Type RESET to confirm this action.';
+    const confirmation = String(value || '');
+    if (!confirmation.trim()) return 'Please fill out this field.';
+    if (confirmation !== 'RESET') return 'Type RESET to confirm this action.';
     return '';
   };
 
@@ -470,7 +470,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
         <div className="activity-log-reset-backdrop" role="presentation" onMouseDown={closeResetDialog}>
           <form className="activity-log-reset-dialog" role="dialog" aria-modal="true" aria-labelledby="activity-log-reset-title" onSubmit={submitActivityReset} onMouseDown={(event) => event.stopPropagation()}>
             <h3 id="activity-log-reset-title">Reset Activity Log</h3>
-            <p>Only Student quest-activity records shown in this view will be deleted.</p>
+            <p>This will permanently delete all Student quest-activity records across all Students; current filters do not limit this reset.</p>
             <p>Accounts, Student progress, saves, results, playtime, questions, publications, relationships, assignments, and audit logs are not affected.</p>
             <label htmlFor="activity-log-reset-confirmation">Type RESET to confirm</label>
             <input
@@ -501,7 +501,7 @@ export default function ActivityLog({ limit = 50, role = 'admin', userId = null,
             )}
             <div className="activity-log-reset-actions">
               <button type="button" className="btn-reset" onClick={closeResetDialog} disabled={resettingActivity}>Cancel</button>
-              <button type="submit" className="btn-reset activity-log-reset-confirm" disabled={resettingActivity}>Reset Activity Log</button>
+              <button type="submit" className="btn-reset activity-log-reset-confirm" disabled={resettingActivity || resetConfirmation !== 'RESET'}>Reset Activity Log</button>
             </div>
           </form>
         </div>

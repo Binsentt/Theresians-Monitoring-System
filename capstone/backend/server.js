@@ -166,6 +166,10 @@ const {
   MILESTONE_WEIGHTS,
   canonicalTaskWeight,
 } = require('./questGraph.utils');
+const {
+  normalizeTopAchieverRow,
+  QUALIFYING_ACTIVITY_DESCRIPTION,
+} = require('./topAchieversCompletion.utils');
 const { loadStudentAnalyticsEvidence, withStudentAnalyticsAliases } = require('./studentAnalyticsEvidence.service');
 const { resolveStudentAiInsight } = require('./studentAiInsight.service');
 const {
@@ -982,12 +986,15 @@ const getPlaytimeEffectiveEndSql = (tableAlias = '') => (
   )`
 );
 
-const getPlaytimePresenceStatusSql = (tableAlias = '') => (
+const getPlaytimePresenceStatusSql = (tableAlias = '', studentAlias = null) => (
   `CASE
     WHEN ${tableAlias}status = 'Playing'
      AND ${tableAlias}end_time IS NULL
      AND COALESCE(${tableAlias}expires_at, NOW()) > NOW()
      AND NOT (${getPlaytimeHeartbeatStaleSql(tableAlias)})
+     ${studentAlias ? `AND ${studentAlias}id IS NOT NULL
+      AND COALESCE(${tableAlias}learning_cycle_version, 0)
+        = COALESCE(${studentAlias}current_learning_cycle_version, 0)` : ''}
     THEN 'Playing'
     ELSE 'Offline'
   END`
@@ -2221,42 +2228,6 @@ const appendParentScopeFilter = ({ parentId, params, studentColumn, relationship
         AND LOWER(tsr.relationship_type) = '${relationshipType}'
     )
   `;
-};
-
-const normalizeTopAchieverRow = (row, index = 0) => {
-  const completion = row.completion_percentage ?? row.progress_percentage;
-  const accuracy = row.accuracy ?? row.accuracy_rate;
-  const correctAnswers = Number(row.total_correct_answers ?? row.correct_answers ?? 0);
-  const totalQuestions = Number(row.total_questions_answered ?? row.total_questions ?? 0);
-  const gameScore = Number(row.game_score ?? row.correct_answers ?? 0);
-  const questsCompleted = Number(row.quests_completed ?? row.total_quests_completed ?? 0);
-  const totalPlayTime = Number(row.total_play_time ?? row.duration_seconds ?? 0);
-  const normalizedCompletion = completion === null || completion === undefined || completion === '' ? null : Number(completion);
-  const normalizedAccuracy = accuracy === null || accuracy === undefined || accuracy === '' ? null : Number(accuracy);
-
-  return {
-    ...row,
-    rank: index + 1,
-    rank_no: index + 1,
-    student_name: row.student_name || row.account_student_name || 'Unknown',
-    grade_level: row.grade_level || row.grade || null,
-    grade: row.grade || row.grade_level || null,
-    section: row.section || null,
-    completion_percentage: Number.isFinite(normalizedCompletion) ? normalizedCompletion : null,
-    progress_percentage: Number.isFinite(normalizedCompletion) ? normalizedCompletion : null,
-    accuracy: Number.isFinite(normalizedAccuracy) ? normalizedAccuracy : null,
-    accuracy_rate: Number.isFinite(normalizedAccuracy) ? normalizedAccuracy : null,
-    total_correct_answers: Number.isFinite(correctAnswers) ? correctAnswers : 0,
-    correct_answers: Number.isFinite(correctAnswers) ? correctAnswers : 0,
-    game_score: Number.isFinite(gameScore) ? Math.max(0, Math.round(gameScore)) : 0,
-    score: Number.isFinite(gameScore) ? Math.max(0, Math.round(gameScore)) : 0,
-    total_questions_answered: Number.isFinite(totalQuestions) ? totalQuestions : 0,
-    total_questions: Number.isFinite(totalQuestions) ? totalQuestions : 0,
-    quests_completed: Number.isFinite(questsCompleted) ? questsCompleted : 0,
-    total_quests_completed: Number.isFinite(questsCompleted) ? questsCompleted : 0,
-    total_play_time: Number.isFinite(totalPlayTime) ? totalPlayTime : 0,
-    duration_seconds: Number.isFinite(totalPlayTime) ? totalPlayTime : 0,
-  };
 };
 
 const verifyParentChildAccess = async (req, res, next) => {
@@ -7458,8 +7429,6 @@ app.post('/api/game/progress', async (req, res) => {
   const {
     parent_id,
     student_name,
-    grade,
-    section,
     current_quest,
     quest_progress,
     lesson_progress,
@@ -7471,7 +7440,6 @@ app.post('/api/game/progress', async (req, res) => {
     login_time,
     logout_time,
   } = req.body || {};
-  const grade_level = req.body?.grade_level || grade;
   const current_scene = req.body?.current_scene || req.body?.currentScene || req.body?.scene || req.body?.scene_name || null;
   const current_map = req.body?.current_map || req.body?.currentMap || req.body?.map || req.body?.map_name || null;
   const difficulty_level = resolveCurrentDifficulty({ ...req.body, current_scene, current_map });
@@ -7550,23 +7518,15 @@ app.post('/api/game/progress', async (req, res) => {
           return res.status(403).json({ error: 'Student is not linked to this parent.' });
         }
 
-        // A legacy code can locate an existing account but can never create one.
+        // Legacy game sync can resolve an existing managed profile but cannot
+        // register a Student or create a Parent relationship.
         const newStudentCode = normalizeNewStudentCode(submittedStudentCode);
         if (!newStudentCode) {
           await client.query('ROLLBACK');
           return res.status(400).json({ error: 'Student ID must be exactly 8 digits.' });
         }
-
-        // No existing account with this code: create a new student account tied to this code.
-        const studentPassword = await hashPassword(generateRandomPassword());
-        const email = buildGameStudentEmail(parent.id, studentName || `student-${newStudentCode}`);
-        studentResult = await client.query(
-          `INSERT INTO public.accounts (name, email, password, role, status, is_archived, must_change_password, game_student_id)
-           VALUES ($1, $2, $3, 'student', 'Offline', false, false, $4)
-           RETURNING *`,
-          [studentName || '', email, studentPassword, newStudentCode]
-        );
-        student = studentResult.rows[0];
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Student profile not found. Create the Student through the Website before syncing progress.' });
       }
     } else {
       // Backwards-compatible numeric student_id (database id) path
@@ -7609,21 +7569,16 @@ app.post('/api/game/progress', async (req, res) => {
       }
     }
 
-    await ensureParentStudentRelationship(client, {
-      teacherId: parent.id,
-      studentId: student.id,
-      relationshipType: 'parent',
-    });
+    if (!student || !isLinkedCanonicalChild) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'A linked Student profile is required to sync progress.' });
+    }
 
-    // A linked Parent-created child profile is the authority for identity and
-    // school metadata. Legacy New Game registrations keep their submitted
-    // values until a managed profile exists.
+    // The managed Student profile is the only source of school metadata.
     const resolvedStudentName = normalizeGameStudentName(student.name) || studentName;
-    const resolvedGradeLevel = String(student.grade_level || '').trim() || grade_level || null;
+    const resolvedGradeLevel = normalizeGameGradeLevel(student.grade_level) || null;
     const canonicalSection = String(student.section || '').trim() || null;
-    const resolvedSection = isLinkedCanonicalChild
-      ? canonicalSection
-      : canonicalSection || section || null;
+    const resolvedSection = canonicalSection;
 
     const lifecycleLease = await validateProgressLearningCycleLease(client, {
       studentId: student.id,
@@ -7974,7 +7929,7 @@ app.post('/api/game/result', async (req, res) => {
       }
       resolvedStudentId = studentResult.rows[0].id;
       resultStudentName = String(studentResult.rows[0].name || '').trim() || resultStudentName || `Student ${submittedStudentCode}`;
-      resultGradeLevel = String(studentResult.rows[0].grade_level || '').trim() || resultGradeLevel;
+      resultGradeLevel = studentResult.rows[0].grade_level;
     } else if (submittedStudentId) {
       const studentResult = await pool.query(
         `SELECT s.id, s.name, s.grade_level
@@ -7992,7 +7947,7 @@ app.post('/api/game/result', async (req, res) => {
       }
       resolvedStudentId = studentResult.rows[0].id;
       resultStudentName = String(studentResult.rows[0].name || '').trim() || resultStudentName || `Student ${resolvedStudentId}`;
-      resultGradeLevel = String(studentResult.rows[0].grade_level || '').trim() || resultGradeLevel;
+      resultGradeLevel = studentResult.rows[0].grade_level;
     } else {
       const studentResult = await pool.query(
         `SELECT s.id, s.name, s.grade_level
@@ -8008,7 +7963,18 @@ app.post('/api/game/result', async (req, res) => {
       );
       resolvedStudentId = studentResult.rows[0]?.id || null;
       resultStudentName = String(studentResult.rows[0]?.name || '').trim() || studentName;
-      resultGradeLevel = String(studentResult.rows[0]?.grade_level || '').trim() || resultGradeLevel;
+      resultGradeLevel = studentResult.rows[0]?.grade_level;
+    }
+
+    if (resolvedStudentId) {
+      const canonicalGradeLevel = normalizeGameGradeLevel(resultGradeLevel);
+      if (!canonicalGradeLevel) {
+        return res.status(409).json({
+          code: 'CANONICAL_GRADE_REQUIRED',
+          error: 'A valid canonical Grade must be assigned to this Student profile before results can be saved.',
+        });
+      }
+      resultGradeLevel = canonicalGradeLevel;
     }
 
     resultClient = await pool.connect();
@@ -9236,9 +9202,13 @@ const handleTopAchieversRequest = async (req, res) => {
           CASE WHEN milestones.has_milestones
                THEN ROUND((milestones.completed_weight * 100.0) / ${CANONICAL_CAMPAIGN_WEIGHT}, 2)
                ELSE 0 END AS progress_percentage,
+          milestones.has_milestones AS completion_has_canonical_milestones,
           CASE WHEN milestones.has_milestones
                THEN ROUND((milestones.completed_weight * 100.0) / ${CANONICAL_CAMPAIGN_WEIGHT}, 2)
-               ELSE 0 END AS completion_percentage,
+               ELSE NULL END AS completion_weighted_percentage,
+          activity_evidence.activity AS completion_activity_evidence,
+          COALESCE(a.current_learning_cycle_version, 0) AS completion_current_learning_cycle_version,
+          a.current_learning_cycle_started_at AS completion_current_learning_cycle_started_at,
            milestones.completed_count AS quests_completed,
            milestones.completed_count AS total_quests_completed,
           CASE WHEN canonical_playtime.has_playtime THEN canonical_playtime.total_playtime_seconds ELSE NULL END AS total_play_time,
@@ -9260,6 +9230,38 @@ const handleTopAchieversRequest = async (req, res) => {
         LEFT JOIN LATERAL (
           ${CANONICAL_MILESTONE_AGGREGATE_SQL}
         ) milestones ON true
+        LEFT JOIN LATERAL (
+          SELECT jsonb_build_object(
+                   'student_id', al.student_id,
+                   'session_id', al.session_id,
+                   'session_record_id', ps.id,
+                   'session_student_id', ps.student_id,
+                   'session_learning_cycle_version', ps.learning_cycle_version,
+                   'activity_event_id', al.activity_event_id,
+                   'activity_description', al.activity_description,
+                   'canonical_task_id', al.canonical_task_id,
+                   'telemetry_contract_version', al.telemetry_contract_version,
+                   'quest_graph_version', al.quest_graph_version,
+                   'is_player_facing', al.is_player_facing,
+                   'activity_timestamp', al.activity_timestamp
+                 ) AS activity
+          FROM public.activity_logs al
+          JOIN public.playtime_sessions ps
+            ON ps.id = al.session_id
+           AND ps.student_id = al.student_id
+          WHERE al.student_id = p.student_id
+            AND al.activity_event_id IS NOT NULL
+            AND COALESCE(ps.learning_cycle_version, 0) = COALESCE(a.current_learning_cycle_version, 0)
+            AND (a.current_learning_cycle_started_at IS NULL
+                 OR al.activity_timestamp >= a.current_learning_cycle_started_at)
+            AND al.activity_description = '${QUALIFYING_ACTIVITY_DESCRIPTION} — ' || LOWER(BTRIM(al.canonical_task_id))
+            AND LOWER(BTRIM(al.canonical_task_id)) IN (${CANONICAL_CAMPAIGN_TASK_SQL})
+            AND al.telemetry_contract_version = '${TELEMETRY_CONTRACT_VERSION}'
+            AND al.quest_graph_version = '${QUEST_GRAPH_VERSION}'
+            AND al.is_player_facing IS TRUE
+          ORDER BY al.activity_timestamp DESC, al.id DESC
+          LIMIT 1
+        ) activity_evidence ON true
         LEFT JOIN LATERAL (
           SELECT COALESCE(SUM(gr.score), 0)::INTEGER AS game_score,
                  COALESCE(SUM(gr.total_items), 0)::INTEGER AS total_questions
@@ -9376,6 +9378,30 @@ const buildVisibleTableSearchClauses = ({
 };
 
 // --- ENHANCED: Get Recent Activity Logs with Filtering & Role-Based Access ---
+const ACTIVITY_LOG_LEGACY_DEDUPE_PARTITION = `
+  al.student_id, al.student_name, al.grade_level, al.section, al.current_quest,
+  al.save_status, al.duration_seconds, al.total_play_time, al.quest_progress,
+  al.lesson_progress, al.difficulty_level, al.role, al.status, al.activity_description,
+  al.current_scene, al.current_map, al.login_time, al.logout_time, al.session_date,
+  al.activity_timestamp, al.started_at, al.completed_at, al.last_played,
+  al.canonical_activity_id, al.canonical_quest_id, al.canonical_task_id,
+  al.canonical_milestone_id, al.map_id, al.session_id, al.actor_account_id,
+  al.telemetry_contract_version, al.quest_graph_version, al.is_player_facing
+`;
+const DEDUPLICATED_ACTIVITY_LOGS_SOURCE = `(
+  SELECT al.*,
+         CASE
+           WHEN NULLIF(BTRIM(al.activity_event_id), '') IS NULL
+            AND NULLIF(BTRIM(al.event_key), '') IS NULL
+           THEN ROW_NUMBER() OVER (
+             PARTITION BY ${ACTIVITY_LOG_LEGACY_DEDUPE_PARTITION}
+             ORDER BY al.id ASC
+           )
+           ELSE 1
+         END AS legacy_duplicate_rank
+  FROM public.activity_logs al
+)`;
+
 app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
   try {
     const {
@@ -9396,8 +9422,7 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
     const selectedStudentId = resolveScopeId(student_id);
     if (Number.isNaN(selectedStudentId)) return res.status(400).json({ error: 'Invalid student ID' });
 
-    let query = `
-      SELECT 
+    let query = `SELECT
         al.id,
         al.student_id,
         account.game_student_id,
@@ -9427,9 +9452,9 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
         al.role,
         al.status,
         al.created_at
-      FROM public.activity_logs al
+      FROM ${DEDUPLICATED_ACTIVITY_LOGS_SOURCE} al
       LEFT JOIN public.accounts account ON account.id = al.student_id
-      WHERE 1=1
+      WHERE al.legacy_duplicate_rank = 1
     `;
 
     const params = [];
@@ -9505,9 +9530,9 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
 
     // Get total count for pagination metadata
     let countQuery = `SELECT COUNT(*) as total
-      FROM public.activity_logs al
+      FROM ${DEDUPLICATED_ACTIVITY_LOGS_SOURCE} al
       LEFT JOIN public.accounts account ON account.id = al.student_id
-      WHERE 1=1`;
+      WHERE al.legacy_duplicate_rank = 1`;
     let countParams = [];
     countQuery += appendAnalyticsScopeFilter({ scope, params: countParams, studentColumn: 'al.student_id' });
     countQuery += ` AND ${STUDENT_QUEST_ACTIVITY_SQL}`;
@@ -9615,6 +9640,7 @@ const parseActivityDurationSeconds = (value) => {
 
 // --- ENHANCED: Create Activity Log Entry with Gameplay Tracking ---
 app.post('/api/activity-logs', async (req, res) => {
+  const body = req.body || {};
   const {
     student_id,
     student_name,
@@ -9632,12 +9658,22 @@ app.post('/api/activity-logs', async (req, res) => {
     role = 'Student',
     status = 'Online',
     activity_description = 'Gameplay Session'
-  } = req.body;
+  } = body;
 
   try {
     if (!student_id || !student_name) {
       return res.status(400).json({ error: 'student_id and student_name are required' });
     }
+
+    const rawActivityEventId = String(body.activity_event_id || '').trim();
+    const rawEventKey = String(body.event_key || '').trim();
+    const normalizedActivityEventId = normalizeCanonicalGameActivityKey(rawActivityEventId);
+    const normalizedEventKey = normalizeCanonicalGameActivityKey(rawEventKey || rawActivityEventId);
+    if ((rawActivityEventId && !normalizedActivityEventId) || (rawEventKey && !normalizedEventKey)) {
+      return res.status(400).json({ error: 'A stable Activity Log event ID must use the supported format.' });
+    }
+    const stableActivityEventId = normalizedActivityEventId || normalizedEventKey;
+    const stableEventKey = normalizedEventKey || normalizedActivityEventId;
 
     // Godot sends the public six-digit Student ID.  Resolve it to the account
     // primary key (and verify the supplied parent relationship) before writing
@@ -9685,17 +9721,35 @@ app.post('/api/activity-logs', async (req, res) => {
     const currentScene = req.body.current_scene || req.body.currentScene || req.body.scene || req.body.scene_name || null;
     const currentMap = req.body.current_map || req.body.currentMap || req.body.map || req.body.map_name || null;
     const difficultyLevel = resolveDifficultyFromScene({ ...req.body, current_scene: currentScene, current_map: currentMap });
+    const canonicalActivityId = normalizeCanonicalGameActivityKey(body.canonical_activity_id) || null;
+    const canonicalQuestId = normalizeCanonicalGameTaskId(body.canonical_quest_id) || null;
+    const canonicalTaskId = normalizeCanonicalGameTaskId(body.canonical_task_id || body.task_id) || null;
+    const canonicalMilestoneId = normalizeCanonicalGameActivityKey(body.canonical_milestone_id) || null;
+    const sessionId = resolvePositiveInteger(body.session_id) || null;
+    const telemetryContractVersion = String(body.telemetry_contract_version || '').trim().slice(0, 32) || null;
+    const questGraphVersion = String(body.quest_graph_version || '').trim().slice(0, 64) || null;
+    const isPlayerFacing = typeof body.is_player_facing === 'boolean' ? body.is_player_facing : null;
 
     const result = await pool.query(
       `INSERT INTO public.activity_logs (
         student_id, student_name, grade_level, section, current_quest,
         save_status, total_play_time, last_played, quest_progress,
         difficulty_level, role, status, activity_description, current_scene, current_map,
-        login_time, session_date, activity_timestamp, created_at
+        login_time, session_date, activity_timestamp, created_at,
+        event_key, activity_event_id, canonical_activity_id, canonical_quest_id,
+        canonical_task_id, canonical_milestone_id, session_id, started_at, completed_at,
+        duration_seconds, telemetry_contract_version, quest_graph_version, is_player_facing
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, COALESCE($13::timestamptz, NOW()), $8, $9, $10, $11, $12, $14, $15,
-        COALESCE($13::timestamptz, NOW()), CURRENT_DATE, COALESCE($13::timestamptz, NOW()), NOW()
-      ) RETURNING *`,
+        COALESCE($13::timestamptz, NOW()), CURRENT_DATE, COALESCE($13::timestamptz, NOW()), NOW(),
+        $16, $17, $18, $19, $20, $21, $22,
+        COALESCE($23::timestamptz, $13::timestamptz, NOW()), $24::timestamptz,
+        $25, $26, $27, $28
+      )
+      ON CONFLICT (student_id, activity_event_id)
+        WHERE activity_event_id IS NOT NULL
+      DO NOTHING
+      RETURNING *`,
       [
         activityStudentId,
         student_name,
@@ -9711,9 +9765,38 @@ app.post('/api/activity-logs', async (req, res) => {
         activity_description,
         activityTime,
         currentScene,
-        currentMap
+        currentMap,
+        stableEventKey,
+        stableActivityEventId,
+        canonicalActivityId,
+        canonicalQuestId,
+        canonicalTaskId,
+        canonicalMilestoneId,
+        sessionId,
+        body.started_at || null,
+        body.completed_at || null,
+        durationValue,
+        telemetryContractVersion,
+        questGraphVersion,
+        isPlayerFacing,
       ]
     );
+
+    if (result.rows.length === 0 && stableActivityEventId) {
+      const existing = await pool.query(
+        `SELECT * FROM public.activity_logs
+         WHERE student_id = $1 AND activity_event_id = $2
+         LIMIT 1`,
+        [activityStudentId, stableActivityEventId]
+      );
+      if (existing.rows.length > 0) {
+        return res.status(200).json({
+          message: 'Activity log event was already recorded.',
+          duplicate: true,
+          data: existing.rows[0],
+        });
+      }
+    }
 
     res.status(201).json({
       message: 'Activity log created successfully',
@@ -9889,7 +9972,7 @@ const applyPlaytimeFilters = ({ req, params, scope = 'all' }) => {
     const normalizedStatus = normalizePlaytimeStatus(status, status);
     const statusFilter = addParam(normalizedStatus);
     filters.push(['Playing', 'Offline'].includes(normalizedStatus)
-      ? `(${getPlaytimePresenceStatusSql('ps.')}) = ${statusFilter}`
+      ? `(${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) = ${statusFilter}`
       : `ps.status = ${statusFilter}`);
   }
 
@@ -9963,7 +10046,7 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
                 END
               ), 0)::BIGINT AS total_playtime_seconds,
                COUNT(*) FILTER (
-                 WHERE (${getPlaytimePresenceStatusSql('ps.')}) = 'Playing'
+                 WHERE (${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) = 'Playing'
                    AND COALESCE(ps.server_started_at, ps.start_time) >= COALESCE(student_account.screen_time_reset_at, '-infinity'::timestamptz)
                )::INTEGER AS playing_count
         FROM public.playtime_sessions ps
@@ -10007,7 +10090,7 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
                ps.status,
                ps.last_heartbeat_at,
                ps.expires_at,
-               (${getPlaytimePresenceStatusSql('ps.')}) AS presence_status,
+               (${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) AS presence_status,
                CASE
                  WHEN ps.status = 'Playing'
                   AND ps.end_time IS NULL
@@ -10025,7 +10108,7 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
                 student_account.is_archived AS student_is_archived,
                 student_account.progress_archived_at AS student_progress_archived_at,
                 CASE
-                  WHEN (${getPlaytimePresenceStatusSql('ps.')}) <> 'Playing'
+                  WHEN (${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) <> 'Playing'
                   THEN true ELSE false
                 END AS screen_time_delete_eligible
        FROM public.playtime_sessions ps
@@ -10071,7 +10154,7 @@ const resolvePlaytimeDeletionTargets = async (queryClient, req, { forUpdate = fa
                  FROM public.playtime_sessions ps
                  LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
                  WHERE 1=1${filterResult.whereSql}
-                   AND (${getPlaytimePresenceStatusSql('ps.')}) <> 'Playing'
+                   AND (${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) <> 'Playing'
                  ORDER BY ps.id ASC${forUpdate ? ' FOR UPDATE OF ps' : ''}`;
   const result = await queryClient.query(query, params);
   return { rows: result.rows };
@@ -10148,9 +10231,9 @@ const handlePlaytimeArchive = async (req, res) => {
     await client.query('BEGIN');
     const targetResult = await client.query(
        `SELECT ps.id, ps.student_id, ps.student_name, ps.parent_id, ps.status, ps.end_time, ps.date_played, ps.total_playtime_minutes,
-               (${getPlaytimePresenceStatusSql('ps.')}) AS presence_status,
+               (${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) AS presence_status,
                student_account.id AS student_account_id,
-               CASE WHEN (${getPlaytimePresenceStatusSql('ps.')}) <> 'Playing'
+               CASE WHEN (${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) <> 'Playing'
                     THEN true ELSE false END AS screen_time_delete_eligible
         FROM public.playtime_sessions ps
         LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
@@ -10445,7 +10528,7 @@ app.post('/api/playtime/start', async (req, res) => {
     let studentId = null;
     let learningCycle = toLearningCycleDescriptor();
     let resolvedStudentName = studentName;
-    let resolvedGradeLevel = String(req.body.grade_level || req.body.grade || '').trim() || null;
+    let resolvedGradeLevel = null;
     let resolvedSection = String(req.body.section || '').trim() || null;
     if (linkedStudentResult.rows.length > 0) {
       // Parent-created profiles own identity, grade, and section. Never allow
@@ -10454,11 +10537,19 @@ app.post('/api/playtime/start', async (req, res) => {
       studentId = linkedStudent.id;
       learningCycle = toLearningCycleDescriptor(linkedStudent);
       resolvedStudentName = String(linkedStudent.name || '').trim() || studentName;
-      resolvedGradeLevel = String(linkedStudent.grade_level || '').trim() || resolvedGradeLevel;
+      resolvedGradeLevel = normalizeGameGradeLevel(linkedStudent.grade_level);
+      if (!resolvedGradeLevel) {
+        return res.status(409).json({
+          code: 'CANONICAL_GRADE_REQUIRED',
+          error: 'A valid Grade must be assigned to this Student profile before gameplay can start.',
+          can_play: false,
+        });
+      }
       resolvedSection = String(linkedStudent.section || '').trim() || null;
     } else {
       // Student not found or not linked to this parent
-      // For NEW GAME registration, allow it if student doesn't exist yet
+      // Existing accounts owned by another Parent (including archived accounts)
+      // remain unavailable to this Parent.
       const existingStudentResult = await pool.query(
         `SELECT id
          FROM public.accounts
@@ -10472,38 +10563,13 @@ app.post('/api/playtime/start', async (req, res) => {
         return res.status(403).json({ error: 'Student ID is already registered with a different parent.', can_play: false });
       }
 
-      const newStudentCode = normalizeNewStudentCode(studentCode);
-      if (!newStudentCode) {
+      if (!normalizeNewStudentCode(studentCode)) {
         return res.status(400).json({ error: 'Student ID must be exactly 8 digits.', can_play: false });
       }
-
-      // NEW GAME: create the canonical student account and Parent relationship before
-      // allowing gameplay so the registration is persistent at Start.
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        const studentPassword = await hashPassword(generateRandomPassword());
-        const email = buildGameStudentEmail(parentId, studentName || `student-${newStudentCode}`);
-        const studentResult = await client.query(
-          `INSERT INTO public.accounts (name, email, password, role, status, is_archived, must_change_password, game_student_id)
-           VALUES ($1, $2, $3, 'student', 'Offline', false, false, $4)
-           RETURNING id`,
-          [studentName, email, studentPassword, newStudentCode]
-        );
-        studentId = studentResult.rows[0]?.id;
-        if (!studentId) throw new Error('Unable to create the new game student account.');
-        await ensureParentStudentRelationship(client, {
-          teacherId: parentId,
-          studentId,
-          relationshipType: 'parent',
-        });
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
-      }
+      return res.status(404).json({
+        error: 'Student profile not found. Create the Student through the Website before starting gameplay.',
+        can_play: false,
+      });
     }
 
     // A client never controls when a playtime session starts. An interrupted

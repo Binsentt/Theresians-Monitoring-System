@@ -34,6 +34,11 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
   const state = aiInsight && typeof aiInsight === 'object' ? aiInsight : {};
   const insight = state.insight && typeof state.insight === 'object' ? state.insight : null;
   const validResultCount = Number.isInteger(state.valid_result_count) ? state.valid_result_count : null;
+  const totalQuestionCount = Number.isInteger(state.total_question_count) ? state.total_question_count : null;
+  const topicLinkedEvidenceCount = Number.isInteger(state.topic_linked_evidence_count)
+    ? state.topic_linked_evidence_count : null;
+  const questTopicLinkedEvidenceCount = Number.isInteger(state.quest_topic_linked_evidence_count)
+    ? state.quest_topic_linked_evidence_count : null;
   const preliminary = state.preliminary === true || state.data_level === 'limited_data';
   const stale = state.is_stale === true || state.status === 'stale';
   const unavailable = state.status === 'unavailable';
@@ -87,6 +92,12 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
         <p className="grounded-ai-evidence-meta">
           Evidence: {validResultCount ?? 0} valid results · Generated: {generatedLabel} · {cacheLabel}
         </p>
+        {totalQuestionCount !== null && (
+          <p className="grounded-ai-evidence-meta">
+            Topic-linked evidence: {topicLinkedEvidenceCount ?? 0} of {totalQuestionCount} recorded answers ·
+            {' '}Quest/topic-linked evidence: {questTopicLinkedEvidenceCount ?? 0} of {totalQuestionCount} recorded answers
+          </p>
+        )}
         {showInsightAction && (
           <button type="button" className="btn btn-primary student-insight-action" onClick={onRefresh} disabled={loading}>
             {insightActionLabel}
@@ -110,8 +121,12 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
           className="student-insight-weaknesses"
           description="Areas where the recorded results show that the student may need more mathematics practice."
           emptyMessage={insight
-            ? topicEvidenceStatus === 'topic_metadata_unavailable'
+            ? topicEvidenceStatus === 'perfect_recorded_results'
+              ? 'No weaknesses identified — no incorrect answers were recorded.'
+              : topicEvidenceStatus === 'topic_metadata_unavailable'
               ? 'Recorded incorrect answers exist, but the questions are not linked to enough validated Mathematics topic information to identify a specific weakness.'
+              : topicEvidenceStatus === 'topic_metadata_partial'
+                ? 'Some recorded incorrect answers are missing validated Grade, topic, or quest linkage; only linked evidence is used for specific weaknesses.'
               : 'No supported weakness is identified from the recorded evidence.'
             : 'Generate the AI insight to identify evidence-backed weaknesses.'}
         />
@@ -123,8 +138,12 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
           className="student-insight-recommendations"
           description="Recommended next steps linked to the recorded weaknesses and evidence gaps."
           emptyMessage={insight
-            ? topicEvidenceStatus === 'topic_metadata_unavailable'
+            ? topicEvidenceStatus === 'perfect_recorded_results'
+              ? 'No additional practice recommendation is needed based on the current perfect recorded results.'
+              : topicEvidenceStatus === 'topic_metadata_unavailable'
               ? 'Topic-specific recommendations cannot be generated until those recorded questions are linked to validated Mathematics topics.'
+              : topicEvidenceStatus === 'topic_metadata_partial'
+                ? 'Recommendations are limited to question evidence with validated Grade, topic, and quest linkage.'
               : 'No additional recommendation is supported by the current recorded evidence.'
             : 'Generate the AI insight to show recommended next steps.'}
         />

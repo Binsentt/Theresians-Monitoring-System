@@ -35,6 +35,13 @@ const metrics = {
     { topicId: 'fractions', topic: 'Fractions', gradeLevel: 'Grade 3', accuracy: 60, correctAnswers: 3, incorrectAnswers: 2, totalQuestions: 5 },
     { topicId: 'multiplication', topic: 'Multiplication', gradeLevel: 'Grade 3', accuracy: 100, correctAnswers: 4, incorrectAnswers: 0, totalQuestions: 4 },
   ],
+  topicLinkedEvidenceCount: 9,
+  questTopicLinkedEvidenceCount: 9,
+  unmappedQuestTopicIncorrectAnswers: 0,
+  questTopicPerformance: [
+    { canonicalTaskId: 'oakleaf-bandits', taskLabel: 'Oakleaf Bandits', topicId: 'fractions', topic: 'Fractions', gradeLevel: 'Grade 3', accuracy: 60, correctAnswers: 3, incorrectAnswers: 2, totalQuestions: 5 },
+    { canonicalTaskId: 'oakleaf-bandits', taskLabel: 'Oakleaf Bandits', topicId: 'multiplication', topic: 'Multiplication', gradeLevel: 'Grade 3', accuracy: 100, correctAnswers: 4, incorrectAnswers: 0, totalQuestions: 4 },
+  ],
   playtimeMinutes: 24,
 };
 
@@ -48,8 +55,8 @@ const jsonResponse = (body, { ok = true, status = 200 } = {}) => ({
 const validSelection = {
   grounding_policy_version: GROUNDING_POLICY_VERSION,
   performance_claim_ids: ['overall_accuracy', 'current_quest'],
-  strength_claim_ids: ['topic_grade_3_multiplication_strength'],
-  weakness_claim_ids: ['topic_grade_3_fractions_weakness'],
+  strength_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_multiplication_strength'],
+  weakness_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_fractions_weakness'],
 };
 
 const inputFor = () => buildGroundedInsightInput({ gradeLevel: 'Grade 3', metrics });
@@ -77,9 +84,12 @@ test('uses only minimized deterministic facts and policy version in grounded ins
     current_difficulty: null,
     difficulty_accuracy: { easy: 100, medium: 50, hard: null },
     topic_performance: [
-      { topic_id: 'fractions', grade_level: 'Grade 3', correct_answers: 3, total_questions: 5 },
-      { topic_id: 'multiplication', grade_level: 'Grade 3', correct_answers: 4, total_questions: 4 },
+      { topic_id: 'fractions', grade_level: 'Grade 3', canonical_task_id: 'oakleaf-bandits', task_label: 'Oakleaf Bandits', correct_answers: 3, total_questions: 5 },
+      { topic_id: 'multiplication', grade_level: 'Grade 3', canonical_task_id: 'oakleaf-bandits', task_label: 'Oakleaf Bandits', correct_answers: 4, total_questions: 4 },
     ],
+    topic_linked_evidence_count: 9,
+    quest_topic_linked_evidence_count: 9,
+    unmapped_quest_topic_incorrect_answers: 0,
     unmapped_topic_incorrect_answers: 0,
     topic_evidence_status: 'weaknesses_identified',
     playtime_minutes: 24,
@@ -116,7 +126,7 @@ test('includes deterministic per-quest timing and graded evidence in the provide
   const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics, activityLogs, quizSessions });
   assert.deepEqual(input.quest_evidence.map((row) => row.canonical_task_id), ['go-to-teachers-house', 'oakleaf-bandits', 'tutorial']);
   assert.deepEqual(input.quest_evidence.find((row) => row.canonical_task_id === 'oakleaf-bandits'), {
-    canonical_task_id: 'oakleaf-bandits', label: 'Bandit Challenge', map_id: 'oakleaf_village',
+    canonical_task_id: 'oakleaf-bandits', label: 'Oakleaf Bandits', map_id: 'oakleaf_village',
     duration_seconds: 240, correct_answers: 2, incorrect_answers: 3, total_questions: 5,
     accuracy: 40, average_response_seconds: 25,
   });
@@ -138,7 +148,8 @@ test('metrics semantics and current difficulty are fingerprinted without changin
 test('fingerprints canonical Grade-topic answer totals used for refreshed grounded insights', () => {
   const canonicalMetrics = {
     ...metrics,
-    topicPerformance: [{
+    questTopicPerformance: [{
+      canonicalTaskId: 'oakleaf-bandits',
       topicId: 'subtraction',
       topic: 'Subtraction',
       gradeLevel: 'Grade 1',
@@ -147,26 +158,30 @@ test('fingerprints canonical Grade-topic answer totals used for refreshed ground
       totalQuestions: 5,
       accuracy: 40,
     }],
+    questTopicLinkedEvidenceCount: 5,
+    unmappedQuestTopicIncorrectAnswers: 3,
   };
   const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics: canonicalMetrics });
   const changedTotals = buildGroundedInsightInput({
     gradeLevel: 'Grade 1',
     metrics: {
       ...canonicalMetrics,
-      topicPerformance: [{ ...canonicalMetrics.topicPerformance[0], correctAnswers: 3, incorrectAnswers: 2, accuracy: 60 }],
+      questTopicPerformance: [{ ...canonicalMetrics.questTopicPerformance[0], correctAnswers: 3, incorrectAnswers: 2, accuracy: 60 }],
     },
   });
   const changedGrade = buildGroundedInsightInput({
     gradeLevel: 'Grade 2',
     metrics: {
       ...canonicalMetrics,
-      topicPerformance: [{ ...canonicalMetrics.topicPerformance[0], gradeLevel: 'Grade 2' }],
+      questTopicPerformance: [{ ...canonicalMetrics.questTopicPerformance[0], gradeLevel: 'Grade 2' }],
     },
   });
 
   assert.deepEqual(input.topic_performance, [{
     topic_id: 'subtraction',
     grade_level: 'Grade 1',
+    canonical_task_id: 'oakleaf-bandits',
+    task_label: 'Oakleaf Bandits',
     correct_answers: 2,
     total_questions: 5,
   }]);
@@ -178,9 +193,16 @@ test('grounds topics only for the student current Grade and fingerprints learnin
   const scopedMetrics = {
     ...metrics,
     incorrectAnswers: 4,
+    totalQuestions: 10,
+    questTopicLinkedEvidenceCount: 5,
+    unmappedQuestTopicIncorrectAnswers: 4,
     topicPerformance: [
       { topicId: 'addition', gradeLevel: 'Grade 1', correctAnswers: 1, totalQuestions: 5 },
       { topicId: 'fractions', gradeLevel: 'Grade 3', correctAnswers: 0, totalQuestions: 5 },
+    ],
+    questTopicPerformance: [
+      { canonicalTaskId: 'oakleaf-bandits', topicId: 'addition', gradeLevel: 'Grade 1', correctAnswers: 1, totalQuestions: 5 },
+      { canonicalTaskId: 'pinehill-bandits', topicId: 'fractions', gradeLevel: 'Grade 3', correctAnswers: 0, totalQuestions: 5 },
     ],
   };
   const currentCycle = buildGroundedInsightInput({
@@ -197,9 +219,9 @@ test('grounds topics only for the student current Grade and fingerprints learnin
   });
 
   assert.deepEqual(currentCycle.topic_performance, [
-    { topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 1, total_questions: 5 },
+    { topic_id: 'addition', grade_level: 'Grade 1', canonical_task_id: 'oakleaf-bandits', task_label: 'Oakleaf Bandits', correct_answers: 1, total_questions: 5 },
   ]);
-  assert.equal(currentCycle.topic_evidence_status, 'weaknesses_identified');
+  assert.equal(currentCycle.topic_evidence_status, 'topic_metadata_partial');
   assert.notEqual(buildInsightFingerprint(currentCycle), buildInsightFingerprint(nextCycle));
 });
 
@@ -233,7 +255,7 @@ test('uses a mocked claim selection and returns only backend-rendered text', asy
   assert.equal(providerRequest.body.text.format.schema.additionalProperties, false);
   assert.match(insight.performance_insight, /Recorded overall accuracy is 60%/);
   assert.match(insight.performance_insight, /Current quest: Fraction Forest/);
-  assert.deepEqual(insight.strengths, ['Recorded Grade 3 Multiplication accuracy is 100% (4 of 4 correct), meeting the current positive-evidence boundary.']);
+  assert.deepEqual(insight.strengths, ['Recorded Multiplication — Oakleaf Bandits accuracy is 100% (4 of 4 correct), meeting the current positive-evidence boundary.']);
   assert.equal(JSON.stringify(insight).includes('85%'), false);
 });
 

@@ -83,6 +83,14 @@ export default function TeacherTopAchievers() {
     const numericValue = Number(value);
     return Number.isFinite(numericValue) ? `${numericValue.toFixed(1)}%` : 'No Data';
   };
+  const formatCompletionPercent = (value) => (
+    value === null || value === undefined || value === '' ? 'N/A' : formatPercent(value)
+  );
+  const completionValue = (row) => (
+    Object.prototype.hasOwnProperty.call(row, 'completion_percentage')
+      ? row.completion_percentage
+      : row.progress_percentage
+  );
   const metricPercentWidth = (value) => {
     if (value === null || value === undefined || value === '') return null;
     const numericValue = Number(value);
@@ -104,7 +112,7 @@ export default function TeacherTopAchievers() {
     { header: 'Student Name', value: (row) => row.student_name },
     { header: 'Grade', value: (row) => row.grade_level },
     { header: 'Section', value: (row) => row.section },
-    { header: 'Progress', value: (row) => formatPercent(row.completion_percentage ?? row.progress_percentage) },
+    { header: 'Progress', value: (row) => formatCompletionPercent(completionValue(row)) },
     { header: 'Game Score', value: (row) => formatMetric(row.game_score ?? row.score) },
     { header: 'Correct / Total', value: (row) => `${formatMetric(row.total_correct_answers ?? row.correct_answers)}/${formatMetric(row.total_questions_answered ?? row.total_questions)}` },
     { header: 'Completed Quests', value: (row) => formatMetric(row.quests_completed ?? row.total_quests_completed) },
@@ -230,7 +238,7 @@ export default function TeacherTopAchievers() {
                     <tbody>
                       {paginatedAchievers.rows.map((achiever, index) => {
                         const rank = paginatedAchievers.start + index;
-                        const completion = achiever.completion_percentage ?? achiever.progress_percentage;
+                        const completion = completionValue(achiever);
                         const completionWidth = metricPercentWidth(completion);
                         const gameScore = achiever.game_score ?? achiever.score ?? 0;
                         return (
@@ -251,7 +259,7 @@ export default function TeacherTopAchievers() {
                                 <div className="progress-fill" style={{ width: `${completionWidth}%` }} />
                               )}
                             </div>
-                            <span className="progress-text">{formatPercent(completion)}</span>
+                            <span className="progress-text">{formatCompletionPercent(completion)}</span>
                           </td>
                           <td className="game-score-cell">{formatMetric(gameScore)}</td>
                           <td>{formatMetric(achiever.total_correct_answers ?? achiever.correct_answers)}/{formatMetric(achiever.total_questions_answered ?? achiever.total_questions)}</td>

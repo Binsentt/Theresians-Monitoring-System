@@ -20,11 +20,8 @@ export const filterDirectoryRows = (rows, filters = {}, type) => {
   if (typeof filters === 'string') {
     const fields = type === 'student'
       ? ['student_id', 'student_name', 'grade_level', 'section', 'parent_name', 'parent_relationship', 'created_at']
-      : ['teacher_id', 'teacher_name', 'email', 'role', 'directory_status', 'created_at'];
-    return safeRows.filter((row) => matchesTableSearch({
-      ...row,
-      directory_status: formatDirectoryStatus(row),
-    }, filters, fields));
+      : ['teacher_id', 'teacher_name', 'email', 'role', 'created_at'];
+    return safeRows.filter((row) => matchesTableSearch(row, filters, fields));
   }
   const idFilter = type === 'student'
     ? normalizeText(normalizeDirectoryStudentId(filters.id) || filters.id)
@@ -54,17 +51,11 @@ export const filterDirectoryRows = (rows, filters = {}, type) => {
       && (!nameFilter || name.includes(nameFilter))
       && (!gradeFilter || grade.includes(gradeFilter))
       && (!sectionFilter || section.includes(sectionFilter))
-      && (!statusFilter || status.includes(statusFilter))
+      && (type !== 'student' || !statusFilter || status.includes(statusFilter))
       && (!emailFilter || email.includes(emailFilter))
       && (!roleFilter || role.includes(roleFilter));
   });
 };
-
-export const formatDirectoryStatus = (row) => (
-  row?.is_archived || row?.isArchived
-    ? 'Archived'
-    : String(row?.status || '').trim() || 'Active'
-);
 
 export const formatDirectoryRole = (role) => {
   const normalizedRole = normalizeRole(role);

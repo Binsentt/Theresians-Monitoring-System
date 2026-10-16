@@ -141,6 +141,26 @@ describe('GroundedAiAnalysis', () => {
     expect(container.textContent).not.toContain('No supported weakness is identified from the recorded evidence.');
   });
 
+  test('shows task-and-topic evidence coverage and clear perfect-score empty states', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis aiInsight={{
+        status: 'generated',
+        valid_result_count: 4,
+        topic_linked_evidence_count: 4,
+        quest_topic_linked_evidence_count: 4,
+        total_question_count: 4,
+        incorrect_answers: 0,
+        topic_evidence_status: 'perfect_recorded_results',
+        insight: { performance_insight: 'All four recorded answers were correct.', strengths: [], weaknesses: [], recommendations: [] },
+      }} />
+    ));
+
+    expect(container.textContent).toContain('Topic-linked evidence: 4 of 4 recorded answers');
+    expect(container.textContent).toContain('Quest/topic-linked evidence: 4 of 4 recorded answers');
+    expect(container.textContent).toContain('No weaknesses identified — no incorrect answers were recorded.');
+    expect(container.textContent).toContain('No additional practice recommendation is needed based on the current perfect recorded results.');
+  });
+
   test('shows explicit weakness and recommendation cards plus a generate action when insight is not generated yet', async () => {
     const onRefresh = jest.fn();
     await act(async () => root.render(

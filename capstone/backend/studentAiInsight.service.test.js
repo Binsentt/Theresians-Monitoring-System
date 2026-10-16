@@ -71,6 +71,10 @@ const metricsFor = (answers) => {
       hard: { accuracy: null },
     },
     topicPerformance: [],
+    topicLinkedEvidenceCount: 0,
+    questTopicLinkedEvidenceCount: 0,
+    unmappedQuestTopicIncorrectAnswers: 0,
+    questTopicPerformance: [],
     playtimeMinutes: 0,
   };
 };
@@ -135,6 +139,7 @@ test('five graded answers with two correct and three incorrect produce grounded 
     canonical_topic_id: 'subtraction',
     canonical_grade_level: 'Grade 1',
     canonical_difficulty: 'Easy',
+    canonical_task_id: 'first-bandit-math-challenge',
     result_event_id: `qa-battle-${index + 1}`,
   }));
   const metrics = buildStudentAnalyticsMetrics({
@@ -156,12 +161,12 @@ test('five graded answers with two correct and three incorrect produce grounded 
     grounding_policy_version: GROUNDING_POLICY_VERSION,
     performance_claim_ids: ['results_recorded', 'answer_counts', 'overall_accuracy'],
     strength_claim_ids: [],
-    weakness_claim_ids: ['topic_grade_1_subtraction_weakness'],
+    weakness_claim_ids: ['quest_first_bandit_math_challenge_topic_grade_1_subtraction_weakness'],
   }, catalog);
   assert.match(grounded.performance_insight, /40%/);
   assert.match(grounded.weaknesses[0], /40%/);
   assert.deepEqual(grounded.recommendations, [
-    'For Grade 1 Subtraction, review the 3 recorded incorrect answers and practice additional Subtraction problems; the recorded result was 2 of 5 correct (40%).',
+    'Practice Grade 1 Subtraction, especially the types missed during First Bandit Math Challenge. Review the 3 recorded incorrect answers before retrying similar questions (2 of 5 correct; 40% accuracy).',
   ]);
 
   const harness = createHarness();
@@ -205,6 +210,14 @@ test('current canonical topic evidence refreshes cached weakness and recommendat
       topicId: 'subtraction', topic: 'Subtraction', gradeLevel: 'Grade 1',
       correctAnswers: 2, incorrectAnswers: 3, totalQuestions: 5, accuracy: 40,
     }],
+    topicLinkedEvidenceCount: 5,
+    questTopicLinkedEvidenceCount: 5,
+    unmappedQuestTopicIncorrectAnswers: 0,
+    questTopicPerformance: [{
+      canonicalTaskId: 'oakleaf-bandits', taskLabel: 'Oakleaf Bandits',
+      topicId: 'subtraction', topic: 'Subtraction', gradeLevel: 'Grade 1',
+      correctAnswers: 2, incorrectAnswers: 3, totalQuestions: 5, accuracy: 40,
+    }],
   };
   const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics });
   harness.setSaved({
@@ -225,8 +238,8 @@ test('current canonical topic evidence refreshes cached weakness and recommendat
   assert.equal(state.status, 'cached');
   assert.equal(providerCalls, 0);
   assert.equal(state.topic_evidence_status, 'weaknesses_identified');
-  assert.match(state.insight.weaknesses[0], /Grade 1 Subtraction accuracy is 40%/);
-  assert.match(state.insight.recommendations[0], /review the 3 recorded incorrect answers/);
+  assert.match(state.insight.weaknesses[0], /Subtraction — Oakleaf Bandits.*40%/);
+  assert.match(state.insight.recommendations[0], /Practice Grade 1 Subtraction.*Oakleaf Bandits/);
 });
 
 test('paused insight with no cache returns a stable state without provider, transaction, or write', async () => {

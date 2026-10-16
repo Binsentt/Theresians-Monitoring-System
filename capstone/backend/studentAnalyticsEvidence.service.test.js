@@ -195,3 +195,37 @@ test('does not assign an aggregate result to one topic when linked question meta
   assert.deepEqual(evidence[0].metrics.topicPerformance, []);
   assert.equal(evidence[0].metrics.topicEvidenceStatus, 'topic_metadata_unavailable');
 });
+
+test('recovers Current Quest only from canonical activity inside the Student current learning cycle', async () => {
+  const queries = [];
+  const client = {
+    async query(sql) {
+      const normalized = String(sql).replace(/\s+/g, ' ').trim();
+      queries.push(normalized);
+      if (normalized.startsWith('SELECT progress')) return { rows: [{
+        student_id: 18,
+        current_learning_cycle_version: 5,
+        current_learning_cycle_started_at: '2026-09-10T00:00:00.000Z',
+        current_quest: 'N/A',
+      }] };
+      if (normalized.startsWith('SELECT al.student_id')) return { rows: [{
+        student_id: 18,
+        canonical_task_id: 'pinehill-bandits',
+        current_quest: null,
+        activity_timestamp: '2026-09-11T00:00:00.000Z',
+        session_id: '900',
+      }] };
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const [evidence] = await loadStudentAnalyticsEvidence({
+    progressQuery: 'SELECT progress FROM public.student_progress',
+  }, { connect: async () => client });
+
+  const activityQuery = queries.find((sql) => sql.startsWith('SELECT al.student_id'));
+  assert.match(activityQuery, /current_learning_cycle_version/i);
+  assert.match(activityQuery, /activity_timestamp/i);
+  assert.equal(evidence.activityLogs.length, 1);
+  assert.equal(evidence.metrics.currentQuest, 'Pinehill Bandits');
+});

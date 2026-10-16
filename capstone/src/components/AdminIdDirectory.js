@@ -14,7 +14,6 @@ import {
   filterDirectoryRows,
   formatDirectoryDate,
   formatDirectoryRole,
-  formatDirectoryStatus,
 } from './idDirectory.utils';
 import '../styles/iddirectory.css';
 
@@ -69,7 +68,6 @@ function TeacherDirectoryTable({ rows }) {
             <th scope="col">Teacher Name</th>
             <th scope="col">Email</th>
             <th scope="col">Role</th>
-            <th scope="col">Status</th>
             <th scope="col">Date Added</th>
           </tr>
         </thead>
@@ -80,7 +78,6 @@ function TeacherDirectoryTable({ rows }) {
               <td>{row.teacher_name || '—'}</td>
               <td>{row.email || '—'}</td>
               <td>{formatDirectoryRole(row.role)}</td>
-              <td>{formatDirectoryStatus(row)}</td>
               <td>{formatDirectoryDate(row.created_at)}</td>
             </tr>
           ))}
@@ -284,7 +281,7 @@ export default function AdminIdDirectory() {
                   <div className="id-directory-filters" aria-label="Teacher ID Directory controls">
                     <label className="id-directory-filter">
                       <span>Search teachers</span>
-                      <input aria-label="Search Teacher ID Directory" type="search" value={teacherSearch} onChange={(event) => { setTeacherSearch(event.target.value); setTeacherPage(1); }} placeholder="Name, Teacher ID, email, role, status, or date" />
+                      <input aria-label="Search Teacher ID Directory" type="search" value={teacherSearch} onChange={(event) => { setTeacherSearch(event.target.value); setTeacherPage(1); }} placeholder="Name, Teacher ID, email, role, or date" />
                     </label>
                     <TablePrintButton reportTitle="Teacher ID Directory" reportContext={formatReportContext({ scope: teacherSearch ? `Search: ${teacherSearch}` : 'All active Teacher accounts', recordCount: filteredTeachers.length })} label="Print Teacher Directory" showPrintHeading={false} />
                   </div>
@@ -302,7 +299,6 @@ export default function AdminIdDirectory() {
                     { header: 'Teacher Name', value: (row) => row.teacher_name || '—' },
                     { header: 'Email', value: (row) => row.email || '—' },
                     { header: 'Role', value: (row) => formatDirectoryRole(row.role) },
-                    { header: 'Status', value: formatDirectoryStatus },
                     { header: 'Date Added', value: (row) => formatDirectoryDate(row.created_at) },
                   ]}
                 />

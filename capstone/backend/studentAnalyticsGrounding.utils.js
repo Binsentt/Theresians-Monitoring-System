@@ -1,9 +1,10 @@
-const GROUNDING_POLICY_VERSION = 'grounded-claims-v5';
+const GROUNDING_POLICY_VERSION = 'grounded-claims-v6';
 const WEAK_PERFORMANCE_THRESHOLD = 75;
 const MAX_SELECTION_ITEMS = 5;
 const MAX_TOPIC_LABEL_LENGTH = 80;
 const MAX_RENDERED_PERFORMANCE_LENGTH = 900;
 const { SCOPES, getTopicById, normalizeGradeLevel, normalizeTopicId } = require('./curriculumScopeRegistry');
+const { canonicalTaskDisplayLabel, PLAYER_FACING_TASKS } = require('./questGraph.utils');
 
 const INSIGHT_VALIDATION_STAGES = Object.freeze({
   RESPONSE_SHAPE_INVALID: 'RESPONSE_SHAPE_INVALID',
@@ -125,18 +126,23 @@ function addObservedTopicClaims(catalog, topicPerformance, input) {
   const candidates = (Array.isArray(topicPerformance) ? topicPerformance : []).map((topic) => {
     const topicId = normalizeTopicId(topic?.topic_id);
     const gradeLevel = normalizeGradeLevel(topic?.grade_level);
+    const canonicalTaskId = String(topic?.canonical_task_id || '').trim().toLowerCase();
+    const taskLabel = PLAYER_FACING_TASKS.includes(canonicalTaskId)
+      ? canonicalTaskDisplayLabel(canonicalTaskId) : null;
     const canonicalTopic = topicId ? getTopicById(topicId) : null;
     const belongsToGrade = Boolean(gradeLevel && topicId && SCOPES.some((scope) => (
       scope.grade_level === gradeLevel && scope.topic_ids.includes(topicId)
     )));
     const correct = topic?.correct_answers;
     const total = topic?.total_questions;
-    if (!canonicalTopic || !belongsToGrade || !isNonNegativeInteger(correct)
+    if (!canonicalTopic || !taskLabel || !belongsToGrade || !isNonNegativeInteger(correct)
       || !isNonNegativeInteger(total) || total < 1 || correct > total
       || (studentGrade && gradeLevel !== studentGrade)) return null;
     return {
       topicId,
       gradeLevel,
+      canonicalTaskId,
+      taskLabel,
       canonicalTopic,
       correct,
       total,
@@ -146,26 +152,28 @@ function addObservedTopicClaims(catalog, topicPerformance, input) {
   }).filter(Boolean).sort((left, right) => left.accuracy - right.accuracy
     || right.incorrect - left.incorrect
     || right.total - left.total
+    || left.canonicalTaskId.localeCompare(right.canonicalTaskId)
     || left.topicId.localeCompare(right.topicId));
 
-  candidates.forEach(({ topicId, gradeLevel, canonicalTopic, correct, total, incorrect, accuracy }) => {
+  candidates.forEach(({ topicId, gradeLevel, canonicalTaskId, taskLabel, canonicalTopic, correct, total, incorrect, accuracy }) => {
 
-    const claimPrefix = `topic_${gradeLevel.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${topicId}`;
+    const claimPrefix = `quest_${canonicalTaskId.replace(/[^a-z0-9]+/g, '_')}_topic_${gradeLevel.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${topicId}`;
     if (seen.has(claimPrefix)) return;
     seen.add(claimPrefix);
     validTopics += 1;
     const accuracyText = formatPercentage(accuracy);
     const subjectLabel = `${gradeLevel} ${canonicalTopic.display_label}`;
+    const contextLabel = `${canonicalTopic.display_label} — ${taskLabel}`;
     addPerformanceClaim(
       catalog,
       `${claimPrefix}_accuracy`,
-      `Recorded ${subjectLabel} accuracy is ${accuracyText} (${correct} of ${total} correct; ${incorrect} incorrect).`
+      `Recorded ${contextLabel} accuracy is ${accuracyText} (${correct} of ${total} answers correct; ${incorrect} incorrect).`
     );
 
     if (accuracy >= WEAK_PERFORMANCE_THRESHOLD) {
       addClaim(catalog, 'strength', {
         id: `${claimPrefix}_strength`,
-        text: `Recorded ${subjectLabel} accuracy is ${accuracyText} (${correct} of ${total} correct), meeting the current positive-evidence boundary.`,
+        text: `Recorded ${contextLabel} accuracy is ${accuracyText} (${correct} of ${total} correct), meeting the current positive-evidence boundary.`,
       });
       return;
     }
@@ -173,30 +181,41 @@ function addObservedTopicClaims(catalog, topicPerformance, input) {
     supportedWeaknesses += 1;
     addClaim(catalog, 'weakness', {
       id: `${claimPrefix}_weakness`,
-      text: `Recorded ${subjectLabel} accuracy is ${accuracyText} (${correct} of ${total} correct; ${incorrect} incorrect), below the current ${WEAK_PERFORMANCE_THRESHOLD}% evidence boundary${total < 5 ? '; limited evidence' : ''}.`,
+      text: `${canonicalTopic.display_label} — ${taskLabel}: ${incorrect} of ${total} answers were incorrect (${accuracyText} accuracy). This is below the current ${WEAK_PERFORMANCE_THRESHOLD}% evidence boundary${total < 5 ? '; limited evidence' : ''}.`,
     });
     addClaim(catalog, 'recommendation', {
       id: `practice_${claimPrefix}`,
       supportId: `${claimPrefix}_weakness`,
       supportCategory: 'weakness',
-      text: `For ${subjectLabel}, review the ${incorrect} recorded incorrect ${incorrect === 1 ? 'answer' : 'answers'} and practice additional ${canonicalTopic.display_label} problems; the recorded result was ${correct} of ${total} correct (${accuracyText}).`,
+      text: `Practice Grade ${gradeLevel.replace(/^Grade\s+/i, '')} ${canonicalTopic.display_label}, especially the types missed during ${taskLabel}. Review the ${incorrect} recorded incorrect ${incorrect === 1 ? 'answer' : 'answers'} before retrying similar questions (${correct} of ${total} correct; ${accuracyText} accuracy).`,
     });
   });
 
-  if (validTopics === 0 && isNonNegativeInteger(input.incorrect_answers) && input.incorrect_answers > 0) {
+  const hasRecordedPerfectResults = isNonNegativeInteger(input.total_questions)
+    && input.total_questions > 0
+    && input.incorrect_answers === 0;
+  const hasQuestTopicMetadataGap = isNonNegativeInteger(input.incorrect_answers)
+    && input.incorrect_answers > 0
+    && (validTopics === 0 || (isNonNegativeInteger(input.unmapped_quest_topic_incorrect_answers)
+      && input.unmapped_quest_topic_incorrect_answers > 0));
+  if (hasQuestTopicMetadataGap) {
     addPerformanceClaim(
       catalog,
       'topic_evidence_unavailable',
-      'Incorrect answers are recorded, but no validated Grade/topic-linked question-set evidence is available to identify a specific math topic weakness.'
+      validTopics === 0
+        ? 'Incorrect answers are recorded, but no validated Grade/topic/task-linked question evidence is available to identify the specific Math topic and quest context.'
+        : 'Some incorrect answers are recorded without validated Grade/topic/task linkage; only the linked answers are used for quest-specific weakness claims.'
     );
   }
-  catalog.topicEvidenceStatus = supportedWeaknesses > 0
-    ? 'weaknesses_identified'
-    : validTopics === 0 && isNonNegativeInteger(input.incorrect_answers) && input.incorrect_answers > 0
-      ? 'topic_metadata_unavailable'
-      : validTopics > 0
-        ? 'no_supported_weakness'
-        : 'no_topic_evidence';
+  catalog.topicEvidenceStatus = hasRecordedPerfectResults
+    ? 'perfect_recorded_results'
+    : hasQuestTopicMetadataGap
+      ? (validTopics > 0 ? 'topic_metadata_partial' : 'topic_metadata_unavailable')
+      : supportedWeaknesses > 0
+        ? 'weaknesses_identified'
+        : validTopics > 0
+          ? 'no_supported_weakness'
+          : 'no_topic_evidence';
 }
 
 function freezeCatalog(catalog) {
@@ -388,7 +407,7 @@ function renderGroup(ids, catalog, category, separator = '\n') {
 function renderValidatedClaimSelection(selection, catalog) {
   const groups = validateClaimSelection(selection, catalog);
   const performanceClaims = groups.performance_claim_ids.map((id) => findClaim(catalog, 'performance', id));
-  if (catalog.topicEvidenceStatus === 'topic_metadata_unavailable') {
+  if (['topic_metadata_unavailable', 'topic_metadata_partial'].includes(catalog.topicEvidenceStatus)) {
     const missingTopicClaim = findClaim(catalog, 'performance', 'topic_evidence_unavailable');
     if (missingTopicClaim) performanceClaims.push(missingTopicClaim);
   }

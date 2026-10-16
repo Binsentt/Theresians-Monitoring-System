@@ -106,7 +106,12 @@ test('successful insight generation persists once and unchanged evidence verifie
   assert.equal(result.second.status, 'cached');
   assert.equal(result.cacheVerification, 'hit');
   assert.equal(providerCalls, 1);
-  assert.deepEqual(harness.getSaved().insight, generatedInsight);
+  assert.deepEqual(harness.getSaved().insight, {
+    ...generatedInsight,
+    topic_evidence_status: 'topic_metadata_unavailable',
+  });
+  assert.deepEqual(harness.getSaved().insight.weaknesses, []);
+  assert.deepEqual(harness.getSaved().insight.recommendations, []);
 });
 
 const withQaArtifact = async (callback) => {
