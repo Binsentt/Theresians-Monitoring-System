@@ -278,28 +278,30 @@ test('read aliases and AI evidence never present legacy answer-like percentages 
   const [row] = await get('/api/students/progress');
   const { children: [child] } = await get('/api/parent/children', 'parent');
   assert.equal(detail.metrics.accuracy, 75);
-  assert.equal(detail.metrics.totalProgress, 0);
+  assert.equal(detail.metrics.totalProgress, null);
   assert.equal(detail.metrics.reportedTotalProgress, 75);
-  assert.equal(detail.progress.progress_percentage, 0);
-  assert.equal(row.progress_percentage, 0);
-  assert.equal(child.completion_percentage, 0);
+  assert.equal(detail.metrics.totalProgressSource, 'unavailable');
+  assert.equal(detail.metrics.totalProgressVerified, false);
+  assert.equal(detail.progress.progress_percentage, null);
+  assert.equal(row.progress_percentage, null);
+  assert.equal(child.completion_percentage, null);
   const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics: detail.metrics });
-  assert.equal(input.total_progress, 0);
-  assert.equal(input.total_progress_verified, true);
+  assert.equal(input.total_progress, null);
+  assert.equal(input.total_progress_verified, false);
   assert.equal(input.accuracy, 75);
 });
 
-test('empty canonical progress is zero while unattempted accuracy and difficulty remain null', async (t) => {
+test('empty canonical progress is unavailable while unattempted accuracy and difficulty remain null', async (t) => {
   const get = await setup(t, []);
   fixture.progress.correct_answers = null;
   fixture.progress.total_questions = null;
   const overview = await get('/api/analytics/overview');
-  assert.equal(overview.averageProgress, 0);
-  assert.equal(overview.gradeSummary[0].averageProgress, 0);
+  assert.equal(overview.averageProgress, null);
+  assert.equal(overview.gradeSummary[0].averageProgress, null);
   assert.equal(overview.gradeSummary[0].averageAccuracy, null);
   assert.equal(overview.gradeSummary[0].difficultyAverage.medium, null);
   const detail = await get('/api/student-progress/44');
-  assert.equal(detail.analyticsReadiness.performanceSignals.progressPercentage, 0);
+  assert.equal(detail.analyticsReadiness.performanceSignals.progressPercentage, null);
   assert.equal(detail.analyticsReadiness.performanceSignals.accuracyRate, null);
 });
 
