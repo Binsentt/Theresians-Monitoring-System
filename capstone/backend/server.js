@@ -170,7 +170,11 @@ const {
   normalizeTopAchieverRow,
   QUALIFYING_ACTIVITY_DESCRIPTION,
 } = require('./topAchieversCompletion.utils');
-const { loadStudentAnalyticsEvidence, withStudentAnalyticsAliases } = require('./studentAnalyticsEvidence.service');
+const {
+  loadStudentAnalyticsEvidence,
+  buildStudentAnalyticsFallbackEntries,
+  withStudentAnalyticsAliases,
+} = require('./studentAnalyticsEvidence.service');
 const { resolveStudentAiInsight } = require('./studentAiInsight.service');
 const {
   archiveParentFamily,
@@ -9247,7 +9251,7 @@ const handleTopAchieversRequest = async (req, res) => {
                  ) AS activity
           FROM public.activity_logs al
           JOIN public.playtime_sessions ps
-            ON ps.id = al.session_id
+            ON ps.id::text = al.session_id
            AND ps.student_id = al.student_id
           WHERE al.student_id = p.student_id
             AND al.activity_event_id IS NOT NULL
@@ -10033,25 +10037,31 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
 
     const countResult = await pool.query(
       `SELECT COUNT(*)::INTEGER AS total,
-               COALESCE(SUM(
-                 CASE
-                   WHEN COALESCE(ps.server_started_at, ps.start_time) < COALESCE(student_account.screen_time_reset_at, '-infinity'::timestamptz) THEN 0
-                   WHEN ps.status = 'Playing' AND ps.end_time IS NULL THEN GREATEST(
-                    0,
-                    FLOOR(EXTRACT(EPOCH FROM (
-                      ${getPlaytimeEffectiveEndSql('ps.')} - COALESCE(ps.server_started_at, ps.start_time)
-                    )))::INTEGER
-                  )
-                  ELSE COALESCE(NULLIF(ps.total_playtime_seconds, 0), ps.total_playtime_minutes * 60, 0)
-                END
-              ), 0)::BIGINT AS total_playtime_seconds,
-               COUNT(*) FILTER (
-                 WHERE (${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) = 'Playing'
+               COALESCE(SUM(student_summary.total_playtime_seconds), 0)::BIGINT AS total_playtime_seconds,
+               COUNT(*) FILTER (WHERE student_summary.playing_now)::INTEGER AS playing_count
+        FROM (
+          SELECT ps.student_id,
+                 COALESCE(SUM(
+                   CASE
+                     WHEN COALESCE(ps.server_started_at, ps.start_time) < COALESCE(student_account.screen_time_reset_at, '-infinity'::timestamptz) THEN 0
+                     WHEN ps.status = 'Playing' AND ps.end_time IS NULL THEN GREATEST(
+                       0,
+                       FLOOR(EXTRACT(EPOCH FROM (
+                         ${getPlaytimeEffectiveEndSql('ps.')} - COALESCE(ps.server_started_at, ps.start_time)
+                       )))::INTEGER
+                     )
+                     ELSE COALESCE(NULLIF(ps.total_playtime_seconds, 0), ps.total_playtime_minutes * 60, 0)
+                   END
+                 ), 0)::BIGINT AS total_playtime_seconds,
+                 BOOL_OR(
+                   (${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) = 'Playing'
                    AND COALESCE(ps.server_started_at, ps.start_time) >= COALESCE(student_account.screen_time_reset_at, '-infinity'::timestamptz)
-               )::INTEGER AS playing_count
-        FROM public.playtime_sessions ps
-        LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
-       WHERE 1=1${filterResult.whereSql}`,
+                 ) AS playing_now
+          FROM public.playtime_sessions ps
+          LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
+          WHERE 1=1${filterResult.whereSql}
+          GROUP BY ps.student_id
+        ) student_summary`,
       params
     );
 
@@ -10060,7 +10070,7 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
     const result = await pool.query(
       `SELECT ps.id,
               ps.student_id,
-              student_account.game_student_id,
+              ps.game_student_id,
               ps.parent_id,
               ps.student_name,
               ps.student_name AS child_name,
@@ -10069,51 +10079,69 @@ const handlePlaytimeListRequest = async (req, res, { scope = 'all' } = {}) => {
               ps.date_played,
               ps.start_time,
                ps.end_time,
-               CASE
-                 WHEN ps.status = 'Playing' AND ps.end_time IS NULL THEN GREATEST(
-                   0,
-                   FLOOR(EXTRACT(EPOCH FROM (
-                     ${getPlaytimeEffectiveEndSql('ps.')} - COALESCE(ps.server_started_at, ps.start_time)
-                   )))::INTEGER
-                 )
-                 ELSE COALESCE(NULLIF(ps.total_playtime_seconds, 0), ps.total_playtime_minutes * 60, 0)
-               END AS total_playtime_seconds,
-               CASE
-                 WHEN ps.status = 'Playing' AND ps.end_time IS NULL THEN GREATEST(
-                   0,
-                   FLOOR(EXTRACT(EPOCH FROM (
-                     ${getPlaytimeEffectiveEndSql('ps.')} - COALESCE(ps.server_started_at, ps.start_time)
-                   )) / 60)::INTEGER
-                 )
-                 ELSE COALESCE(ps.total_playtime_minutes, FLOOR(COALESCE(ps.total_playtime_seconds, 0) / 60), 0)
-               END AS total_playtime_minutes,
-               ps.status,
+               ps.total_playtime_seconds,
+               FLOOR(ps.total_playtime_seconds / 60.0)::INTEGER AS total_playtime_minutes,
+               CASE WHEN ps.student_playing THEN 'Playing' ELSE ps.status END AS status,
                ps.last_heartbeat_at,
                ps.expires_at,
-               (${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) AS presence_status,
-               CASE
-                 WHEN ps.status = 'Playing'
-                  AND ps.end_time IS NULL
-                  AND ${getPlaytimeHeartbeatStaleSql('ps.')}
-                 THEN 'heartbeat_stale'
-                 WHEN ps.status = 'Playing'
-                  AND ps.end_time IS NULL
-                  AND COALESCE(ps.expires_at, NOW()) <= NOW()
-                 THEN 'lease_expired'
-                 ELSE NULL
-               END AS presence_reason,
+               CASE WHEN ps.student_playing THEN 'Playing' ELSE ps.latest_presence_status END AS presence_status,
+               CASE WHEN ps.student_playing THEN NULL ELSE ps.latest_presence_reason END AS presence_reason,
                ps.created_at,
+                ps.updated_at,
+               ps.student_status,
+               ps.student_is_archived,
+               ps.student_progress_archived_at,
+               NOT ps.student_playing AS screen_time_delete_eligible
+       FROM (
+         SELECT DISTINCT ON (ps.student_id)
+                ps.id,
+                ps.student_id,
+                student_account.game_student_id,
+                ps.parent_id,
+                ps.student_name,
+                ps.grade_level,
+                ps.section,
+                ps.date_played,
+                ps.start_time,
+                ps.end_time,
+                ps.status,
+                ps.last_heartbeat_at,
+                ps.expires_at,
+                ps.created_at,
                 ps.updated_at,
                 student_account.status AS student_status,
                 student_account.is_archived AS student_is_archived,
                 student_account.progress_archived_at AS student_progress_archived_at,
+                COALESCE(SUM(
+                  CASE
+                    WHEN COALESCE(ps.server_started_at, ps.start_time) < COALESCE(student_account.screen_time_reset_at, '-infinity'::timestamptz) THEN 0
+                    WHEN ps.status = 'Playing' AND ps.end_time IS NULL THEN GREATEST(
+                      0,
+                      FLOOR(EXTRACT(EPOCH FROM (
+                        ${getPlaytimeEffectiveEndSql('ps.')} - COALESCE(ps.server_started_at, ps.start_time)
+                      )))::INTEGER
+                    )
+                    ELSE COALESCE(NULLIF(ps.total_playtime_seconds, 0), ps.total_playtime_minutes * 60, 0)
+                  END
+                ) OVER (PARTITION BY ps.student_id), 0)::BIGINT AS total_playtime_seconds,
+                BOOL_OR(
+                  (${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) = 'Playing'
+                  AND COALESCE(ps.server_started_at, ps.start_time) >= COALESCE(student_account.screen_time_reset_at, '-infinity'::timestamptz)
+                ) OVER (PARTITION BY ps.student_id) AS student_playing,
+                (${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) AS latest_presence_status,
                 CASE
-                  WHEN (${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) <> 'Playing'
-                  THEN true ELSE false
-                END AS screen_time_delete_eligible
-       FROM public.playtime_sessions ps
-       LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
-       WHERE 1=1${filterResult.whereSql}
+                  WHEN ps.status = 'Playing' AND ps.end_time IS NULL AND ${getPlaytimeHeartbeatStaleSql('ps.')} THEN 'heartbeat_stale'
+                  WHEN ps.status = 'Playing' AND ps.end_time IS NULL AND COALESCE(ps.expires_at, NOW()) <= NOW() THEN 'lease_expired'
+                  ELSE NULL
+                END AS latest_presence_reason
+         FROM public.playtime_sessions ps
+         LEFT JOIN public.accounts student_account ON student_account.id = ps.student_id
+         WHERE 1=1${filterResult.whereSql}
+         ORDER BY ps.student_id,
+                  ((${getPlaytimePresenceStatusSql('ps.', 'student_account.')}) = 'Playing') DESC,
+                  COALESCE(ps.server_started_at, ps.start_time, ps.created_at) DESC,
+                  ps.id DESC
+       ) ps
        ORDER BY ${sortField} ${sortDirection}, ps.id DESC
        LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
       dataParams
@@ -11037,10 +11065,21 @@ app.get('/api/students/progress', requireAnalyticsAccess, async (req, res) => {
     query += appendAnalyticsScopeFilter({ scope, params, studentColumn: 'a.id' });
     query += " ORDER BY LOWER(COALESCE(NULLIF(a.name, ''), NULLIF(p.student_name, ''), '')), a.id ASC";
 
-    const evidence = await loadStudentAnalyticsEvidence({
-      progressQuery: query, params, normalizeProgress: normalizeStudentProgressRow,
-    }, pool);
-    const rows = sortRowsByStudentName(evidence.map(withStudentAnalyticsAliases));
+    let rows;
+    try {
+      const evidence = await loadStudentAnalyticsEvidence({
+        progressQuery: query, params, normalizeProgress: normalizeStudentProgressRow,
+      }, pool);
+      rows = evidence.map(withStudentAnalyticsAliases);
+    } catch (error) {
+      console.error('Student Progress evidence unavailable; returning scoped Student identities:', error.message);
+      const progressResult = await pool.query(query, params);
+      const fallbackEntries = buildStudentAnalyticsFallbackEntries(
+        progressResult.rows.map(normalizeStudentProgressRow),
+      );
+      rows = fallbackEntries.map(withStudentAnalyticsAliases);
+    }
+    rows = sortRowsByStudentName(rows);
     res.json(rows);
   } catch (err) {
     console.error('Fetch students progress failed:', err.message);

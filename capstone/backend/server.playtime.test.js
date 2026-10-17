@@ -1278,6 +1278,66 @@ test('screen time projects stale open sessions as Offline with a heartbeat cutof
   assert.equal(response.body.data[0].presence_reason, 'heartbeat_stale');
 });
 
+test('Screen Time returns one cumulative summary row per Student across multiple sessions', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  let countSql = '';
+  let dataSql = '';
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  verifiedTokenPayload = { userId: 1, sessionVersion: 0 };
+  setQueryHandler(async (sql, _params, rawSql) => {
+    if (sql.startsWith('select * from public.accounts where id = $1')) {
+      return resultRows([{ id: 1, role: 'admin', session_version: 0 }]);
+    }
+    if (sql.startsWith('update public.playtime_sessions')) return resultRows([]);
+    if (sql.startsWith('select count(*)::integer as total') && sql.includes('from (')) {
+      countSql = String(rawSql);
+      return resultRows([{ total: 1, total_playtime_seconds: 2100, playing_count: 1 }]);
+    }
+    if (sql.startsWith('select ps.id')) {
+      dataSql = String(rawSql);
+      return resultRows([{
+        id: 91,
+        student_id: 44,
+        student_name: 'Ava Santos',
+        date_played: '2026-10-17',
+        start_time: '2026-10-17T09:00:00.000Z',
+        end_time: null,
+        total_playtime_seconds: 2100,
+        total_playtime_minutes: 35,
+        status: 'Playing',
+        presence_status: 'Playing',
+        screen_time_delete_eligible: false,
+      }]);
+    }
+    return emptyResult;
+  });
+
+  const response = await requestJson(baseUrl, '/api/playtime', {
+    headers: { Authorization: 'Bearer admin-token' },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.data.length, 1);
+  assert.equal(response.body.data[0].student_id, 44);
+  assert.equal(response.body.data[0].total_playtime_seconds, 2100);
+  assert.equal(response.body.data[0].start_time, '2026-10-17T09:00:00.000Z');
+  assert.equal(response.body.data[0].status, 'Playing');
+  assert.equal(response.body.pagination.total, 1);
+  assert.equal(response.body.summary.total_playtime_seconds, 2100);
+  assert.equal(response.body.summary.playing_count, 1);
+  assert.match(countSql, /GROUP BY ps\.student_id/i);
+  assert.match(countSql, /SUM\(/i);
+  assert.match(dataSql, /DISTINCT ON\s*\(ps\.student_id\)/i);
+  assert.match(dataSql, /PARTITION BY ps\.student_id/i);
+  assert.match(dataSql, /last_heartbeat_at/i);
+  assert.match(dataSql, /interval '45 seconds'/i);
+});
+
 test('screen time summary covers the complete filtered authorized dataset, not the visible page', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;

@@ -106,7 +106,7 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
        FROM public.activity_logs al
        JOIN public.accounts student ON student.id = al.student_id
        LEFT JOIN public.playtime_sessions session
-         ON session.id = al.session_id
+         ON session.id::text = al.session_id
         AND session.student_id = al.student_id
       WHERE al.student_id = ANY($1::INTEGER[])
         AND (student.current_learning_cycle_started_at IS NULL
@@ -150,7 +150,19 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
   });
 }
 
-function withStudentAnalyticsAliases({ progress, metrics }) {
+function buildStudentAnalyticsFallbackEntries(progressRows = []) {
+  return (Array.isArray(progressRows) ? progressRows : []).map((progress) => ({
+    progress,
+    quizSessions: [],
+    playtimeSessions: [],
+    completedMilestones: null,
+    activityLogs: [],
+    metrics: buildStudentAnalyticsMetrics({ progress }),
+    evidenceStatus: 'unavailable',
+  }));
+}
+
+function withStudentAnalyticsAliases({ progress, metrics, evidenceStatus = null }) {
   return {
     ...progress,
     correct_answers: metrics.correctAnswers,
@@ -164,8 +176,13 @@ function withStudentAnalyticsAliases({ progress, metrics }) {
     difficulty: metrics.currentDifficulty || 'Unknown',
     difficulty_level: metrics.currentDifficulty || 'Unknown',
     difficultyBreakdown: metrics.difficultyBreakdown,
+    ...(evidenceStatus ? { analytics_evidence_status: evidenceStatus } : {}),
     metrics,
   };
 }
 
-module.exports = { loadStudentAnalyticsEvidence, withStudentAnalyticsAliases };
+module.exports = {
+  loadStudentAnalyticsEvidence,
+  buildStudentAnalyticsFallbackEntries,
+  withStudentAnalyticsAliases,
+};

@@ -54,6 +54,27 @@ test('joins committed game results to their canonical question-set Grade/topic b
   assert.equal(evidence[0].metrics.topicLinkedEvidenceCount, 5);
 });
 
+test('matches text activity session IDs to numeric playtime IDs without a PostgreSQL type error', async () => {
+  const queries = [];
+  const client = {
+    async query(sql) {
+      const normalized = String(sql).replace(/\s+/g, ' ').trim();
+      queries.push(normalized);
+      if (normalized.startsWith('SELECT progress')) return { rows: [{ student_id: 18, current_learning_cycle_version: 2 }] };
+      return { rows: [] };
+    },
+    release() {},
+  };
+
+  await loadStudentAnalyticsEvidence({ progressQuery: 'SELECT progress FROM public.student_progress' }, {
+    connect: async () => client,
+  });
+
+  const activityQuery = queries.find((sql) => sql.startsWith('SELECT al.student_id'));
+  assert.match(activityQuery, /session\.id::text\s*=\s*al\.session_id/i);
+  assert.doesNotMatch(activityQuery, /session\.id\s*=\s*al\.session_id/i);
+});
+
 test('recovers a missing question-set topic ID only from that linked file canonical Grade and topic label', async () => {
   const row = {
     resolved_student_id: 18,

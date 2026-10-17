@@ -68,7 +68,7 @@ test('only persisted player-facing current-cycle canonical task-trigger evidence
     serverSource.indexOf("app.get('/api/top-achievers'")
   );
   assert.match(handler, /activity_description = '\$\{QUALIFYING_ACTIVITY_DESCRIPTION\} — ' \|\| LOWER\(BTRIM\(al\.canonical_task_id\)\)/);
-  assert.match(handler, /JOIN public\.playtime_sessions ps\s+ON ps\.id = al\.session_id\s+AND ps\.student_id = al\.student_id/);
+  assert.match(handler, /JOIN public\.playtime_sessions ps\s+ON ps\.id::text = al\.session_id\s+AND ps\.student_id = al\.student_id/);
   assert.match(handler, /'session_record_id', ps\.id/);
   assert.match(handler, /al\.student_id = p\.student_id/);
   assert.match(handler, /al\.activity_event_id IS NOT NULL/);

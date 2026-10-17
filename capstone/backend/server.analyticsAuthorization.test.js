@@ -687,6 +687,68 @@ test('activity logs and top achievers ignore caller-supplied parent and teacher 
   assert.ok(observedScopeParams.some((params) => params.includes(4)), 'parent scope must use authenticated account id');
 });
 
+test('Top Achievers joins text Activity Log session IDs without integer/text equality', async (t) => {
+  reset();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  let topAchieversSql = '';
+  queryHandler = async (sql, _params) => {
+    if (sql.includes('from public.student_game_progress p')) {
+      topAchieversSql = sql;
+      return resultRows([]);
+    }
+    return emptyResult;
+  };
+
+  const response = await requestJson(baseUrl, '/api/top-achievers', { headers: authHeaders('admin') });
+
+  assert.equal(response.status, 200);
+  assert.match(topAchieversSql, /ps\.id::text\s*=\s*al\.session_id/i);
+  assert.doesNotMatch(topAchieversSql, /ps\.id\s*=\s*al\.session_id/i);
+});
+
+test('Student Progress keeps the scoped Student visible when current-cycle analytics evidence is unavailable', async (t) => {
+  reset();
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { reset(); await close(server); });
+
+  let progressReads = 0;
+  queryHandler = async (sql) => {
+    if (sql.startsWith('select p.*') && sql.includes('from public.accounts a')) {
+      progressReads += 1;
+      return resultRows([{
+        student_id: 44,
+        student_name: 'Scoped Student',
+        student_email: 'student@example.test',
+        grade_level: 'Grade 2',
+        section: 'Section A',
+        current_learning_cycle_version: 2,
+        current_canonical_task_id: 'tutorial',
+        current_quest: 'Start the tutorial',
+        completed_player_facing_task_ids: ['tutorial'],
+        progress_percentage: 5,
+      }]);
+    }
+    if (sql.includes('left join public.playtime_sessions session')) {
+      throw new Error('analytics evidence unavailable');
+    }
+    return emptyResult;
+  };
+
+  const response = await requestJson(baseUrl, '/api/students/progress', { headers: authHeaders('admin') });
+
+  assert.equal(response.status, 200);
+  assert.equal(progressReads, 2, 'after evidence failure, the route rereads only the scoped canonical Student rows');
+  assert.equal(response.body.length, 1);
+  assert.equal(response.body[0].student_id, 44);
+  assert.equal(response.body[0].student_name, 'Scoped Student');
+  assert.equal(response.body[0].analytics_evidence_status, 'unavailable');
+  assert.equal(response.body[0].metrics.accuracy, null);
+});
+
 test('each management role is allowed only on its authenticated analytics policy routes', async (t) => {
   reset();
   const server = await listen();
