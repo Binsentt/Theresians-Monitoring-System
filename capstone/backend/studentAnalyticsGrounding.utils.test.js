@@ -50,16 +50,16 @@ test('catalog renders exact supported percentage, count, and current quest facts
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(validSelection, catalog);
 
-  assert.equal(GROUNDING_POLICY_VERSION, 'grounded-claims-v6');
+  assert.equal(GROUNDING_POLICY_VERSION, 'grounded-claims-v7');
   assert.match(insight.performance_insight, /60%/);
   assert.match(insight.performance_insight, /3 correct answers and 2 incorrect answers/);
   assert.match(insight.performance_insight, /Current quest: Fraction Forest\./);
   assert.deepEqual(insight.strengths, []);
   assert.deepEqual(insight.weaknesses, [
-    'Fractions — Oakleaf Bandits: 2 of 5 answers were incorrect (60% accuracy). This is below the current 75% evidence boundary.',
+    'Fractions — Oakleaf Bandits: 2 incorrect answers were recorded (3 of 5 correct; 60% accuracy). This is limited evidence and does not yet show a persistent weakness.',
   ]);
   assert.deepEqual(insight.recommendations, [
-    'Practice Grade 3 Fractions, especially the types missed during Oakleaf Bandits. Review the 2 recorded incorrect answers before retrying similar questions (3 of 5 correct; 60% accuracy).',
+    'Keep practicing Grade 3 Fractions and review the 2 missed questions from Oakleaf Bandits. More recorded answers are needed before judging a persistent weakness.',
   ]);
 });
 
@@ -67,16 +67,16 @@ test('difficulty remains descriptive while canonical Grade-topic evidence suppor
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(selection({
     performance_claim_ids: ['difficulty_easy_accuracy', 'difficulty_normal_accuracy', 'quest_oakleaf_bandits_topic_grade_3_fractions_accuracy'],
-    strength_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_multiplication_strength'],
+    strength_claim_ids: [],
     weakness_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_fractions_weakness'],
   }), catalog);
 
   assert.match(insight.performance_insight, /Easy accuracy is 100%/);
   assert.match(insight.performance_insight, /Normal accuracy is 50%/);
   assert.match(insight.performance_insight, /Fractions — Oakleaf Bandits accuracy is 60%/);
-  assert.deepEqual(insight.strengths, ['Recorded Multiplication — Oakleaf Bandits accuracy is 100% (4 of 4 correct), meeting the current positive-evidence boundary.']);
-  assert.deepEqual(insight.weaknesses, ['Fractions — Oakleaf Bandits: 2 of 5 answers were incorrect (60% accuracy). This is below the current 75% evidence boundary.']);
-  assert.deepEqual(insight.recommendations, ['Practice Grade 3 Fractions, especially the types missed during Oakleaf Bandits. Review the 2 recorded incorrect answers before retrying similar questions (3 of 5 correct; 60% accuracy).']);
+  assert.deepEqual(insight.strengths, []); // Four attempts do not meet the five-answer strength boundary.
+  assert.deepEqual(insight.weaknesses, ['Fractions — Oakleaf Bandits: 2 incorrect answers were recorded (3 of 5 correct; 60% accuracy). This is limited evidence and does not yet show a persistent weakness.']);
+  assert.deepEqual(insight.recommendations, ['Keep practicing Grade 3 Fractions and review the 2 missed questions from Oakleaf Bandits. More recorded answers are needed before judging a persistent weakness.']);
 });
 
 test('difficulty no-data remains descriptive while topic recommendation uses recorded evidence', () => {
@@ -139,14 +139,13 @@ test('positive topic evidence does not turn overall misses or difficulty into we
       'difficulty_normal_no_data',
     ],
     strength_claim_ids: [
-      'completed_quests_strength',
-      'quest_oakleaf_bandits_topic_grade_3_fractions_strength',
+      'topic_grade_3_fractions_strength',
     ],
     weakness_claim_ids: [],
   }, catalog);
 
   assert.equal(insight.performance_insight.length > 0, true);
-  assert.equal(insight.strengths.length, 2);
+  assert.deepEqual(insight.strengths, ['Strong performance in Fractions: 4 of 5 recorded answers correct (80%).']);
   assert.deepEqual(insight.weaknesses, []);
   assert.deepEqual(insight.recommendations, []);
 });
@@ -159,7 +158,7 @@ test('selected weakness deterministically enables its matching recommendation', 
   }), catalog);
 
   assert.deepEqual(insight.recommendations, [
-    'Practice Grade 3 Fractions, especially the types missed during Oakleaf Bandits. Review the 2 recorded incorrect answers before retrying similar questions (3 of 5 correct; 60% accuracy).',
+    'Keep practicing Grade 3 Fractions and review the 2 missed questions from Oakleaf Bandits. More recorded answers are needed before judging a persistent weakness.',
   ]);
 });
 
@@ -175,8 +174,8 @@ test('overall accuracy with one recorded miss is not mislabeled as a math-topic 
     topic_performance: [],
   });
 
-  assert.deepEqual(catalog.weakness, []);
-  assert.deepEqual(catalog.recommendation, []);
+  assert.match(catalog.weakness[0].text, /limited evidence.*does not identify a persistent Math weakness/);
+  assert.match(catalog.recommendation[0].text, /Review the 1 missed question.*More topic-linked results/);
   assert.ok(catalog.performance.some((claim) => /no validated Grade\/topic\/task-linked/i.test(claim.text)));
 });
 
@@ -208,8 +207,8 @@ test('an isolated recorded miss without topic linkage does not invent a subject 
     topic_performance: [],
   });
 
-  assert.deepEqual(catalog.weakness, []);
-  assert.deepEqual(catalog.recommendation, []);
+  assert.match(catalog.weakness[0].text, /limited evidence.*does not identify a persistent Math weakness/);
+  assert.match(catalog.recommendation[0].text, /Review the 1 missed question.*More topic-linked results/);
 });
 
 test('recorded topic weaknesses and matching recommendations do not depend on provider selection', () => {
@@ -231,7 +230,7 @@ test('selected weakness deterministically enables its matching topic recommendat
     weakness_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_fractions_weakness'],
   }), catalog);
 
-  assert.deepEqual(insight.recommendations, ['Practice Grade 3 Fractions, especially the types missed during Oakleaf Bandits. Review the 2 recorded incorrect answers before retrying similar questions (3 of 5 correct; 60% accuracy).']);
+  assert.deepEqual(insight.recommendations, ['Keep practicing Grade 3 Fractions and review the 2 missed questions from Oakleaf Bandits. More recorded answers are needed before judging a persistent weakness.']);
 });
 
 test('topic weaknesses and recommendations are deterministic even when provider selects none', () => {
@@ -301,9 +300,9 @@ test('low topic accuracy with fewer than five attempts is still a supported weak
   }, catalog);
 
   assert.equal(insight.weaknesses.length, 1);
-  assert.match(insight.weaknesses[0], /Addition — Oakleaf Bandits: 3 of 4 answers were incorrect/);
+  assert.match(insight.weaknesses[0], /Addition — Oakleaf Bandits: 3 incorrect answers were recorded/);
   assert.match(insight.weaknesses[0], /limited evidence/i);
-  assert.match(insight.recommendations[0], /Practice Grade 1 Addition.*Oakleaf Bandits/);
+  assert.match(insight.recommendations[0], /Keep practicing Grade 1 Addition.*Oakleaf Bandits/);
   assert.equal(insight.topic_evidence_status, 'weaknesses_identified');
 });
 
@@ -351,8 +350,8 @@ test('multiple topic recommendations are unique and deterministic', () => {
   }), catalog);
 
   assert.deepEqual(insight.recommendations, [
-    'Practice Grade 3 Division, especially the types missed during Pinehill Bandits. Review the 3 recorded incorrect answers before retrying similar questions (2 of 5 correct; 40% accuracy).',
-    'Practice Grade 3 Fractions, especially the types missed during Oakleaf Bandits. Review the 2 recorded incorrect answers before retrying similar questions (3 of 5 correct; 60% accuracy).',
+    'Keep practicing Grade 3 Division and review the 3 missed questions from Pinehill Bandits. More recorded answers are needed before judging a persistent weakness.',
+    'Keep practicing Grade 3 Fractions and review the 2 missed questions from Oakleaf Bandits. More recorded answers are needed before judging a persistent weakness.',
   ]);
 });
 
@@ -386,7 +385,8 @@ test('dynamic provider schema allows only catalog ids and no free-text propertie
   assert.deepEqual(schema.properties.grounding_policy_version.enum, [GROUNDING_POLICY_VERSION]);
   assert.equal(schema.properties.performance_claim_ids.items.enum.includes('overall_accuracy'), true);
   assert.equal(schema.properties.performance_claim_ids.items.enum.includes('improving_accuracy'), false);
-  assert.equal(schema.properties.strength_claim_ids.items.enum.includes('quest_oakleaf_bandits_topic_grade_3_multiplication_strength'), true);
+  assert.equal(schema.properties.strength_claim_ids.maxItems, 0);
+  assert.equal(Object.prototype.hasOwnProperty.call(schema.properties.strength_claim_ids.items, 'enum'), false);
   assert.equal(schema.properties.weakness_claim_ids.items.enum.includes('difficulty_difficult_weakness'), false);
   assert.equal(schema.properties.weakness_claim_ids.minItems, 0);
   assert.equal(Object.prototype.hasOwnProperty.call(schema.properties, 'recommendation_claim_ids'), false);

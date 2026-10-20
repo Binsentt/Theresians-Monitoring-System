@@ -166,7 +166,7 @@ test('five graded answers with two correct and three incorrect produce grounded 
   assert.match(grounded.performance_insight, /40%/);
   assert.match(grounded.weaknesses[0], /40%/);
   assert.deepEqual(grounded.recommendations, [
-    'Practice Grade 1 Subtraction, especially the types missed during First Bandit Math Challenge. Review the 3 recorded incorrect answers before retrying similar questions (2 of 5 correct; 40% accuracy).',
+    'Keep practicing Grade 1 Subtraction and review the 3 missed questions from First Bandit Math Challenge. More recorded answers are needed before judging a persistent weakness.',
   ]);
 
   const harness = createHarness();
@@ -239,7 +239,33 @@ test('current canonical topic evidence refreshes cached weakness and recommendat
   assert.equal(providerCalls, 0);
   assert.equal(state.topic_evidence_status, 'weaknesses_identified');
   assert.match(state.insight.weaknesses[0], /Subtraction — Oakleaf Bandits.*40%/);
-  assert.match(state.insight.recommendations[0], /Practice Grade 1 Subtraction.*Oakleaf Bandits/);
+  assert.match(state.insight.recommendations[0], /Keep practicing Grade 1 Subtraction.*Oakleaf Bandits/);
+});
+
+test('current Math strengths replace retired cached quest-completion strengths', async () => {
+  const harness = createHarness();
+  const metrics = {
+    ...metricsFor([1, 1, 1, 1, 1]),
+    completedQuests: 3,
+    topicPerformance: [{ topicId: 'addition', gradeLevel: 'Grade 1', correctAnswers: 5, totalQuestions: 5 }],
+    questTopicPerformance: [{ canonicalTaskId: 'oakleaf-bandits', topicId: 'addition', gradeLevel: 'Grade 1', correctAnswers: 5, totalQuestions: 5 }],
+  };
+  const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics });
+  harness.setSaved({
+    input_fingerprint: buildInsightFingerprint(input),
+    insight: { ...generatedInsight('Previous output.'), strengths: ['Recorded progress includes 3 completed quests.'] },
+    generated_at: '2026-09-09T00:00:00.000Z',
+    stale_at: null,
+  });
+  const state = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics,
+    pool: harness.pool,
+    generateInsight: async () => { throw new Error('Current cache should not call provider.'); },
+  });
+  assert.equal(state.status, 'cached');
+  assert.deepEqual(state.insight.strengths, ['Strong performance in Addition: 5 of 5 recorded answers correct (100%).']);
 });
 
 test('paused insight with no cache returns a stable state without provider, transaction, or write', async () => {
@@ -439,8 +465,8 @@ test('provider failure keeps and marks the prior cached insight while canonical 
   assert.equal(state.status, 'unavailable');
   assert.equal(state.is_stale, true);
   assert.equal(state.insight.performance_insight, before.insight.performance_insight);
-  assert.deepEqual(state.insight.weaknesses, []);
-  assert.deepEqual(state.insight.recommendations, []);
+  assert.match(state.insight.weaknesses[0], /limited evidence.*does not identify a persistent Math weakness/);
+  assert.match(state.insight.recommendations[0], /Review the 1 missed question.*More topic-linked results/);
   assert.equal(state.insight.topic_evidence_status, 'topic_metadata_unavailable');
   assert.equal(state.topic_evidence_status, 'topic_metadata_unavailable');
   assert.deepEqual(harness.getSaved(), before);

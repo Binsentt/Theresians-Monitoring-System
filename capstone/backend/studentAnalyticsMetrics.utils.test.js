@@ -367,6 +367,44 @@ test('prefers canonical current progress task state over later historical activi
   assert.equal(metrics.currentQuestSource, 'canonical_current_progress_task');
 });
 
+test('a later committed canonical task trigger supersedes an older saved free-text Current Quest', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    progress: {
+      current_quest: "Defeat the Wizard's 4 Guards.",
+      last_played: '2026-10-17T04:30:00.000Z',
+    },
+    activityLogs: [
+      {
+        canonical_activity_id: 'task_triggered',
+        canonical_task_id: 'return-to-city-of-knowledge',
+        current_quest: 'Return to the City of Knowledge.',
+        activity_timestamp: '2026-10-17T05:00:00.000Z',
+      },
+    ],
+  });
+  assert.equal(metrics.currentQuest, 'Return to the City of Knowledge.');
+  assert.equal(metrics.currentQuestSource, 'canonical_current_cycle_activity');
+});
+
+test('a newer saved Current Quest is not replaced by an older queued activity', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    progress: {
+      current_quest: 'Return to the City of Knowledge.',
+      last_played: '2026-10-17T05:10:00.000Z',
+    },
+    activityLogs: [
+      {
+        canonical_activity_id: 'task_triggered',
+        canonical_task_id: 'pinehill-bandits',
+        current_quest: "Defeat the Wizard's 4 Guards.",
+        activity_timestamp: '2026-10-17T04:50:00.000Z',
+      },
+    ],
+  });
+  assert.equal(metrics.currentQuest, 'Return to the City of Knowledge.');
+  assert.equal(metrics.currentQuestSource, 'persisted_progress');
+});
+
 test('uses reached and completed canonical tasks for journey position without trusting client percentages', () => {
   const stage = (taskId, completed = []) => buildStudentAnalyticsMetrics({
     progress: { progress_percentage: 99 },

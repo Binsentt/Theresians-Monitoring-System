@@ -5,11 +5,12 @@ const {
   hasQualifyingTopAchieverActivity,
   resolveTopAchieverCompletion,
   normalizeTopAchieverRow,
+  rankTopAchieverRows,
   QUALIFYING_ACTIVITY_DESCRIPTION,
   TOP_ACHIEVER_TELEMETRY_VERSION,
   QUEST_GRAPH_VERSION,
 } = require('./topAchieversCompletion.utils');
-const { PLAYER_FACING_TASKS, calculateWeightedCompletion } = require('./questGraph.utils');
+const { PLAYER_FACING_TASKS, calculateJourneyProgress, calculateWeightedCompletion } = require('./questGraph.utils');
 
 const context = {
   studentId: 42,
@@ -140,4 +141,48 @@ test('response mapping hides evidence internals and preserves unavailable comple
   assert.equal(Object.hasOwn(row, 'completion_activity_evidence'), false);
   assert.equal(Object.hasOwn(row, 'completion_current_learning_cycle_version'), false);
   assert.equal(Object.hasOwn(row, 'completion_current_learning_cycle_started_at'), false);
+});
+
+test('Top Achievers follows canonical journey position when late current-cycle tasks are reached', () => {
+  const completedTaskIds = ['tutorial', 'go-to-teachers-house', 'talk-to-the-teacher'];
+  const reachedTaskIds = ['defeat-the-wizard', 'return-to-city-of-knowledge'];
+  const expected = calculateJourneyProgress({ completedTaskIds, reachedTaskIds });
+  assert(expected > 80 && expected < 100);
+  assert.equal(resolveTopAchieverCompletion({ completedTaskIds, reachedTaskIds }), expected);
+  assert.equal(normalizeTopAchieverRow({
+    student_id: 42,
+    completion_completed_task_ids: completedTaskIds,
+    completion_result_task_ids: ['defeat-the-wizard'],
+    completion_activity_evidence: eligibleActivity({
+      activity_description: `${QUALIFYING_ACTIVITY_DESCRIPTION} — return-to-city-of-knowledge`,
+      canonical_task_id: 'return-to-city-of-knowledge',
+    }),
+    completion_current_learning_cycle_version: 3,
+    completion_current_learning_cycle_started_at: context.cycleStartedAt,
+    completion_has_canonical_milestones: true,
+    completion_weighted_percentage: calculateWeightedCompletion(completedTaskIds),
+  }).completion_percentage, expected);
+});
+
+test('reaching Final Teacher is capped below 100 until the entire campaign is completed', () => {
+  const reached = resolveTopAchieverCompletion({ reachedTaskIds: ['final-teacher'] });
+  assert(reached > 90 && reached < 100);
+  assert.equal(resolveTopAchieverCompletion({
+    completedTaskIds: ['tutorial', ...PLAYER_FACING_TASKS],
+    reachedTaskIds: ['final-teacher'],
+  }), 100);
+  assert.equal(resolveTopAchieverCompletion({ completedTaskIds: [], reachedTaskIds: [] }), null);
+});
+
+test('Top Achievers ranks by canonical journey first, then existing score and stable student ID', () => {
+  const rows = rankTopAchieverRows([
+    { student_id: 8, game_score: 99, completion_completed_task_ids: ['tutorial'], completion_result_task_ids: ['go-to-school'] },
+    { student_id: 7, game_score: 4, completion_completed_task_ids: ['tutorial'], completion_result_task_ids: ['return-to-city-of-knowledge'] },
+    { student_id: 9, game_score: 4, completion_completed_task_ids: ['tutorial'], completion_result_task_ids: ['return-to-city-of-knowledge'] },
+    { student_id: 5, game_score: 100 },
+  ]);
+  assert.deepEqual(rows.map((row) => row.student_id), [7, 9, 8, 5]);
+  assert.deepEqual(rows.map((row) => row.rank), [1, 2, 3, 4]);
+  assert.equal(rows[3].completion_percentage, null);
+  assert.equal(Object.hasOwn(rows[0], 'completion_result_task_ids'), false);
 });

@@ -1,5 +1,7 @@
-const GROUNDING_POLICY_VERSION = 'grounded-claims-v6';
+const GROUNDING_POLICY_VERSION = 'grounded-claims-v7';
 const WEAK_PERFORMANCE_THRESHOLD = 75;
+const STRENGTH_MIN_ATTEMPTS = 5;
+const STRENGTH_MIN_ACCURACY = 80;
 const MAX_SELECTION_ITEMS = 5;
 const MAX_TOPIC_LABEL_LENGTH = 80;
 const MAX_RENDERED_PERFORMANCE_LENGTH = 900;
@@ -86,12 +88,6 @@ function addRecordedPerformanceClaims(catalog, input) {
   }
   if (isNonNegativeInteger(input.completed_quests)) {
     addPerformanceClaim(catalog, 'completed_quests', `Recorded completed quests: ${input.completed_quests}.`);
-    if (input.completed_quests > 0) {
-      addClaim(catalog, 'strength', {
-        id: 'completed_quests_strength',
-        text: `Recorded progress includes ${input.completed_quests} completed quest${input.completed_quests === 1 ? '' : 's'}.`,
-      });
-    }
   }
   const currentQuest = asSafeQuestLabel(input.current_quest);
   if (currentQuest) addPerformanceClaim(catalog, 'current_quest', `Current quest: ${currentQuest}.`);
@@ -120,6 +116,7 @@ function addDifficultyClaims(catalog, difficultyAccuracy) {
 
 function addObservedTopicClaims(catalog, topicPerformance, input) {
   const seen = new Set();
+  const strengthTotals = new Map();
   let validTopics = 0;
   let supportedWeaknesses = 0;
   const studentGrade = normalizeGradeLevel(input.grade);
@@ -155,6 +152,23 @@ function addObservedTopicClaims(catalog, topicPerformance, input) {
     || left.canonicalTaskId.localeCompare(right.canonicalTaskId)
     || left.topicId.localeCompare(right.topicId));
 
+  candidates.forEach(({ topicId, gradeLevel, canonicalTopic, correct, total }) => {
+    const key = `${gradeLevel}|${topicId}`;
+    const current = strengthTotals.get(key) || { topicId, gradeLevel, canonicalTopic, correct: 0, total: 0 };
+    current.correct += correct;
+    current.total += total;
+    strengthTotals.set(key, current);
+  });
+  [...strengthTotals.values()].sort((left, right) => left.gradeLevel.localeCompare(right.gradeLevel)
+    || left.topicId.localeCompare(right.topicId)).forEach(({ topicId, gradeLevel, canonicalTopic, correct, total }) => {
+    const accuracy = Number(((correct / total) * 100).toFixed(2));
+    if (total < STRENGTH_MIN_ATTEMPTS || accuracy < STRENGTH_MIN_ACCURACY) return;
+    addClaim(catalog, 'strength', {
+      id: `topic_${gradeLevel.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${topicId}_strength`,
+      text: `Strong performance in ${canonicalTopic.display_label}: ${correct} of ${total} recorded answers correct (${formatPercentage(accuracy)}).`,
+    });
+  });
+
   candidates.forEach(({ topicId, gradeLevel, canonicalTaskId, taskLabel, canonicalTopic, correct, total, incorrect, accuracy }) => {
 
     const claimPrefix = `quest_${canonicalTaskId.replace(/[^a-z0-9]+/g, '_')}_topic_${gradeLevel.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${topicId}`;
@@ -162,7 +176,6 @@ function addObservedTopicClaims(catalog, topicPerformance, input) {
     seen.add(claimPrefix);
     validTopics += 1;
     const accuracyText = formatPercentage(accuracy);
-    const subjectLabel = `${gradeLevel} ${canonicalTopic.display_label}`;
     const contextLabel = `${canonicalTopic.display_label} — ${taskLabel}`;
     addPerformanceClaim(
       catalog,
@@ -170,26 +183,41 @@ function addObservedTopicClaims(catalog, topicPerformance, input) {
       `Recorded ${contextLabel} accuracy is ${accuracyText} (${correct} of ${total} answers correct; ${incorrect} incorrect).`
     );
 
-    if (accuracy >= WEAK_PERFORMANCE_THRESHOLD) {
-      addClaim(catalog, 'strength', {
-        id: `${claimPrefix}_strength`,
-        text: `Recorded ${contextLabel} accuracy is ${accuracyText} (${correct} of ${total} correct), meeting the current positive-evidence boundary.`,
-      });
-      return;
-    }
+    if (accuracy >= WEAK_PERFORMANCE_THRESHOLD) return;
 
     supportedWeaknesses += 1;
+    const limited = incorrect <= 3;
     addClaim(catalog, 'weakness', {
       id: `${claimPrefix}_weakness`,
-      text: `${canonicalTopic.display_label} — ${taskLabel}: ${incorrect} of ${total} answers were incorrect (${accuracyText} accuracy). This is below the current ${WEAK_PERFORMANCE_THRESHOLD}% evidence boundary${total < 5 ? '; limited evidence' : ''}.`,
+      text: limited
+        ? `${canonicalTopic.display_label} — ${taskLabel}: ${incorrect} incorrect ${incorrect === 1 ? 'answer was' : 'answers were'} recorded (${correct} of ${total} correct; ${accuracyText} accuracy). This is limited evidence and does not yet show a persistent weakness.`
+        : `${canonicalTopic.display_label} — ${taskLabel}: ${incorrect} of ${total} answers were incorrect (${accuracyText} accuracy). This is below the current ${WEAK_PERFORMANCE_THRESHOLD}% evidence boundary.`,
     });
     addClaim(catalog, 'recommendation', {
       id: `practice_${claimPrefix}`,
       supportId: `${claimPrefix}_weakness`,
       supportCategory: 'weakness',
-      text: `Practice Grade ${gradeLevel.replace(/^Grade\s+/i, '')} ${canonicalTopic.display_label}, especially the types missed during ${taskLabel}. Review the ${incorrect} recorded incorrect ${incorrect === 1 ? 'answer' : 'answers'} before retrying similar questions (${correct} of ${total} correct; ${accuracyText} accuracy).`,
+      text: limited
+        ? `Keep practicing Grade ${gradeLevel.replace(/^Grade\s+/i, '')} ${canonicalTopic.display_label} and review the ${incorrect} missed ${incorrect === 1 ? 'question' : 'questions'} from ${taskLabel}. More recorded answers are needed before judging a persistent weakness.`
+        : `Practice Grade ${gradeLevel.replace(/^Grade\s+/i, '')} ${canonicalTopic.display_label}, especially the types missed during ${taskLabel}. Review the ${incorrect} recorded incorrect ${incorrect === 1 ? 'answer' : 'answers'} before retrying similar questions (${correct} of ${total} correct; ${accuracyText} accuracy).`,
     });
   });
+
+  if (supportedWeaknesses === 0 && validTopics === 0
+    && isNonNegativeInteger(input.incorrect_answers)
+    && input.incorrect_answers >= 1 && input.incorrect_answers <= 3) {
+    const incorrect = input.incorrect_answers;
+    addClaim(catalog, 'weakness', {
+      id: 'unlinked_limited_errors',
+      text: `${incorrect} incorrect ${incorrect === 1 ? 'answer was' : 'answers were'} recorded. This is limited evidence and does not identify a persistent Math weakness or a verified topic.`,
+    });
+    addClaim(catalog, 'recommendation', {
+      id: 'review_unlinked_limited_errors',
+      supportId: 'unlinked_limited_errors',
+      supportCategory: 'weakness',
+      text: `Review the ${incorrect} missed ${incorrect === 1 ? 'question' : 'questions'} and continue regular Math practice. More topic-linked results are needed for a specific recommendation.`,
+    });
+  }
 
   const hasRecordedPerfectResults = isNonNegativeInteger(input.total_questions)
     && input.total_questions > 0
@@ -445,7 +473,7 @@ function renderValidatedClaimSelection(selection, catalog) {
   return {
     topic_evidence_status: catalog.topicEvidenceStatus,
     performance_insight: performanceInsight,
-    strengths: renderGroup(groups.strength_claim_ids, catalog, 'strength'),
+    strengths: renderGroup(catalog.strength.map((claim) => claim.id), catalog, 'strength'),
     weaknesses: renderGroup(deterministicWeaknessIds, catalog, 'weakness'),
     recommendations: renderGroup(
       deterministicRecommendationIds,
@@ -459,6 +487,8 @@ function renderValidatedClaimSelection(selection, catalog) {
 module.exports = {
   GROUNDING_POLICY_VERSION,
   WEAK_PERFORMANCE_THRESHOLD,
+  STRENGTH_MIN_ATTEMPTS,
+  STRENGTH_MIN_ACCURACY,
   INSIGHT_VALIDATION_STAGES,
   GroundingValidationError,
   buildGroundedClaimCatalog,

@@ -37,14 +37,14 @@ test('weakness and recommendation are grounded in the exact canonical Grade-topi
   const insight = renderValidatedClaimSelection({
     grounding_policy_version: GROUNDING_POLICY_VERSION,
     performance_claim_ids: ['quest_oakleaf_bandits_topic_grade_1_subtraction_accuracy'],
-    strength_claim_ids: ['quest_oakleaf_bandits_topic_grade_1_multiplication_strength'],
+    strength_claim_ids: [],
     weakness_claim_ids: ['quest_oakleaf_bandits_topic_grade_1_subtraction_weakness'],
   }, catalog);
 
   assert.match(insight.weaknesses[0], /Subtraction — Oakleaf Bandits/);
-  assert.match(insight.weaknesses[0], /3 of 4 answers were incorrect/);
+  assert.match(insight.weaknesses[0], /3 incorrect answers were recorded.*limited evidence/);
   assert.match(insight.recommendations[0], /Grade 1 Subtraction/);
-  assert.match(insight.recommendations[0], /3 recorded incorrect/);
+  assert.match(insight.recommendations[0], /3 missed questions/);
   assert.match(insight.recommendations[0], /Oakleaf Bandits/);
   assert.equal(insight.weaknesses.some((text) => /Easy|Normal|Difficult|overall/i.test(text)), false);
 });
@@ -172,9 +172,9 @@ test('95 committed results with validated Grade-topic links surface the weakest 
   assert.equal(metrics.validResultCount, 95);
   assert.equal(metrics.difficultyBreakdown.easy.accuracy < 75, true);
   assert.deepEqual(metrics.topicPerformance.map(({ topicId }) => topicId), ['addition', 'subtraction']);
-  assert.match(insight.weaknesses[0], /Addition — Oakleaf Bandits: 3 of 4 answers were incorrect/);
+  assert.match(insight.weaknesses[0], /Addition — Oakleaf Bandits: 3 incorrect answers were recorded/);
   assert.match(insight.weaknesses[0], /limited evidence/i);
-  assert.match(insight.recommendations[0], /Practice Grade 1 Addition.*Oakleaf Bandits/);
+  assert.match(insight.recommendations[0], /Keep practicing Grade 1 Addition.*Oakleaf Bandits/);
   assert.equal(insight.weaknesses.some((text) => /Easy|Normal|Difficult/i.test(text)), false);
   assert.equal(insight.weaknesses.some((text) => /Subtraction/.test(text)), false);
 });

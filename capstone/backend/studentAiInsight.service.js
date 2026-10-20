@@ -62,6 +62,7 @@ const buildCurrentTopicEvidence = (input) => {
   }, catalog);
   return {
     topicEvidenceStatus: catalog.topicEvidenceStatus,
+    strengths: catalog.strength.map((claim) => claim.text),
     weaknesses: weaknessIds.map((id) => catalog.weakness.find((claim) => claim.id === id).text),
     recommendations: recommendationIds.map((id) => catalog.recommendation.find((claim) => claim.id === id).text),
   };
@@ -72,6 +73,7 @@ const applyCurrentTopicEvidence = (insight, topicEvidence) => {
   return {
     ...insight,
     topic_evidence_status: topicEvidence.topicEvidenceStatus,
+    strengths: topicEvidence.strengths,
     weaknesses: topicEvidence.weaknesses,
     recommendations: topicEvidence.recommendations,
   };

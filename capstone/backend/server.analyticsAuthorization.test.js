@@ -371,6 +371,8 @@ test('grounded insight endpoint returns a current cache without another provider
   assert.equal(response.body.is_stale, false);
   assert.deepEqual(response.body.insight, {
     ...cachedInsight,
+    weaknesses: ['2 incorrect answers were recorded. This is limited evidence and does not identify a persistent Math weakness or a verified topic.'],
+    recommendations: ['Review the 2 missed questions and continue regular Math practice. More topic-linked results are needed for a specific recommendation.'],
     topic_evidence_status: 'topic_metadata_unavailable',
   });
 });
@@ -457,8 +459,8 @@ test('grounded insight treats four valid results as preliminary and generates on
   assert.equal(response.body.sufficient_result_count, 5);
   assert.equal(providerCalls, 1);
   assert.equal(response.body.insight.topic_evidence_status, 'topic_metadata_unavailable');
-  assert.deepEqual(response.body.insight.weaknesses, []);
-  assert.deepEqual(response.body.insight.recommendations, []);
+  assert.match(response.body.insight.weaknesses[0], /2 incorrect answers.*limited evidence.*no.*verified topic/);
+  assert.match(response.body.insight.recommendations[0], /Review the 2 missed questions.*More topic-linked results/);
 });
 
 test('invalid grounded provider output is not cached and deterministic progress remains available', async (t) => {
@@ -637,8 +639,8 @@ test('valid grounded output caches by fingerprint and regenerates a stale entry'
   for (const response of [generated, cached, regenerated]) {
     assert.equal(response.body.insight.topic_evidence_status, 'topic_metadata_unavailable');
     assert.deepEqual(response.body.insight.strengths, []);
-    assert.deepEqual(response.body.insight.weaknesses, []);
-    assert.deepEqual(response.body.insight.recommendations, []);
+    assert.match(response.body.insight.weaknesses[0], /2 incorrect answers.*limited evidence.*no.*verified topic/);
+    assert.match(response.body.insight.recommendations[0], /Review the 2 missed questions.*More topic-linked results/);
   }
 });
 

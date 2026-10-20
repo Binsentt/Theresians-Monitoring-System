@@ -80,10 +80,13 @@ test('only persisted player-facing current-cycle canonical task-trigger evidence
   assert.match(handler, /LOWER\(BTRIM\(al\.canonical_task_id\)\) IN \(\$\{CANONICAL_CAMPAIGN_TASK_SQL\}\)/);
 });
 
-test('completion evidence metadata is internal and explicit null is not replaced by ranking fallback', () => {
-  assert.match(serverSource, /normalizeTopAchieverRow,[\s\S]*QUALIFYING_ACTIVITY_DESCRIPTION,[\s\S]*require\('\.\/topAchieversCompletion\.utils'\)/);
+test('completion evidence metadata is internal and canonical journey ranking replaces SQL display fallback', () => {
+  assert.match(serverSource, /rankTopAchieverRows,[\s\S]*QUALIFYING_ACTIVITY_DESCRIPTION,[\s\S]*require\('\.\/topAchieversCompletion\.utils'\)/);
   assert.match(serverSource, /completion_activity_evidence/);
-  assert.match(serverSource, /normalizeTopAchieverRow\(row, index\)/);
+  assert.match(serverSource, /milestones\.completed_task_ids AS completion_completed_task_ids/);
+  assert.match(serverSource, /canonical_results\.reached_task_ids AS completion_result_task_ids/);
+  assert.match(serverSource, /res\.json\(rankTopAchieverRows\(result\.rows\)\)/);
+  assert.match(completionUtilsSource, /calculateJourneyProgress\(\{ completedTaskIds, reachedTaskIds, currentTaskId \}\)/);
 });
 
 test('website and lease-authorized game projection reuse one stable canonical ranking order', () => {

@@ -65,8 +65,8 @@ const canonicalTaskDisplayLabel = (taskId) => {
   return null;
 };
 
-// Student Progress is journey position, not the Top Achievers completion
-// score. A current/reached canonical task advances the visible journey through
+// Student Progress and Top Achievers share the canonical journey position.
+// A current/reached canonical task advances the visible journey through
 // that graph position; completed milestones remain included. Only the complete
 // canonical task set (plus the tutorial marker) can report 100%.
 const calculateJourneyProgress = ({ completedTaskIds = [], reachedTaskIds = [], currentTaskId = null } = {}) => {

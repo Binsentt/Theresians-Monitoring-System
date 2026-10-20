@@ -212,6 +212,38 @@ test('activity log API accepts Godot session aliases and scoped child filters', 
     }
   });
 
+  await t.test('deduplicates the visible Student activity minute in both list and count, preferring completion', async () => {
+    let listSql = '';
+    let countSql = '';
+    setQueryHandler(async (sql, _params, rawSql) => {
+      if (sql.startsWith('select al.id')) {
+        listSql = String(rawSql);
+        return resultRows([]);
+      }
+      if (sql.startsWith('select count(*) as total')) {
+        countSql = String(rawSql);
+        return resultRows([{ total: 1 }]);
+      }
+      return emptyResult;
+    });
+    const response = await requestJson(baseUrl, '/api/activity-logs?search=Continue%20to%20Pinehill&limit=10', {
+      headers: { Authorization: 'Bearer admin-token' },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.pagination.total, 1);
+    for (const sql of [listSql, countSql]) {
+      assert.match(sql, /visible_duplicate_rank\s*=\s*1/i);
+      assert.match(sql, /PARTITION BY\s+al\.student_id/i);
+      const visiblePartition = sql.match(/ROW_NUMBER\(\) OVER \(\s*PARTITION BY al\.student_id,[\s\S]+?AS visible_duplicate_rank/i)?.[0];
+      assert.ok(visiblePartition);
+      assert.match(visiblePartition, /al\.current_quest/i); // The UI displays this label, not technical event descriptions.
+      assert.match(visiblePartition, /ELSE LOWER\(BTRIM\(COALESCE\(NULLIF\(BTRIM\(al\.canonical_task_id\), ''\), al\.activity_description/i);
+      assert.match(sql, /al\.difficulty_level/i);
+      assert.match(sql, /DATE_TRUNC\('minute'/i);
+      assert.match(sql, /task_completed|quest_completed/i);
+    }
+  });
+
   await t.test('keeps parent activity requests scoped to the selected child', async () => {
     let mainQuery = '';
     let mainParams = [];

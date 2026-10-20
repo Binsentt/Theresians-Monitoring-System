@@ -55,7 +55,7 @@ const jsonResponse = (body, { ok = true, status = 200 } = {}) => ({
 const validSelection = {
   grounding_policy_version: GROUNDING_POLICY_VERSION,
   performance_claim_ids: ['overall_accuracy', 'current_quest'],
-  strength_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_multiplication_strength'],
+  strength_claim_ids: [],
   weakness_claim_ids: ['quest_oakleaf_bandits_topic_grade_3_fractions_weakness'],
 };
 
@@ -255,7 +255,7 @@ test('uses a mocked claim selection and returns only backend-rendered text', asy
   assert.equal(providerRequest.body.text.format.schema.additionalProperties, false);
   assert.match(insight.performance_insight, /Recorded overall accuracy is 60%/);
   assert.match(insight.performance_insight, /Current quest: Fraction Forest/);
-  assert.deepEqual(insight.strengths, ['Recorded Multiplication — Oakleaf Bandits accuracy is 100% (4 of 4 correct), meeting the current positive-evidence boundary.']);
+  assert.deepEqual(insight.strengths, []); // Four answers cannot establish a Math strength.
   assert.equal(JSON.stringify(insight).includes('85%'), false);
 });
 

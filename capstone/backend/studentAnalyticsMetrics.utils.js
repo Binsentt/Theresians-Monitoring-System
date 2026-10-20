@@ -259,8 +259,16 @@ function buildStudentAnalyticsMetrics({
   const activityQuest = normalizeTopic(latestCanonicalActivity?.current_quest);
   const persistedQuest = normalizeTopic(progress.current_quest);
   const hasPersistedQuest = persistedQuest && !/^n\/?a$/i.test(persistedQuest);
+  const latestTriggerTime = Date.parse(String(latestCanonicalActivity?.timestamp || ''));
+  const persistedSaveTime = Date.parse(String(progress.last_played || ''));
+  const hasNewerCanonicalTrigger = String(latestCanonicalActivity?.canonical_activity_id || '').trim().toLowerCase() === 'task_triggered'
+    && Number.isFinite(latestTriggerTime)
+    && (!Number.isFinite(persistedSaveTime) || latestTriggerTime > persistedSaveTime);
   const currentQuest = persistedCanonicalTaskId
     ? canonicalTaskDisplayLabel(persistedCanonicalTaskId)
+    : hasNewerCanonicalTrigger
+      ? (activityQuest && !/^n\/?a$/i.test(activityQuest)
+        ? activityQuest : canonicalTaskDisplayLabel(latestCanonicalActivity.taskId))
     : hasPersistedQuest
       ? persistedQuest
       : latestCanonicalActivity
@@ -271,6 +279,8 @@ function buildStudentAnalyticsMetrics({
           : null;
   const currentQuestSource = persistedCanonicalTaskId
     ? 'canonical_current_progress_task'
+    : hasNewerCanonicalTrigger
+      ? 'canonical_current_cycle_activity'
     : hasPersistedQuest
       ? 'persisted_progress'
       : latestCanonicalActivity

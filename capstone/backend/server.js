@@ -168,6 +168,7 @@ const {
 } = require('./questGraph.utils');
 const {
   normalizeTopAchieverRow,
+  rankTopAchieverRows,
   QUALIFYING_ACTIVITY_DESCRIPTION,
 } = require('./topAchieversCompletion.utils');
 const {
@@ -219,6 +220,8 @@ const resolvePersistedMilestoneWeight = (taskId) => {
 const CANONICAL_MILESTONE_AGGREGATE_SQL = `
   SELECT COUNT(*)::INTEGER AS completed_count,
          COALESCE(SUM(completed_tasks.task_weight), 0)::INTEGER AS completed_weight,
+          ARRAY_AGG(completed_tasks.task_id ORDER BY completed_tasks.task_id)
+            FILTER (WHERE completed_tasks.task_id IS NOT NULL) AS completed_task_ids,
          COUNT(*) > 0 AS has_milestones
   FROM (
     SELECT LOWER(BTRIM(COALESCE(sqm.canonical_task_id, sqm.milestone_id))) AS task_id,
@@ -7785,7 +7788,7 @@ const ensureCurrentLearningProgressRow = async (queryClient, {
   if (String(currentQuest || '').trim()) {
     await queryClient.query(
       `UPDATE public.student_game_progress
-       SET current_quest = $2,
+       SET current_quest = COALESCE(NULLIF(BTRIM(current_quest), ''), $2),
            current_map = COALESCE(NULLIF(BTRIM($3), ''), current_map),
            difficulty_level = COALESCE(NULLIF(BTRIM($4), ''), difficulty_level),
            updated_at = NOW()
@@ -9207,10 +9210,12 @@ const handleTopAchieversRequest = async (req, res) => {
                THEN ROUND((milestones.completed_weight * 100.0) / ${CANONICAL_CAMPAIGN_WEIGHT}, 2)
                ELSE 0 END AS progress_percentage,
           milestones.has_milestones AS completion_has_canonical_milestones,
+          milestones.completed_task_ids AS completion_completed_task_ids,
           CASE WHEN milestones.has_milestones
                THEN ROUND((milestones.completed_weight * 100.0) / ${CANONICAL_CAMPAIGN_WEIGHT}, 2)
                ELSE NULL END AS completion_weighted_percentage,
           activity_evidence.activity AS completion_activity_evidence,
+          canonical_results.reached_task_ids AS completion_result_task_ids,
           COALESCE(a.current_learning_cycle_version, 0) AS completion_current_learning_cycle_version,
           a.current_learning_cycle_started_at AS completion_current_learning_cycle_started_at,
            milestones.completed_count AS quests_completed,
@@ -9268,7 +9273,9 @@ const handleTopAchieversRequest = async (req, res) => {
         ) activity_evidence ON true
         LEFT JOIN LATERAL (
           SELECT COALESCE(SUM(gr.score), 0)::INTEGER AS game_score,
-                 COALESCE(SUM(gr.total_items), 0)::INTEGER AS total_questions
+                  COALESCE(SUM(gr.total_items), 0)::INTEGER AS total_questions,
+                  ARRAY_AGG(DISTINCT LOWER(BTRIM(gr.canonical_task_id)))
+                    FILTER (WHERE LOWER(BTRIM(gr.canonical_task_id)) IN (${CANONICAL_CAMPAIGN_TASK_SQL})) AS reached_task_ids
           FROM public.game_results gr
           WHERE gr.resolved_student_id = p.student_id
             AND gr.total_items > 0
@@ -9304,7 +9311,7 @@ const handleTopAchieversRequest = async (req, res) => {
     `;
 
     const result = await pool.query(query, params);
-    res.json(result.rows.map((row, index) => normalizeTopAchieverRow(row, index)));
+    res.json(rankTopAchieverRows(result.rows));
   } catch (err) {
     console.error('Fetch top achievers failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch top achievers' });
@@ -9402,7 +9409,21 @@ const DEDUPLICATED_ACTIVITY_LOGS_SOURCE = `(
              ORDER BY al.id ASC
            )
            ELSE 1
-         END AS legacy_duplicate_rank
+          END AS legacy_duplicate_rank,
+          ROW_NUMBER() OVER (
+            PARTITION BY al.student_id,
+              CASE WHEN NULLIF(BTRIM(al.current_quest), '') IS NOT NULL
+                THEN LOWER(BTRIM(al.current_quest))
+                ELSE LOWER(BTRIM(COALESCE(NULLIF(BTRIM(al.canonical_task_id), ''), al.activity_description, '')))
+              END,
+              LOWER(BTRIM(COALESCE(al.difficulty_level, ''))),
+              COALESCE(al.session_id, ''),
+              DATE_TRUNC('minute', COALESCE(al.activity_timestamp, al.completed_at, al.started_at, al.created_at))
+            ORDER BY CASE WHEN LOWER(BTRIM(COALESCE(al.canonical_activity_id, '')))
+                           IN ('task_completed', 'quest_completed') THEN 0 ELSE 1 END,
+                     COALESCE(al.activity_timestamp, al.completed_at, al.started_at, al.created_at) DESC,
+                     al.id ASC
+          ) AS visible_duplicate_rank
   FROM public.activity_logs al
 )`;
 
@@ -9458,7 +9479,7 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
         al.created_at
       FROM ${DEDUPLICATED_ACTIVITY_LOGS_SOURCE} al
       LEFT JOIN public.accounts account ON account.id = al.student_id
-      WHERE al.legacy_duplicate_rank = 1
+      WHERE al.legacy_duplicate_rank = 1 AND al.visible_duplicate_rank = 1
     `;
 
     const params = [];
@@ -9536,7 +9557,7 @@ app.get('/api/activity-logs', requireAnalyticsAccess, async (req, res) => {
     let countQuery = `SELECT COUNT(*) as total
       FROM ${DEDUPLICATED_ACTIVITY_LOGS_SOURCE} al
       LEFT JOIN public.accounts account ON account.id = al.student_id
-      WHERE al.legacy_duplicate_rank = 1`;
+      WHERE al.legacy_duplicate_rank = 1 AND al.visible_duplicate_rank = 1`;
     let countParams = [];
     countQuery += appendAnalyticsScopeFilter({ scope, params: countParams, studentColumn: 'al.student_id' });
     countQuery += ` AND ${STUDENT_QUEST_ACTIVITY_SQL}`;

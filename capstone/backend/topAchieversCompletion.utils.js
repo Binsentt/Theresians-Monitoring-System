@@ -1,4 +1,4 @@
-const { PLAYER_FACING_TASKS, QUEST_GRAPH_VERSION } = require('./questGraph.utils');
+const { PLAYER_FACING_TASKS, QUEST_GRAPH_VERSION, calculateJourneyProgress } = require('./questGraph.utils');
 
 const TOP_ACHIEVER_TELEMETRY_VERSION = '2.0';
 const QUALIFYING_ACTIVITY_DESCRIPTION = 'Task Triggered';
@@ -43,10 +43,15 @@ const hasQualifyingTopAchieverActivity = (activities = [], context = {}) => (
 );
 
 const resolveTopAchieverCompletion = ({
+  completedTaskIds = [],
+  reachedTaskIds = [],
+  currentTaskId = null,
   hasCanonicalMilestones = false,
   weightedCompletionPercentage,
   hasQualifyingActivity = false,
 } = {}) => {
+  const journey = calculateJourneyProgress({ completedTaskIds, reachedTaskIds, currentTaskId });
+  if (journey !== null) return journey;
   if (hasCanonicalMilestones) {
     if (weightedCompletionPercentage === null || weightedCompletionPercentage === undefined || weightedCompletionPercentage === '') return null;
     const percentage = Number(weightedCompletionPercentage);
@@ -62,6 +67,9 @@ const normalizeTopAchieverRow = (row, index = 0) => {
     completion_has_canonical_milestones: hasCanonicalMilestones,
     completion_weighted_percentage: weightedCompletionPercentage,
     completion_activity_evidence: activityEvidence,
+    completion_completed_task_ids: completedTaskIds,
+    completion_result_task_ids: resultTaskIds,
+    completion_current_task_id: currentTaskId,
     completion_current_learning_cycle_version: learningCycleVersion,
     completion_current_learning_cycle_started_at: cycleStartedAt,
     ...publicRow
@@ -74,7 +82,12 @@ const normalizeTopAchieverRow = (row, index = 0) => {
       cycleStartedAt,
     }
   );
+  const reachedTaskIds = Array.isArray(resultTaskIds) ? [...resultTaskIds] : [];
+  if (hasQualifyingActivity) reachedTaskIds.push(activityEvidence.canonical_task_id);
   const completion = resolveTopAchieverCompletion({
+    completedTaskIds: Array.isArray(completedTaskIds) ? completedTaskIds : [],
+    reachedTaskIds,
+    currentTaskId,
     hasCanonicalMilestones,
     weightedCompletionPercentage,
     hasQualifyingActivity,
@@ -112,6 +125,15 @@ const normalizeTopAchieverRow = (row, index = 0) => {
   };
 };
 
+const rankTopAchieverRows = (rows = []) => (Array.isArray(rows) ? rows : [])
+  .map((row) => normalizeTopAchieverRow(row))
+  .sort((left, right) => (right.completion_percentage ?? -1) - (left.completion_percentage ?? -1)
+    || right.game_score - left.game_score
+    || right.correct_answers - left.correct_answers
+    || right.quests_completed - left.quests_completed
+    || Number(left.student_id) - Number(right.student_id))
+  .map((row, index) => ({ ...row, rank: index + 1, rank_no: index + 1 }));
+
 module.exports = {
   TOP_ACHIEVER_TELEMETRY_VERSION,
   QUEST_GRAPH_VERSION,
@@ -120,4 +142,5 @@ module.exports = {
   hasQualifyingTopAchieverActivity,
   resolveTopAchieverCompletion,
   normalizeTopAchieverRow,
+  rankTopAchieverRows,
 };
