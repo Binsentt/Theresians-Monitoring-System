@@ -27,7 +27,7 @@ const withoutVisibleQuestDuration = (value) => {
     return !/^(?:recorded\s+)?duration\b/i.test(normalizedClause)
       && !/\brecorded activity\b/i.test(normalizedClause);
   });
-  return visibleClauses.join('; ').trim() || 'No graded evidence is recorded for this task yet.';
+  return visibleClauses.join('; ').trim() || 'No canonical completion or graded evidence is recorded for this task yet.';
 };
 
 export default function GroundedAiAnalysis({ aiInsight, error = '', loading = false, onRefresh }) {
@@ -120,7 +120,9 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
           items={weaknesses}
           className="student-insight-weaknesses"
           description="Areas where the recorded results show that the student may need more mathematics practice."
-          emptyMessage={insight
+          emptyMessage={noData
+            ? 'No recorded graded results are available for a Mathematics weakness assessment yet.'
+            : insight
             ? topicEvidenceStatus === 'perfect_recorded_results'
               ? 'No weaknesses identified — no incorrect answers were recorded.'
               : topicEvidenceStatus === 'topic_metadata_unavailable'
@@ -137,7 +139,9 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
           items={recommendations}
           className="student-insight-recommendations"
           description="Recommended next steps linked to the recorded weaknesses and evidence gaps."
-          emptyMessage={insight
+          emptyMessage={noData
+            ? 'No recommendation is supported until recorded graded results are available.'
+            : insight
             ? topicEvidenceStatus === 'perfect_recorded_results'
               ? 'No additional practice recommendation is needed based on the current perfect recorded results.'
               : topicEvidenceStatus === 'topic_metadata_unavailable'
@@ -155,7 +159,9 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
         tone="blue"
         items={strengths}
         description="Positive patterns selected from recorded gameplay evidence."
-        emptyMessage={insight
+        emptyMessage={noData
+          ? 'No recorded graded results are available for a Mathematics strength assessment yet.'
+          : insight
           ? 'No supported strength is identified from the recorded evidence yet.'
           : 'Generate the AI insight to identify supported strengths from recorded gameplay.'}
       />

@@ -129,6 +129,7 @@ test('includes deterministic per-quest timing and graded evidence in the provide
     canonical_task_id: 'oakleaf-bandits', label: 'Oakleaf Bandits', map_id: 'oakleaf_village',
     duration_seconds: 240, correct_answers: 2, incorrect_answers: 3, total_questions: 5,
     accuracy: 40, average_response_seconds: 25,
+    completion_status: 'observed', requires_graded_questions: true,
   });
   const changed = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics, activityLogs: activityLogs.map((row) => ({ ...row, duration_seconds: row.duration_seconds + 1 })), quizSessions });
   assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(changed));
@@ -235,6 +236,43 @@ test('deduplicates repeated committed result events in per-quest grounded eviden
   assert.equal(quest.total_questions, 2);
   assert.equal(quest.correct_answers, 1);
   assert.equal(quest.incorrect_answers, 1);
+});
+
+test('keeps completed and started non-graded tasks distinct from missing graded evidence', () => {
+  const input = buildGroundedInsightInput({
+    gradeLevel: 'Grade 1',
+    metrics,
+    activityLogs: [
+      {
+        canonical_activity_id: 'task_completed',
+        canonical_task_id: 'go-to-school',
+        current_quest: 'Go to the School.',
+        map_id: 'city_of_knowledge',
+      },
+      {
+        canonical_activity_id: 'task_triggered',
+        canonical_task_id: 'talk-to-city-school-teacher',
+        current_quest: 'Talk to the Teacher.',
+        map_id: 'city_of_knowledge',
+      },
+      {
+        canonical_activity_id: 'task_completed',
+        canonical_task_id: 'oakleaf-bandits',
+        current_quest: 'Defeat the Oakleaf Bandits.',
+        map_id: 'oakleaf_village',
+      },
+    ],
+  });
+
+  assert.deepEqual(input.quest_evidence.map((quest) => ({
+    canonical_task_id: quest.canonical_task_id,
+    completion_status: quest.completion_status,
+    requires_graded_questions: quest.requires_graded_questions,
+  })), [
+    { canonical_task_id: 'go-to-school', completion_status: 'completed', requires_graded_questions: false },
+    { canonical_task_id: 'oakleaf-bandits', completion_status: 'completed', requires_graded_questions: true },
+    { canonical_task_id: 'talk-to-city-school-teacher', completion_status: 'started', requires_graded_questions: false },
+  ]);
 });
 
 test('uses a mocked claim selection and returns only backend-rendered text', async () => {

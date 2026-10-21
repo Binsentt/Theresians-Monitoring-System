@@ -8,7 +8,12 @@ const {
   QUEST_GRAPH_VERSION,
   PLAYER_FACING_TASKS,
 } = require('./questGraph.utils');
-const { getTopicById, normalizeScope, resolveLegacyDisplayTopic } = require('./curriculumScopeRegistry');
+const {
+  getTopicById,
+  isValidScope,
+  normalizeScope,
+  resolveLegacyDisplayTopic,
+} = require('./curriculumScopeRegistry');
 
 const CANONICAL_CAMPAIGN_TASK_IDS = new Set(['tutorial', ...PLAYER_FACING_TASKS]);
 
@@ -56,30 +61,70 @@ const distinctNonEmptyStrings = (values) => [...new Set((Array.isArray(values) ?
   .map((value) => String(value ?? '').trim())
   .filter(Boolean))];
 
+const resolveValidatedTopicScope = (gradeLevel, difficulty, topicId) => {
+  const scope = normalizeScope({ grade_level: gradeLevel, difficulty, topic_id: topicId });
+  return scope && isValidScope(scope.grade_level, scope.difficulty, scope.topic_id) ? scope : null;
+};
+
+const resolveStoredTopicScope = ({ gradeLevel, difficulty, topicId, mathTopic }) => {
+  const directTopicId = String(topicId || '').trim();
+  if (directTopicId) return resolveValidatedTopicScope(gradeLevel, difficulty, directTopicId);
+  const displayLabel = String(mathTopic || '').trim();
+  if (!displayLabel) return null;
+  const resolvedTopicId = resolveLegacyDisplayTopic(gradeLevel, difficulty, displayLabel);
+  return resolvedTopicId ? resolveValidatedTopicScope(gradeLevel, difficulty, resolvedTopicId) : null;
+};
+
 const resolveLinkedQuestionSetScope = (row) => {
-  if (row.question_set_id === null || row.question_set_id === undefined || row.question_set_id === '') return null;
   const gradeLevel = row.canonical_grade_level;
   const difficulty = row.canonical_difficulty;
+  const hasQuestionSetId = row.question_set_id !== null && row.question_set_id !== undefined && row.question_set_id !== '';
   const hasExactQuestionId = row.question_id !== null && row.question_id !== undefined && row.question_id !== '';
   if (hasExactQuestionId && String(row.resolved_question_id) !== String(row.question_id)) return null;
-  const questionTopicIds = hasExactQuestionId
-    ? distinctNonEmptyStrings([row.exact_question_topic_id])
-    : distinctNonEmptyStrings(row.question_topic_ids);
-  const questionLabels = hasExactQuestionId
-    ? distinctNonEmptyStrings([row.exact_question_math_topic])
-    : distinctNonEmptyStrings(row.question_math_topics);
-  if (questionTopicIds.some((topicId) => !getTopicById(topicId)) || questionTopicIds.length > 1) return null;
+  const fileScope = resolveStoredTopicScope({
+    gradeLevel,
+    difficulty,
+    topicId: row.canonical_topic_id,
+    mathTopic: row.canonical_math_topic,
+  });
+  // The evidence loader supplies canonical_* fields only from server-owned
+  // question-set metadata. Keep that already-resolved evidence usable for
+  // callers that provide the normalized row directly.
+  if (!hasQuestionSetId) return fileScope;
 
-  const resolvedQuestionLabels = questionLabels.map((label) => resolveLegacyDisplayTopic(gradeLevel, difficulty, label));
-  if (resolvedQuestionLabels.some((topicId) => !topicId) || new Set(resolvedQuestionLabels).size > 1) return null;
+  // A resolved question ID is the most precise server-side relationship.
+  // A generic legacy label on its parent set (for example, "Mathematics") is
+  // not a topic and must not discard that exact canonical question evidence.
+  if (hasExactQuestionId) {
+    const exactQuestionScope = resolveStoredTopicScope({
+      gradeLevel,
+      difficulty,
+      topicId: row.exact_question_topic_id,
+      mathTopic: row.exact_question_math_topic,
+    });
+    if (exactQuestionScope && fileScope
+      && exactQuestionScope.topic_id !== fileScope.topic_id) return null;
+    return exactQuestionScope || fileScope;
+  }
 
-  const fileLabel = String(row.canonical_math_topic || '').trim();
-  const fileLabelTopicId = fileLabel ? resolveLegacyDisplayTopic(gradeLevel, difficulty, fileLabel) : null;
-  if (fileLabel && !fileLabelTopicId) return null;
-
-  const sources = [questionTopicIds[0], resolvedQuestionLabels[0], fileLabelTopicId].filter(Boolean);
-  if (sources.length === 0 || new Set(sources).size !== 1) return null;
-  return normalizeScope({ grade_level: gradeLevel, difficulty, topic_id: sources[0] });
+  // Without an exact question ID, a set can support one topic only when all
+  // server-stored per-question metadata agrees, or the set itself has a
+  // validated canonical topic. Never choose from a mixed question set.
+  const questionTopicIds = distinctNonEmptyStrings(row.question_topic_ids);
+  const questionTopicScopes = questionTopicIds
+    .map((topicId) => resolveValidatedTopicScope(gradeLevel, difficulty, topicId));
+  if (questionTopicScopes.some((scope) => !scope) || new Set(questionTopicScopes.map((scope) => scope?.topic_id)).size > 1) {
+    return null;
+  }
+  const questionLabels = distinctNonEmptyStrings(row.question_math_topics);
+  const questionLabelScopes = questionLabels
+    .map((label) => resolveStoredTopicScope({ gradeLevel, difficulty, mathTopic: label }));
+  if (questionLabelScopes.some((scope) => !scope) || new Set(questionLabelScopes.map((scope) => scope?.topic_id)).size > 1) {
+    return null;
+  }
+  const sources = [questionTopicScopes[0], questionLabelScopes[0], fileScope].filter(Boolean);
+  if (sources.length === 0 || new Set(sources.map((scope) => scope.topic_id)).size !== 1) return null;
+  return sources[0];
 };
 
 const normalizeResult = (row = {}) => {
@@ -89,18 +134,16 @@ const normalizeResult = (row = {}) => {
     return null;
   }
 
-  const canonicalScope = normalizeScope({
-    grade_level: row.canonical_grade_level,
-    difficulty: row.canonical_difficulty,
-    topic_id: row.canonical_topic_id,
-  });
-  const linkedScope = canonicalScope || resolveLinkedQuestionSetScope(row);
+  const linkedScope = resolveLinkedQuestionSetScope(row);
   const canonicalTopic = linkedScope ? getTopicById(linkedScope.topic_id) : null;
 
   return {
     correctAnswers,
     totalQuestions,
-    difficulty: normalizeDifficulty(row.difficulty),
+    // When a result is linked to a server-owned question set, that set's
+    // difficulty is authoritative. Older valid rows can lack their copied
+    // result difficulty even though their canonical question metadata remains.
+    difficulty: normalizeDifficulty(row.canonical_difficulty) || normalizeDifficulty(row.difficulty),
     topicId: canonicalTopic ? linkedScope.topic_id : null,
     topic: canonicalTopic?.display_label || null,
     gradeLevel: canonicalTopic ? linkedScope.grade_level : null,

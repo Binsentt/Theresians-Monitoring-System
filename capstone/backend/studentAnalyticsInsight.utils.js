@@ -17,7 +17,11 @@ const {
   renderValidatedClaimSelection,
 } = require('./studentAnalyticsGrounding.utils');
 const { SCOPES, getTopicById, normalizeGradeLevel, normalizeTopicId } = require('./curriculumScopeRegistry');
-const { canonicalTaskDisplayLabel, PLAYER_FACING_TASKS } = require('./questGraph.utils');
+const {
+  canonicalTaskDisplayLabel,
+  canonicalTaskRequiresGradedEvidence,
+  PLAYER_FACING_TASKS,
+} = require('./questGraph.utils');
 const CANONICAL_TASK_SET = new Set(['tutorial', ...PLAYER_FACING_TASKS]);
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
@@ -49,6 +53,8 @@ const buildQuestEvidence = ({ activityLogs = [], quizSessions = [] } = {}) => {
       total_questions: 0,
       accuracy: null,
       average_response_seconds: null,
+      completion_status: 'unknown',
+      requires_graded_questions: canonicalTaskRequiresGradedEvidence(canonicalTaskId),
       _response_seconds_total: 0,
       _response_seconds_count: 0,
     });
@@ -57,6 +63,16 @@ const buildQuestEvidence = ({ activityLogs = [], quizSessions = [] } = {}) => {
   (Array.isArray(activityLogs) ? activityLogs : []).forEach((row) => {
     const group = getGroup(row?.canonical_task_id);
     if (!group) return;
+    const activityId = asText(row?.canonical_activity_id).toLowerCase();
+    if (activityId === 'task_completed' || activityId === 'quest_completed') {
+      group.completion_status = 'completed';
+    } else if (activityId === 'task_triggered' && group.completion_status !== 'completed') {
+      group.completion_status = 'started';
+    } else if (group.completion_status === 'unknown') {
+      // A canonical task row without an explicit lifecycle verb proves that
+      // the task was observed, but never that it was completed.
+      group.completion_status = 'observed';
+    }
     const label = asText(row?.current_quest);
     if (label) group.label = label;
     const mapId = asText(row?.map_id);
@@ -95,6 +111,8 @@ const buildQuestEvidence = ({ activityLogs = [], quizSessions = [] } = {}) => {
       accuracy: group.total_questions > 0 ? Number(((group.correct_answers / group.total_questions) * 100).toFixed(2)) : null,
       average_response_seconds: group._response_seconds_count > 0
         ? Number((group._response_seconds_total / group._response_seconds_count).toFixed(2)) : null,
+      completion_status: group.completion_status,
+      requires_graded_questions: group.requires_graded_questions,
     }))
     .sort((left, right) => left.canonical_task_id.localeCompare(right.canonical_task_id));
 };

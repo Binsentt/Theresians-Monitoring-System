@@ -105,6 +105,34 @@ test('zero valid results returns no-data without calling the provider or writing
   assert.equal(harness.getSaved(), null);
 });
 
+test('zero valid results retain authoritative completed non-graded quest evidence without generating AI output', async () => {
+  const harness = createHarness();
+  let providerCalls = 0;
+  const state = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics: metricsFor([]),
+    activityLogs: [{
+      canonical_activity_id: 'task_completed',
+      canonical_task_id: 'go-to-school',
+      map_id: 'city_of_knowledge',
+      created_at: '2026-09-10T00:00:00.000Z',
+    }],
+    actorId: 1,
+    pool: harness.pool,
+    generateInsight: async () => { providerCalls += 1; return generatedInsight('unused'); },
+  });
+
+  assert.equal(state.status, 'no_data');
+  assert.equal(state.data_level, 'no_data');
+  assert.equal(state.valid_result_count, 0);
+  assert.equal(state.insight.performance_insight, undefined);
+  assert.equal(state.insight.quest_insights[0].canonical_task_id, 'go-to-school');
+  assert.equal(state.insight.quest_insights[0].summary, 'Quest completed — no graded questions required.');
+  assert.equal(providerCalls, 0);
+  assert.equal(harness.getSaved(), null);
+});
+
 test('four Grade 1 Oakleaf Easy results generate a real preliminary 75 percent insight', async () => {
   const harness = createHarness();
   let providerInput = null;
@@ -266,6 +294,49 @@ test('current Math strengths replace retired cached quest-completion strengths',
   });
   assert.equal(state.status, 'cached');
   assert.deepEqual(state.insight.strengths, ['Strong performance in Addition: 5 of 5 recorded answers correct (100%).']);
+});
+
+test('current canonical non-graded completion replaces stale cached per-quest no-evidence wording', async () => {
+  const harness = createHarness();
+  const metrics = metricsFor([1, 1, 1, 1, 1]);
+  const input = buildGroundedInsightInput({
+    gradeLevel: 'Grade 1',
+    metrics,
+    activityLogs: [{
+      canonical_activity_id: 'task_completed',
+      canonical_task_id: 'go-to-school',
+      current_quest: 'Go to the School.',
+    }],
+  });
+  harness.setSaved({
+    input_fingerprint: buildInsightFingerprint(input),
+    insight: {
+      ...generatedInsight('Previously generated.'),
+      quest_insights: [{
+        canonical_task_id: 'go-to-school',
+        label: 'Go to the School.',
+        summary: 'No graded or timing evidence is recorded for this task yet.',
+      }],
+    },
+    generated_at: '2026-09-09T00:00:00.000Z',
+    stale_at: null,
+  });
+
+  const state = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics,
+    activityLogs: [{
+      canonical_activity_id: 'task_completed',
+      canonical_task_id: 'go-to-school',
+      current_quest: 'Go to the School.',
+    }],
+    pool: harness.pool,
+    generateInsight: async () => { throw new Error('Current cache should not call provider.'); },
+  });
+
+  assert.equal(state.status, 'cached');
+  assert.equal(state.insight.quest_insights[0].summary, 'Quest completed — no graded questions required.');
 });
 
 test('paused insight with no cache returns a stable state without provider, transaction, or write', async () => {

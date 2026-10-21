@@ -129,6 +129,36 @@ test('keeps no-data difficulty distinct from a recorded zero-percent result', ()
   assert.equal(metrics.difficultyBreakdown.hard.accuracy, null);
 });
 
+test('uses the linked canonical question-set difficulty when a legacy result omits its own difficulty', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    quizSessions: [{
+      score: 0,
+      total_items: 1,
+      question_set_id: 901,
+      canonical_grade_level: 'Grade 2',
+      canonical_difficulty: 'Difficult',
+      canonical_topic_id: 'division',
+      result_event_id: 'canonical-difficult-result',
+    }],
+  });
+
+  assert.equal(metrics.difficultyBreakdown.hard.accuracy, 0);
+  assert.equal(metrics.difficultyBreakdown.medium.accuracy, null);
+});
+
+test('does not manufacture a Difficult attempt from Pinehill task progress without a recorded result', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    activityLogs: [{
+      canonical_activity_id: 'task_completed',
+      canonical_task_id: 'pinehill-bandits',
+      quest_graph_version: 'oakleaf-city-pinehill-v1',
+    }],
+  });
+
+  assert.equal(metrics.difficultyBreakdown.hard.accuracy, null);
+  assert.equal(metrics.validResultCount, 0);
+});
+
 test('current gameplay difficulty stays separate from historical answer performance and legacy progress', () => {
   const metrics = buildStudentAnalyticsMetrics({
     progress: { current_map: 'oak_leaf_village', difficulty_level: 'Hard', progress_percentage: 75 },
@@ -219,8 +249,8 @@ test('aggregates topic evidence only from canonical Grade and topic question-set
         score: 4,
         total_items: 4,
         difficulty: 'Normal',
-        math_topic: 'Subtraction',
-        canonical_topic_id: 'subtraction',
+        math_topic: 'Multiplication',
+        canonical_topic_id: 'multiplication',
         canonical_grade_level: 'Grade 2',
         canonical_difficulty: 'Normal',
       },
@@ -247,8 +277,8 @@ test('aggregates topic evidence only from canonical Grade and topic question-set
       accuracy: 25,
     },
     {
-      topicId: 'subtraction',
-      topic: 'Subtraction',
+      topicId: 'multiplication',
+      topic: 'Multiplication',
       gradeLevel: 'Grade 2',
       correctAnswers: 4,
       incorrectAnswers: 0,
@@ -317,6 +347,48 @@ test('exact question linkage attributes only that canonical question topic and c
     { topicId: 'basic_addition', totalQuestions: 1 },
   ]);
   assert.equal(metrics.unmappedTopicQuestionCount, 1);
+});
+
+test('rejects an exact question topic that is outside its canonical Grade and Difficulty scope', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    quizSessions: [{
+      question_id: 503,
+      resolved_question_id: 503,
+      question_set_id: 83,
+      exact_question_topic_id: 'addition',
+      exact_question_math_topic: 'Addition',
+      canonical_grade_level: 'Grade 1',
+      canonical_difficulty: 'Easy',
+      score: 1,
+      total_items: 1,
+      result_event_id: 'invalid-grade-scope',
+    }],
+  });
+
+  assert.equal(metrics.topicLinkedEvidenceCount, 0);
+  assert.deepEqual(metrics.topicPerformance, []);
+});
+
+test('rejects conflicting exact-question and canonical-question-set topics', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    quizSessions: [{
+      question_id: 504,
+      resolved_question_id: 504,
+      question_set_id: 84,
+      exact_question_topic_id: 'addition',
+      exact_question_math_topic: 'Addition',
+      canonical_topic_id: 'multiplication',
+      canonical_math_topic: 'Multiplication',
+      canonical_grade_level: 'Grade 1',
+      canonical_difficulty: 'Normal',
+      score: 1,
+      total_items: 1,
+      result_event_id: 'conflicting-canonical-topics',
+    }],
+  });
+
+  assert.equal(metrics.topicLinkedEvidenceCount, 0);
+  assert.deepEqual(metrics.topicPerformance, []);
 });
 
 test('duplicate committed result event IDs do not double-count unlinked topic misses', () => {

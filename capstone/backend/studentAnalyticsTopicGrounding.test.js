@@ -109,6 +109,56 @@ test('perfect recorded scores produce an explicit no-weakness and no-practice st
   assert.deepEqual(insight.recommendations, []);
 });
 
+test('recognizes 10/10 and 9/10 Grade-topic strengths while recommending only the proven 6-of-15 weakness', () => {
+  const catalog = buildGroundedClaimCatalog({
+    ...baseInput,
+    grade: 'Grade 2',
+    correct_answers: 28,
+    incorrect_answers: 7,
+    total_questions: 35,
+    accuracy: 80,
+    topic_performance: [
+      { canonical_task_id: 'pinehill-bandits', topic_id: 'multiplication', grade_level: 'Grade 2', correct_answers: 10, total_questions: 10 },
+      { canonical_task_id: 'defeat-the-wizard', topic_id: 'fractions', grade_level: 'Grade 2', correct_answers: 9, total_questions: 10 },
+      { canonical_task_id: 'final-teacher', topic_id: 'division', grade_level: 'Grade 2', correct_answers: 9, total_questions: 15 },
+    ],
+  });
+
+  assert.deepEqual(catalog.strength.map((claim) => claim.text), [
+    'Strong performance in Fractions: 9 of 10 recorded answers correct (90%).',
+    'Strong performance in Multiplication: 10 of 10 recorded answers correct (100%).',
+  ]);
+  assert.equal(catalog.weakness.length, 1);
+  assert.match(catalog.weakness[0].text, /Division — Final Teacher: 6 of 15 answers were incorrect \(60% accuracy\)/);
+  assert.doesNotMatch(catalog.weakness[0].text, /limited evidence/i);
+  assert.deepEqual(catalog.recommendation.map((claim) => claim.text), [
+    'Practice Grade 2 Division, especially the types missed during Final Teacher. Review the 6 recorded incorrect answers before retrying similar questions (9 of 15 correct; 60% accuracy).',
+  ]);
+});
+
+test('one through three topic-linked incorrect answers retain limited-evidence wording', () => {
+  [1, 2, 3].forEach((incorrect) => {
+    const total = incorrect + 1;
+    const catalog = buildGroundedClaimCatalog({
+      ...baseInput,
+      correct_answers: 1,
+      incorrect_answers: incorrect,
+      total_questions: total,
+      accuracy: Number(((1 / total) * 100).toFixed(2)),
+      topic_performance: [{
+        canonical_task_id: 'oakleaf-bandits',
+        topic_id: 'addition',
+        grade_level: 'Grade 1',
+        correct_answers: 1,
+        total_questions: total,
+      }],
+    });
+    assert.equal(catalog.weakness.length, 1);
+    assert.match(catalog.weakness[0].text, /limited evidence and does not yet show a persistent weakness/i);
+    assert.match(catalog.recommendation[0].text, /More recorded answers are needed before judging a persistent weakness/i);
+  });
+});
+
 test('incorrect overall answers without canonical topic evidence do not invent a topic weakness', () => {
   const catalog = buildGroundedClaimCatalog({
     ...baseInput,

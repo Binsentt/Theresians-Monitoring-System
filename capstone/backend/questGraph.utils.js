@@ -55,6 +55,13 @@ const taskWeightType = (taskId) => {
   return 'interaction';
 };
 
+const canonicalTaskRequiresGradedEvidence = (taskId) => {
+  const normalized = normalizeCanonicalTaskId(taskId);
+  if (!PLAYER_FACING_TASKS.includes(normalized)) return false;
+  const type = taskWeightType(normalized);
+  return type === 'graded_battle' || type === 'boss';
+};
+
 const canonicalTaskWeight = (taskId) => MILESTONE_WEIGHTS[taskWeightType(taskId)] || 1;
 
 const normalizeCanonicalTaskId = (value) => String(value || '').trim().toLowerCase();
@@ -120,6 +127,7 @@ module.exports = {
   MILESTONE_WEIGHTS,
   CANONICAL_TASK_LABELS,
   canonicalTaskWeight,
+  canonicalTaskRequiresGradedEvidence,
   canonicalTaskDisplayLabel,
   calculateJourneyProgress,
   calculateWeightedCompletion,

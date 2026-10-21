@@ -230,6 +230,27 @@ test('all authorized role contexts receive the same Student metrics', async (t) 
   }
 });
 
+test('Student and Parent views retain server-linked Difficult results when legacy result difficulty is blank', async (t) => {
+  const get = await setup(t, [0]);
+  fixture.results[0] = {
+    ...fixture.results[0],
+    difficulty: null,
+    canonical_difficulty: 'Difficult',
+    canonical_grade_level: 'Grade 1',
+    question_set_id: 77,
+  };
+
+  const studentDetail = await get('/api/student-progress/44');
+  const parentDetail = await get('/api/student-progress/44?scope=parent', 'parent');
+  const [parentRow] = await get('/api/students/progress?scope=parent', 'parent');
+
+  assert.equal(studentDetail.metrics.totalQuestions, 1);
+  assert.equal(studentDetail.metrics.difficultyBreakdown.hard.accuracy, 0);
+  assert.equal(studentDetail.metrics.difficultyBreakdown.medium.accuracy, null);
+  assert.deepEqual(parentDetail.metrics.difficultyBreakdown, studentDetail.metrics.difficultyBreakdown);
+  assert.deepEqual(parentRow.difficultyBreakdown, studentDetail.metrics.difficultyBreakdown);
+});
+
 test('detail includes every current-cycle answer after the first 100 results', async (t) => {
   const get = await setup(t, [...Array(100).fill(1), 0]);
   fixture.results.unshift({ id: 0, resolved_student_id: 44, score: 0, total_items: 1, difficulty: 'Hard', played_at: '2026-08-01T00:00:00.000Z' });
@@ -295,6 +316,44 @@ test('forced AI refresh re-reads the latest committed current-cycle result snaps
   assert.equal(refreshed.valid_result_count, 5);
   assert.equal(refreshed.status, 'regenerated');
   assert.equal(get.providerCallCount(), 2);
+});
+
+test('Student and Parent refresh views retain exact question topics despite a generic legacy set label', async (t) => {
+  const get = await setup(t, [...Array(53).fill(1), ...Array(10).fill(0)], {
+    providerSelection: {
+      grounding_policy_version: GROUNDING_POLICY_VERSION,
+      performance_claim_ids: ['results_recorded'],
+      strength_claim_ids: ['topic_grade_1_addition_strength'],
+      weakness_claim_ids: [],
+    },
+  });
+  fixture.results = fixture.results.map((result, index) => ({
+    ...result,
+    question_id: 5000 + index,
+    resolved_question_id: 5000 + index,
+    exact_question_topic_id: 'addition',
+    exact_question_math_topic: 'Addition',
+    canonical_topic_id: null,
+    canonical_grade_level: 'Grade 1',
+    canonical_difficulty: 'Normal',
+    canonical_math_topic: 'Mathematics',
+    canonical_task_id: 'pinehill-bandits',
+    difficulty: 'Normal',
+  }));
+
+  const refreshed = await get('/api/student-progress/44/ai-insight', 'admin', 'POST', { refresh: true });
+  const parentDetail = await get('/api/student-progress/44?scope=parent', 'parent');
+
+  assert.equal(refreshed.evidence_snapshot.metrics.totalQuestions, 63);
+  assert.equal(refreshed.evidence_snapshot.metrics.correctAnswers, 53);
+  assert.equal(refreshed.evidence_snapshot.metrics.incorrectAnswers, 10);
+  assert.equal(refreshed.evidence_snapshot.metrics.topicLinkedEvidenceCount, 63);
+  assert.equal(refreshed.evidence_snapshot.metrics.questTopicLinkedEvidenceCount, 63);
+  assert.deepEqual(refreshed.insight.strengths, [
+    'Strong performance in Addition: 53 of 63 recorded answers correct (84.13%).',
+  ]);
+  assert.equal(parentDetail.metrics.topicLinkedEvidenceCount, 63);
+  assert.deepEqual(parentDetail.aiInsight.insight.strengths, refreshed.insight.strengths);
 });
 
 test('Parent children and Student detail use canonical account Grade and matching answer facts', async (t) => {

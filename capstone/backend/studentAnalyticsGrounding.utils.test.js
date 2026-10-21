@@ -63,6 +63,51 @@ test('catalog renders exact supported percentage, count, and current quest facts
   ]);
 });
 
+test('renders authoritative non-graded quest completion without inventing quiz evidence', () => {
+  const catalog = buildGroundedClaimCatalog({
+    ...input,
+    quest_evidence: [
+      {
+        canonical_task_id: 'go-to-school',
+        label: 'Go to School',
+        completion_status: 'completed',
+        requires_graded_questions: false,
+        correct_answers: 0,
+        incorrect_answers: 0,
+        total_questions: 0,
+        accuracy: null,
+      },
+      {
+        canonical_task_id: 'talk-to-city-school-teacher',
+        label: 'Talk to the City School Teacher',
+        completion_status: 'started',
+        requires_graded_questions: false,
+        correct_answers: 0,
+        incorrect_answers: 0,
+        total_questions: 0,
+        accuracy: null,
+      },
+      {
+        canonical_task_id: 'oakleaf-bandits',
+        label: 'Oakleaf Bandits',
+        completion_status: 'completed',
+        requires_graded_questions: true,
+        correct_answers: 0,
+        incorrect_answers: 0,
+        total_questions: 0,
+        accuracy: null,
+      },
+    ],
+  });
+  const insight = renderValidatedClaimSelection(validSelection, catalog);
+
+  assert.deepEqual(insight.quest_insights.map((quest) => [quest.canonical_task_id, quest.summary]), [
+    ['go-to-school', 'Quest completed — no graded questions required.'],
+    ['oakleaf-bandits', 'Quest completed; no graded question result is recorded for this task yet.'],
+    ['talk-to-city-school-teacher', 'Quest started — no graded questions required.'],
+  ]);
+});
+
 test('difficulty remains descriptive while canonical Grade-topic evidence supports weaknesses', () => {
   const catalog = buildGroundedClaimCatalog(input);
   const insight = renderValidatedClaimSelection(selection({

@@ -151,6 +151,60 @@ test('recovers topic from unanimous canonical per-question metadata in a linked 
   assert.equal(evidence[0].metrics.topicPerformance[0].accuracy, 60);
 });
 
+test('retains exact canonical question topics when a legacy question-set display label is generic', async () => {
+  const rows = Array.from({ length: 63 }, (_, index) => ({
+    resolved_student_id: 18,
+    id: index + 1,
+    question_id: 5000 + index,
+    resolved_question_id: 5000 + index,
+    question_set_id: 905,
+    exact_question_topic_id: 'addition',
+    exact_question_math_topic: 'Addition',
+    canonical_topic_id: null,
+    canonical_grade_level: 'Grade 1',
+    canonical_difficulty: 'Normal',
+    // Legacy question sets can describe the subject rather than one Math
+    // topic. The exact linked question remains the authoritative source.
+    canonical_math_topic: 'Mathematics',
+    question_topic_ids: ['addition'],
+    question_math_topics: ['Addition'],
+    canonical_task_id: 'pinehill-bandits',
+    score: index < 53 ? 1 : 0,
+    total_items: 1,
+    difficulty: 'Normal',
+    result_event_id: `generic-set-label-${index + 1}`,
+  }));
+  const client = {
+    async query(sql) {
+      const normalized = String(sql).replace(/\s+/g, ' ').trim();
+      if (normalized.startsWith('SELECT progress')) return { rows: [{ student_id: 18, current_learning_cycle_version: 2 }] };
+      if (normalized.startsWith('SELECT gr.')) return { rows };
+      return { rows: [] };
+    },
+    release() {},
+  };
+
+  const [evidence] = await loadStudentAnalyticsEvidence({
+    progressQuery: 'SELECT progress FROM public.student_progress',
+  }, { connect: async () => client });
+
+  assert.equal(evidence.metrics.validResultCount, 63);
+  assert.equal(evidence.metrics.correctAnswers, 53);
+  assert.equal(evidence.metrics.incorrectAnswers, 10);
+  assert.equal(evidence.metrics.accuracy, 84.13);
+  assert.equal(evidence.metrics.topicLinkedEvidenceCount, 63);
+  assert.deepEqual(evidence.metrics.topicPerformance, [{
+    topicId: 'addition',
+    topic: 'Addition',
+    gradeLevel: 'Grade 1',
+    correctAnswers: 53,
+    incorrectAnswers: 10,
+    totalQuestions: 63,
+    accuracy: 84.13,
+  }]);
+  assert.equal(evidence.metrics.questTopicLinkedEvidenceCount, 63);
+});
+
 test('does not infer a topic from client text when result has no question-set linkage', async () => {
   const client = {
     async query(sql) {

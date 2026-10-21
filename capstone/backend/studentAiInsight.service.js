@@ -1,6 +1,7 @@
 const {
   buildGroundedClaimCatalog,
   deriveSupportedRecommendationIds,
+  renderQuestInsights,
 } = require('./studentAnalyticsGrounding.utils');
 const {
   buildGroundedInsightInput,
@@ -65,6 +66,7 @@ const buildCurrentTopicEvidence = (input) => {
     strengths: catalog.strength.map((claim) => claim.text),
     weaknesses: weaknessIds.map((id) => catalog.weakness.find((claim) => claim.id === id).text),
     recommendations: recommendationIds.map((id) => catalog.recommendation.find((claim) => claim.id === id).text),
+    questInsights: renderQuestInsights(input?.quest_evidence),
   };
 };
 
@@ -76,6 +78,7 @@ const applyCurrentTopicEvidence = (insight, topicEvidence) => {
     strengths: topicEvidence.strengths,
     weaknesses: topicEvidence.weaknesses,
     recommendations: topicEvidence.recommendations,
+    quest_insights: topicEvidence.questInsights,
   };
 };
 
@@ -132,16 +135,6 @@ async function resolveStudentAiInsight({
   }
 
   const baseState = buildBaseState(metrics);
-  if (baseState.data_level === 'no_data') {
-    return {
-      ...baseState,
-      topic_evidence_status: metrics.topicEvidenceStatus || 'no_topic_evidence',
-      status: 'no_data',
-      is_stale: false,
-      message: 'No valid gameplay results are available for grounded AI analysis yet.',
-    };
-  }
-
   const input = buildGroundedInsightInput({
     gradeLevel,
     metrics,
@@ -151,6 +144,27 @@ async function resolveStudentAiInsight({
     learningCycleStartedAt,
   });
   const topicEvidence = buildCurrentTopicEvidence(input);
+  if (baseState.data_level === 'no_data') {
+    return {
+      ...baseState,
+      topic_evidence_status: topicEvidence.topicEvidenceStatus || metrics.topicEvidenceStatus || 'no_topic_evidence',
+      status: 'no_data',
+      is_stale: false,
+      message: 'No valid gameplay results are available for grounded AI analysis yet.',
+      // Canonical task completion is useful progress evidence, but it is not a
+      // graded result and must not cause an AI analysis or cache write.
+      insight: topicEvidence.questInsights.length > 0
+        ? {
+          topic_evidence_status: topicEvidence.topicEvidenceStatus,
+          strengths: [],
+          weaknesses: [],
+          recommendations: [],
+          quest_insights: topicEvidence.questInsights,
+        }
+        : null,
+    };
+  }
+
   const inputFingerprint = buildInsightFingerprint(input);
   const initialCache = await readCachedInsight(pool, studentId);
   if (!aiGenerationEnabled) {

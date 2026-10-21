@@ -127,6 +127,34 @@ describe('GroundedAiAnalysis', () => {
     expect(container.querySelector('button')).toBeNull();
   });
 
+  test('shows completed non-graded quest evidence even when no graded result exists', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis
+        aiInsight={{
+          status: 'no_data', data_level: 'no_data', valid_result_count: 0,
+          message: 'No valid gameplay results are available.',
+          insight: {
+            strengths: [], weaknesses: [], recommendations: [],
+            quest_insights: [{
+              canonical_task_id: 'go-to-school',
+              label: 'Go to the School.',
+              summary: 'Quest completed — no graded questions required.',
+            }],
+          },
+        }}
+        onRefresh={jest.fn()}
+      />
+    ));
+
+    expect(container.textContent).toContain('No valid gameplay results are available.');
+    expect(container.textContent).toContain('Per-Quest Evidence');
+    expect(container.textContent).toContain('Go to the School.');
+    expect(container.textContent).toContain('Quest completed — no graded questions required.');
+    expect(container.textContent).toContain('No recorded graded results are available for a Mathematics weakness assessment yet.');
+    expect(container.textContent).not.toContain('No supported weakness is identified from the recorded evidence.');
+    expect(container.querySelector('button')).toBeNull();
+  });
+
   test('explains when recorded misses cannot be assigned to a validated topic', async () => {
     await act(async () => root.render(
       <GroundedAiAnalysis aiInsight={{
