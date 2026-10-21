@@ -444,6 +444,54 @@ test('explicit Refresh AI Insight bypasses an unchanged current cache and stores
   assert.equal(providerCalls, 2);
 });
 
+test('explicit refresh replaces a generic cached warning with latest canonical topic and task evidence', async () => {
+  const harness = createHarness();
+  const metrics = {
+    ...metricsFor([1, 0, 0]),
+    topicPerformance: [{
+      topicId: 'addition', gradeLevel: 'Grade 1', correctAnswers: 1, totalQuestions: 3,
+    }],
+    topicLinkedEvidenceCount: 3,
+    questTopicLinkedEvidenceCount: 3,
+    unmappedQuestTopicIncorrectAnswers: 0,
+    questTopicPerformance: [{
+      canonicalTaskId: 'oakleaf-bandits', topicId: 'addition', gradeLevel: 'Grade 1', correctAnswers: 1, totalQuestions: 3,
+    }],
+  };
+  const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics });
+  harness.setSaved({
+    input_fingerprint: buildInsightFingerprint(input),
+    insight: {
+      ...generatedInsight('Previous generic evidence warning.'),
+      weaknesses: ['No verified topic was available.'],
+      recommendations: ['Continue regular Math practice.'],
+    },
+    generated_at: '2026-09-09T00:00:00.000Z',
+    stale_at: null,
+  });
+  let providerCalls = 0;
+
+  const state = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics,
+    forceRefresh: true,
+    actorId: 1,
+    pool: harness.pool,
+    generateInsight: async () => {
+      providerCalls += 1;
+      return generatedInsight('Freshly analyzed committed results.');
+    },
+  });
+
+  assert.equal(providerCalls, 1);
+  assert.equal(state.status, 'regenerated');
+  assert.equal(state.insight.performance_insight, 'Freshly analyzed committed results.');
+  assert.match(state.insight.weaknesses[0], /Addition — Oakleaf Bandits: 2 incorrect answers were recorded/);
+  assert.match(state.insight.recommendations[0], /Keep practicing Grade 1 Addition.*Oakleaf Bandits/);
+  assert.equal(harness.getSaved().insight.performance_insight, 'Freshly analyzed committed results.');
+});
+
 test('provider failure keeps and marks the prior cached insight while canonical metrics remain available', async () => {
   const harness = createHarness();
   harness.setSaved({

@@ -453,7 +453,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
     await act(async () => Array.from(container.querySelectorAll('.child-selector-card'))
       .find((button) => button.textContent.includes('Ava Santos')).click());
     await act(async () => Array.from(container.querySelectorAll('button'))
-      .find((button) => button.textContent === 'Retry grounded insight').click());
+      .find((button) => button.textContent === 'Refresh AI Insight').click());
     await act(async () => Array.from(container.querySelectorAll('.child-selector-card'))
       .find((button) => button.textContent.includes('Noah Santos')).click());
     expect(container.textContent).toContain('Practice shapes for Noah.');
@@ -465,6 +465,86 @@ describe('ParentChildProgress child selection and game warnings', () => {
 
     expect(container.textContent).toContain('Practice shapes for Noah.');
     expect(container.textContent).not.toContain('Late Ava-only insight.');
+  });
+
+  test('Refresh AI Insight forces a fresh parent-scoped analysis and applies its evidence snapshot', async () => {
+    global.fetch = jest.fn((url, options = {}) => {
+      if (url.startsWith('/api/student-progress/44/ai-insight?')) {
+        expect(options.method).toBe('POST');
+        expect(JSON.parse(options.body)).toEqual({ refresh: true });
+        return jsonResponse({
+          status: 'regenerated',
+          generated_at: '2026-10-21T08:30:00.000Z',
+          insight: {
+            performance_insight: 'Fresh committed Addition evidence is available.',
+            strengths: [],
+            weaknesses: ['Addition — Oakleaf Bandits: 2 incorrect answers were recorded.'],
+            recommendations: ['Keep practicing Grade 1 Addition from Oakleaf Bandits.'],
+          },
+          evidence_snapshot: {
+            progress: { student_id: 44, student_name: 'Ava Santos', current_quest: 'Deepest Forest Bandits' },
+            metrics: {
+              currentQuest: 'Deepest Forest Bandits',
+              correctAnswers: 3,
+              incorrectAnswers: 2,
+              totalQuestions: 5,
+              accuracy: 60,
+              totalProgress: 35,
+            },
+          },
+        });
+      }
+      return successPayloadForUrl(url, {
+        children: [{ id: 44, student_name: 'Ava Santos' }], unlinked_count: 0,
+      });
+    });
+
+    await act(async () => root.render(<ParentChildProgress />));
+    const refresh = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Refresh AI Insight');
+    expect(refresh).toBeTruthy();
+
+    await act(async () => refresh.click());
+
+    expect(container.textContent).toContain('Fresh committed Addition evidence is available.');
+    expect(container.textContent).toContain('Addition — Oakleaf Bandits: 2 incorrect answers were recorded.');
+    expect(container.textContent).toContain('Deepest Forest Bandits');
+    expect(container.textContent).toContain('Correct Answers3');
+    expect(container.textContent).toContain('Incorrect Answers2');
+  });
+
+  test('Refresh AI Insight renders the authoritative no-evidence state instead of a transient error', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url.startsWith('/api/student-progress/44/ai-insight?')) {
+        return Promise.resolve({
+          ok: false,
+          status: 422,
+          json: async () => ({
+            status: 'no_data',
+            data_level: 'no_data',
+            valid_result_count: 0,
+            message: 'No valid gameplay results are available for grounded AI analysis yet.',
+            evidence_snapshot: {
+              progress: { student_id: 44, student_name: 'Ava Santos', current_quest: 'Tutorial' },
+              metrics: { currentQuest: 'Tutorial', totalQuestions: 0, correctAnswers: 0, incorrectAnswers: 0, accuracy: null, totalProgress: 0 },
+            },
+          }),
+        });
+      }
+      return successPayloadForUrl(url, {
+        children: [{ id: 44, student_name: 'Ava Santos' }], unlinked_count: 0,
+      });
+    });
+
+    await act(async () => root.render(<ParentChildProgress />));
+    const refresh = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Refresh AI Insight');
+    await act(async () => refresh.click());
+
+    expect(container.textContent).toContain('No valid gameplay results are available for grounded AI analysis yet.');
+    expect(container.textContent).toContain('Tutorial');
+    expect(Array.from(container.querySelectorAll('button'))
+      .some((button) => button.textContent === 'Refresh AI Insight')).toBe(false);
   });
 
   test('loads only the chosen child after the parent selects from multiple children', async () => {

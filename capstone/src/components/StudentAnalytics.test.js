@@ -303,7 +303,7 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('Record more gameplay evidence.');
   });
 
-  test('Refresh AI Insight replaces the whole page from one fresh snapshot and blocks repeat interaction', async () => {
+  test('Refresh AI Insight keeps the current snapshot visible while one fresh request is active', async () => {
     let resolveRefresh;
     global.fetch = jest.fn()
       .mockResolvedValueOnce(jsonResponse({
@@ -329,9 +329,12 @@ describe('StudentAnalytics defensive rendering', () => {
     const request = global.fetch.mock.calls.find(([, options]) => options?.method === 'POST');
     expect(request).toBeTruthy();
     expect(JSON.parse(request[1].body)).toEqual({ refresh: true });
-    expect(container.textContent).toContain('Refreshing student progress...');
-    expect(container.querySelector('.student-metrics-grid')).toBeFalsy();
-    expect(container.querySelector('.student-insight-action')).toBeFalsy();
+    const refreshingButton = container.querySelector('.student-insight-action');
+    expect(refreshingButton).toBeTruthy();
+    expect(refreshingButton.textContent).toBe('Refreshing AI insight...');
+    expect(refreshingButton.disabled).toBe(true);
+    expect(container.querySelector('.student-metrics-grid')).toBeTruthy();
+    expect(container.textContent).toContain('Old cached insight.');
     expect(global.fetch).toHaveBeenCalledTimes(2);
 
     const refreshedAt = '2026-10-13T06:30:00.000Z';
@@ -387,7 +390,7 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).not.toContain('Refreshing student progress...');
   });
 
-  test('shows a page-level failure state when a full refresh cannot provide a complete snapshot', async () => {
+  test('keeps the prior snapshot and offers another refresh when a refreshed snapshot is incomplete', async () => {
     global.fetch = jest.fn()
       .mockResolvedValueOnce(jsonResponse({
         progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
@@ -401,8 +404,12 @@ describe('StudentAnalytics defensive rendering', () => {
     await act(async () => refresh.click());
 
     expect(container.textContent).toContain('The refreshed Student Progress snapshot was incomplete.');
-    expect(container.querySelector('.student-metrics-grid')).toBeFalsy();
-    expect(container.textContent).not.toContain('Refreshing student progress...');
+    expect(container.textContent).toContain('Existing insight.');
+    expect(container.querySelector('.student-metrics-grid')).toBeTruthy();
+    const retry = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Refresh AI Insight');
+    expect(retry).toBeTruthy();
+    expect(retry.disabled).toBe(false);
   });
 
   test('offers a dedicated selected-student analytics print report without dashboard controls', async () => {

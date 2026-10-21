@@ -247,18 +247,26 @@ export default function ParentChildProgress() {
     try {
       const response = await fetch(
         buildScopedApiUrl(`/api/student-progress/${focusStudentId}/ai-insight`, 'parent'),
-        { method: 'POST', headers: { ...buildAuthHeaders(), 'Content-Type': 'application/json' } }
+        {
+          method: 'POST',
+          headers: { ...buildAuthHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh: true }),
+        }
       );
       const payload = await response.json();
       if (childRequestVersion.current !== requestVersion) return;
-      if (payload?.status === 'insufficient_data' || payload?.status === 'no_data') {
-        setSelectedChildAiInsight(payload);
-        return;
-      }
-      if (!response.ok) {
+      const supportedEmptyState = ['insufficient_data', 'no_data'].includes(payload?.status);
+      if (!response.ok && !supportedEmptyState) {
         setInsightError(payload?.error || 'Grounded AI Insights are unavailable right now.');
         return;
       }
+      const evidenceSnapshot = payload?.evidence_snapshot;
+      if (!evidenceSnapshot?.progress || !evidenceSnapshot?.metrics) {
+        setInsightError('The refreshed Student Progress snapshot was incomplete.');
+        return;
+      }
+      setSelectedChildProgress(evidenceSnapshot.progress);
+      setSelectedChildMetrics(evidenceSnapshot.metrics);
       setSelectedChildAiInsight(payload);
     } catch (err) {
       if (childRequestVersion.current !== requestVersion) return;
@@ -588,7 +596,7 @@ export default function ParentChildProgress() {
                 <GroundedAiAnalysis
                   aiInsight={selectedChildAiInsight}
                   error={insightError}
-                  loading={loading || childDetailsLoading || insightLoading}
+                  loading={insightLoading}
                   onRefresh={focusStudentId ? generateChildInsight : undefined}
                 />
               </div>

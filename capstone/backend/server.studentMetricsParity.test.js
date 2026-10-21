@@ -144,8 +144,15 @@ const setup = async (t, answers = [1, 1, 1, 0], { providerSelection = null, aiGe
     fixture = null;
     await new Promise((resolve) => server.close(resolve));
   });
-  const get = async (route, token = 'admin', method = 'GET') => {
-    const response = await global.fetch(`${base}${route}`, { method, headers: { Authorization: `Bearer ${token}` } });
+  const get = async (route, token = 'admin', method = 'GET', body = undefined) => {
+    const response = await global.fetch(`${base}${route}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
     assert.equal(response.status, 200, `${token} ${route}`);
     return response.json();
   };
@@ -258,6 +265,36 @@ test('detail and AI reuse the same complete evidence fingerprint after 500 resul
   assert.deepEqual(generated.insight, detail.aiInsight.insight);
   assert.deepEqual(generated.evidence_snapshot.metrics, detail.metrics);
   assert.equal(generated.evidence_snapshot.progress.student_id, detail.progress.student_id);
+});
+
+test('forced AI refresh re-reads the latest committed current-cycle result snapshot', async (t) => {
+  const get = await setup(t, [1, 1, 1, 0], {
+    providerSelection: {
+      grounding_policy_version: GROUNDING_POLICY_VERSION,
+      performance_claim_ids: ['results_recorded'],
+      strength_claim_ids: [],
+      weakness_claim_ids: [],
+    },
+  });
+
+  const first = await get('/api/student-progress/44/ai-insight', 'admin', 'POST', { refresh: true });
+  fixture.results.push({
+    id: 5,
+    resolved_student_id: 44,
+    score: 0,
+    total_items: 1,
+    difficulty: 'Easy',
+    played_at: '2026-09-07T00:00:01.000Z',
+    question_set_id: 77,
+  });
+  const refreshed = await get('/api/student-progress/44/ai-insight', 'admin', 'POST', { refresh: true });
+
+  assert.equal(first.evidence_snapshot.metrics.totalQuestions, 4);
+  assert.equal(refreshed.evidence_snapshot.metrics.totalQuestions, 5);
+  assert.equal(refreshed.evidence_snapshot.metrics.incorrectAnswers, 2);
+  assert.equal(refreshed.valid_result_count, 5);
+  assert.equal(refreshed.status, 'regenerated');
+  assert.equal(get.providerCallCount(), 2);
 });
 
 test('Parent children and Student detail use canonical account Grade and matching answer facts', async (t) => {

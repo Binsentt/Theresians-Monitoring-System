@@ -66,7 +66,6 @@ export default function StudentAnalytics() {
   const [metrics, setMetrics] = useState(null);
   const [aiInsight, setAiInsight] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [insightLoading, setInsightLoading] = useState(false);
   const [error, setError] = useState('');
   const [insightError, setInsightError] = useState('');
@@ -120,9 +119,6 @@ export default function StudentAnalytics() {
     refreshInFlight.current = true;
     const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
     setInsightLoading(true);
-    setRefreshing(true);
-    setLoading(true);
-    setError('');
     setInsightError('');
     try {
       const response = await fetch(buildInsightUrl(buildStudentProgressDetailUrl(studentId, loggedInUser?.role)), {
@@ -149,11 +145,9 @@ export default function StudentAnalytics() {
       setInsightError('');
     } catch (err) {
       console.error('Grounded insight request failed:', err);
-      setError(err?.message || 'Unable to refresh student progress.');
+      setInsightError(err?.message || 'Unable to refresh student progress.');
     } finally {
       refreshInFlight.current = false;
-      setRefreshing(false);
-      setLoading(false);
       setInsightLoading(false);
     }
   };
@@ -271,7 +265,7 @@ export default function StudentAnalytics() {
 
       {loading ? (
         <div className="loading-state" role="status" aria-live="polite">
-          {refreshing ? 'Refreshing student progress...' : 'Loading student details...'}
+          Loading student details...
         </div>
       ) : error ? (
         <div className="fallback-note validation-error-text">{error}</div>
