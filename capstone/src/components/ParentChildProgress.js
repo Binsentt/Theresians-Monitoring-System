@@ -17,11 +17,66 @@ import {
   resolveCurrentDifficulty,
   safeDisplayText,
   sortStudentsByName,
-  toFiniteNumber,
 } from './studentProgress.utils';
-import { LearningCycleResetAction } from './LearningCycleResetAction';
 import GroundedAiAnalysis from './GroundedAiAnalysis';
 import '../styles/studentprogress.css';
+
+const toTimestamp = (value) => {
+  const parsed = new Date(value || 0).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+export const buildScoreTimeline = (sessions = []) => {
+  if (!Array.isArray(sessions)) return [];
+
+  return sessions
+    .filter((session) => Number.isFinite(Number(session?.percentage)))
+    .slice()
+    .sort((left, right) => toTimestamp(left?.played_at || left?.activity_timestamp || left?.created_at)
+      - toTimestamp(right?.played_at || right?.activity_timestamp || right?.created_at))
+    .map((session, index) => ({
+      label: `#${index + 1}`,
+      percentage: clampPercent(session.percentage, 0),
+      topic: safeDisplayText(session.math_topic, 'Topic unavailable'),
+      difficulty: normalizeDifficultyDisplay(session.difficulty, 'Difficulty unavailable'),
+      playedAt: session.played_at || session.activity_timestamp || session.created_at || null,
+      sessionId: session.id ?? null,
+    }));
+};
+
+const isGradedActivity = (activity = {}) => {
+  const description = `${activity.canonical_activity_id || ''} ${activity.activity_description || ''}`;
+  const score = Number(activity.score);
+  const totalItems = Number(activity.total_items ?? activity.totalItems);
+  const percentage = Number(activity.percentage ?? activity.accuracy);
+  return (Number.isFinite(score) && Number.isFinite(totalItems) && totalItems > 0)
+    || (Number.isFinite(percentage) && /quiz|battle|answer|result/i.test(description));
+};
+
+export const formatLatestActivityScore = (activity = {}) => {
+  if (!isGradedActivity(activity)) return 'Not graded';
+  const score = Number(activity.score);
+  const totalItems = Number(activity.total_items ?? activity.totalItems);
+  if (Number.isFinite(score) && Number.isFinite(totalItems) && totalItems > 0) {
+    return `${score} / ${totalItems}`;
+  }
+  const percentage = Number(activity.percentage ?? activity.accuracy);
+  return Number.isFinite(percentage) ? `${percentage.toFixed(0)}%` : 'Not graded';
+};
+
+const ScoreTimelineTooltip = ({ active, payload }) => {
+  if (!active || !payload?.length) return null;
+  const point = payload[0]?.payload || {};
+  return (
+    <div className="child-score-tooltip">
+      <strong>{point.label}</strong>
+      <span>{point.topic}</span>
+      <span>{point.difficulty}</span>
+      <span>{point.playedAt ? new Date(point.playedAt).toLocaleString() : 'Date unavailable'}</span>
+      <b>{Number(point.percentage).toFixed(0)}%</b>
+    </div>
+  );
+};
 
 export default function ParentChildProgress() {
   const navigate = useNavigate();
@@ -31,16 +86,11 @@ export default function ParentChildProgress() {
   const [portalRole, setPortalRole] = useState('parent');
   const [parentAccountId, setParentAccountId] = useState(null);
   const [quizSessions, setQuizSessions] = useState([]);
-  const [topicCoverage, setTopicCoverage] = useState([]);
   const [selectedChildMetrics, setSelectedChildMetrics] = useState(null);
   const [selectedChildProgress, setSelectedChildProgress] = useState(null);
   const [selectedChildAiInsight, setSelectedChildAiInsight] = useState(null);
   const [insightLoading, setInsightLoading] = useState(false);
   const [insightError, setInsightError] = useState('');
-  const [selectedAnalyticsReadiness, setSelectedAnalyticsReadiness] = useState(null);
-  const [childDetailsLoading, setChildDetailsLoading] = useState(false);
-  const [childDetailsError, setChildDetailsError] = useState('');
-  const [topicDetailsError, setTopicDetailsError] = useState('');
   const [unlinkedCount, setUnlinkedCount] = useState(0);
   const [unlinkedWarningDismissed, setUnlinkedWarningDismissed] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -135,24 +185,17 @@ export default function ParentChildProgress() {
     const requestVersion = ++childRequestVersion.current;
     setInsightLoading(false);
     setInsightError('');
-    setTopicDetailsError('');
     if (!focusStudentId || !parentAccountId) {
       setQuizSessions([]);
-      setTopicCoverage([]);
       setSelectedChildMetrics(null);
       setSelectedChildProgress(null);
       setSelectedChildAiInsight(null);
       setInsightError('');
-      setSelectedAnalyticsReadiness(null);
-      setChildDetailsLoading(false);
-      setChildDetailsError('');
       return undefined;
     }
 
     let active = true;
     const loadChildGameDetails = async () => {
-      setChildDetailsLoading(true);
-      setChildDetailsError('');
       setSelectedChildMetrics(null);
       setSelectedChildProgress(null);
       setSelectedChildAiInsight(null);
@@ -163,38 +206,27 @@ export default function ParentChildProgress() {
           if (!response.ok) throw new Error('Could not load child data');
           return response.json();
         };
-        const [quizzesResult, topicsResult, analyticsResult] = await Promise.allSettled([
+        const [quizzesResult, analyticsResult] = await Promise.allSettled([
           readChildData(`/api/parent/children/${focusStudentId}/quizzes?limit=20`),
-          readChildData(`/api/parent/children/${focusStudentId}/topics`),
           readChildData(`/api/student-progress/${focusStudentId}`),
         ]);
         if (!active) return;
 
         const quizzesPayload = quizzesResult.status === 'fulfilled' ? quizzesResult.value : null;
-        const topicsPayload = topicsResult.status === 'fulfilled' ? topicsResult.value : null;
         const analyticsPayload = analyticsResult.status === 'fulfilled' ? analyticsResult.value : null;
-        setChildDetailsError(quizzesResult.status === 'rejected' ? 'Quiz session details are currently unavailable.' : '');
-        setTopicDetailsError(topicsResult.status === 'rejected' ? 'Topic coverage is currently unavailable.' : '');
         setInsightError(analyticsResult.status === 'rejected' ? 'Student analytics are currently unavailable.' : '');
 
         setQuizSessions(Array.isArray(quizzesPayload?.data) ? quizzesPayload.data : []);
-        setTopicCoverage(Array.isArray(topicsPayload) ? topicsPayload : []);
         setSelectedChildMetrics(analyticsPayload?.metrics && typeof analyticsPayload.metrics === 'object' ? analyticsPayload.metrics : null);
         setSelectedChildProgress(analyticsPayload?.progress && typeof analyticsPayload.progress === 'object' ? analyticsPayload.progress : null);
         setSelectedChildAiInsight(analyticsPayload?.aiInsight && typeof analyticsPayload.aiInsight === 'object' ? analyticsPayload.aiInsight : null);
-        setSelectedAnalyticsReadiness(analyticsPayload?.analyticsReadiness && typeof analyticsPayload.analyticsReadiness === 'object' ? analyticsPayload.analyticsReadiness : null);
       } catch (err) {
         console.error('Child game result load error:', err);
         if (!active) return;
         setQuizSessions([]);
-        setTopicCoverage([]);
         setSelectedChildMetrics(null);
         setSelectedChildProgress(null);
         setSelectedChildAiInsight(null);
-        setSelectedAnalyticsReadiness(null);
-        setChildDetailsError('Quiz session details are currently unavailable.');
-      } finally {
-        if (active) setChildDetailsLoading(false);
       }
     };
 
@@ -222,11 +254,7 @@ export default function ParentChildProgress() {
   }, [focusStudent, logsByStudent]);
 
   const scoreTimeline = useMemo(() => {
-    return quizSessions.slice().reverse().map((session, index) => ({
-      label: `${session.math_topic || 'Topic'} (${normalizeDifficultyDisplay(session.difficulty)})`,
-      percentage: clampPercent(session.percentage, 0),
-      quiz: index + 1,
-    }));
+    return buildScoreTimeline(quizSessions);
   }, [quizSessions]);
 
   const currentQuest = selectedChildMetrics?.currentQuest !== undefined
@@ -401,12 +429,6 @@ export default function ParentChildProgress() {
                         <p>{[safeDisplayText(focusStudent.grade_level || focusStudent.grade, 'Grade N/A'), safeDisplayText(focusStudent.section, 'Not assigned')].filter(Boolean).join(' - ')}</p>
                         <small>Student ID: {focusStudent.game_student_id || 'Not linked'}</small>
                       </div>
-                      <LearningCycleResetAction
-                        studentId={focusStudentId}
-                        role="parent"
-                        className="table-action-button child-reset-action"
-                        onReset={() => setRefreshToken((value) => value + 1)}
-                      />
                     </div>
 
                     <div className="child-progress-stats">
@@ -485,7 +507,7 @@ export default function ParentChildProgress() {
                           {selectedLogs.slice(0, 5).map((log) => (
                             <div key={log.id || `${log.student_id}-${log.activity_timestamp}`} className="child-activity-item">
                               <strong>{safeDisplayText(log.activity_description, 'Gameplay Session')}</strong>
-                              <span>{safeDisplayText(log.current_quest, 'No active quest')} | Score {toFiniteNumber(log.score, 0)}</span>
+                              <span>{safeDisplayText(log.current_quest, 'No active quest')} | {formatLatestActivityScore(log)}</span>
                               <small>{log.activity_timestamp ? new Date(log.activity_timestamp).toLocaleString() : 'Timestamp unavailable'}</small>
                             </div>
                           ))}
@@ -493,35 +515,11 @@ export default function ParentChildProgress() {
                       )}
                     </div>
 
-                    <div className="child-game-results-grid">
-                      <div className="child-activity-panel child-quiz-panel">
-                        <div className="insights-header">
-                          <h2>Quiz Sessions</h2>
-                          <p>Per-session game results for the selected child.</p>
-                        </div>
-                        {childDetailsLoading ? (
-                          <div className="fallback-note">Loading quiz sessions...</div>
-                        ) : childDetailsError ? (
-                          <div className="fallback-note validation-error-text">{childDetailsError}</div>
-                        ) : quizSessions.length === 0 ? (
-                          <div className="fallback-note">No quiz sessions recorded for this child.</div>
-                        ) : (
-                          <div className="child-quiz-list">
-                            {quizSessions.map((session) => (
-                              <div key={session.id} className="child-quiz-item">
-                                <strong>{safeDisplayText(session.math_topic, 'Topic unavailable')}</strong>
-                                <span>{toFiniteNumber(session.score, 0)} / {toFiniteNumber(session.total_items, 0)} | {formatPercent(session.percentage, '0%')}</span>
-                                <small>{normalizeDifficultyDisplay(session.difficulty, 'Difficulty unavailable')} | {session.played_at ? new Date(session.played_at).toLocaleString() : 'Date unavailable'}</small>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
+                    <div className="child-score-results">
                       <div className="child-activity-panel child-score-panel">
                         <div className="insights-header">
                           <h2>Score Over Time</h2>
-                          <p>Recent quiz percentages by topic and difficulty.</p>
+                          <p>Most recent 20 recorded quiz results in chronological order. Hover a bar for topic and session details.</p>
                         </div>
                         {scoreTimeline.length === 0 ? (
                           <div className="fallback-note">No quiz percentages recorded for this child.</div>
@@ -530,9 +528,9 @@ export default function ParentChildProgress() {
                             <ResponsiveContainer width="100%" height={260}>
                               <BarChart data={scoreTimeline}>
                                 <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="label" interval={0} angle={-24} textAnchor="end" height={96} />
+                                <XAxis dataKey="label" interval="preserveStartEnd" height={32} />
                                 <YAxis domain={[0, 100]} />
-                                <Tooltip formatter={(value) => [`${Number(value).toFixed(0)}%`, 'Score']} />
+                                <Tooltip content={<ScoreTimelineTooltip />} />
                                 <Bar dataKey="percentage" fill="#2563eb" radius={[6, 6, 0, 0]} />
                               </BarChart>
                             </ResponsiveContainer>
@@ -540,51 +538,6 @@ export default function ParentChildProgress() {
                         )}
                       </div>
 
-                      <div className="child-activity-panel child-topic-panel">
-                        <div className="insights-header">
-                          <h2>Topic Coverage</h2>
-                          <p>Topics attempted and best recorded quiz scores.</p>
-                        </div>
-                        {topicDetailsError ? (
-                          <div className="fallback-note validation-error-text">{topicDetailsError}</div>
-                        ) : topicCoverage.length === 0 ? (
-                          <div className="fallback-note">No topic results recorded for this child.</div>
-                        ) : (
-                          <div className="child-topic-list">
-                            {topicCoverage.map((topic) => (
-                              <div key={safeDisplayText(topic.math_topic, 'topic')} className="child-topic-item">
-                                <strong>{safeDisplayText(topic.math_topic, 'Topic unavailable')}</strong>
-                                <span>{toFiniteNumber(topic.times_played, 0)} played</span>
-                                <small>Best score {toFiniteNumber(topic.best_score, 0)}</small>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="child-activity-panel child-ai-readiness-panel">
-                        <div className="insights-header">
-                          <h2>Analytics Readiness</h2>
-                          <p>Child-specific learning signals prepared for future recommendation APIs.</p>
-                        </div>
-                        <div className="child-topic-list">
-                          <div className="child-topic-item">
-                            <strong>Quiz sessions</strong>
-                            <span>{selectedAnalyticsReadiness?.engagement?.quizSessionCount ?? quizSessions.length} available</span>
-                          </div>
-                          <div className="child-topic-item">
-                            <strong>Weak topic candidates</strong>
-                            <span>{selectedAnalyticsReadiness?.weakTopicCandidates?.length ?? 0} detected</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="child-activity-panel child-achievements-panel">
-                        <div className="insights-header">
-                          <h2>Achievements — Coming Soon</h2>
-                          <p>Badges and milestones will appear here when they are available.</p>
-                        </div>
-                      </div>
                     </div>
                   </div>
                 ) : (

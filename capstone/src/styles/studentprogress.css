@@ -1122,9 +1122,9 @@
   color: var(--text-muted, #64748b);
 }
 
-.child-game-results-grid {
+.child-score-results {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -1163,6 +1163,28 @@
   min-height: 260px;
   width: 100%;
   overflow: hidden;
+}
+
+.child-score-tooltip {
+  display: grid;
+  gap: 4px;
+  max-width: min(260px, 70vw);
+  padding: 10px 12px;
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 8px;
+  background: var(--panel-bg, #ffffff);
+  color: var(--text-primary, #0f172a);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.14);
+  overflow-wrap: anywhere;
+}
+
+.child-score-tooltip span {
+  color: var(--text-muted, #64748b);
+  font-size: 0.82rem;
+}
+
+.child-score-tooltip b {
+  color: var(--accent-color, #2563eb);
 }
 
 .child-achievements-panel {
@@ -1446,7 +1468,7 @@
   .student-charts-grid,
   .student-ai-panel,
   .child-progress-stats,
-  .child-game-results-grid {
+  .child-score-results {
     grid-template-columns: 1fr;
   }
 

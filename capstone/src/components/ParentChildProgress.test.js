@@ -1,6 +1,6 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import ParentChildProgress from './ParentChildProgress';
+import ParentChildProgress, { buildScoreTimeline, formatLatestActivityScore } from './ParentChildProgress';
 
 const mockNavigate = jest.fn();
 
@@ -147,9 +147,11 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('Ava has limited Normal evidence.');
     expect(container.textContent).toContain('Practice fractions for Ava.');
     expect(container.textContent).toContain('Grade 3 - Jade');
-    expect(container.textContent).toContain('Quiz Sessions');
-    expect(container.textContent).toContain('No quiz sessions recorded for this child.');
-    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Reset Progress')).toBe(true);
+    expect(container.textContent).not.toContain('Quiz Sessions');
+    expect(container.textContent).not.toContain('Topic Coverage');
+    expect(container.textContent).not.toContain('Analytics Readiness');
+    expect(container.textContent).not.toContain('Achievements — Coming Soon');
+    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Reset Progress')).toBe(false);
     expect(container.textContent).not.toContain('My Children');
     expect(mockNavigate).not.toHaveBeenCalledWith('/login');
     expect(global.fetch.mock.calls.every(([, options]) => (
@@ -391,41 +393,52 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('Practice fractions for Ava.');
   });
 
-  test('reloads authoritative detail after resetting the same child learning cycle', async () => {
-    let resetComplete = false;
-    let detailRequests = 0;
+  test('does not expose a reset action for a selected child', async () => {
+    global.fetch = jest.fn((url) => successPayloadForUrl(url, {
+      children: [{ id: 44, student_name: 'Ava Santos' }], unlinked_count: 0,
+    }));
+    await act(async () => root.render(<ParentChildProgress />));
+
+    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Reset Progress')).toBe(false);
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes('/reset'))).toBe(false);
+  });
+
+  test('uses short chronological chart labels and keeps topic details in the timeline data', () => {
+    expect(buildScoreTimeline([
+      { id: 2, math_topic: 'Subtraction', difficulty: 'Difficult', percentage: 80, played_at: '2026-10-21T10:00:00.000Z' },
+      { id: 1, math_topic: 'Addition', difficulty: 'Easy', percentage: 60, played_at: '2026-10-20T10:00:00.000Z' },
+    ])).toEqual([
+      expect.objectContaining({ label: '#1', percentage: 60, topic: 'Addition', difficulty: 'Easy', sessionId: 1 }),
+      expect.objectContaining({ label: '#2', percentage: 80, topic: 'Subtraction', difficulty: 'Difficult', sessionId: 2 }),
+    ]);
+  });
+
+  test('does not display a zero score for ungraded story activity', () => {
+    expect(formatLatestActivityScore({ activity_description: 'Task Completed — talk to the old lady', score: 0 })).toBe('Not graded');
+    expect(formatLatestActivityScore({ activity_description: 'Quiz Result', score: 0, total_items: 1 })).toBe('0 / 1');
+  });
+
+  test('renders Not graded for story activity instead of a misleading Score 0', async () => {
     global.fetch = jest.fn((url) => {
-      if (url.startsWith('/api/student-progress/44/reset?')) {
-        resetComplete = true;
-        return jsonResponse({ success: true });
-      }
-      if (url.startsWith('/api/student-progress/44?')) {
-        detailRequests += 1;
-        return jsonResponse({
-          progress: { student_id: 44 },
-          metrics: { currentQuest: resetComplete ? null : 'Before reset quest', totalProgress: null },
-          aiInsight: { status: 'insufficient_data' },
-        });
+      if (String(url).startsWith('/api/activity-logs?')) {
+        return jsonResponse({ data: [{
+          id: 7,
+          student_id: 44,
+          activity_description: 'Task Completed — talk to the old lady',
+          current_quest: 'Thank you for defeating the Wizard',
+          score: 0,
+          activity_timestamp: '2026-10-21T10:00:00.000Z',
+        }] });
       }
       return successPayloadForUrl(url, {
         children: [{ id: 44, student_name: 'Ava Santos' }], unlinked_count: 0,
       });
     });
+
     await act(async () => root.render(<ParentChildProgress />));
-    expect(container.textContent).toContain('Before reset quest');
 
-    await act(async () => Array.from(container.querySelectorAll('button'))
-      .find((button) => button.textContent === 'Reset Progress').click());
-    await act(async () => {
-      const reason = document.body.querySelector('select[name="learning-cycle-reason"]');
-      reason.value = 'New Lesson';
-      reason.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    await act(async () => Array.from(document.body.querySelectorAll('button'))
-      .find((button) => button.textContent === 'Start New Learning Cycle').click());
-
-    expect(detailRequests).toBe(2);
-    expect(container.textContent).not.toContain('Before reset quest');
+    expect(container.textContent).toContain('Not graded');
+    expect(container.textContent).not.toContain('Score 0');
   });
 
   test('does not apply an earlier child insight after the selected child changes', async () => {

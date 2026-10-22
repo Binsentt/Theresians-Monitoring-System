@@ -1102,6 +1102,14 @@ const requireLessonQuestionManagerAccess = (req, res, next) => {
 };
 const requireAnalyticsAccess = requireAuthenticatedRoles(['admin', 'teacher', 'parent', 'parent_teacher']);
 const requireParentAnalyticsAccess = requireAuthenticatedRoles(['parent', 'parent_teacher']);
+const requireLearningCycleResetAccess = (req, res, next) => {
+  const role = normalizeAccountRole(req.authenticatedUser?.role);
+  const requestedScope = String(req.query?.scope || '').trim().toLowerCase();
+  if (role === 'parent' || (role === 'parent_teacher' && requestedScope === 'parent')) {
+    return res.status(403).json({ error: 'Parents cannot start a new learning cycle.' });
+  }
+  return requireAnalyticsAccess(req, res, next);
+};
 
 const resolveAnalyticsScope = (req) => {
   const accountId = Number(req.authenticatedUser?.id);
@@ -11230,7 +11238,7 @@ app.post('/api/student-progress/bulk/permanent-delete', requireAccountManagement
 app.post('/api/student-progress/:studentId/archive', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, retiredStudentProgressLifecycle);
 app.post('/api/student-progress/:studentId/permanent-delete', requireAccountManagementAdmin, retiredStudentProgressLifecycle);
 
-app.post('/api/student-progress/:studentId/reset', requireAnalyticsAccess, verifyScopedStudentAnalyticsAccess, async (req, res) => {
+app.post('/api/student-progress/:studentId/reset', requireLearningCycleResetAccess, verifyScopedStudentAnalyticsAccess, async (req, res) => {
   const studentId = resolvePositiveInteger(req.params.studentId);
   const resetReason = resolveLearningCycleResetReason(req.body);
   if (!studentId || resetReason.error) {

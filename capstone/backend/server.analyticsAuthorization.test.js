@@ -374,6 +374,7 @@ test('grounded insight endpoint returns a current cache without another provider
     weaknesses: ['2 incorrect answers were recorded. This is limited evidence and does not identify a persistent Math weakness or a verified topic.'],
     recommendations: ['Review the 2 missed questions and continue regular Math practice. More topic-linked results are needed for a specific recommendation.'],
     topic_evidence_status: 'topic_metadata_unavailable',
+    quest_insights: [],
   });
 });
 

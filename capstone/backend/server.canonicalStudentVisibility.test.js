@@ -143,7 +143,7 @@ test('canonical students remain visible before gameplay through only their authe
   assert.equal(admin.body[0].total_questions, 0);
   assert.equal(admin.body[0].game_score, 0);
   assert.equal(admin.body[0].accuracy_rate, null);
-  assert.equal(admin.body[0].progress_percentage, 0);
+  assert.equal(admin.body[0].progress_percentage, null);
   assert.equal(admin.body[0].difficultyBreakdown.easy.accuracy, null);
 
   const teacher = await requestJson(baseUrl, '/api/students/progress?teacher_id=999', { headers: authHeaders('teacher') });
@@ -164,8 +164,10 @@ test('canonical students remain visible before gameplay through only their authe
   const teacherScope = observedScopes.find((entry) => entry.params.includes(16));
   const otherTeacherScope = observedScopes.find((entry) => entry.params.includes(17));
   const parentScope = observedScopes.find((entry) => entry.params.includes(19));
-  assert.ok(teacherScope?.sql.includes('from public.teacher_student_relationships tsr'));
-  assert.ok(otherTeacherScope?.sql.includes('from public.teacher_student_relationships tsr'));
+  assert.ok(teacherScope?.sql.includes('teacher_class_assignments'));
+  assert.ok(!teacherScope?.sql.includes("lower(tsr.relationship_type) = 'teacher'"));
+  assert.ok(otherTeacherScope?.sql.includes('teacher_class_assignments'));
+  assert.ok(!otherTeacherScope?.sql.includes("lower(tsr.relationship_type) = 'teacher'"));
   assert.ok(parentScope?.sql.includes("lower(tsr.relationship_type) = 'parent'"));
 });
 
@@ -201,11 +203,14 @@ test('Parent/Teacher keeps its teacher and parent scopes distinct for the same c
   let parentScopeSql = '';
   queryHandler = async (sql, params) => {
     if (isCanonicalProgressQuery(sql) && params.includes(20)) {
+      if (sql.includes('teacher_class_assignments')) {
+        teacherScopeSql = sql;
+        return emptyResult;
+      }
       if (sql.includes("lower(tsr.relationship_type) = 'parent'")) {
         parentScopeSql = sql;
         return resultRows([canonicalZeroGameplayStudent]);
       }
-      teacherScopeSql = sql;
       return emptyResult;
     }
     return emptyResult;
@@ -219,7 +224,8 @@ test('Parent/Teacher keeps its teacher and parent scopes distinct for the same c
   assert.equal(parentContext.status, 200);
   assert.equal(parentContext.body.length, 1);
   assert.equal(parentContext.body[0].section, 'Jade');
-  assert.ok(teacherScopeSql.includes("lower(tsr.relationship_type) = 'teacher'"));
+  assert.ok(teacherScopeSql.includes('teacher_class_assignments'));
+  assert.ok(!teacherScopeSql.includes("lower(tsr.relationship_type) = 'teacher'"));
   assert.ok(parentScopeSql.includes("lower(tsr.relationship_type) = 'parent'"));
 });
 
@@ -282,5 +288,5 @@ test('an authenticated parent can open a canonical zero-gameplay child analysis 
   assert.equal(response.body.metrics.gameScore, 0);
   assert.equal(response.body.metrics.accuracy, null);
   assert.equal(response.body.metrics.completedQuests, 0);
-  assert.equal(response.body.metrics.totalProgress, 0);
+  assert.equal(response.body.metrics.totalProgress, null);
 });

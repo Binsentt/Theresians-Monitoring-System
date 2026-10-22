@@ -301,7 +301,7 @@ test('Parent and Parent/Teacher parent scopes cannot run bulk Reset', async (t) 
   assert.equal(observed.transactionStarted, false);
 });
 
-test('Parent and Parent/Teacher reset scopes remain isolated', async (t) => {
+test('Parent reset is rejected while Parent/Teacher keeps only Teacher reset scope', async (t) => {
   reset();
   configureActor('parent', 3, 'parent');
   withScopedRelationship({ actorId: 3, scopeType: 'parent' });
@@ -309,10 +309,11 @@ test('Parent and Parent/Teacher reset scopes remain isolated', async (t) => {
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => { reset(); await close(server); });
 
-  const parentAllowed = await requestJson(baseUrl, '/api/student-progress/44/reset', {
+  const parentDenied = await requestJson(baseUrl, '/api/student-progress/44/reset', {
     method: 'POST', headers: authHeaders('parent'), body: JSON.stringify({ reason: 'Completed Current Lesson' }),
   });
-  assert.equal(parentAllowed.status, 200);
+  assert.equal(parentDenied.status, 403);
+  assert.equal(observed.transactionStarted, false);
 
   reset();
   configureActor('parentTeacher', 4, 'parent_teacher');
@@ -320,7 +321,8 @@ test('Parent and Parent/Teacher reset scopes remain isolated', async (t) => {
   const parentScope = await requestJson(baseUrl, '/api/student-progress/44/reset?scope=parent', {
     method: 'POST', headers: authHeaders('parentTeacher'), body: JSON.stringify({ reason: 'New Grading Period' }),
   });
-  assert.equal(parentScope.status, 200);
+  assert.equal(parentScope.status, 403);
+  assert.equal(observed.transactionStarted, false);
 
   reset();
   configureActor('parentTeacher', 4, 'parent_teacher');
