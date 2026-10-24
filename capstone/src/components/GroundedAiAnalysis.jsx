@@ -24,8 +24,10 @@ const withoutVisibleQuestDuration = (value) => {
   if (!summary) return 'No recorded evidence.';
   const visibleClauses = summary.split(/\s*;\s*/).filter((clause) => {
     const normalizedClause = clause.replace(/^Recorded evidence:\s*/i, '').trim();
-    return !/^(?:recorded\s+)?duration\b/i.test(normalizedClause)
-      && !/\brecorded activity\b/i.test(normalizedClause);
+    const hasMeasuredDuration = /\b\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?|seconds?|secs?|h|m|s)\b/i.test(normalizedClause);
+    const isDurationClause = /^(?:recorded\s+)?duration\b/i.test(normalizedClause)
+      || (hasMeasuredDuration && /\b(?:recorded\s+activity|activity)\b/i.test(normalizedClause));
+    return !isDurationClause;
   });
   return visibleClauses.join('; ').trim() || 'No canonical completion or graded evidence is recorded for this task yet.';
 };

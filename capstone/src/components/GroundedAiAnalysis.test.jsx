@@ -155,6 +155,29 @@ describe('GroundedAiAnalysis', () => {
     expect(container.querySelector('button')).toBeNull();
   });
 
+  test('preserves story-only completion evidence that is described as recorded activity', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis
+        aiInsight={{
+          status: 'no_data', data_level: 'no_data', valid_result_count: 0,
+          message: 'No valid gameplay results are available.',
+          insight: {
+            strengths: [], weaknesses: [], recommendations: [],
+            quest_insights: [{
+              canonical_task_id: 'go-to-school',
+              label: 'Go to the School.',
+              summary: 'Task completed from recorded activity; canonical task trigger and completion were recorded.',
+            }],
+          },
+        }}
+      />
+    ));
+
+    expect(container.textContent).toContain('Task completed from recorded activity');
+    expect(container.textContent).toContain('canonical task trigger and completion were recorded');
+    expect(container.textContent).not.toContain('No canonical completion or graded evidence is recorded for this task yet.');
+  });
+
   test('explains when recorded misses cannot be assigned to a validated topic', async () => {
     await act(async () => root.render(
       <GroundedAiAnalysis aiInsight={{

@@ -144,6 +144,9 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   const [refreshToken, setRefreshToken] = useState(0);
   const { preparedRows, hasPreparedReport, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
   const isChildView = mode === 'children';
+  const normalizedUserRole = normalizeRole(user?.role);
+  const isParentScoped = ['parent', 'parent_teacher'].includes(normalizedUserRole);
+  const effectiveLifecycle = isParentScoped ? 'active' : filters.lifecycle;
   const pageSize = 10;
   const visibleRange = {
     totalItems: pagination.total || records.length,
@@ -153,9 +156,9 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
   const reportRows = hasPreparedReport ? preparedRows : records;
   const queryFilters = useMemo(() => ({
     search: debouncedSearch,
-    lifecycle: filters.lifecycle,
+    lifecycle: effectiveLifecycle,
     sort_by: filters.sort_by,
-  }), [debouncedSearch, filters.lifecycle, filters.sort_by]);
+  }), [debouncedSearch, effectiveLifecycle, filters.sort_by]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(filters.search.trim()), 300);
@@ -264,7 +267,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     : (normalizeRole(user?.role) === 'admin' ? 'admin' : 'teacher');
   const activeItem = isChildView ? 'my-child-screen-time' : 'screen-time';
   const activeReportScope = [
-    filters.lifecycle === 'archived' ? 'Archived History' : 'Active Students',
+    effectiveLifecycle === 'archived' ? 'Archived History' : 'Active Students',
     filters.search ? `Search: ${filters.search}` : '',
   ].filter(Boolean).join(' / ') || (isChildView ? 'Linked children' : 'All authorised records');
   const reportColumns = [
@@ -298,7 +301,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
     setPage(1);
   };
 
-  const isAdminAllView = !isChildView && normalizeRole(user?.role) === 'admin';
+  const isAdminAllView = !isChildView && normalizedUserRole === 'admin';
   const isHistoryDeletionEligible = (record) => record.screen_time_delete_eligible === true
     || typeof record.screen_time_delete_eligible === 'undefined';
   const closeDeletionDialog = (force = false) => {
@@ -512,11 +515,11 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                     Monitoring View
                     <select
                       className="screen-time-input"
-                      value={filters.lifecycle}
+                      value={effectiveLifecycle}
                       onChange={(event) => setFilter('lifecycle', event.target.value)}
                     >
                       <option value="active">Active Students</option>
-                      <option value="archived">Archived History</option>
+                      {!isParentScoped && <option value="archived">Archived History</option>}
                     </select>
                   </label>
 
@@ -549,7 +552,7 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                       preparing={reportPreparing}
                       onPrint={prepareFilteredScreenTimeReport}
                     />
-                    {isAdminAllView && filters.lifecycle !== 'archived' && (
+                    {isAdminAllView && effectiveLifecycle !== 'archived' && (
                       <button type="button" className="screen-time-danger-button" data-action="archive-all-completed-playtime" onClick={openBulkDeletion} disabled={deleting || loading}>
                         Archive All Completed Records
                       </button>
@@ -640,17 +643,17 @@ export default function ScreenTimeMonitoring({ mode = 'all' }) {
                                 `Student: ${record.student_name || record.child_name || record.game_student_id || 'Selected student'}`
                               )}
                             />
-                            {isAdminAllView && filters.lifecycle !== 'archived' && !isHistoryDeletionEligible(record) && (
+                            {isAdminAllView && effectiveLifecycle !== 'archived' && !isHistoryDeletionEligible(record) && (
                               <button type="button" className="screen-time-clear" data-action="reset-screen-time" onClick={() => openSingleDeletion(record)}>
                                 Reset Screen Time
                               </button>
                             )}
-                            {isAdminAllView && filters.lifecycle !== 'archived' && String(record.status || '').toLowerCase() !== 'playing' && isHistoryDeletionEligible(record) && (
+                            {isAdminAllView && effectiveLifecycle !== 'archived' && String(record.status || '').toLowerCase() !== 'playing' && isHistoryDeletionEligible(record) && (
                               <button type="button" className="screen-time-danger-link" data-action="archive-playtime-record" onClick={() => openSingleDeletion(record)}>
                                 Archive
                               </button>
                             )}
-                            {isAdminAllView && filters.lifecycle === 'archived' && (
+                            {isAdminAllView && effectiveLifecycle === 'archived' && (
                               <button type="button" className="screen-time-danger-link" data-action="permanently-delete-playtime-record" onClick={() => openPermanentDeletion(record)}>
                                 Permanently Delete
                               </button>

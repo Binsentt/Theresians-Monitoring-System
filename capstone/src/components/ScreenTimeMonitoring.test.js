@@ -380,6 +380,26 @@ describe('ScreenTimeMonitoring', () => {
     expect(container.textContent).toContain('Ava Santos');
   });
 
+  test.each([
+    ['parent', 'Parent User'],
+    ['parent_teacher', 'Parent/Teacher User'],
+  ])('%s child scope hides archive navigation and every destructive Screen Time action', async (role, name) => {
+    localStorage.setItem('loggedInUser', JSON.stringify({ id: 19, role, name }));
+    localStorage.setItem('rememberToken', 'remember-token');
+    global.fetch = jest.fn(() => jsonResponse(playtimePayload));
+
+    act(() => {
+      root.render(<ScreenTimeMonitoring mode="children" />);
+    });
+    await waitForContent(container, 'Ava Santos');
+
+    expect(container.textContent).not.toContain('Archived History');
+    expect(container.querySelector('[data-action="archive-all-completed-playtime"]')).toBeNull();
+    expect(container.querySelector('[data-action="archive-playtime-record"]')).toBeNull();
+    expect(container.querySelector('[data-action="reset-screen-time"]')).toBeNull();
+    expect(container.querySelector('[data-action="permanently-delete-playtime-record"]')).toBeNull();
+  });
+
   test('parent sessions cannot open the all-student screen time view', async () => {
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 19, role: 'parent', name: 'Parent User' }));
     global.fetch = jest.fn(() => jsonResponse(playtimePayload));

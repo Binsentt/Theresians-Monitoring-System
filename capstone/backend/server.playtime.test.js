@@ -201,6 +201,37 @@ test('Screen Time reset is admin-only, atomic, and limited to active enrolled st
   assert.equal(accountResetUpdates, 1);
 });
 
+test('Parent and Parent/Teacher scopes cannot invoke any destructive Screen Time action', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    resetTestState();
+    await close(server);
+  });
+
+  for (const [role, userId] of [['parent', 19], ['parent_teacher', 20]]) {
+    verifiedTokenPayload = { userId, sessionVersion: 0 };
+    setQueryHandler(async (sql) => {
+      if (sql.startsWith('select * from public.accounts where id = $1')) {
+        return resultRows([{ id: userId, role, session_version: 0 }]);
+      }
+      throw new Error(`Destructive ${role} request reached a mutation query: ${sql}`);
+    });
+
+    for (const [path, method, body] of [
+      ['/api/playtime/77/reset', 'POST', { reason: 'blocked', confirmation: 'RESET' }],
+      ['/api/playtime/77/archive', 'POST', { reason: 'blocked', confirmation: 'ARCHIVE' }],
+      ['/api/playtime/77/permanent-delete-preview', 'GET', {}],
+      ['/api/playtime/completed/bulk/archive', 'POST', { reason: 'blocked', confirmation: 'ARCHIVE', expected_count: 0, target_ids: [], target_fingerprint: '' }],
+    ]) {
+      const requestOptions = { method, headers: { Authorization: 'Bearer scoped-token' } };
+      if (method !== 'GET') requestOptions.body = JSON.stringify(body);
+      const response = await requestJson(baseUrl, path, requestOptions);
+      assert.equal(response.status, 403, `${role} must be rejected for ${path}`);
+    }
+  }
+});
+
 test('Screen Time single archive soft-marks an ended row and blocks an active session', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
