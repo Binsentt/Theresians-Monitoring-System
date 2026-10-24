@@ -203,7 +203,9 @@ export default function ManageUsers() {
       const error = validateEmployeeId(value, { required: isTeacherRole(role) });
       return isTeacherRole(role) && !String(value || '').trim() ? 'Please fill out this field.' : error;
     }
-    if (field === 'gender') return String(value || '').trim() ? '' : 'Please fill out this field.';
+    if (field === 'gender') {
+      return isParentRole(role) || String(value || '').trim() ? '' : 'Please fill out this field.';
+    }
     return '';
   };
 
@@ -1102,7 +1104,7 @@ export default function ManageUsers() {
 
                   <button
                     type="submit"
-                    disabled={adding}
+                    disabled={adding || (isParentRole(selectedRole) && (parentChildAvailability.pending || !parentChildAvailability.isValid))}
                     className="sts-submit-btn"
                   >
                     {adding ? `Adding ${selectedRole}...` : `Add ${selectedRole}`}

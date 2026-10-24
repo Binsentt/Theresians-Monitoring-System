@@ -108,10 +108,21 @@ test('successful insight generation persists once and unchanged evidence verifie
   assert.equal(providerCalls, 1);
   assert.deepEqual(harness.getSaved().insight, {
     ...generatedInsight,
+    weaknesses: [
+      '2 incorrect answers were recorded. This is limited evidence and does not identify a persistent Math weakness or a verified topic.',
+    ],
+    recommendations: [
+      'Review the 2 missed questions and continue regular Math practice. More topic-linked results are needed for a specific recommendation.',
+    ],
     topic_evidence_status: 'topic_metadata_unavailable',
+    quest_insights: [],
   });
-  assert.deepEqual(harness.getSaved().insight.weaknesses, []);
-  assert.deepEqual(harness.getSaved().insight.recommendations, []);
+  assert.deepEqual(harness.getSaved().insight.weaknesses, [
+    '2 incorrect answers were recorded. This is limited evidence and does not identify a persistent Math weakness or a verified topic.',
+  ]);
+  assert.deepEqual(harness.getSaved().insight.recommendations, [
+    'Review the 2 missed questions and continue regular Math practice. More topic-linked results are needed for a specific recommendation.',
+  ]);
 });
 
 const withQaArtifact = async (callback) => {
