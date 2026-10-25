@@ -27,7 +27,7 @@ describe('TablePrintButton', () => {
     jest.useRealTimers();
   });
 
-  test('opens print settings first and prints only after explicit confirmation', () => {
+  test('opens the prepared browser print document and invokes native print', () => {
     const printSpy = jest.spyOn(window, 'print').mockImplementation(() => {});
 
     act(() => {
@@ -39,9 +39,9 @@ describe('TablePrintButton', () => {
     act(() => {
       container.querySelector('button').click();
     });
-    expect(document.querySelector('#print-report-settings')).toBeTruthy();
+    expect(document.querySelector('#print-report-settings')).toBeNull();
+    expect(document.querySelector('#print-report-root .printable-report-table tbody tr')).toBeTruthy();
     expect(printSpy).not.toHaveBeenCalled();
-    act(() => document.querySelector('#print-report-settings button[type="submit"]').click());
     act(() => jest.runOnlyPendingTimers());
     expect(printSpy).toHaveBeenCalledTimes(1);
 

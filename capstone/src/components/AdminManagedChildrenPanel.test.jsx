@@ -74,7 +74,8 @@ describe('AdminManagedChildrenPanel', () => {
   test('Remove Child confirms unlink-only behavior and preserves the Student account', async () => {
     await renderPanel();
     await act(async () => container.querySelector('button[data-action="unlink-child"]').click());
-    expect(container.textContent).toContain('Student account and gameplay data will be preserved');
+    expect(container.textContent).toContain('Only the Parent relationship will be removed.');
+    expect(container.textContent).toContain('The Student account, gameplay data, Screen Time, and activity history will be preserved.');
     expect(container.textContent).toContain('00123456');
     expect(container.querySelector('button[data-action="confirm-unlink-child"]').disabled).toBe(true);
     const reason = container.querySelector('textarea[aria-label="Reason for removing this child relationship"]');

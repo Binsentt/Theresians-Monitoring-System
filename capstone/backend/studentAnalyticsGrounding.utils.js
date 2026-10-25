@@ -114,54 +114,91 @@ function addDifficultyClaims(catalog, difficultyAccuracy) {
   });
 }
 
-function addObservedTopicClaims(catalog, topicPerformance, input) {
-  const seen = new Set();
-  const strengthTotals = new Map();
-  let validTopics = 0;
-  let supportedWeaknesses = 0;
+function addObservedTopicClaims(catalog, topicPerformance, questTopicPerformance, input) {
   const studentGrade = normalizeGradeLevel(input.grade);
-  const candidates = (Array.isArray(topicPerformance) ? topicPerformance : []).map((topic) => {
+  const normalizeEvidence = (topic, { requireTask = false } = {}) => {
     const topicId = normalizeTopicId(topic?.topic_id);
     const gradeLevel = normalizeGradeLevel(topic?.grade_level);
-    const canonicalTaskId = String(topic?.canonical_task_id || '').trim().toLowerCase();
-    const taskLabel = PLAYER_FACING_TASKS.includes(canonicalTaskId)
-      ? canonicalTaskDisplayLabel(canonicalTaskId) : null;
     const canonicalTopic = topicId ? getTopicById(topicId) : null;
     const belongsToGrade = Boolean(gradeLevel && topicId && SCOPES.some((scope) => (
       scope.grade_level === gradeLevel && scope.topic_ids.includes(topicId)
     )));
     const correct = topic?.correct_answers;
     const total = topic?.total_questions;
-    if (!canonicalTopic || !taskLabel || !belongsToGrade || !isNonNegativeInteger(correct)
+    const canonicalTaskId = String(topic?.canonical_task_id || '').trim().toLowerCase();
+    const taskLabel = PLAYER_FACING_TASKS.includes(canonicalTaskId)
+      ? canonicalTaskDisplayLabel(canonicalTaskId) : null;
+    if (!canonicalTopic || !belongsToGrade || !isNonNegativeInteger(correct)
       || !isNonNegativeInteger(total) || total < 1 || correct > total
-      || (studentGrade && gradeLevel !== studentGrade)) return null;
+      || (studentGrade && gradeLevel !== studentGrade)
+      || (requireTask && !taskLabel)) return null;
     return {
       topicId,
       gradeLevel,
-      canonicalTaskId,
-      taskLabel,
       canonicalTopic,
+      canonicalTaskId: taskLabel ? canonicalTaskId : null,
+      taskLabel,
       correct,
       total,
       incorrect: total - correct,
       accuracy: Number(((correct / total) * 100).toFixed(2)),
     };
-  }).filter(Boolean).sort((left, right) => left.accuracy - right.accuracy
-    || right.incorrect - left.incorrect
-    || right.total - left.total
-    || left.canonicalTaskId.localeCompare(right.canonicalTaskId)
-    || left.topicId.localeCompare(right.topicId));
+  };
 
-  candidates.forEach(({ topicId, gradeLevel, canonicalTopic, correct, total }) => {
-    const key = `${gradeLevel}|${topicId}`;
-    const current = strengthTotals.get(key) || { topicId, gradeLevel, canonicalTopic, correct: 0, total: 0 };
-    current.correct += correct;
-    current.total += total;
-    strengthTotals.set(key, current);
+  const validatedTopicRows = (Array.isArray(topicPerformance) ? topicPerformance : [])
+    .map((topic) => normalizeEvidence(topic))
+    .filter(Boolean);
+  const topicTotals = new Map();
+  validatedTopicRows.forEach((row) => {
+    const key = `${row.gradeLevel}|${row.topicId}`;
+    const current = topicTotals.get(key) || { ...row, correct: 0, total: 0 };
+    current.correct += row.correct;
+    current.total += row.total;
+    topicTotals.set(key, current);
   });
-  [...strengthTotals.values()].sort((left, right) => left.gradeLevel.localeCompare(right.gradeLevel)
-    || left.topicId.localeCompare(right.topicId)).forEach(({ topicId, gradeLevel, canonicalTopic, correct, total }) => {
-    const accuracy = Number(((correct / total) * 100).toFixed(2));
+
+  // Older callers supplied task-linked rows in topic_performance. The v5
+  // contract separates task evidence, so use that legacy shape only when the
+  // dedicated quest array is absent; never add both arrays together.
+  const rawQuestRows = Array.isArray(questTopicPerformance)
+    ? questTopicPerformance
+    : validatedTopicRows.filter((row) => row.canonicalTaskId).map((row) => ({
+      topic_id: row.topicId,
+      grade_level: row.gradeLevel,
+      canonical_task_id: row.canonicalTaskId,
+      correct_answers: row.correct,
+      total_questions: row.total,
+    }));
+  const validatedQuestRows = rawQuestRows
+    .map((topic) => normalizeEvidence(topic, { requireTask: true }))
+    .filter(Boolean);
+  const questTotals = new Map();
+  validatedQuestRows.forEach((row) => {
+    const key = `${row.gradeLevel}|${row.topicId}|${row.canonicalTaskId}`;
+    const current = questTotals.get(key) || { ...row, correct: 0, total: 0 };
+    current.correct += row.correct;
+    current.total += row.total;
+    questTotals.set(key, current);
+  });
+  const questsByTopic = new Map();
+  questTotals.forEach((row) => {
+    const key = `${row.gradeLevel}|${row.topicId}`;
+    questsByTopic.set(key, [...(questsByTopic.get(key) || []), row]);
+  });
+
+  const topics = [...topicTotals.values()]
+    .map((row) => ({
+      ...row,
+      incorrect: row.total - row.correct,
+      accuracy: Number(((row.correct / row.total) * 100).toFixed(2)),
+    }))
+    .sort((left, right) => left.accuracy - right.accuracy
+      || right.incorrect - left.incorrect
+      || right.total - left.total
+      || left.gradeLevel.localeCompare(right.gradeLevel)
+      || left.topicId.localeCompare(right.topicId));
+
+  topics.forEach(({ topicId, gradeLevel, canonicalTopic, correct, total, accuracy }) => {
     if (total < STRENGTH_MIN_ATTEMPTS || accuracy < STRENGTH_MIN_ACCURACY) return;
     addClaim(catalog, 'strength', {
       id: `topic_${gradeLevel.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${topicId}_strength`,
@@ -169,40 +206,55 @@ function addObservedTopicClaims(catalog, topicPerformance, input) {
     });
   });
 
-  candidates.forEach(({ topicId, gradeLevel, canonicalTaskId, taskLabel, canonicalTopic, correct, total, incorrect, accuracy }) => {
+  let supportedWeaknesses = 0;
+  topics.forEach(({ topicId, gradeLevel, canonicalTopic, correct, total, incorrect, accuracy }) => {
+    const topicKey = `${gradeLevel}|${topicId}`;
+    const matchingQuestRows = questsByTopic.get(topicKey) || [];
+    const questTotalsMatchTopic = matchingQuestRows.length > 0
+      && matchingQuestRows.reduce((sum, row) => sum + row.correct, 0) === correct
+      && matchingQuestRows.reduce((sum, row) => sum + row.total, 0) === total;
+    const claimRows = questTotalsMatchTopic
+      ? matchingQuestRows
+      : [{ topicId, gradeLevel, canonicalTopic, correct, total, incorrect, accuracy }];
+    const gradeKey = gradeLevel.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    claimRows.forEach((row) => {
+      const taskLabel = questTotalsMatchTopic ? row.taskLabel : null;
+      const contextLabel = taskLabel ? `${canonicalTopic.display_label} — ${taskLabel}` : canonicalTopic.display_label;
+      const claimPrefix = taskLabel
+        ? `quest_${row.canonicalTaskId.replace(/[^a-z0-9]+/g, '_')}_topic_${gradeKey}_${topicId}`
+        : `topic_${gradeKey}_${topicId}`;
+      const rowIncorrect = row.total - row.correct;
+      const rowAccuracy = Number(((row.correct / row.total) * 100).toFixed(2));
+      const accuracyText = formatPercentage(rowAccuracy);
+      addPerformanceClaim(
+        catalog,
+        `${claimPrefix}_accuracy`,
+        `Recorded ${contextLabel} accuracy is ${accuracyText} (${row.correct} of ${row.total} answers correct; ${rowIncorrect} incorrect).`
+      );
 
-    const claimPrefix = `quest_${canonicalTaskId.replace(/[^a-z0-9]+/g, '_')}_topic_${gradeLevel.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${topicId}`;
-    if (seen.has(claimPrefix)) return;
-    seen.add(claimPrefix);
-    validTopics += 1;
-    const accuracyText = formatPercentage(accuracy);
-    const contextLabel = `${canonicalTopic.display_label} — ${taskLabel}`;
-    addPerformanceClaim(
-      catalog,
-      `${claimPrefix}_accuracy`,
-      `Recorded ${contextLabel} accuracy is ${accuracyText} (${correct} of ${total} answers correct; ${incorrect} incorrect).`
-    );
+      if (rowAccuracy >= WEAK_PERFORMANCE_THRESHOLD || rowIncorrect <= 0) return;
 
-    if (accuracy >= WEAK_PERFORMANCE_THRESHOLD) return;
-
-    supportedWeaknesses += 1;
-    const limited = incorrect <= 3;
-    addClaim(catalog, 'weakness', {
-      id: `${claimPrefix}_weakness`,
-      text: limited
-        ? `${canonicalTopic.display_label} — ${taskLabel}: ${incorrect} incorrect ${incorrect === 1 ? 'answer was' : 'answers were'} recorded (${correct} of ${total} correct; ${accuracyText} accuracy). This is limited evidence and does not yet show a persistent weakness.`
-        : `${canonicalTopic.display_label} — ${taskLabel}: ${incorrect} of ${total} answers were incorrect (${accuracyText} accuracy). This is below the current ${WEAK_PERFORMANCE_THRESHOLD}% evidence boundary.`,
-    });
-    addClaim(catalog, 'recommendation', {
-      id: `practice_${claimPrefix}`,
-      supportId: `${claimPrefix}_weakness`,
-      supportCategory: 'weakness',
-      text: limited
-        ? `Keep practicing Grade ${gradeLevel.replace(/^Grade\s+/i, '')} ${canonicalTopic.display_label} and review the ${incorrect} missed ${incorrect === 1 ? 'question' : 'questions'} from ${taskLabel}. More recorded answers are needed before judging a persistent weakness.`
-        : `Practice Grade ${gradeLevel.replace(/^Grade\s+/i, '')} ${canonicalTopic.display_label}, especially the types missed during ${taskLabel}. Review the ${incorrect} recorded incorrect ${incorrect === 1 ? 'answer' : 'answers'} before retrying similar questions (${correct} of ${total} correct; ${accuracyText} accuracy).`,
+      supportedWeaknesses += 1;
+      const limited = rowIncorrect <= 3;
+      addClaim(catalog, 'weakness', {
+        id: `${claimPrefix}_weakness`,
+        text: limited
+          ? `${contextLabel}: ${rowIncorrect} incorrect ${rowIncorrect === 1 ? 'answer was' : 'answers were'} recorded (${row.correct} of ${row.total} correct; ${accuracyText} accuracy). This is limited evidence and does not yet show a persistent weakness.`
+          : `${contextLabel}: ${rowIncorrect} of ${row.total} answers were incorrect (${accuracyText} accuracy). This is below the current ${WEAK_PERFORMANCE_THRESHOLD}% evidence boundary.`,
+      });
+      const gradeNumber = gradeLevel.replace(/^Grade\s+/i, '');
+      addClaim(catalog, 'recommendation', {
+        id: `practice_${claimPrefix}`,
+        supportId: `${claimPrefix}_weakness`,
+        supportCategory: 'weakness',
+        text: limited
+          ? `Keep practicing Grade ${gradeNumber} ${canonicalTopic.display_label} and review the ${rowIncorrect} missed ${rowIncorrect === 1 ? 'question' : 'questions'}${taskLabel ? ` from ${taskLabel}` : ''}. More recorded answers are needed before judging a persistent weakness.`
+          : `Practice Grade ${gradeNumber} ${canonicalTopic.display_label}${taskLabel ? `, especially the types missed during ${taskLabel}` : ''}. Review the ${rowIncorrect} recorded incorrect ${rowIncorrect === 1 ? 'answer' : 'answers'} before retrying similar questions (${row.correct} of ${row.total} correct; ${accuracyText} accuracy).`,
+      });
     });
   });
 
+  const validTopics = topics.length;
   if (supportedWeaknesses === 0 && validTopics === 0
     && isNonNegativeInteger(input.incorrect_answers)
     && input.incorrect_answers >= 1 && input.incorrect_answers <= 3) {
@@ -222,22 +274,24 @@ function addObservedTopicClaims(catalog, topicPerformance, input) {
   const hasRecordedPerfectResults = isNonNegativeInteger(input.total_questions)
     && input.total_questions > 0
     && input.incorrect_answers === 0;
-  const hasQuestTopicMetadataGap = isNonNegativeInteger(input.incorrect_answers)
+  const hasTopicMetadataGap = isNonNegativeInteger(input.incorrect_answers)
     && input.incorrect_answers > 0
-    && (validTopics === 0 || (isNonNegativeInteger(input.unmapped_quest_topic_incorrect_answers)
-      && input.unmapped_quest_topic_incorrect_answers > 0));
-  if (hasQuestTopicMetadataGap) {
+    && (validTopics === 0
+      || (isNonNegativeInteger(input.unmapped_topic_incorrect_answers) && input.unmapped_topic_incorrect_answers > 0)
+      || (isNonNegativeInteger(input.topic_linked_evidence_count)
+        && input.topic_linked_evidence_count < input.total_questions));
+  if (hasTopicMetadataGap) {
     addPerformanceClaim(
       catalog,
       'topic_evidence_unavailable',
       validTopics === 0
-        ? 'Incorrect answers are recorded, but no validated Grade/topic/task-linked question evidence is available to identify the specific Math topic and quest context.'
-        : 'Some incorrect answers are recorded without validated Grade/topic/task linkage; only the linked answers are used for quest-specific weakness claims.'
+        ? 'Incorrect answers are recorded, but no validated Grade/topic-linked question evidence is available to identify the specific Math topic.'
+        : 'Some incorrect answers are recorded without validated Grade/topic metadata; only linked answers are used for topic-level claims.'
     );
   }
   catalog.topicEvidenceStatus = hasRecordedPerfectResults
     ? 'perfect_recorded_results'
-    : hasQuestTopicMetadataGap
+    : hasTopicMetadataGap
       ? (validTopics > 0 ? 'topic_metadata_partial' : 'topic_metadata_unavailable')
       : supportedWeaknesses > 0
         ? 'weaknesses_identified'
@@ -276,7 +330,7 @@ function buildGroundedClaimCatalog(input = {}) {
   const catalog = createCatalog(input);
   addRecordedPerformanceClaims(catalog, input);
   addDifficultyClaims(catalog, input.difficulty_accuracy);
-  addObservedTopicClaims(catalog, input.topic_performance, input);
+  addObservedTopicClaims(catalog, input.topic_performance, input.quest_topic_performance, input);
   return freezeCatalog(catalog);
 }
 

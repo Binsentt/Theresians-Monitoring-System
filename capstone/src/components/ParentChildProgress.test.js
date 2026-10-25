@@ -1,6 +1,6 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import ParentChildProgress, { buildScoreTimeline, formatLatestActivityScore } from './ParentChildProgress';
+import ParentChildProgress, { buildScoreTimeline, formatLatestActivityScore, ScoreTimelineTooltip } from './ParentChildProgress';
 
 const mockNavigate = jest.fn();
 
@@ -10,7 +10,12 @@ jest.mock('react-router-dom', () => ({
 
 jest.mock('recharts', () => ({
   Bar: () => <div>Bar</div>,
-  BarChart: ({ children }) => <div>{children}</div>,
+  BarChart: ({ children, data = [] }) => (
+    <div data-testid="score-timeline-data">
+      {data.map((point) => <span key={point.sessionId || point.label}>{point.label}:{point.percentage}%</span>)}
+      {children}
+    </div>
+  ),
   CartesianGrid: () => <div>Grid</div>,
   ResponsiveContainer: ({ children }) => <div>{children}</div>,
   Tooltip: () => <div>Tooltip</div>,
@@ -403,18 +408,57 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(global.fetch.mock.calls.some(([url]) => String(url).includes('/reset'))).toBe(false);
   });
 
-  test('uses short chronological chart labels and keeps topic details in the timeline data', () => {
+  test('uses compact chronological chart labels and keeps topic details in the timeline data', () => {
     expect(buildScoreTimeline([
       { id: 2, math_topic: 'Subtraction', difficulty: 'Difficult', percentage: 80, played_at: '2026-10-21T10:00:00.000Z' },
       { id: 1, math_topic: 'Addition', difficulty: 'Easy', percentage: 60, played_at: '2026-10-20T10:00:00.000Z' },
     ])).toEqual([
-      expect.objectContaining({ label: '#1', percentage: 60, topic: 'Addition', difficulty: 'Easy', sessionId: 1 }),
-      expect.objectContaining({ label: '#2', percentage: 80, topic: 'Subtraction', difficulty: 'Difficult', sessionId: 2 }),
+      expect.objectContaining({ label: 'Q1', percentage: 60, topic: 'Addition', difficulty: 'Easy', sessionId: 1 }),
+      expect.objectContaining({ label: 'Q2', percentage: 80, topic: 'Subtraction', difficulty: 'Difficult', sessionId: 2 }),
     ]);
+  });
+
+  test('rejects missing or malformed percentages while preserving a genuine zero score', () => {
+    expect(buildScoreTimeline([
+      { id: 'missing', percentage: null, played_at: '2026-10-19T10:00:00.000Z' },
+      { id: 'undefined', percentage: undefined, played_at: '2026-10-19T11:00:00.000Z' },
+      { id: 'empty', percentage: ' ', played_at: '2026-10-19T12:00:00.000Z' },
+      { id: 'malformed', percentage: 'not-a-score', played_at: '2026-10-19T13:00:00.000Z' },
+      { id: 'negative', percentage: -1, played_at: '2026-10-19T14:00:00.000Z' },
+      { id: 'over-100', percentage: 101, played_at: '2026-10-19T15:00:00.000Z' },
+      { id: 2, percentage: 50, score: 5, total_items: 10, played_at: '2026-10-21T10:00:00.000Z' },
+      { id: 1, percentage: 0, score: 0, total_items: 10, played_at: '2026-10-20T10:00:00.000Z' },
+    ])).toEqual([
+      expect.objectContaining({ label: 'Q1', percentage: 0, score: 0, totalItems: 10, sessionId: 1 }),
+      expect.objectContaining({ label: 'Q2', percentage: 50, score: 5, totalItems: 10, sessionId: 2 }),
+    ]);
+  });
+
+  test('score timeline tooltip shows topic, difficulty, date, authoritative score, and percentage', async () => {
+    const [point] = buildScoreTimeline([{
+      id: 9,
+      math_topic: 'Addition',
+      difficulty: 'Normal',
+      percentage: 0,
+      score: 0,
+      total_items: 5,
+      played_at: '2026-10-20T10:00:00.000Z',
+    }]);
+
+    await act(async () => root.render(<ScoreTimelineTooltip active payload={[{ payload: point }]} />));
+
+    expect(container.textContent).toContain('Q1');
+    expect(container.textContent).toContain('Topic: Addition');
+    expect(container.textContent).toContain('Difficulty: Normal');
+    expect(container.textContent).toContain('Date:');
+    expect(container.textContent).toContain('Score: 0 / 5');
+    expect(container.textContent).toContain('Percentage: 0%');
   });
 
   test('does not display a zero score for ungraded story activity', () => {
     expect(formatLatestActivityScore({ activity_description: 'Task Completed — talk to the old lady', score: 0 })).toBe('Not graded');
+    expect(formatLatestActivityScore({ activity_description: 'Quiz Result', percentage: null })).toBe('Not graded');
+    expect(formatLatestActivityScore({ activity_description: 'Quiz Result', percentage: ' ' })).toBe('Not graded');
     expect(formatLatestActivityScore({ activity_description: 'Quiz Result', score: 0, total_items: 1 })).toBe('0 / 1');
   });
 
@@ -439,6 +483,88 @@ describe('ParentChildProgress child selection and game warnings', () => {
 
     expect(container.textContent).toContain('Not graded');
     expect(container.textContent).not.toContain('Score 0');
+  });
+
+  test('fetches selected-child activity with a server-side student filter beyond the old global first-100 window', async () => {
+    const unrelatedFirstPage = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+      student_id: 45,
+      activity_description: `Unrelated Noah activity ${index + 1}`,
+      activity_timestamp: `2026-10-21T10:${String(index % 60).padStart(2, '0')}:00.000Z`,
+    }));
+    const selectedChildActivity = {
+      id: 500,
+      student_id: 44,
+      activity_description: 'Ava completed Addition practice',
+      current_quest: 'Addition practice',
+      activity_timestamp: '2026-10-21T11:00:00.000Z',
+    };
+    global.fetch = jest.fn((url) => {
+      if (String(url).startsWith('/api/activity-logs?')) {
+        return url.includes('student_id=44')
+          ? jsonResponse({ data: [selectedChildActivity] })
+          : jsonResponse({ data: unrelatedFirstPage });
+      }
+      return successPayloadForUrl(url, {
+        children: [{ id: 44, student_name: 'Ava Santos' }], unlinked_count: 0,
+      });
+    });
+
+    await act(async () => root.render(<ParentChildProgress />));
+
+    const activityRequest = global.fetch.mock.calls
+      .map(([url]) => String(url))
+      .find((url) => url.startsWith('/api/activity-logs?'));
+    expect(activityRequest).toContain('student_id=44');
+    expect(activityRequest).toContain('scope=parent');
+    expect(container.textContent).toContain('Ava completed Addition practice');
+    expect(container.textContent).not.toContain('Unrelated Noah activity');
+  });
+
+  test('ignores late activity from the previous child and clears the previous score chart on child switch', async () => {
+    let resolveAActivity;
+    const pendingAActivity = new Promise((resolve) => { resolveAActivity = resolve; });
+    let resolveBQuizzes;
+    const pendingBQuizzes = new Promise((resolve) => { resolveBQuizzes = resolve; });
+    const children = [
+      { id: 44, student_name: 'Ava Santos' },
+      { id: 45, student_name: 'Noah Santos' },
+    ];
+    global.fetch = jest.fn((url) => {
+      const value = String(url);
+      if (value.startsWith('/api/parent/children?')) return jsonResponse({ children, unlinked_count: 0 });
+      if (value.startsWith('/api/activity-logs?')) {
+        if (value.includes('student_id=44')) return pendingAActivity;
+        if (value.includes('student_id=45')) return jsonResponse({ data: [{ id: 2, student_id: 45, activity_description: 'Noah activity' }] });
+        return jsonResponse({ data: [] });
+      }
+      if (value.startsWith('/api/parent/children/44/quizzes?')) return jsonResponse({ data: [{
+        id: 1, percentage: 80, score: 4, total_items: 5, math_topic: 'Addition', difficulty: 'Easy', played_at: '2026-10-20T10:00:00.000Z',
+      }] });
+      if (value.startsWith('/api/parent/children/45/quizzes?')) return pendingBQuizzes;
+      return successPayloadForUrl(value, { children, unlinked_count: 0 });
+    });
+
+    await act(async () => root.render(<ParentChildProgress />));
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes('/api/activity-logs?'))).toBe(false);
+
+    await act(async () => Array.from(container.querySelectorAll('.child-selector-card'))
+      .find((button) => button.textContent.includes('Ava Santos')).click());
+    expect(container.textContent).toContain('Q1:80%');
+
+    await act(async () => Array.from(container.querySelectorAll('.child-selector-card'))
+      .find((button) => button.textContent.includes('Noah Santos')).click());
+    expect(container.textContent).not.toContain('Q1:80%');
+    expect(container.textContent).toContain('No quiz percentages recorded for this child.');
+
+    await act(async () => resolveAActivity(jsonResponse({ data: [{
+      id: 1, student_id: 44, activity_description: 'Late Ava-only activity',
+    }] })));
+    expect(container.textContent).toContain('Noah activity');
+    expect(container.textContent).not.toContain('Late Ava-only activity');
+
+    await act(async () => resolveBQuizzes(jsonResponse({ data: [] })));
+    expect(container.textContent).not.toContain('Q1:80%');
   });
 
   test('does not apply an earlier child insight after the selected child changes', async () => {
@@ -526,6 +652,64 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('Incorrect Answers2');
   });
 
+  test('Refresh AI Insight recovers a no-data child view when new committed answers arrive', async () => {
+    global.fetch = jest.fn((url, options = {}) => {
+      const value = String(url);
+      if (value.startsWith('/api/student-progress/44/ai-insight?')) {
+        expect(options.method).toBe('POST');
+        return jsonResponse({
+          status: 'generated',
+          generated_at: '2026-10-25T04:00:00.000Z',
+          valid_result_count: 5,
+          insight: {
+            performance_insight: 'Five newly committed Addition answers are now available.',
+            strengths: [],
+            weaknesses: ['Addition: 1 of 5 answers was incorrect.'],
+            recommendations: ['Review the missed Grade 1 Addition question.'],
+          },
+          evidence_snapshot: {
+            progress: { student_id: 44, student_name: 'Ava Santos', current_quest: 'Addition practice' },
+            metrics: {
+              currentQuest: 'Addition practice',
+              correctAnswers: 4,
+              incorrectAnswers: 1,
+              totalQuestions: 5,
+              accuracy: 80,
+              totalProgress: 10,
+              gameScore: 4,
+            },
+          },
+        });
+      }
+      if (value.startsWith('/api/student-progress/44?')) {
+        return jsonResponse({
+          progress: { student_id: 44, student_name: 'Ava Santos', current_quest: 'Tutorial' },
+          metrics: { currentQuest: 'Tutorial', correctAnswers: 0, incorrectAnswers: 0, totalQuestions: 0, accuracy: null, totalProgress: 0 },
+          aiInsight: { status: 'no_data', data_level: 'no_data', valid_result_count: 0, message: 'No valid gameplay results are available yet.' },
+        });
+      }
+      return successPayloadForUrl(url, {
+        children: [{ id: 44, student_name: 'Ava Santos' }], unlinked_count: 0,
+      });
+    });
+
+    await act(async () => root.render(<ParentChildProgress />));
+    expect(container.textContent).toContain('No valid gameplay results are available yet.');
+    expect(container.textContent).toContain('0%');
+    const refresh = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Refresh AI Insight');
+    expect(refresh).toBeTruthy();
+
+    await act(async () => refresh.click());
+
+    expect(container.textContent).toContain('Five newly committed Addition answers are now available.');
+    expect(container.textContent).toContain('Review the missed Grade 1 Addition question.');
+    expect(container.textContent).toContain('Average accuracy80%');
+    expect(container.textContent).toContain('Current QuestAddition practice');
+    expect(container.textContent).toContain('Correct Answers4');
+    expect(container.textContent).toContain('Incorrect Answers1');
+  });
+
   test('Refresh AI Insight renders the authoritative no-evidence state instead of a transient error', async () => {
     global.fetch = jest.fn((url) => {
       if (url.startsWith('/api/student-progress/44/ai-insight?')) {
@@ -557,7 +741,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('No valid gameplay results are available for grounded AI analysis yet.');
     expect(container.textContent).toContain('Tutorial');
     expect(Array.from(container.querySelectorAll('button'))
-      .some((button) => button.textContent === 'Refresh AI Insight')).toBe(false);
+      .some((button) => button.textContent === 'Refresh AI Insight')).toBe(true);
   });
 
   test('loads only the chosen child after the parent selects from multiple children', async () => {

@@ -26,54 +26,75 @@ const toTimestamp = (value) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+const toOptionalFiniteNumber = (value) => {
+  if (value === null || value === undefined || typeof value === 'boolean') return null;
+  if (typeof value === 'string' && !value.trim()) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 export const buildScoreTimeline = (sessions = []) => {
   if (!Array.isArray(sessions)) return [];
 
   return sessions
-    .filter((session) => Number.isFinite(Number(session?.percentage)))
+    .filter((session) => {
+      const percentage = toOptionalFiniteNumber(session?.percentage);
+      return percentage !== null && percentage >= 0 && percentage <= 100;
+    })
     .slice()
     .sort((left, right) => toTimestamp(left?.played_at || left?.activity_timestamp || left?.created_at)
       - toTimestamp(right?.played_at || right?.activity_timestamp || right?.created_at))
-    .map((session, index) => ({
-      label: `#${index + 1}`,
-      percentage: clampPercent(session.percentage, 0),
-      topic: safeDisplayText(session.math_topic, 'Topic unavailable'),
-      difficulty: normalizeDifficultyDisplay(session.difficulty, 'Difficulty unavailable'),
-      playedAt: session.played_at || session.activity_timestamp || session.created_at || null,
-      sessionId: session.id ?? null,
-    }));
+    .map((session, index) => {
+      const score = toOptionalFiniteNumber(session.score);
+      const totalItems = toOptionalFiniteNumber(session.total_items ?? session.totalItems);
+      const hasAuthoritativeScore = score !== null && totalItems !== null
+        && Number.isInteger(score) && score >= 0
+        && Number.isInteger(totalItems) && totalItems > 0 && score <= totalItems;
+      return {
+        label: `Q${index + 1}`,
+        percentage: clampPercent(toOptionalFiniteNumber(session.percentage), 0),
+        topic: safeDisplayText(session.math_topic, 'Topic unavailable'),
+        difficulty: normalizeDifficultyDisplay(session.difficulty, 'Difficulty unavailable'),
+        playedAt: session.played_at || session.activity_timestamp || session.created_at || null,
+        sessionId: session.id ?? null,
+        ...(hasAuthoritativeScore ? { score, totalItems } : {}),
+      };
+    });
 };
 
 const isGradedActivity = (activity = {}) => {
   const description = `${activity.canonical_activity_id || ''} ${activity.activity_description || ''}`;
-  const score = Number(activity.score);
-  const totalItems = Number(activity.total_items ?? activity.totalItems);
-  const percentage = Number(activity.percentage ?? activity.accuracy);
-  return (Number.isFinite(score) && Number.isFinite(totalItems) && totalItems > 0)
-    || (Number.isFinite(percentage) && /quiz|battle|answer|result/i.test(description));
+  const score = toOptionalFiniteNumber(activity.score);
+  const totalItems = toOptionalFiniteNumber(activity.total_items ?? activity.totalItems);
+  const percentage = toOptionalFiniteNumber(activity.percentage ?? activity.accuracy);
+  return (score !== null && totalItems !== null && totalItems > 0)
+    || (percentage !== null && /quiz|battle|answer|result/i.test(description));
 };
 
 export const formatLatestActivityScore = (activity = {}) => {
   if (!isGradedActivity(activity)) return 'Not graded';
-  const score = Number(activity.score);
-  const totalItems = Number(activity.total_items ?? activity.totalItems);
-  if (Number.isFinite(score) && Number.isFinite(totalItems) && totalItems > 0) {
+  const score = toOptionalFiniteNumber(activity.score);
+  const totalItems = toOptionalFiniteNumber(activity.total_items ?? activity.totalItems);
+  if (score !== null && totalItems !== null && totalItems > 0) {
     return `${score} / ${totalItems}`;
   }
-  const percentage = Number(activity.percentage ?? activity.accuracy);
-  return Number.isFinite(percentage) ? `${percentage.toFixed(0)}%` : 'Not graded';
+  const percentage = toOptionalFiniteNumber(activity.percentage ?? activity.accuracy);
+  return percentage !== null ? `${percentage.toFixed(0)}%` : 'Not graded';
 };
 
-const ScoreTimelineTooltip = ({ active, payload }) => {
+export const ScoreTimelineTooltip = ({ active, payload }) => {
   if (!active || !payload?.length) return null;
   const point = payload[0]?.payload || {};
   return (
     <div className="child-score-tooltip">
       <strong>{point.label}</strong>
-      <span>{point.topic}</span>
-      <span>{point.difficulty}</span>
-      <span>{point.playedAt ? new Date(point.playedAt).toLocaleString() : 'Date unavailable'}</span>
-      <b>{Number(point.percentage).toFixed(0)}%</b>
+      <span>Topic: {point.topic}</span>
+      <span>Difficulty: {point.difficulty}</span>
+      <span>Date: {point.playedAt ? new Date(point.playedAt).toLocaleString() : 'Date unavailable'}</span>
+      {Number.isInteger(point.score) && Number.isInteger(point.totalItems) && (
+        <span>Score: {point.score} / {point.totalItems}</span>
+      )}
+      <b>Percentage: {Number(point.percentage).toFixed(0)}%</b>
     </div>
   );
 };
@@ -112,10 +133,9 @@ export default function ParentChildProgress() {
         const requestOptions = { headers: buildAuthHeaders() };
         setParentAccountId(parentId);
         setPortalRole(normalizeRole(loggedInUser?.role) === 'parent_teacher' ? 'parent_teacher' : 'parent');
-        const [childrenResult, studentsResult, activityResult] = await Promise.allSettled([
+        const [childrenResult, studentsResult] = await Promise.allSettled([
           fetch(buildScopedApiUrl('/api/parent/children', 'parent'), requestOptions),
           fetch(buildScopedApiUrl('/api/students/progress', 'parent'), requestOptions),
-          fetch(buildScopedApiUrl('/api/activity-logs?limit=100', 'parent'), requestOptions),
         ]);
 
         if (childrenResult.status !== 'fulfilled' || !childrenResult.value.ok) {
@@ -156,12 +176,6 @@ export default function ParentChildProgress() {
             : null;
         });
 
-        if (activityResult.status === 'fulfilled' && activityResult.value.ok) {
-          const activityData = await activityResult.value.json();
-          setActivityLogs(normalizeActivityLogPayload(activityData).records);
-        } else {
-          setActivityLogs([]);
-        }
       } catch (err) {
         console.error('Load error:', err);
         setError('Analytics currently unavailable. Please try again later.');
@@ -187,6 +201,7 @@ export default function ParentChildProgress() {
     setInsightError('');
     if (!focusStudentId || !parentAccountId) {
       setQuizSessions([]);
+      setActivityLogs([]);
       setSelectedChildMetrics(null);
       setSelectedChildProgress(null);
       setSelectedChildAiInsight(null);
@@ -196,6 +211,8 @@ export default function ParentChildProgress() {
 
     let active = true;
     const loadChildGameDetails = async () => {
+      setQuizSessions([]);
+      setActivityLogs([]);
       setSelectedChildMetrics(null);
       setSelectedChildProgress(null);
       setSelectedChildAiInsight(null);
@@ -206,6 +223,13 @@ export default function ParentChildProgress() {
           if (!response.ok) throw new Error('Could not load child data');
           return response.json();
         };
+        readChildData(`/api/activity-logs?limit=100&student_id=${encodeURIComponent(focusStudentId)}`)
+          .then((activityPayload) => {
+            if (active) setActivityLogs(normalizeActivityLogPayload(activityPayload).records);
+          })
+          .catch(() => {
+            if (active) setActivityLogs([]);
+          });
         const [quizzesResult, analyticsResult] = await Promise.allSettled([
           readChildData(`/api/parent/children/${focusStudentId}/quizzes?limit=20`),
           readChildData(`/api/student-progress/${focusStudentId}`),
@@ -224,6 +248,7 @@ export default function ParentChildProgress() {
         console.error('Child game result load error:', err);
         if (!active) return;
         setQuizSessions([]);
+        setActivityLogs([]);
         setSelectedChildMetrics(null);
         setSelectedChildProgress(null);
         setSelectedChildAiInsight(null);

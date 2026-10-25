@@ -2,6 +2,8 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import LoginScreen from './LoginScreen';
 
+const futureOtpExpiry = () => new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
 const mockNavigate = jest.fn();
 let mockLocation = { state: null };
 
@@ -38,7 +40,7 @@ describe('LoginScreen OTP device controls', () => {
         success: true,
         step: 2,
         userId: 18,
-        otpExpiresAt: '2026-05-21T12:03:00.000Z',
+        otpExpiresAt: futureOtpExpiry(),
         emailSent: true,
       }),
     }));
@@ -95,7 +97,7 @@ describe('LoginScreen OTP device controls', () => {
           success: true,
           step: 2,
           userId: 18,
-          otpExpiresAt: '2026-05-21T12:03:00.000Z',
+          otpExpiresAt: futureOtpExpiry(),
           emailSent: true,
         }),
       });
@@ -225,7 +227,7 @@ describe('LoginScreen real-time form validation', () => {
         success: true,
         step: 2,
         userId: 18,
-        otpExpiresAt: '2026-05-21T12:03:00.000Z',
+        otpExpiresAt: futureOtpExpiry(),
         emailSent: true,
       }),
     }));
@@ -311,8 +313,7 @@ describe('LoginScreen real-time form validation', () => {
       loginButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Email is required.');
-    expect(container.textContent).toContain('Password is required.');
+    expect(container.textContent.match(/Please fill out this field\./g)).toHaveLength(2);
   });
 
   test('does not display error messages before fields are touched', async () => {
@@ -320,8 +321,7 @@ describe('LoginScreen real-time form validation', () => {
       root.render(<LoginScreen />);
     });
 
-    expect(container.textContent).not.toContain('Email is required.');
-    expect(container.textContent).not.toContain('Password is required.');
+    expect(container.textContent).not.toContain('Please fill out this field.');
   });
 
   test('allows valid credentials to proceed to OTP step', async () => {
@@ -363,7 +363,7 @@ describe('LoginScreen real-time form validation', () => {
           success: true,
           step: 2,
           userId: 18,
-          otpExpiresAt: '2026-05-21T12:03:00.000Z',
+          otpExpiresAt: futureOtpExpiry(),
         }),
       });
     });
@@ -397,7 +397,7 @@ describe('LoginScreen real-time form validation', () => {
             success: true,
             step: 2,
             userId: 18,
-            otpExpiresAt: '2026-05-21T12:03:00.000Z',
+            otpExpiresAt: futureOtpExpiry(),
           }),
         });
       }
@@ -460,7 +460,7 @@ describe('LoginScreen real-time form validation', () => {
           success: true,
           step: 2,
           userId: 18,
-          otpExpiresAt: '2026-05-21T12:03:00.000Z',
+          otpExpiresAt: futureOtpExpiry(),
         }),
       });
     });
@@ -503,7 +503,7 @@ describe('LoginScreen real-time form validation', () => {
             success: true,
             step: 2,
             userId: 18,
-            otpExpiresAt: '2026-05-21T12:03:00.000Z',
+            otpExpiresAt: futureOtpExpiry(),
           }),
         });
       }
@@ -550,7 +550,7 @@ describe('LoginScreen real-time form validation', () => {
             success: true,
             step: 2,
             userId: 18,
-            otpExpiresAt: '2026-05-21T12:03:00.000Z',
+            otpExpiresAt: futureOtpExpiry(),
           }),
         });
       }
@@ -592,7 +592,7 @@ describe('LoginScreen real-time form validation', () => {
       if (String(url).includes('/api/login/verify-otp')) {
         return Promise.resolve({ ok: true, json: async () => ({ success: true, user: { id: 18, name: 'Test User', role: 'admin' } }) });
       }
-      return Promise.resolve({ ok: true, json: async () => ({ success: true, step: 2, userId: 18, challengeId: 'login-challenge-1', otpExpiresAt: '2026-05-21T12:03:00.000Z' }) });
+      return Promise.resolve({ ok: true, json: async () => ({ success: true, step: 2, userId: 18, challengeId: 'login-challenge-1', otpExpiresAt: futureOtpExpiry() }) });
     });
 
     await act(async () => { root.render(<LoginScreen />); });
@@ -617,7 +617,7 @@ describe('LoginScreen real-time form validation', () => {
     let resolveVerify;
     global.fetch = jest.fn((url) => {
       if (String(url).includes('/api/login/verify-otp')) return new Promise((resolve) => { resolveVerify = resolve; });
-      return Promise.resolve({ ok: true, json: async () => ({ success: true, step: 2, userId: 18, challengeId: 'login-challenge-2', otpExpiresAt: '2026-05-21T12:03:00.000Z' }) });
+      return Promise.resolve({ ok: true, json: async () => ({ success: true, step: 2, userId: 18, challengeId: 'login-challenge-2', otpExpiresAt: futureOtpExpiry() }) });
     });
     await act(async () => { root.render(<LoginScreen />); });
     const inputs = container.querySelectorAll('input');

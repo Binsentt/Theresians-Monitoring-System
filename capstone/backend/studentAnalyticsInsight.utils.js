@@ -127,6 +127,30 @@ function buildGroundedInsightInput({
 } = {}) {
   const difficulty = metrics.difficultyBreakdown || {};
   const studentGrade = normalizeGradeLevel(gradeLevel);
+  const topicPerformance = (Array.isArray(metrics.topicPerformance) ? metrics.topicPerformance : [])
+    .map((topic) => {
+      const topicId = normalizeTopicId(topic?.topicId ?? topic?.topic_id);
+      const gradeLevel = normalizeGradeLevel(topic?.gradeLevel ?? topic?.grade_level);
+      const canonicalTopic = topicId ? getTopicById(topicId) : null;
+      const belongsToGrade = Boolean(gradeLevel && topicId && SCOPES.some((scope) => (
+        scope.grade_level === gradeLevel && scope.topic_ids.includes(topicId)
+      )));
+      const correctAnswers = Number(topic?.correctAnswers ?? topic?.correct_answers);
+      const totalQuestions = Number(topic?.totalQuestions ?? topic?.total_questions);
+      if (!canonicalTopic || !belongsToGrade || !Number.isInteger(correctAnswers)
+        || !Number.isInteger(totalQuestions) || totalQuestions < 1
+        || correctAnswers < 0 || correctAnswers > totalQuestions
+        || (studentGrade && gradeLevel !== studentGrade)) return null;
+      return {
+        topic_id: topicId,
+        grade_level: gradeLevel,
+        correct_answers: correctAnswers,
+        total_questions: totalQuestions,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.grade_level.localeCompare(right.grade_level)
+      || left.topic_id.localeCompare(right.topic_id));
   const questTopicPerformance = (Array.isArray(metrics.questTopicPerformance) ? metrics.questTopicPerformance : [])
     .map((topic) => {
       const topicId = normalizeTopicId(topic?.topicId ?? topic?.topic_id);
@@ -157,27 +181,45 @@ function buildGroundedInsightInput({
     .sort((left, right) => left.grade_level.localeCompare(right.grade_level)
       || left.canonical_task_id.localeCompare(right.canonical_task_id)
       || left.topic_id.localeCompare(right.topic_id));
-  const hasSupportedWeakness = questTopicPerformance.some((topic) => (
+  const hasAggregateWeakness = topicPerformance.some((topic) => (
     (topic.correct_answers / topic.total_questions) * 100 < WEAK_PERFORMANCE_THRESHOLD
   ));
+  const hasFullyLinkedTaskWeakness = topicPerformance.some((topic) => {
+    const taskRows = questTopicPerformance.filter((task) => (
+      task.grade_level === topic.grade_level && task.topic_id === topic.topic_id
+    ));
+    const taskRowsCoverTopic = taskRows.length > 0
+      && taskRows.reduce((sum, task) => sum + task.correct_answers, 0) === topic.correct_answers
+      && taskRows.reduce((sum, task) => sum + task.total_questions, 0) === topic.total_questions;
+    return taskRowsCoverTopic && taskRows.some((task) => (
+      task.correct_answers < task.total_questions
+      && (task.correct_answers / task.total_questions) * 100 < WEAK_PERFORMANCE_THRESHOLD
+    ));
+  });
+  const hasSupportedWeakness = hasAggregateWeakness || hasFullyLinkedTaskWeakness;
   const totalQuestions = Number.isInteger(metrics.totalQuestions) ? metrics.totalQuestions : 0;
   const incorrectAnswers = Number.isInteger(metrics.incorrectAnswers) ? metrics.incorrectAnswers : 0;
   const questTopicLinkedEvidenceCount = Number.isInteger(metrics.questTopicLinkedEvidenceCount)
     ? metrics.questTopicLinkedEvidenceCount : questTopicPerformance.reduce((sum, topic) => sum + topic.total_questions, 0);
-  const hasQuestTopicMetadataGap = incorrectAnswers > 0
-    && (questTopicPerformance.length === 0 || questTopicLinkedEvidenceCount < totalQuestions);
+  const topicLinkedEvidenceCount = Number.isInteger(metrics.topicLinkedEvidenceCount)
+    ? metrics.topicLinkedEvidenceCount : topicPerformance.reduce((sum, topic) => sum + topic.total_questions, 0);
+  const unmappedTopicIncorrectAnswers = Number.isInteger(metrics.unmappedTopicIncorrectAnswers)
+    ? metrics.unmappedTopicIncorrectAnswers : 0;
+  const hasTopicMetadataGap = incorrectAnswers > 0
+    && (topicPerformance.length === 0 || unmappedTopicIncorrectAnswers > 0
+      || topicPerformance.reduce((sum, topic) => sum + topic.total_questions, 0) < topicLinkedEvidenceCount);
   const topicEvidenceStatus = totalQuestions > 0 && incorrectAnswers === 0
     ? 'perfect_recorded_results'
-    : hasQuestTopicMetadataGap
-      ? (questTopicPerformance.length > 0 ? 'topic_metadata_partial' : 'topic_metadata_unavailable')
+    : hasTopicMetadataGap
+      ? (topicPerformance.length > 0 ? 'topic_metadata_partial' : 'topic_metadata_unavailable')
       : hasSupportedWeakness
         ? 'weaknesses_identified'
-        : questTopicPerformance.length > 0
+        : topicPerformance.length > 0
           ? 'no_supported_weakness'
           : 'no_topic_evidence';
   return {
     grounding_policy_version: GROUNDING_POLICY_VERSION,
-    metrics_definition_version: 'student-metrics-v4',
+    metrics_definition_version: 'student-metrics-v5',
     grade: studentGrade,
     learning_cycle_version: Number.isInteger(Number(learningCycleVersion)) && learningCycleVersion !== null
       ? Number(learningCycleVersion) : null,
@@ -199,8 +241,9 @@ function buildGroundedInsightInput({
       medium: difficulty.medium?.accuracy ?? null,
       hard: difficulty.hard?.accuracy ?? null,
     },
-    topic_performance: questTopicPerformance,
-    topic_linked_evidence_count: metrics.topicLinkedEvidenceCount ?? 0,
+    topic_performance: topicPerformance,
+    quest_topic_performance: questTopicPerformance,
+    topic_linked_evidence_count: topicLinkedEvidenceCount,
     quest_topic_linked_evidence_count: questTopicLinkedEvidenceCount,
     unmapped_quest_topic_incorrect_answers: Number.isInteger(metrics.unmappedQuestTopicIncorrectAnswers)
       ? metrics.unmappedQuestTopicIncorrectAnswers

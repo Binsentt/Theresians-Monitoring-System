@@ -52,10 +52,10 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
   const topicEvidenceStatus = state.topic_evidence_status || insight?.topic_evidence_status || 'no_topic_evidence';
   const questInsights = Array.isArray(insight?.quest_insights) ? insight.quest_insights : [];
   const message = safeDisplayText(error || state.message, 'Grounded analysis is loading from recorded gameplay evidence.');
-  const showInsightAction = Boolean(onRefresh && !noData && !paused);
+  const showInsightAction = Boolean(onRefresh && !paused);
   const insightActionLabel = loading
-    ? (insight ? 'Refreshing AI insight...' : 'Generating AI insight...')
-    : insight
+    ? 'Refreshing AI insight...'
+    : (insight || noData)
       ? 'Refresh AI Insight'
       : 'Generate AI Insight';
   const generatedAt = state.generated_at ? new Date(state.generated_at) : null;

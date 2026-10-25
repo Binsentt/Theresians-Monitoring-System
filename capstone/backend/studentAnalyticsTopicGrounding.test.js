@@ -70,22 +70,50 @@ test('separates the same canonical topic across quests and preserves both task c
   assert.equal(insight.recommendations.length, 2);
 });
 
-test('requires both canonical topic and canonical quest linkage and reports missing task metadata', () => {
+test('topic-only Grade/topic evidence supports a weakness without inventing quest context', () => {
+  const metrics = buildStudentAnalyticsMetrics({
+    quizSessions: [1, 0, 0, 0, 0].map((score, index) => ({
+      question_set_id: 901,
+      score,
+      total_items: 1,
+      canonical_grade_level: 'Grade 1',
+      canonical_difficulty: 'Normal',
+      canonical_topic_id: 'addition',
+      result_event_id: `topic-only-result-${index + 1}`,
+    })),
+  });
+  assert.deepEqual(metrics.topicPerformance, [{
+    topicId: 'addition',
+    topic: 'Addition',
+    gradeLevel: 'Grade 1',
+    correctAnswers: 1,
+    incorrectAnswers: 4,
+    totalQuestions: 5,
+    accuracy: 20,
+  }]);
+  assert.deepEqual(metrics.questTopicPerformance, []);
+
+  const groundedInput = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics });
+  assert.deepEqual(groundedInput.topic_performance, [{
+    topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 1, total_questions: 5,
+  }]);
+  assert.deepEqual(groundedInput.quest_topic_performance, []);
   const catalog = buildGroundedClaimCatalog({
-    ...baseInput,
-    topic_performance: [{ topic_id: 'addition', grade_level: 'Grade 1', correct_answers: 0, total_questions: 3 }],
+    ...groundedInput,
   });
   const insight = renderValidatedClaimSelection({
     grounding_policy_version: GROUNDING_POLICY_VERSION,
-    performance_claim_ids: ['results_recorded', 'topic_evidence_unavailable'],
+    performance_claim_ids: ['topic_grade_1_addition_accuracy'],
     strength_claim_ids: [],
-    weakness_claim_ids: [],
+    weakness_claim_ids: ['topic_grade_1_addition_weakness'],
   }, catalog);
 
-  assert.deepEqual(insight.weaknesses, []);
-  assert.deepEqual(insight.recommendations, []);
-  assert.equal(insight.topic_evidence_status, 'topic_metadata_unavailable');
-  assert.match(insight.performance_insight, /no validated Grade\/topic\/task-linked question evidence/i);
+  assert.equal(insight.weaknesses.length, 1);
+  assert.match(insight.weaknesses[0], /Addition: 4 of 5 answers were incorrect/);
+  assert.match(insight.recommendations[0], /Grade 1 Addition/);
+  assert.equal(insight.topic_evidence_status, 'weaknesses_identified');
+  assert.equal(catalog.weakness.some((claim) => claim.id.startsWith('quest_')), false);
+  assert.doesNotMatch(JSON.stringify(insight), /Oakleaf|Pinehill/i);
 });
 
 test('perfect recorded scores produce an explicit no-weakness and no-practice state', () => {
@@ -168,7 +196,7 @@ test('incorrect overall answers without canonical topic evidence do not invent a
 
   assert.deepEqual(catalog.weakness, []);
   assert.deepEqual(catalog.recommendation, []);
-  assert.ok(catalog.performance.some((claim) => /no validated Grade\/topic\/task-linked/i.test(claim.text)));
+  assert.ok(catalog.performance.some((claim) => /no validated Grade\/topic-linked/i.test(claim.text)));
 });
 
 test('free-text legacy math topic cannot create a canonical weakness', () => {
@@ -253,7 +281,7 @@ test('95 unlinked committed results remain counted but cannot infer a weakness f
   assert.deepEqual(metrics.topicPerformance, []);
   assert.equal(input.topic_evidence_status, 'topic_metadata_unavailable');
   assert.equal(insight.topic_evidence_status, 'topic_metadata_unavailable');
-  assert.match(insight.performance_insight, /no validated Grade\/topic\/task-linked question evidence/i);
+  assert.match(insight.performance_insight, /no validated Grade\/topic-linked question evidence/i);
   assert.deepEqual(insight.weaknesses, []);
   assert.deepEqual(insight.recommendations, []);
   assert.equal(insight.weaknesses.some((text) => /Addition|Easy/.test(text)), false);

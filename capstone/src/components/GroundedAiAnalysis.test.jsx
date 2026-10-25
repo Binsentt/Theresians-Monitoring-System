@@ -115,16 +115,20 @@ describe('GroundedAiAnalysis', () => {
     expect(container.querySelector('button')).toBeNull();
   });
 
-  test('shows truthful no-data state without invented analysis or a generation action', async () => {
+  test('shows truthful no-data state and allows a refresh after new committed answers', async () => {
+    const onRefresh = jest.fn();
     await act(async () => root.render(
       <GroundedAiAnalysis
         aiInsight={{ status: 'no_data', data_level: 'no_data', valid_result_count: 0, message: 'No valid gameplay results are available.' }}
-        onRefresh={jest.fn()}
+        onRefresh={onRefresh}
       />
     ));
 
     expect(container.textContent).toContain('No valid gameplay results are available.');
-    expect(container.querySelector('button')).toBeNull();
+    const refresh = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Refresh AI Insight');
+    expect(refresh).not.toBeNull();
+    await act(async () => refresh.click());
+    expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
   test('shows completed non-graded quest evidence even when no graded result exists', async () => {
@@ -152,7 +156,8 @@ describe('GroundedAiAnalysis', () => {
     expect(container.textContent).toContain('Quest completed — no graded questions required.');
     expect(container.textContent).toContain('No recorded graded results are available for a Mathematics weakness assessment yet.');
     expect(container.textContent).not.toContain('No supported weakness is identified from the recorded evidence.');
-    expect(container.querySelector('button')).toBeNull();
+    expect(Array.from(container.querySelectorAll('button'))
+      .some((button) => button.textContent === 'Refresh AI Insight')).toBe(true);
   });
 
   test('preserves story-only completion evidence that is described as recorded activity', async () => {

@@ -63,6 +63,80 @@ test('catalog renders exact supported percentage, count, and current quest facts
   ]);
 });
 
+test('topic-only evidence supports topic strengths and weaknesses without inventing quest context or double counting', () => {
+  const catalog = buildGroundedClaimCatalog({
+    ...input,
+    correct_answers: 7,
+    incorrect_answers: 4,
+    total_questions: 11,
+    accuracy: 63.64,
+    topic_evidence_status: 'weaknesses_identified',
+    topic_performance: [
+      { topic_id: 'multiplication', grade_level: 'Grade 3', correct_answers: 5, total_questions: 5 },
+      { topic_id: 'fractions', grade_level: 'Grade 3', correct_answers: 2, total_questions: 6 },
+    ],
+    quest_topic_performance: [],
+    quest_topic_linked_evidence_count: 0,
+    unmapped_quest_topic_incorrect_answers: 4,
+    unmapped_topic_incorrect_answers: 0,
+  });
+  const insight = renderValidatedClaimSelection(selection({
+    performance_claim_ids: ['topic_grade_3_multiplication_accuracy', 'topic_grade_3_fractions_accuracy'],
+    strength_claim_ids: ['topic_grade_3_multiplication_strength'],
+    weakness_claim_ids: ['topic_grade_3_fractions_weakness'],
+  }), catalog);
+
+  assert.match(insight.strengths[0], /Multiplication: 5 of 5 recorded answers correct \(100%\)/);
+  assert.match(insight.weaknesses[0], /Fractions: 4 of 6 answers were incorrect \(33\.33% accuracy\)/);
+  assert.match(insight.recommendations[0], /Practice Grade 3 Fractions/);
+  assert.match(insight.recommendations[0], /4 recorded incorrect answers/);
+  assert.equal(catalog.weakness.some((claim) => claim.id.startsWith('quest_')), false);
+  assert.equal(/Oakleaf|Pinehill/i.test(JSON.stringify(insight)), false);
+  assert.doesNotMatch(insight.strengths[0], /10 of 10/);
+});
+
+test('does not count topic and quest aggregates twice when both describe the same answers', () => {
+  const catalog = buildGroundedClaimCatalog({
+    ...input,
+    correct_answers: 2,
+    incorrect_answers: 4,
+    total_questions: 6,
+    topic_performance: [{
+      topic_id: 'fractions', grade_level: 'Grade 3', correct_answers: 2, total_questions: 6,
+    }],
+    quest_topic_performance: [{
+      canonical_task_id: 'oakleaf-bandits', topic_id: 'fractions', grade_level: 'Grade 3',
+      correct_answers: 2, total_questions: 6,
+    }],
+    topic_linked_evidence_count: 6,
+    quest_topic_linked_evidence_count: 6,
+    unmapped_topic_incorrect_answers: 0,
+    unmapped_quest_topic_incorrect_answers: 0,
+  });
+
+  assert.equal(catalog.weakness.length, 1);
+  assert.match(catalog.weakness[0].text, /Fractions — Oakleaf Bandits: 4 of 6 answers were incorrect/);
+  assert.doesNotMatch(catalog.weakness[0].text, /8 of 12|10 of 12/);
+});
+
+test('quest-specific topic claims require a validated canonical task ID', () => {
+  const catalog = buildGroundedClaimCatalog({
+    ...input,
+    topic_performance: [{ topic_id: 'fractions', grade_level: 'Grade 3', correct_answers: 2, total_questions: 6 }],
+    quest_topic_performance: [{ topic_id: 'fractions', grade_level: 'Grade 3', correct_answers: 2, total_questions: 6 }],
+    correct_answers: 2,
+    incorrect_answers: 4,
+    total_questions: 6,
+    unmapped_topic_incorrect_answers: 0,
+    unmapped_quest_topic_incorrect_answers: 4,
+    quest_topic_linked_evidence_count: 0,
+  });
+
+  assert.ok(catalog.weakness.some((claim) => claim.id === 'topic_grade_3_fractions_weakness'));
+  assert.equal(catalog.weakness.some((claim) => claim.id.startsWith('quest_')), false);
+  assert.equal(catalog.performance.some((claim) => claim.id.startsWith('quest_')), false);
+});
+
 test('renders authoritative non-graded quest completion without inventing quiz evidence', () => {
   const catalog = buildGroundedClaimCatalog({
     ...input,
@@ -221,7 +295,7 @@ test('overall accuracy with one recorded miss is not mislabeled as a math-topic 
 
   assert.match(catalog.weakness[0].text, /limited evidence.*does not identify a persistent Math weakness/);
   assert.match(catalog.recommendation[0].text, /Review the 1 missed question.*More topic-linked results/);
-  assert.ok(catalog.performance.some((claim) => /no validated Grade\/topic\/task-linked/i.test(claim.text)));
+  assert.ok(catalog.performance.some((claim) => /no validated Grade\/topic-linked/i.test(claim.text)));
 });
 
 test('duration evidence alone never creates a weakness or recommendation', () => {
@@ -367,7 +441,7 @@ test('incorrect answers without canonical topic metadata return an explicit evid
   }, catalog);
 
   assert.equal(insight.topic_evidence_status, 'topic_metadata_unavailable');
-  assert.match(insight.performance_insight, /incorrect answers are recorded, but no validated Grade\/topic\/task-linked/i);
+  assert.match(insight.performance_insight, /incorrect answers are recorded, but no validated Grade\/topic-linked/i);
   assert.deepEqual(insight.weaknesses, []);
   assert.deepEqual(insight.recommendations, []);
 });
