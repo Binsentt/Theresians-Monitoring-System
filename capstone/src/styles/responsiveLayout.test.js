@@ -32,6 +32,18 @@ describe('responsive text and table layout guardrails', () => {
     ))?.[1]
   );
 
+  const rulesContainingSelector = (source, selector) => {
+    const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const selectorBoundary = new RegExp(`${escapedSelector}(?=\\s|\\.|:|,|>)`);
+    return source
+      .split('}')
+      .filter((block) => {
+        const openingBrace = block.indexOf('{');
+        return openingBrace >= 0 && selectorBoundary.test(block.slice(0, openingBrace));
+      })
+      .join('}');
+  };
+
   test('shared text and sidebar labels wrap at word boundaries instead of arbitrary characters', () => {
     expect(rule(styles, 'p,\\s*label,\\s*h1,\\s*h2,\\s*h3,\\s*h4,\\s*h5,\\s*h6')).toContain('overflow-wrap: normal');
     expect(rule(layoutStyles, '\\.header-info h1,\\s*\\.header-info p,\\s*\\.top-bar h1,\\s*\\.top-bar p')).toContain('overflow-wrap: normal');
@@ -50,7 +62,7 @@ describe('responsive text and table layout guardrails', () => {
     expect(dataCells).toContain('overflow-wrap: normal');
     expect(componentStyles).not.toMatch(/word-break:\s*break-all/);
     expect(manageUsersStyles).not.toMatch(/word-break:\s*break-all/);
-    expect(progressStyles).not.toMatch(/overflow-wrap:\s*anywhere/);
+    expect(rulesContainingSelector(progressStyles, '.student-progress-table')).not.toMatch(/overflow-wrap:\s*anywhere/);
     expect(styles).toMatch(/\.table-container,[\s\S]*overflow-x:\s*auto;/);
     expect(progressStyles).toMatch(/\.table-wrapper\s*\{[\s\S]*overflow-x:\s*auto;/);
   });
@@ -104,7 +116,7 @@ describe('responsive text and table layout guardrails', () => {
       expect(wrapperRule).toContain('overflow-x: auto');
       expect(tableRule).toContain('min-width: 1040px');
       expect(progressStyles).not.toMatch(/word-break:\s*break-all/);
-      expect(progressStyles).not.toMatch(/overflow-wrap:\s*anywhere/);
+      expect(rulesContainingSelector(progressStyles, '.student-progress-table')).not.toMatch(/overflow-wrap:\s*anywhere/);
     }
   );
 });

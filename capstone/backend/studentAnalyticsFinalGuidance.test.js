@@ -15,6 +15,10 @@ const topic = (topicId, correct, total, task = 'oakleaf-bandits') => ({
 });
 
 const insightFor = ({ topics = [], correct = 0, incorrect = 0, completedQuests = 3 } = {}) => {
+  const topicLinkedEvidenceCount = topics.reduce((sum, item) => sum + item.total_questions, 0);
+  const topicLinkedIncorrectAnswers = topics.reduce((sum, item) => (
+    sum + item.total_questions - item.correct_answers
+  ), 0);
   const catalog = buildGroundedClaimCatalog({
     grounding_policy_version: GROUNDING_POLICY_VERSION,
     grade: 'Grade 1',
@@ -24,6 +28,8 @@ const insightFor = ({ topics = [], correct = 0, incorrect = 0, completedQuests =
     results_recorded: correct + incorrect,
     completed_quests: completedQuests,
     topic_performance: topics,
+    topic_linked_evidence_count: topicLinkedEvidenceCount,
+    unmapped_topic_incorrect_answers: Math.max(0, incorrect - topicLinkedIncorrectAnswers),
     unmapped_quest_topic_incorrect_answers: Math.max(0, incorrect - topics.reduce((sum, item) => sum + item.total_questions - item.correct_answers, 0)),
   });
   const insight = renderValidatedClaimSelection({
@@ -94,7 +100,7 @@ test('linked topic evidence remains useful when older unlinked answers also exis
     topics: [topic('addition', 7, 10)], correct: 8, incorrect: 4,
   });
   assert.match(insight.weaknesses[0], /Addition/);
-  assert.match(insight.performance_insight, /without validated Grade\/topic\/task linkage/i);
+  assert.match(insight.performance_insight, /without validated Grade\/topic metadata/i);
 });
 
 test('perfect results create no weakness or recommendation', () => {

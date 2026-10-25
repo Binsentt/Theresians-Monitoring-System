@@ -112,7 +112,16 @@ test('lesson generation sends only lesson context to the server-side Responses A
   assert.equal(requestBody.text.format.schema.properties.questions.minItems, 2);
   assert.equal(requestBody.text.format.schema.properties.questions.maxItems, 2);
   assert.match(JSON.stringify(requestBody.input), /Addition combines two quantities/);
-  assert.deepEqual(questions, validQuestions);
+  assert.deepEqual(questions.map((question) => question.question), validQuestions.map((question) => question.question));
+  assert.deepEqual(questions.map((question) => question.correct_answer), validQuestions.map((question) => question.correct_answer));
+  questions.forEach((question, index) => {
+    assert.deepEqual(new Set(question.options), new Set(validQuestions[index].options));
+    assert.equal(question.options.filter((option) => option === question.correct_answer).length, 1);
+  });
+  assert.deepEqual(
+    questions.map((question) => question.options.indexOf(question.correct_answer)).sort(),
+    [0, 1]
+  );
 });
 
 test('lesson generation does not route or prompt on optional Topic metadata', async () => {
@@ -602,4 +611,103 @@ test('lesson generation retries only the missing questions and rejects duplicate
   assert.equal(generated.length, 2);
   assert.equal(generated[0].question, 'New question 1');
   assert.deepEqual(batches.map((entry) => entry.batch_index), [0]);
+});
+
+test('single-request generation balances correct answers across A-D without changing answer mapping', async () => {
+  const generated = Array.from({ length: 20 }, (_, index) => ({
+    question: `Generated question ${index + 1}`,
+    options: ['correct', `wrong-${index}-a`, `wrong-${index}-b`, `wrong-${index}-c`],
+    correct_answer: 'correct',
+  }));
+  const questions = await generateLessonQuestions({
+    lessonText: 'A lesson about addition.',
+    title: 'Addition lesson',
+    gradeLevel: 'Grade 1',
+    difficulty: 'Easy',
+    questionCount: generated.length,
+    apiKey: 'test-key',
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ output_text: JSON.stringify({ questions: generated }) }),
+    }),
+  });
+
+  const counts = [0, 0, 0, 0];
+  questions.forEach((question) => {
+    counts[question.options.indexOf(question.correct_answer)] += 1;
+    assert.equal(question.options.length, 4);
+    assert.equal(new Set(question.options).size, 4);
+    assert.equal(question.options.filter((option) => option === question.correct_answer).length, 1);
+  });
+  assert.deepEqual(counts, [5, 5, 5, 5]);
+});
+
+test('batched generation persists and returns the same globally balanced A-D answer positions', async () => {
+  const persisted = [];
+  let batchIndex = 0;
+  const questions = await require('./lessonQuestionGeneration').generateLessonQuestionsInBatches({
+    questionCount: 20,
+    batchSize: 5,
+    generateBatch: async ({ questionCount }) => {
+      const currentBatch = batchIndex++;
+      return Array.from({ length: questionCount }, (_, index) => ({
+        question: `Batch ${currentBatch} question ${index + 1}`,
+        options: ['correct', `wrong-${currentBatch}-${index}-a`, `wrong-${currentBatch}-${index}-b`, `wrong-${currentBatch}-${index}-c`],
+        correct_answer: 'correct',
+      }));
+    },
+    onBatch: async ({ batch }) => persisted.push(...batch),
+  });
+
+  const counts = [0, 0, 0, 0];
+  questions.forEach((question) => { counts[question.options.indexOf(question.correct_answer)] += 1; });
+  assert.deepEqual(counts, [5, 5, 5, 5]);
+  assert.deepEqual(
+    persisted.map((question) => question.options.indexOf(question.correct_answer)),
+    questions.map((question) => question.options.indexOf(question.correct_answer))
+  );
+});
+
+test('batched generation retries a repeated prompt after whitespace normalization', async () => {
+  let calls = 0;
+  const questions = await require('./lessonQuestionGeneration').generateLessonQuestionsInBatches({
+    questionCount: 2,
+    batchSize: 1,
+    maxBatchAttempts: 2,
+    generateBatch: async ({ avoidQuestions }) => {
+      calls += 1;
+      if (calls === 1) return [{ question: 'What is 1 + 1?', options: ['2', '1', '3', '4'], correct_answer: '2' }];
+      if (calls === 2) {
+        assert.ok(avoidQuestions.some((question) => (
+          question.toLocaleLowerCase().trim().replace(/\s+/gu, ' ') === 'what is 1 + 1?'
+        )));
+        return [{ question: ' what   is 1 + 1? ', options: ['2', '1', '3', '4'], correct_answer: '2' }];
+      }
+      return [{ question: 'What is 2 + 2?', options: ['4', '2', '3', '5'], correct_answer: '4' }];
+    },
+  });
+
+  assert.equal(calls, 3);
+  assert.deepEqual(questions.map((question) => question.question), ['What is 1 + 1?', 'What is 2 + 2?']);
+});
+
+test('one provider response rejects repeated question content even when options differ', async () => {
+  await assert.rejects(
+    generateLessonQuestions({
+      lessonText: 'A lesson about addition.',
+      title: 'Addition lesson',
+      gradeLevel: 'Grade 1',
+      difficulty: 'Easy',
+      questionCount: 2,
+      apiKey: 'test-key',
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({ output_text: JSON.stringify({ questions: [
+          { question: 'What is 1 + 1?', options: ['2', '1', '3', '4'], correct_answer: '2' },
+          { question: ' what   is 1 + 1? ', options: ['3', '2', '4', '5'], correct_answer: '3' },
+        ] }) }),
+      }),
+    }),
+    (error) => error instanceof QuestionGenerationError && error.code === 'QUESTION_AI_INVALID_RESPONSE'
+  );
 });

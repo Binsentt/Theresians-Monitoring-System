@@ -179,6 +179,31 @@ const normalizeGeneratedQuestion = (item) => {
   };
 };
 
+const questionContentKey = (value) => asTrimmedString(value)
+  .toLocaleLowerCase()
+  .replace(/\s+/gu, ' ');
+
+const fisherYatesShuffle = (values) => {
+  const shuffled = [...values];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled;
+};
+
+const buildBalancedAnswerPositionPlan = (questionCount) => fisherYatesShuffle(
+  Array.from({ length: questionCount }, (_, index) => index % 4)
+);
+
+const balanceCorrectAnswerPositions = (questions, positionPlan) => questions.map((question, index) => {
+  const correctAnswer = question.correct_answer;
+  const distractors = fisherYatesShuffle(question.options.filter((option) => option !== correctAnswer));
+  const options = [...distractors];
+  options.splice(positionPlan[index] ?? Math.floor(Math.random() * 4), 0, correctAnswer);
+  return { ...question, options };
+});
+
 const parseGeneratedQuestions = (outputText, expectedCount) => {
   let payload;
   try {
@@ -195,6 +220,11 @@ const parseGeneratedQuestions = (outputText, expectedCount) => {
   const questions = generated.map(normalizeGeneratedQuestion).filter(Boolean);
   if (questions.length !== expectedCount) {
     throw new QuestionGenerationError('QUESTION_AI_INVALID_RESPONSE', 'Question generation did not return the requested number of valid questions.');
+  }
+
+  const fingerprints = questions.map((question) => questionContentKey(question.question));
+  if (new Set(fingerprints).size !== fingerprints.length) {
+    throw new QuestionGenerationError('QUESTION_AI_INVALID_RESPONSE', 'Question generation returned duplicate questions.');
   }
 
   return questions;
@@ -348,7 +378,8 @@ const generateLessonQuestions = async ({
     );
   }
   try {
-    return parseGeneratedQuestions(outputText, questionCount);
+    const questions = parseGeneratedQuestions(outputText, questionCount);
+    return balanceCorrectAnswerPositions(questions, buildBalancedAnswerPositionPlan(questions.length));
   } catch (error) {
     if (error instanceof QuestionGenerationError && !error.providerDiagnostics) {
       error.providerDiagnostics = buildProviderDiagnostics(response, responseBody, 'invalid_provider_response');
@@ -376,9 +407,10 @@ const generateLessonQuestionsInBatches = async ({
   const boundedAttempts = Number.isInteger(maxBatchAttempts) && maxBatchAttempts > 0 ? Math.min(maxBatchAttempts, 5) : 3;
   const questions = [];
   const seen = new Set();
+  const answerPositionPlan = buildBalancedAnswerPositionPlan(questionCount);
   (Array.isArray(existingQuestions) ? existingQuestions : []).forEach((question) => {
     const normalized = normalizeGeneratedQuestion(question);
-    if (normalized) seen.add(normalized.question.toLocaleLowerCase());
+    if (normalized) seen.add(questionContentKey(normalized.question));
   });
   for (let offset = 0; offset < questionCount; offset += boundedBatchSize) {
     const count = Math.min(boundedBatchSize, questionCount - offset);
@@ -396,7 +428,7 @@ const generateLessonQuestionsInBatches = async ({
         continue;
       }
       const normalizedBatch = candidate.map(normalizeGeneratedQuestion);
-      const fingerprints = normalizedBatch.map((question) => question?.question.toLocaleLowerCase());
+      const fingerprints = normalizedBatch.map((question) => questionContentKey(question?.question));
       const batchHasInvalid = normalizedBatch.some((question) => !question);
       const batchHasDuplicate = fingerprints.some((fingerprint, index) => (
         !fingerprint
@@ -409,14 +441,17 @@ const generateLessonQuestionsInBatches = async ({
         }
         continue;
       }
-      batch = normalizedBatch;
+      batch = balanceCorrectAnswerPositions(
+        normalizedBatch,
+        answerPositionPlan.slice(questions.length, questions.length + count)
+      );
       break;
     }
     if (!batch) {
       throw new QuestionGenerationError('QUESTION_AI_INVALID_RESPONSE', 'Question generation returned unusable question data.');
     }
     for (const question of batch) {
-      const fingerprint = question.question.toLocaleLowerCase();
+      const fingerprint = questionContentKey(question.question);
       seen.add(fingerprint);
       questions.push(question);
     }
