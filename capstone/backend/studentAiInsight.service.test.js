@@ -590,6 +590,21 @@ test('provider failure keeps and marks the prior cached insight while canonical 
   assert.equal(state.topic_evidence_status, 'topic_metadata_unavailable');
   assert.deepEqual(harness.getSaved(), before);
   assert.ok(harness.calls.some(({ sql }) => sql === 'rollback'));
+
+  const retry = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics: metricsFor([1, 1, 1, 1, 0]),
+    actorId: 2,
+    forceRefresh: true,
+    pool: harness.pool,
+    generateInsight: async () => generatedInsight('A later refresh succeeded.'),
+  });
+
+  assert.equal(retry.status, 'regenerated');
+  assert.equal(retry.is_stale, false);
+  assert.equal(retry.insight.performance_insight, 'A later refresh succeeded.');
+  assert.equal(harness.getSaved().insight.performance_insight, 'A later refresh succeeded.');
 });
 
 test('persistence failure reports a safe persistence diagnostic without changing the unavailable UX', async () => {

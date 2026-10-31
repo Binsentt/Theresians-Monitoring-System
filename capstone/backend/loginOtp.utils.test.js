@@ -49,7 +49,7 @@ test('OTP email delivery resolves false when sending stalls past the timeout', a
 });
 
 test('login OTP response never exposes the OTP code when delivery fails', () => {
-  const expiresAt = new Date('2026-05-20T01:23:00.000Z');
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
   const response = buildLoginOtpResponse({
     user: { id: 12, email: 'teacher@gmail.com', otp_code: '123456' },
     expiresAt,
@@ -63,6 +63,7 @@ test('login OTP response never exposes the OTP code when delivery fails', () => 
     email: 'teacher@gmail.com',
     otpExpiresAt: expiresAt,
     emailSent: false,
+    resendAvailableAt: null,
     warning: 'Verification code could not be sent. Please resend the code or contact an administrator.',
   });
   assert.equal(response.otp, undefined);

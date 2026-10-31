@@ -410,11 +410,11 @@ describe('ParentChildProgress child selection and game warnings', () => {
 
   test('uses compact chronological chart labels and keeps topic details in the timeline data', () => {
     expect(buildScoreTimeline([
-      { id: 2, math_topic: 'Subtraction', difficulty: 'Difficult', percentage: 80, played_at: '2026-10-21T10:00:00.000Z' },
-      { id: 1, math_topic: 'Addition', difficulty: 'Easy', percentage: 60, played_at: '2026-10-20T10:00:00.000Z' },
+      { id: 2, session_id: 'session-2', math_topic: 'Subtraction', difficulty: 'Difficult', percentage: 80, played_at: '2026-10-21T10:00:00.000Z' },
+      { id: 1, session_id: 'session-1', math_topic: 'Addition', difficulty: 'Easy', percentage: 60, played_at: '2026-10-20T10:00:00.000Z' },
     ])).toEqual([
-      expect.objectContaining({ label: 'Q1', percentage: 60, topic: 'Addition', difficulty: 'Easy', sessionId: 1 }),
-      expect.objectContaining({ label: 'Q2', percentage: 80, topic: 'Subtraction', difficulty: 'Difficult', sessionId: 2 }),
+      expect.objectContaining({ label: 'Q1', percentage: 60, topic: 'Addition', difficulty: 'Easy', resultId: 1, sessionId: 'session-1' }),
+      expect.objectContaining({ label: 'Q2', percentage: 80, topic: 'Subtraction', difficulty: 'Difficult', resultId: 2, sessionId: 'session-2' }),
     ]);
   });
 
@@ -426,17 +426,18 @@ describe('ParentChildProgress child selection and game warnings', () => {
       { id: 'malformed', percentage: 'not-a-score', played_at: '2026-10-19T13:00:00.000Z' },
       { id: 'negative', percentage: -1, played_at: '2026-10-19T14:00:00.000Z' },
       { id: 'over-100', percentage: 101, played_at: '2026-10-19T15:00:00.000Z' },
-      { id: 2, percentage: 50, score: 5, total_items: 10, played_at: '2026-10-21T10:00:00.000Z' },
-      { id: 1, percentage: 0, score: 0, total_items: 10, played_at: '2026-10-20T10:00:00.000Z' },
+      { id: 2, session_id: null, percentage: 50, score: 5, total_items: 10, played_at: '2026-10-21T10:00:00.000Z' },
+      { id: 1, session_id: undefined, percentage: 0, score: 0, total_items: 10, played_at: '2026-10-20T10:00:00.000Z' },
     ])).toEqual([
-      expect.objectContaining({ label: 'Q1', percentage: 0, score: 0, totalItems: 10, sessionId: 1 }),
-      expect.objectContaining({ label: 'Q2', percentage: 50, score: 5, totalItems: 10, sessionId: 2 }),
+      expect.objectContaining({ label: 'Q1', percentage: 0, score: 0, totalItems: 10, resultId: 1, sessionId: null }),
+      expect.objectContaining({ label: 'Q2', percentage: 50, score: 5, totalItems: 10, resultId: 2, sessionId: null }),
     ]);
   });
 
   test('score timeline tooltip shows topic, difficulty, date, authoritative score, and percentage', async () => {
     const [point] = buildScoreTimeline([{
       id: 9,
+      session_id: 'playtime-session-9',
       math_topic: 'Addition',
       difficulty: 'Normal',
       percentage: 0,
@@ -450,9 +451,27 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('Q1');
     expect(container.textContent).toContain('Topic: Addition');
     expect(container.textContent).toContain('Difficulty: Normal');
+    expect(container.textContent).toContain('Session ID: playtime-session-9');
     expect(container.textContent).toContain('Date:');
     expect(container.textContent).toContain('Score: 0 / 5');
     expect(container.textContent).toContain('Percentage: 0%');
+  });
+
+  test('score timeline tooltip reports unavailable when no real session ID exists', async () => {
+    const [point] = buildScoreTimeline([{
+      id: 321,
+      math_topic: 'Addition',
+      difficulty: 'Easy',
+      percentage: 50,
+      played_at: '2026-10-20T10:00:00.000Z',
+    }]);
+
+    expect(point.resultId).toBe(321);
+    expect(point.sessionId).toBeNull();
+    await act(async () => root.render(<ScoreTimelineTooltip active payload={[{ payload: point }]} />));
+
+    expect(container.textContent).toContain('Session ID: unavailable');
+    expect(container.textContent).not.toContain('Session ID: 321');
   });
 
   test('does not display a zero score for ungraded story activity', () => {
@@ -630,6 +649,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
               accuracy: 60,
               totalProgress: 35,
             },
+            scoreHistory: [{ id: 901, session_id: 'parent-session-901', math_topic: 'Addition', difficulty: 'Easy', score: 4, total_items: 5, percentage: 80, played_at: '2026-10-21T08:20:00.000Z' }],
           },
         });
       }
@@ -650,6 +670,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('Deepest Forest Bandits');
     expect(container.textContent).toContain('Correct Answers3');
     expect(container.textContent).toContain('Incorrect Answers2');
+    expect(container.textContent).toContain('Q1:80%');
   });
 
   test('Refresh AI Insight recovers a no-data child view when new committed answers arrive', async () => {

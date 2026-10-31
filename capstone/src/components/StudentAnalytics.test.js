@@ -3,12 +3,28 @@ import { createRoot } from 'react-dom/client';
 import StudentAnalytics from './StudentAnalytics';
 import { clearPreparedReport } from './PrintReportPortal';
 
+jest.mock('recharts', () => ({
+  Bar: () => <div>Bar</div>,
+  BarChart: ({ children, data = [] }) => (
+    <div data-testid="score-timeline-data">
+      {data.map((point) => <span key={point.sessionId || point.label}>{point.label}:{point.percentage}%</span>)}
+      {children}
+    </div>
+  ),
+  CartesianGrid: () => <div>Grid</div>,
+  ResponsiveContainer: ({ children }) => <div>{children}</div>,
+  Tooltip: () => <div>Tooltip</div>,
+  XAxis: () => <div>XAxis</div>,
+  YAxis: () => <div>YAxis</div>,
+}));
+
 const mockNavigate = jest.fn();
+let mockStudentId = '44';
 
 jest.mock('react-router-dom', () => ({
   useLocation: () => ({ pathname: '/admin/student-progress/44' }),
   useNavigate: () => mockNavigate,
-  useParams: () => ({ studentId: '44' }),
+  useParams: () => ({ studentId: mockStudentId }),
 }));
 
 jest.mock('../assets/images/STS_Logo.png', () => 'logo.png');
@@ -38,6 +54,7 @@ describe('StudentAnalytics defensive rendering', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     mockNavigate.mockReset();
+    mockStudentId = '44';
     localStorage.clear();
     localStorage.setItem('loggedInUser', JSON.stringify({ id: 1, role: 'admin', name: 'Admin' }));
     localStorage.setItem('token', 'student-detail-token');
@@ -58,7 +75,7 @@ describe('StudentAnalytics defensive rendering', () => {
 
   test('keeps the role-aware dashboard shell during loading, success, and error states', async () => {
     let resolveRequest;
-    global.fetch = jest.fn(() => new Promise((resolve) => { resolveRequest = resolve; }));
+    global.fetch = jest.fn((url) => String(url).startsWith('/api/activity-logs?') ? jsonResponse({ data: [] }) : new Promise((resolve) => { resolveRequest = resolve; }));
 
     await act(async () => root.render(<StudentAnalytics />));
     expect(container.querySelector('[data-testid="analytics-sidebar"]')).not.toBeNull();
@@ -305,8 +322,10 @@ describe('StudentAnalytics defensive rendering', () => {
 
   test('Refresh AI Insight keeps the current snapshot visible while one fresh request is active', async () => {
     let resolveRefresh;
-    global.fetch = jest.fn()
-      .mockResolvedValueOnce(jsonResponse({
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).startsWith('/api/activity-logs?')) return jsonResponse({ data: [] });
+      if (options.method === 'POST') return new Promise((resolve) => { resolveRefresh = resolve; });
+      return jsonResponse({
         progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
         metrics: { validResultCount: 4, topicLinkedEvidenceCount: 0, accuracy: 75, totalQuestions: 4, correctAnswers: 3, incorrectAnswers: 1, gameScore: 3 },
         aiInsight: {
@@ -315,9 +334,8 @@ describe('StudentAnalytics defensive rendering', () => {
           generated_at: '2026-10-12T06:30:00.000Z',
           insight: { performance_insight: 'Old cached insight.', strengths: [], weaknesses: [], recommendations: [] },
         },
-      }))
-      .mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
-
+      });
+    });
     await act(async () => root.render(<StudentAnalytics />));
     const refresh = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Refresh AI Insight');
     expect(refresh).toBeTruthy();
@@ -335,7 +353,8 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(refreshingButton.disabled).toBe(true);
     expect(container.querySelector('.student-metrics-grid')).toBeTruthy();
     expect(container.textContent).toContain('Old cached insight.');
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
+    expect(global.fetch.mock.calls.some(([url]) => String(url).startsWith('/api/activity-logs?student_id=44'))).toBe(true);
 
     const refreshedAt = '2026-10-13T06:30:00.000Z';
     await act(async () => resolveRefresh({
@@ -356,7 +375,8 @@ describe('StudentAnalytics defensive rendering', () => {
               { topicId: 'subtraction', topic: 'Subtraction', gradeLevel: 'Grade 1', correctAnswers: 2, incorrectAnswers: 8, totalQuestions: 10, accuracy: 20 },
               { topic: 'Unvalidated guessed topic', gradeLevel: 'Grade 1', correctAnswers: 0, totalQuestions: 1, accuracy: 0 },
             ],
-          },
+        },
+          scoreHistory: [{ id: 99, math_topic: 'Addition', difficulty: 'Easy', score: 0, total_items: 1, percentage: 0, played_at: '2026-10-13T06:20:00.000Z' }],
         },
         insight: {
           performance_insight: 'Updated from the latest committed results.',
@@ -382,6 +402,7 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('Grade 1 Addition');
     expect(container.textContent).toContain('Grade 1 Subtraction');
     expect(container.textContent).toContain('Topic-linked evidence: 7 of 8 recorded answers');
+    expect(container.textContent).toContain('Q1:0%');
     expect(container.textContent).toContain('Quest/topic-linked evidence: 6 of 8 recorded answers');
     expect(container.textContent).not.toContain('Unvalidated guessed topic');
     expect(container.textContent).not.toContain(new Date('2026-10-12T06:30:00.000Z').toLocaleString());
@@ -391,14 +412,15 @@ describe('StudentAnalytics defensive rendering', () => {
   });
 
   test('keeps the prior snapshot and offers another refresh when a refreshed snapshot is incomplete', async () => {
-    global.fetch = jest.fn()
-      .mockResolvedValueOnce(jsonResponse({
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).startsWith('/api/activity-logs?')) return jsonResponse({ data: [] });
+      if (options.method === 'POST') return jsonResponse({ status: 'regenerated', insight: {} });
+      return jsonResponse({
         progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
         metrics: { validResultCount: 4, accuracy: 75, totalQuestions: 4, correctAnswers: 3, incorrectAnswers: 1 },
         aiInsight: { status: 'cached', insight: { performance_insight: 'Existing insight.', strengths: [], weaknesses: [], recommendations: [] } },
-      }))
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ status: 'regenerated', insight: {} }) });
-
+      });
+    });
     await act(async () => root.render(<StudentAnalytics />));
     const refresh = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Refresh AI Insight');
     await act(async () => refresh.click());
@@ -412,6 +434,240 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(retry.disabled).toBe(false);
   });
 
+  test('Refresh AI Insight creates the first analysis from saved topic evidence when no prior insight exists', async () => {
+    let refreshBody;
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).startsWith('/api/activity-logs?')) return jsonResponse({ data: [] });
+      if (options.method === 'POST') {
+        refreshBody = JSON.parse(options.body);
+        return jsonResponse({
+          status: 'generated',
+          valid_result_count: 10,
+          total_question_count: 10,
+          topic_linked_evidence_count: 10,
+          generated_at: '2026-10-31T04:00:00.000Z',
+          evidence_snapshot: {
+            progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
+            metrics: {
+              validResultCount: 10, totalQuestions: 10, correctAnswers: 7, incorrectAnswers: 3, accuracy: 70,
+              topicLinkedEvidenceCount: 10,
+              topicPerformance: [
+                { topic: 'Addition', gradeLevel: 'Grade 1', correctAnswers: 5, incorrectAnswers: 0, totalQuestions: 5, accuracy: 100 },
+                { topic: 'Subtraction', gradeLevel: 'Grade 1', correctAnswers: 2, incorrectAnswers: 3, totalQuestions: 5, accuracy: 40 },
+              ],
+            },
+            scoreHistory: [],
+          },
+          insight: {
+            performance_insight: 'Fresh analysis of ten saved Grade 1 answers.',
+            strengths: ['Grade 1 Addition: 5 of 5 recorded answers correct (100%).'],
+            weaknesses: ['Grade 1 Subtraction has three recorded incorrect answers.'],
+            recommendations: ['Practice Grade 1 Subtraction based on the recorded errors.'],
+          },
+        });
+      }
+      return jsonResponse({
+        progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
+        metrics: {
+          validResultCount: 10, totalQuestions: 10, correctAnswers: 7, incorrectAnswers: 3, accuracy: 70,
+          topicLinkedEvidenceCount: 10,
+          topicPerformance: [
+            { topic: 'Addition', gradeLevel: 'Grade 1', correctAnswers: 5, incorrectAnswers: 0, totalQuestions: 5, accuracy: 100 },
+            { topic: 'Subtraction', gradeLevel: 'Grade 1', correctAnswers: 2, incorrectAnswers: 3, totalQuestions: 5, accuracy: 40 },
+          ],
+        },
+        aiInsight: null,
+        scoreHistory: [],
+      });
+    });
+
+    await act(async () => root.render(<StudentAnalytics />));
+    expect(container.textContent).toContain('Generate AI Insight');
+    expect(container.textContent).toContain('Generate the AI insight to identify evidence-backed weaknesses.');
+
+    const generate = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Generate AI Insight');
+    await act(async () => generate.click());
+
+    expect(refreshBody).toEqual({ refresh: true });
+    expect(container.textContent).toContain('Fresh analysis of ten saved Grade 1 answers.');
+    expect(container.textContent).toContain('Grade 1 Addition: 5 of 5 recorded answers correct (100%).');
+    expect(container.textContent).toContain('Grade 1 Subtraction has three recorded incorrect answers.');
+    expect(container.textContent).toContain('Practice Grade 1 Subtraction based on the recorded errors.');
+    expect(Array.from(container.querySelectorAll('button'))
+      .some((button) => button.textContent === 'Refresh AI Insight')).toBe(true);
+  });
+
+  test('keeps an unavailable refresh actionable and displays the result after a successful retry', async () => {
+    let refreshAttempts = 0;
+    const snapshot = {
+      progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
+      metrics: { validResultCount: 5, totalQuestions: 5, correctAnswers: 2, incorrectAnswers: 3, accuracy: 40 },
+      scoreHistory: [],
+    };
+    global.fetch = jest.fn((url, options = {}) => {
+      if (String(url).startsWith('/api/activity-logs?')) return jsonResponse({ data: [] });
+      if (options.method === 'POST') {
+        refreshAttempts += 1;
+        if (refreshAttempts === 1) {
+          return jsonResponse({
+            status: 'unavailable',
+            message: 'Grounded AI Insights are unavailable right now. Recorded analytics remain available.',
+            evidence_snapshot: snapshot,
+            insight: null,
+          });
+        }
+        return jsonResponse({
+          status: 'generated',
+          evidence_snapshot: snapshot,
+          insight: {
+            performance_insight: 'The retry analyzed the saved answers.',
+            strengths: [],
+            weaknesses: ['Subtraction needs more practice.'],
+            recommendations: ['Practice subtraction problems.'],
+          },
+        });
+      }
+      return jsonResponse({ progress: snapshot.progress, metrics: snapshot.metrics, aiInsight: null, scoreHistory: [] });
+    });
+
+    await act(async () => root.render(<StudentAnalytics />));
+    const generate = () => Array.from(container.querySelectorAll('button'))
+      .find((button) => ['Generate AI Insight', 'Refresh AI Insight'].includes(button.textContent));
+    await act(async () => generate().click());
+
+    expect(container.textContent).toContain('Grounded AI Insights are unavailable right now. Recorded analytics remain available.');
+    expect(generate()).toBeTruthy();
+    expect(generate().disabled).toBe(false);
+
+    await act(async () => generate().click());
+    expect(refreshAttempts).toBe(2);
+    expect(container.textContent).toContain('The retry analyzed the saved answers.');
+    expect(container.textContent).toContain('Subtraction needs more practice.');
+  });
+
+  test('loads the selected Student activity and displays the shared score history section', async () => {
+    global.fetch = jest.fn((url) => {
+      if (String(url).startsWith('/api/activity-logs?')) {
+        return jsonResponse({ data: [{
+          id: 8, student_id: 44, activity_description: 'Completed addition quiz',
+          current_quest: 'Oakleaf Bandit Battle', activity_timestamp: '2026-10-21T10:00:00.000Z',
+          canonical_activity_id: 'quiz_result', score: 0, total_items: 1,
+        }] });
+      }
+      return jsonResponse({
+        progress: { student_id: 44, student_name: 'Ava Santos' },
+        metrics: { validResultCount: 1 },
+        scoreHistory: [{
+          id: 8, math_topic: 'Addition', difficulty: 'Easy', score: 0,
+          total_items: 1, percentage: 0, played_at: '2026-10-21T10:00:00.000Z',
+        }],
+        aiInsight: { status: 'insufficient_data' },
+      });
+    });
+
+    await act(async () => root.render(<StudentAnalytics />));
+
+    expect(global.fetch.mock.calls.some(([url]) => (
+      String(url).startsWith('/api/activity-logs?student_id=44&limit=100')
+      && !String(url).includes('scope=parent')
+    ))).toBe(true);
+    expect(container.textContent).toContain('Latest Activity');
+    expect(container.textContent).toContain('Completed addition quiz');
+    expect(container.textContent).toContain('Oakleaf Bandit Battle');
+    expect(container.textContent).toContain('0 / 1');
+    expect(container.textContent).toContain('Score Over Time');
+    expect(container.querySelector('.child-score-panel')).toBeTruthy();
+  });
+
+  test('ignores a late detail response after the selected Student changes', async () => {
+    let resolveA;
+    global.fetch = jest.fn((url) => {
+      const value = String(url);
+      if (value.startsWith('/api/activity-logs?')) return jsonResponse({ data: [] });
+      if (value.startsWith('/api/student-progress/44')) {
+        return new Promise((resolve) => { resolveA = resolve; });
+      }
+      if (value.startsWith('/api/student-progress/45')) {
+        return jsonResponse({
+          progress: { student_id: 45, student_name: 'Noah Santos' },
+          metrics: {}, scoreHistory: [], aiInsight: { status: 'insufficient_data' },
+        });
+      }
+      throw new Error('Unexpected request: ' + value);
+    });
+
+    await act(async () => root.render(<StudentAnalytics />));
+    mockStudentId = '45';
+    await act(async () => root.render(<StudentAnalytics />));
+    expect(container.textContent).toContain('Noah Santos');
+
+    await act(async () => resolveA(jsonResponse({
+      progress: { student_id: 44, student_name: 'Ava Santos' },
+      metrics: {}, scoreHistory: [], aiInsight: { status: 'insufficient_data' },
+    })));
+
+    expect(container.textContent).toContain('Noah Santos');
+    expect(container.textContent).not.toContain('Ava Santos');
+  });
+
+  test('does not let a prior Student refresh overwrite the selected Student or block their refresh', async () => {
+    let resolveOldRefresh;
+    let resolveNewRefresh;
+    global.fetch = jest.fn((url, options = {}) => {
+      const value = String(url);
+      if (value.startsWith('/api/activity-logs?')) return jsonResponse({ data: [] });
+      if (options.method === 'POST' && value.startsWith('/api/student-progress/44')) {
+        return new Promise((resolve) => { resolveOldRefresh = resolve; });
+      }
+      if (options.method === 'POST' && value.startsWith('/api/student-progress/45')) {
+        return new Promise((resolve) => { resolveNewRefresh = resolve; });
+      }
+      if (value.startsWith('/api/student-progress/44')) {
+        return jsonResponse({
+          progress: { student_id: 44, student_name: 'Ava Santos' }, metrics: {},
+          scoreHistory: [], aiInsight: { status: 'cached', insight: { performance_insight: 'Existing insight.', strengths: [], weaknesses: [], recommendations: [] } },
+        });
+      }
+      if (value.startsWith('/api/student-progress/45')) {
+        return jsonResponse({
+          progress: { student_id: 45, student_name: 'Noah Santos' }, metrics: {},
+          scoreHistory: [], aiInsight: { status: 'cached', insight: { performance_insight: 'Existing insight.', strengths: [], weaknesses: [], recommendations: [] } },
+        });
+      }
+      throw new Error('Unexpected request: ' + value);
+    });
+
+    await act(async () => root.render(<StudentAnalytics />));
+    const firstRefresh = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Refresh AI Insight');
+    await act(async () => firstRefresh.click());
+
+    mockStudentId = '45';
+    await act(async () => root.render(<StudentAnalytics />));
+    expect(container.textContent).toContain('Noah Santos');
+    const secondRefresh = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Refresh AI Insight');
+    await act(async () => secondRefresh.click());
+    expect(global.fetch.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(2);
+
+    const refreshedResponse = (studentId, studentName) => jsonResponse({
+      status: 'regenerated',
+      evidence_snapshot: {
+        progress: { student_id: studentId, student_name: studentName },
+        metrics: { validResultCount: 1 },
+        scoreHistory: [],
+      },
+      insight: { performance_insight: 'Fresh for ' + studentName, strengths: [], weaknesses: [], recommendations: [] },
+    });
+    await act(async () => resolveOldRefresh(refreshedResponse(44, 'Ava Santos')));
+    expect(container.textContent).toContain('Noah Santos');
+    expect(container.textContent).not.toContain('Fresh for Ava Santos');
+
+    await act(async () => resolveNewRefresh(refreshedResponse(45, 'Noah Santos')));
+    expect(container.textContent).toContain('Fresh for Noah Santos');
+    expect(container.textContent).not.toContain('Fresh for Ava Santos');
+  });
   test('offers a dedicated selected-student analytics print report without dashboard controls', async () => {
     global.fetch = jest.fn(() => jsonResponse({
       progress: { student_id: 44, game_student_id: '001234', student_name: 'Ava Santos', grade_level: 'Grade 3', section: 'Section A' },

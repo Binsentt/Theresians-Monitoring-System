@@ -160,6 +160,7 @@ const {
 const {
   aggregateStudentAccuracy,
   buildStudentAnalyticsMetrics,
+  buildStudentAnalyticsScoreHistory,
 } = require('./studentAnalyticsMetrics.utils');
 const {
   PLAYER_FACING_TASKS,
@@ -11399,7 +11400,7 @@ app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, 
     });
     return res.status(aiInsight.status === 'no_data' ? 422 : 200).json({
       ...aiInsight,
-      evidence_snapshot: { progress: progressSnapshot, metrics },
+      evidence_snapshot: { progress: progressSnapshot, metrics, scoreHistory: buildStudentAnalyticsScoreHistory(quizSessions) },
     });
   } catch (err) {
     console.error('Generate grounded student insight failed:', err.message);
@@ -11457,7 +11458,7 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
       quizSessions,
       activityLogs: activityResult.rows,
     });
-    res.json({ progress, metrics, analysis, analyticsReadiness, aiInsight });
+    res.json({ progress, metrics, analysis, analyticsReadiness, aiInsight, scoreHistory: buildStudentAnalyticsScoreHistory(quizSessions) });
   } catch (err) {
     console.error('Fetch student progress failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch student progress' });

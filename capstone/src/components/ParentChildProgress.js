@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { DashboardContainer, MainContent, TopBar, PageContent, ContentSection } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
@@ -9,96 +8,19 @@ import { buildAuthHeaders } from './session.utils';
 import { normalizeActivityLogPayload } from './activityLog.utils';
 import { isParentRole, normalizeRole } from './manageUsers.utils';
 import {
-  clampPercent,
   formatPercent,
   getTotalProgressNote,
-  normalizeDifficultyDisplay,
   normalizeStudentProgressPayload,
   resolveCurrentDifficulty,
   safeDisplayText,
   sortStudentsByName,
 } from './studentProgress.utils';
 import GroundedAiAnalysis from './GroundedAiAnalysis';
+import { LatestActivitySection, ScoreOverTimeSection } from './StudentProgressEvidence';
 import '../styles/studentprogress.css';
 
-const toTimestamp = (value) => {
-  const parsed = new Date(value || 0).getTime();
-  return Number.isNaN(parsed) ? 0 : parsed;
-};
-
-const toOptionalFiniteNumber = (value) => {
-  if (value === null || value === undefined || typeof value === 'boolean') return null;
-  if (typeof value === 'string' && !value.trim()) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-export const buildScoreTimeline = (sessions = []) => {
-  if (!Array.isArray(sessions)) return [];
-
-  return sessions
-    .filter((session) => {
-      const percentage = toOptionalFiniteNumber(session?.percentage);
-      return percentage !== null && percentage >= 0 && percentage <= 100;
-    })
-    .slice()
-    .sort((left, right) => toTimestamp(left?.played_at || left?.activity_timestamp || left?.created_at)
-      - toTimestamp(right?.played_at || right?.activity_timestamp || right?.created_at))
-    .map((session, index) => {
-      const score = toOptionalFiniteNumber(session.score);
-      const totalItems = toOptionalFiniteNumber(session.total_items ?? session.totalItems);
-      const hasAuthoritativeScore = score !== null && totalItems !== null
-        && Number.isInteger(score) && score >= 0
-        && Number.isInteger(totalItems) && totalItems > 0 && score <= totalItems;
-      return {
-        label: `Q${index + 1}`,
-        percentage: clampPercent(toOptionalFiniteNumber(session.percentage), 0),
-        topic: safeDisplayText(session.math_topic, 'Topic unavailable'),
-        difficulty: normalizeDifficultyDisplay(session.difficulty, 'Difficulty unavailable'),
-        playedAt: session.played_at || session.activity_timestamp || session.created_at || null,
-        sessionId: session.id ?? null,
-        ...(hasAuthoritativeScore ? { score, totalItems } : {}),
-      };
-    });
-};
-
-const isGradedActivity = (activity = {}) => {
-  const description = `${activity.canonical_activity_id || ''} ${activity.activity_description || ''}`;
-  const score = toOptionalFiniteNumber(activity.score);
-  const totalItems = toOptionalFiniteNumber(activity.total_items ?? activity.totalItems);
-  const percentage = toOptionalFiniteNumber(activity.percentage ?? activity.accuracy);
-  return (score !== null && totalItems !== null && totalItems > 0)
-    || (percentage !== null && /quiz|battle|answer|result/i.test(description));
-};
-
-export const formatLatestActivityScore = (activity = {}) => {
-  if (!isGradedActivity(activity)) return 'Not graded';
-  const score = toOptionalFiniteNumber(activity.score);
-  const totalItems = toOptionalFiniteNumber(activity.total_items ?? activity.totalItems);
-  if (score !== null && totalItems !== null && totalItems > 0) {
-    return `${score} / ${totalItems}`;
-  }
-  const percentage = toOptionalFiniteNumber(activity.percentage ?? activity.accuracy);
-  return percentage !== null ? `${percentage.toFixed(0)}%` : 'Not graded';
-};
-
-export const ScoreTimelineTooltip = ({ active, payload }) => {
-  if (!active || !payload?.length) return null;
-  const point = payload[0]?.payload || {};
-  return (
-    <div className="child-score-tooltip">
-      <strong>{point.label}</strong>
-      <span>Topic: {point.topic}</span>
-      <span>Difficulty: {point.difficulty}</span>
-      <span>Date: {point.playedAt ? new Date(point.playedAt).toLocaleString() : 'Date unavailable'}</span>
-      {Number.isInteger(point.score) && Number.isInteger(point.totalItems) && (
-        <span>Score: {point.score} / {point.totalItems}</span>
-      )}
-      <b>Percentage: {Number(point.percentage).toFixed(0)}%</b>
-    </div>
-  );
-};
-
+export { buildScoreTimeline, formatLatestActivityScore } from './studentProgressHistory.utils';
+export { ScoreTimelineTooltip } from './StudentProgressEvidence';
 export default function ParentChildProgress() {
   const navigate = useNavigate();
   const [students, setStudents] = useState([]);
@@ -240,7 +162,9 @@ export default function ParentChildProgress() {
         const analyticsPayload = analyticsResult.status === 'fulfilled' ? analyticsResult.value : null;
         setInsightError(analyticsResult.status === 'rejected' ? 'Student analytics are currently unavailable.' : '');
 
-        setQuizSessions(Array.isArray(quizzesPayload?.data) ? quizzesPayload.data : []);
+        setQuizSessions(Array.isArray(analyticsPayload?.scoreHistory)
+          ? analyticsPayload.scoreHistory
+          : Array.isArray(quizzesPayload?.data) ? quizzesPayload.data : []);
         setSelectedChildMetrics(analyticsPayload?.metrics && typeof analyticsPayload.metrics === 'object' ? analyticsPayload.metrics : null);
         setSelectedChildProgress(analyticsPayload?.progress && typeof analyticsPayload.progress === 'object' ? analyticsPayload.progress : null);
         setSelectedChildAiInsight(analyticsPayload?.aiInsight && typeof analyticsPayload.aiInsight === 'object' ? analyticsPayload.aiInsight : null);
@@ -277,10 +201,6 @@ export default function ParentChildProgress() {
     const key = String(focusStudent?.student_id || focusStudent?.id || '');
     return key ? logsByStudent[key] || [] : [];
   }, [focusStudent, logsByStudent]);
-
-  const scoreTimeline = useMemo(() => {
-    return buildScoreTimeline(quizSessions);
-  }, [quizSessions]);
 
   const currentQuest = selectedChildMetrics?.currentQuest !== undefined
     ? selectedChildMetrics.currentQuest
@@ -321,6 +241,7 @@ export default function ParentChildProgress() {
       setSelectedChildProgress(evidenceSnapshot.progress);
       setSelectedChildMetrics(evidenceSnapshot.metrics);
       setSelectedChildAiInsight(payload);
+      if (Array.isArray(evidenceSnapshot.scoreHistory)) setQuizSessions(evidenceSnapshot.scoreHistory);
     } catch (err) {
       if (childRequestVersion.current !== requestVersion) return;
       console.error('Child grounded insight request failed:', err);
@@ -520,50 +441,15 @@ export default function ParentChildProgress() {
                         </div>
                       </div>
 
-                    <div className="child-activity-panel">
-                      <div className="insights-header">
-                        <h2>Latest Activity</h2>
-                        <p>Recent gameplay updates for the selected child.</p>
-                      </div>
-                      {selectedLogs.length === 0 ? (
-                        <div className="fallback-note">No recorded activity available for this child.</div>
-                      ) : (
-                        <div className="child-activity-list">
-                          {selectedLogs.slice(0, 5).map((log) => (
-                            <div key={log.id || `${log.student_id}-${log.activity_timestamp}`} className="child-activity-item">
-                              <strong>{safeDisplayText(log.activity_description, 'Gameplay Session')}</strong>
-                              <span>{safeDisplayText(log.current_quest, 'No active quest')} | {formatLatestActivityScore(log)}</span>
-                              <small>{log.activity_timestamp ? new Date(log.activity_timestamp).toLocaleString() : 'Timestamp unavailable'}</small>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    <LatestActivitySection
+                      activities={selectedLogs}
+                      description="Recent gameplay updates for the selected child."
+                    />
 
                     <div className="child-score-results">
-                      <div className="child-activity-panel child-score-panel">
-                        <div className="insights-header">
-                          <h2>Score Over Time</h2>
-                          <p>Most recent 20 recorded quiz results in chronological order. Hover a bar for topic and session details.</p>
-                        </div>
-                        {scoreTimeline.length === 0 ? (
-                          <div className="fallback-note">No quiz percentages recorded for this child.</div>
-                        ) : (
-                          <div className="child-score-chart">
-                            <ResponsiveContainer width="100%" height={260}>
-                              <BarChart data={scoreTimeline}>
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="label" interval="preserveStartEnd" height={32} />
-                                <YAxis domain={[0, 100]} />
-                                <Tooltip content={<ScoreTimelineTooltip />} />
-                                <Bar dataKey="percentage" fill="#2563eb" radius={[6, 6, 0, 0]} />
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </div>
-                        )}
-                      </div>
-
+                      <ScoreOverTimeSection sessions={quizSessions} studentLabel="this child" />
                     </div>
+
                   </div>
                 ) : (
                   <div className="fallback-note">No child progress records available yet.</div>

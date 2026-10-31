@@ -157,6 +157,40 @@ const normalizeResult = (row = {}) => {
   };
 };
 
+const buildStudentAnalyticsScoreHistory = (quizSessions = [], limit = 20) => {
+  if (!Array.isArray(quizSessions)) return [];
+  const maxRows = Math.max(0, Math.min(Number.parseInt(limit, 10) || 20, 20));
+  const seenResultEventIds = new Set();
+  const validResults = quizSessions
+    .map((row, index) => ({ row, index, result: normalizeResult(row) }))
+    .filter(({ result }) => Boolean(result))
+    .filter(({ row }) => {
+      const eventId = normalizeTopic(row.result_event_id);
+      if (!eventId) return true;
+      if (seenResultEventIds.has(eventId)) return false;
+      seenResultEventIds.add(eventId);
+      return true;
+    })
+    .sort((left, right) => {
+      const leftTime = new Date(left.row.played_at || 0).getTime();
+      const rightTime = new Date(right.row.played_at || 0).getTime();
+      const safeLeftTime = Number.isFinite(leftTime) ? leftTime : 0;
+      const safeRightTime = Number.isFinite(rightTime) ? rightTime : 0;
+      return safeLeftTime - safeRightTime || left.index - right.index;
+    })
+    .slice(-maxRows);
+
+  return validResults.map(({ row, result }) => ({
+    id: row.id ?? null,
+    session_id: row.session_id ?? null,
+    math_topic: result.topic,
+    difficulty: ({ easy: 'Easy', medium: 'Normal', hard: 'Difficult' })[result.difficulty] || null,
+    score: result.correctAnswers,
+    total_items: result.totalQuestions,
+    percentage: Number(((result.correctAnswers / result.totalQuestions) * 100).toFixed(2)),
+    played_at: row.played_at || null,
+  }));
+};
 const emptyDifficultyBreakdown = () => ({
   easy: { correctAnswers: 0, totalQuestions: 0, accuracy: null },
   medium: { correctAnswers: 0, totalQuestions: 0, accuracy: null },
@@ -444,6 +478,7 @@ function buildStudentAnalyticsMetrics({
 }
 
 module.exports = {
+  buildStudentAnalyticsScoreHistory,
   aggregateStudentAccuracy,
   buildStudentAnalyticsMetrics,
   normalizeDifficulty,

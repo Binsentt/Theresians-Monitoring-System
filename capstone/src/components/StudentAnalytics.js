@@ -13,14 +13,16 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { DashboardContainer, MainContent, TopBar, PageContent } from './layout/AppLayout';
 import AnalyticsSidebar from './layout/AnalyticsSidebar';
 import logoImage from '../assets/images/STS_Logo.png';
-import { buildStudentProgressDetailUrl } from './analyticsEndpoints';
+import { buildScopedApiUrl, buildStudentProgressDetailUrl } from './analyticsEndpoints';
 import { normalizeRole } from './manageUsers.utils';
 import { buildAuthHeaders } from './session.utils';
+import { normalizeActivityLogPayload } from './activityLog.utils';
 import { getTotalProgressNote, normalizeDisplayList, resolveCurrentDifficulty, safeDisplayText } from './studentProgress.utils';
 import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { usePreparedReportPrint } from './usePreparedReportPrint';
 import GroundedAiAnalysis from './GroundedAiAnalysis';
+import { LatestActivitySection, ScoreOverTimeSection } from './StudentProgressEvidence';
 import '../styles/studentprogress.css';
 
 const toNullableNumber = (value) => {
@@ -65,41 +67,99 @@ export default function StudentAnalytics() {
   const [progress, setProgress] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const [aiInsight, setAiInsight] = useState(null);
+  const [scoreHistory, setScoreHistory] = useState([]);
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [activityError, setActivityError] = useState('');
   const [loading, setLoading] = useState(true);
   const [insightLoading, setInsightLoading] = useState(false);
   const [error, setError] = useState('');
   const [insightError, setInsightError] = useState('');
   const [userRole, setUserRole] = useState('admin');
   const refreshInFlight = useRef(false);
+  const detailRequestVersion = useRef(0);
+  const refreshRequestVersion = useRef(0);
   const { preparedRows, preparing: reportPreparing, prepareAndPrint } = usePreparedReportPrint();
 
-  const loadDetail = async () => {
-    setLoading(true);
-    setError('');
-    const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
-    if (loggedInUser?.role) setUserRole(normalizeRole(loggedInUser.role));
-
+  const loadStudentActivity = async (requestedStudentId, role, isCurrentRequest) => {
     try {
-      const response = await fetch(buildStudentProgressDetailUrl(studentId, loggedInUser?.role), {
-        headers: buildAuthHeaders(),
-      });
-      if (!response.ok) throw new Error('Unable to load student analytics');
-      const data = await response.json();
-      setProgress(data.progress || null);
-      setMetrics(data.metrics || null);
-      setAiInsight(data.aiInsight || null);
-    } catch (err) {
-      console.error('Detail load failed:', err);
-      setError('Analytics currently unavailable. Please try again later.');
-    } finally {
-      setLoading(false);
+      const activityUrl = buildScopedApiUrl(
+        '/api/activity-logs?student_id=' + encodeURIComponent(requestedStudentId) + '&limit=100',
+        role
+      );
+      const response = await fetch(activityUrl, { headers: buildAuthHeaders() });
+      if (!response.ok) throw new Error('Activity request failed');
+      const payload = await response.json();
+      if (isCurrentRequest()) {
+        setActivityLogs(normalizeActivityLogPayload(payload).records);
+        setActivityError('');
+      }
+    } catch {
+      if (isCurrentRequest()) {
+        setActivityLogs([]);
+        setActivityError('Latest activity is currently unavailable.');
+      }
     }
   };
 
   useEffect(() => {
-    loadDetail();
-  }, [studentId]);
+    const requestedStudentId = String(studentId || '');
+    const requestVersion = ++detailRequestVersion.current;
+    refreshRequestVersion.current += 1;
+    refreshInFlight.current = false;
+    setInsightLoading(false);
+    setLoading(true);
+    setError('');
+    setInsightError('');
+    setProgress(null);
+    setMetrics(null);
+    setAiInsight(null);
+    setScoreHistory([]);
+    setActivityLogs([]);
+    setActivityError('');
 
+    let active = true;
+    const isCurrentRequest = () => active && detailRequestVersion.current === requestVersion;
+    let loggedInUser = null;
+
+    try {
+      loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
+      if (loggedInUser?.role) setUserRole(normalizeRole(loggedInUser.role));
+    } catch {
+      setUserRole('admin');
+    }
+
+    const loadDetail = async () => {
+      try {
+        const response = await fetch(buildStudentProgressDetailUrl(requestedStudentId, loggedInUser?.role), {
+          headers: buildAuthHeaders(),
+        });
+        if (!response.ok) throw new Error('Unable to load student analytics');
+        const data = await response.json();
+        if (!isCurrentRequest()) return;
+        setProgress(data.progress || null);
+        setMetrics(data.metrics || null);
+        setAiInsight(data.aiInsight || null);
+        setScoreHistory(Array.isArray(data.scoreHistory) ? data.scoreHistory : []);
+      } catch (err) {
+        if (!isCurrentRequest()) return;
+        console.error('Detail load failed:', err);
+        setError('Analytics currently unavailable. Please try again later.');
+      } finally {
+        if (isCurrentRequest()) setLoading(false);
+      }
+    };
+
+    void loadDetail();
+    void loadStudentActivity(requestedStudentId, loggedInUser?.role, isCurrentRequest);
+    return () => {
+      active = false;
+      if (detailRequestVersion.current === requestVersion) {
+        detailRequestVersion.current += 1;
+        refreshRequestVersion.current += 1;
+        refreshInFlight.current = false;
+      }
+    };
+  }, [studentId]);
   const getBackRoute = () => {
     if (location.pathname.startsWith('/teacher')) return '/teacher/student-progress';
     if (location.pathname.startsWith('/parent')) return '/parent/child-progress';
@@ -115,13 +175,21 @@ export default function StudentAnalytics() {
   };
 
   const generateInsight = async () => {
-    if (refreshInFlight.current) return;
+    if (refreshInFlight.current || !studentId) return;
     refreshInFlight.current = true;
+    const requestedStudentId = String(studentId);
+    const detailVersion = detailRequestVersion.current;
+    const requestVersion = ++refreshRequestVersion.current;
+    const isCurrentRequest = () => (
+      detailRequestVersion.current === detailVersion
+      && refreshRequestVersion.current === requestVersion
+      && requestedStudentId === String(studentId)
+    );
     const loggedInUser = JSON.parse(localStorage.getItem('loggedInUser') || 'null');
     setInsightLoading(true);
     setInsightError('');
     try {
-      const response = await fetch(buildInsightUrl(buildStudentProgressDetailUrl(studentId, loggedInUser?.role)), {
+      const response = await fetch(buildInsightUrl(buildStudentProgressDetailUrl(requestedStudentId, loggedInUser?.role)), {
         method: 'POST',
         headers: {
           ...buildAuthHeaders(),
@@ -130,6 +198,7 @@ export default function StudentAnalytics() {
         body: JSON.stringify({ refresh: true }),
       });
       const data = await response.json();
+      if (!isCurrentRequest()) return;
       const supportedEmptyStates = ['insufficient_data', 'no_data'];
       if (!response.ok && !supportedEmptyStates.includes(data?.status)) {
         throw new Error(data?.error || 'Unable to refresh student progress.');
@@ -140,18 +209,37 @@ export default function StudentAnalytics() {
       }
       setProgress(evidenceSnapshot.progress);
       setMetrics(evidenceSnapshot.metrics);
+      if (Array.isArray(evidenceSnapshot.scoreHistory)) setScoreHistory(evidenceSnapshot.scoreHistory);
       const nextInsightState = Object.keys(insightState).length > 0 ? insightState : data;
       setAiInsight(nextInsightState);
       setInsightError('');
+
+      try {
+        const activityUrl = buildScopedApiUrl(
+          '/api/activity-logs?student_id=' + encodeURIComponent(requestedStudentId) + '&limit=100',
+          loggedInUser?.role
+        );
+        const activityResponse = await fetch(activityUrl, { headers: buildAuthHeaders() });
+        if (!activityResponse.ok) throw new Error('Activity request failed');
+        const activityPayload = await activityResponse.json();
+        if (isCurrentRequest()) {
+          setActivityLogs(normalizeActivityLogPayload(activityPayload).records);
+          setActivityError('');
+        }
+      } catch {
+        if (isCurrentRequest()) setActivityError('Latest activity is currently unavailable.');
+      }
     } catch (err) {
+      if (!isCurrentRequest()) return;
       console.error('Grounded insight request failed:', err);
       setInsightError(err?.message || 'Unable to refresh student progress.');
     } finally {
-      refreshInFlight.current = false;
-      setInsightLoading(false);
+      if (isCurrentRequest()) {
+        refreshInFlight.current = false;
+        setInsightLoading(false);
+      }
     }
   };
-
   const difficultyRows = useMemo(() => [
     { label: 'Easy', value: toNullableNumber(metrics?.difficultyBreakdown?.easy?.accuracy), tone: 'easy' },
     { label: 'Normal', value: toNullableNumber(metrics?.difficultyBreakdown?.medium?.accuracy), tone: 'medium' },
@@ -392,6 +480,14 @@ export default function StudentAnalytics() {
             )}
           </section>
 
+          <section className="child-score-results student-progress-history">
+            <LatestActivitySection
+              activities={activityLogs}
+              error={activityError}
+              description="Recent gameplay updates for the selected Student."
+            />
+            <ScoreOverTimeSection sessions={scoreHistory} studentLabel="this Student" />
+          </section>
           <GroundedAiAnalysis
             aiInsight={aiInsight}
             error={insightError}

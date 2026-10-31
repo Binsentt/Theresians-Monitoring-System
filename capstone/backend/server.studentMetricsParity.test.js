@@ -261,6 +261,65 @@ test('detail includes every current-cycle answer after the first 100 results', a
   assert.equal(detail.metrics.difficultyBreakdown.hard.accuracy, null);
 });
 
+test('Student detail and refresh return sanitized latest 20 validated current-cycle scores', async (t) => {
+  const get = await setup(t, Array(25).fill(1));
+  fixture.results = fixture.results.map((row, index) => ({
+    ...row,
+    id: index + 1,
+    score: index === 5 ? 0 : 1,
+    total_items: 1,
+    question_set_id: 77,
+    canonical_topic_id: 'basic_addition',
+    canonical_grade_level: 'Grade 1',
+    canonical_difficulty: 'Easy',
+    canonical_math_topic: 'Addition',
+    result_event_id: 'event-' + (index + 1),
+    session_id: index === 5 ? null : String(8000 + index),
+    played_at: new Date(Date.UTC(2026, 8, index + 1)).toISOString(),
+  }));
+  fixture.results.push({
+    ...fixture.results[24],
+    id: 90,
+    score: 2,
+    total_items: 1,
+    result_event_id: 'invalid-score',
+    played_at: '2026-09-29T00:00:00.000Z',
+  });
+  fixture.results.push({
+    ...fixture.results[24],
+    id: 91,
+    result_event_id: 'event-25',
+    played_at: '2026-09-30T00:00:00.000Z',
+  });
+  fixture.results.push({
+    ...fixture.results[24],
+    id: 92,
+    result_event_id: 'old-cycle',
+    played_at: '2026-08-31T23:59:59.000Z',
+  });
+
+  const detail = await get('/api/student-progress/44');
+  assert.equal(detail.scoreHistory.length, 20);
+  assert.deepEqual(detail.scoreHistory.map((row) => row.id), Array.from({ length: 20 }, (_, index) => index + 6));
+  assert.equal(detail.scoreHistory.find((row) => row.id === 6).percentage, 0);
+  assert.equal(detail.scoreHistory.find((row) => row.id === 6).session_id, null);
+  assert.equal(detail.scoreHistory.find((row) => row.id === 7).id, 7);
+  assert.equal(detail.scoreHistory.find((row) => row.id === 7).session_id, '8006');
+  assert.notEqual(detail.scoreHistory.find((row) => row.id === 7).id, detail.scoreHistory.find((row) => row.id === 7).session_id);
+  assert.equal(detail.scoreHistory[0].math_topic, 'Basic Addition');
+  assert.equal(detail.scoreHistory[0].difficulty, 'Easy');
+  assert.deepEqual(Object.keys(detail.scoreHistory[0]).sort(), [
+    'difficulty', 'id', 'math_topic', 'percentage', 'played_at', 'score', 'session_id', 'total_items',
+  ]);
+  const teacherDetail = await get('/api/student-progress/44', 'teacher');
+  const parentDetail = await get('/api/student-progress/44?scope=parent', 'parent');
+  assert.deepEqual(teacherDetail.scoreHistory, detail.scoreHistory);
+  assert.deepEqual(parentDetail.scoreHistory, detail.scoreHistory);
+  assert.equal(detail.scoreHistory.some((row) => row.id === 90 || row.id === 91 || row.id === 92), false);
+
+  const refreshed = await get('/api/student-progress/44/ai-insight', 'admin', 'POST', { refresh: true });
+  assert.deepEqual(refreshed.evidence_snapshot.scoreHistory, detail.scoreHistory);
+});
 test('detail and AI reuse the same complete evidence fingerprint after 500 results', async (t) => {
   const get = await setup(t, [...Array(500).fill(1), 0]);
   const metrics = buildStudentAnalyticsMetrics({
@@ -341,9 +400,12 @@ test('Student and Parent refresh views retain exact question topics despite a ge
     difficulty: 'Normal',
   }));
 
+  assert.equal(fixture.cached, undefined, 'the Student has no prior saved AI analysis');
   const refreshed = await get('/api/student-progress/44/ai-insight', 'admin', 'POST', { refresh: true });
   const parentDetail = await get('/api/student-progress/44?scope=parent', 'parent');
 
+  assert.equal(refreshed.status, 'generated');
+  assert.equal(get.providerCallCount(), 1);
   assert.equal(refreshed.evidence_snapshot.metrics.totalQuestions, 63);
   assert.equal(refreshed.evidence_snapshot.metrics.correctAnswers, 53);
   assert.equal(refreshed.evidence_snapshot.metrics.incorrectAnswers, 10);
