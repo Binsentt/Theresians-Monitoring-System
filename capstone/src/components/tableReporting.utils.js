@@ -70,9 +70,13 @@ export function matchesTableSearch(row, query, fields) {
     if (canonicalIdentifier) {
       return values.some(({ field, identifier }) => schoolIdentifierField(field) && identifier === canonicalIdentifier);
     }
-    return values.some(({ field, value }) => (
-      schoolIdentifierField(field) ? value === term : value.includes(term)
-    ));
+    const compactTerm = term.replace(/-/g, '');
+    return values.some(({ field, value, identifier }) => {
+      if (!schoolIdentifierField(field)) return value.includes(term);
+      return identifier
+        ? Boolean(compactTerm && identifier.startsWith(compactTerm))
+        : value === term;
+    });
   });
 }
 
