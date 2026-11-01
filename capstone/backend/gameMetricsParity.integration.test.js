@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
-const { calculateWeightedCompletion } = require('./questGraph.utils');
+const { calculateJourneyProgress, calculateWeightedCompletion } = require('./questGraph.utils');
 const { applyReleaseMigrations } = require('./releaseMigrations');
 
 const databaseUrl = process.env.GAME_METRICS_TEST_DATABASE_URL || '';
@@ -225,7 +225,12 @@ if (!isSafeDatabase(databaseUrl)) {
     });
     assert.equal(banditActivity.status, 201);
 
-    const progress = calculateWeightedCompletion(['tutorial', 'go-to-teachers-house']);
+    const completedTaskIds = ['tutorial', 'go-to-teachers-house'];
+    const reachedTaskIds = ['first-bandit-math-challenge'];
+    const completionOnlyProgress = calculateWeightedCompletion(completedTaskIds);
+    const progress = calculateJourneyProgress({ completedTaskIds, reachedTaskIds });
+    assert.equal(completionOnlyProgress, 5.56, 'completed milestone weight remains distinct from the reached journey position');
+    assert.equal(progress, 16.67, 'the canonical reached-task position advances weighted journey progress');
     const leaderboard = await json(`${base}/api/game/leaderboard`, {
       method: 'POST',
       body: JSON.stringify({ session_id: sessionId, session_credential: credential, learning_cycle_version: 0 }),
@@ -332,11 +337,37 @@ if (!isSafeDatabase(databaseUrl)) {
     assert.ok(ended.body.session.end_time);
     assert.ok(Number(ended.body.session.total_playtime_seconds) >= 119);
 
+    const persistedEndedSession = await pool.query(
+      `SELECT status, end_time, total_playtime_seconds
+         FROM public.playtime_sessions
+        WHERE id = $1 AND student_id = $2`,
+      [sessionId, studentId],
+    );
+    assert.equal(persistedEndedSession.rowCount, 1, 'the ended session remains persisted under its exact ID');
+    assert.equal(persistedEndedSession.rows[0].status, 'Completed');
+    assert.ok(persistedEndedSession.rows[0].end_time, 'the persisted session has a final end time');
+    assert.ok(Number(persistedEndedSession.rows[0].total_playtime_seconds) >= 119, 'the persisted duration covers the simulated elapsed time');
+
     const offline = await json(`${base}/api/playtime?search=${encodeURIComponent(studentCode)}&limit=20`, { headers: adminHeaders });
-    const offlineRow = offline.body.data.find((row) => Number(row.id) === sessionId);
-    assert.equal(offlineRow.status, 'Offline');
-    assert.ok(offlineRow.end_time);
-    assert.ok(Number(offlineRow.total_playtime_seconds) >= 119);
+    const offlineRow = offline.body.data.find((row) => Number(row.student_id) === studentId);
+    assert.ok(offlineRow, 'Screen Time returns the Student summary row');
+    assert.notEqual(offlineRow.status, 'Playing', 'the Student is no longer shown as Playing');
+    assert.equal(offline.body.summary.playing_count, 0);
+    const persistedStudentPlaytime = await pool.query(
+      `SELECT COALESCE(SUM(
+                CASE
+                  WHEN COALESCE(ps.server_started_at, ps.start_time) < COALESCE(a.screen_time_reset_at, '-infinity'::timestamptz) THEN 0
+                  ELSE COALESCE(NULLIF(ps.total_playtime_seconds, 0), ps.total_playtime_minutes * 60, 0)
+                END
+              ), 0)::BIGINT AS total_playtime_seconds
+         FROM public.playtime_sessions ps
+         LEFT JOIN public.accounts a ON a.id = ps.student_id
+        WHERE ps.student_id = $1`,
+      [studentId],
+    );
+    assert.equal(Number(offline.body.summary.total_playtime_seconds), Number(persistedStudentPlaytime.rows[0].total_playtime_seconds));
+    assert.equal(Number(offlineRow.total_playtime_seconds), Number(persistedStudentPlaytime.rows[0].total_playtime_seconds));
+    assert.equal(Number(offlineRow.total_playtime_minutes), Math.floor(Number(persistedStudentPlaytime.rows[0].total_playtime_seconds) / 60));
 
     const top = await json(`${base}/api/top-achievers`, { headers: adminHeaders });
     const topRow = top.body.find((row) => Number(row.student_id) === studentId);
