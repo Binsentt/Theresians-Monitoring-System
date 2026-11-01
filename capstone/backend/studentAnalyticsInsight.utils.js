@@ -17,9 +17,15 @@ const {
   renderValidatedClaimSelection,
 } = require('./studentAnalyticsGrounding.utils');
 const { SCOPES, getTopicById, normalizeGradeLevel, normalizeTopicId } = require('./curriculumScopeRegistry');
+const { normalizeResult } = require('./studentAnalyticsMetrics.utils');
 const {
   canonicalTaskDisplayLabel,
   canonicalTaskRequiresGradedEvidence,
+  canonicalTaskEvidenceType,
+  canonicalEncounterDisplayLabel,
+  canonicalMapDisplayLabel,
+  compareCanonicalTaskIdsByProgression,
+  QUEST_GRAPH_VERSION,
   PLAYER_FACING_TASKS,
 } = require('./questGraph.utils');
 const CANONICAL_TASK_SET = new Set(['tutorial', ...PLAYER_FACING_TASKS]);
@@ -37,62 +43,121 @@ const INSIGHT_RESPONSE_EXTRACTION_STAGES = Object.freeze({
 });
 const asText = (value) => String(value || '').trim();
 
-const buildQuestEvidence = ({ activityLogs = [], quizSessions = [] } = {}) => {
+const safeTimestamp = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+};
+
+const buildQuestEvidence = ({ activityLogs = [], quizSessions = [], completedMilestones = [], gradeLevel = null } = {}) => {
   const groups = new Map();
   const seenResultEventIds = new Set();
+  const canonicalTaskIds = ['tutorial', ...PLAYER_FACING_TASKS];
+  const currentGrade = normalizeGradeLevel(gradeLevel);
   const getGroup = (taskId) => {
     const canonicalTaskId = asText(taskId).toLowerCase();
     if (!CANONICAL_TASK_SET.has(canonicalTaskId)) return null;
     if (!groups.has(canonicalTaskId)) groups.set(canonicalTaskId, {
       canonical_task_id: canonicalTaskId,
       label: canonicalTaskDisplayLabel(canonicalTaskId),
-      map_id: null,
+      quest_type: canonicalTaskEvidenceType(canonicalTaskId),
+      map_ids: new Set(),
       duration_seconds: null,
       correct_answers: 0,
       incorrect_answers: 0,
       total_questions: 0,
+      result_count: 0,
       accuracy: null,
       average_response_seconds: null,
-      completion_status: 'unknown',
+      completion_status: 'not_recorded',
       requires_graded_questions: canonicalTaskRequiresGradedEvidence(canonicalTaskId),
+      encounters: new Map(),
+      topic_totals: new Map(),
+      completion_dates: [],
+      result_timestamps: [],
       _response_seconds_total: 0,
       _response_seconds_count: 0,
     });
     return groups.get(canonicalTaskId);
   };
+  const getEventGroup = (row) => {
+    const taskId = asText(row?.canonical_task_id).toLowerCase();
+    if (!CANONICAL_TASK_SET.has(taskId)) return null;
+    if (row?.is_player_facing === false) return null;
+    if (row?.quest_graph_version && row.quest_graph_version !== QUEST_GRAPH_VERSION) return null;
+    return getGroup(taskId);
+  };
+  const includeMap = (group, mapId) => {
+    const normalized = asText(mapId).toLowerCase();
+    if (canonicalMapDisplayLabel(group.canonical_task_id, normalized)) group.map_ids.add(normalized);
+  };
+  canonicalTaskIds.forEach(getGroup);
   (Array.isArray(activityLogs) ? activityLogs : []).forEach((row) => {
-    const group = getGroup(row?.canonical_task_id);
+    const group = getEventGroup(row);
     if (!group) return;
     const activityId = asText(row?.canonical_activity_id).toLowerCase();
     if (activityId === 'task_completed' || activityId === 'quest_completed') {
       group.completion_status = 'completed';
-    } else if (activityId === 'task_triggered' && group.completion_status !== 'completed') {
+      const completedAt = safeTimestamp(row?.completed_at || row?.activity_timestamp || row?.started_at);
+      if (completedAt) group.completion_dates.push(completedAt);
+    } else if (activityId === 'task_triggered' && !['completed', 'started'].includes(group.completion_status)) {
       group.completion_status = 'started';
-    } else if (group.completion_status === 'unknown') {
+    } else if (group.completion_status === 'not_recorded') {
       // A canonical task row without an explicit lifecycle verb proves that
       // the task was observed, but never that it was completed.
       group.completion_status = 'observed';
     }
-    const label = asText(row?.current_quest);
-    if (label) group.label = label;
-    const mapId = asText(row?.map_id);
-    if (mapId) group.map_id = mapId;
+    includeMap(group, row?.map_id);
     const duration = Number(row?.duration_seconds);
     if (Number.isInteger(duration) && duration >= 0) {
       group.duration_seconds = Math.max(group.duration_seconds ?? 0, duration);
     }
   });
+  (Array.isArray(completedMilestones) ? completedMilestones : []).forEach((row) => {
+    const taskId = asText(row?.canonical_task_id || row?.milestone_id).toLowerCase();
+    if (row?.player_facing === false) return;
+    const group = getGroup(taskId);
+    if (!group) return;
+    group.completion_status = 'completed';
+    const completedAt = safeTimestamp(row?.completed_at);
+    if (completedAt) group.completion_dates.push(completedAt);
+    includeMap(group, row?.map_id);
+  });
   (Array.isArray(quizSessions) ? quizSessions : []).forEach((row) => {
     const eventId = asText(row?.result_event_id);
     if (eventId && seenResultEventIds.has(eventId)) return;
+    const result = normalizeResult(row);
+    const group = result?.canonicalTaskId ? getGroup(result.canonicalTaskId) : null;
+    if (!group) return;
     if (eventId) seenResultEventIds.add(eventId);
-    const group = getGroup(row?.canonical_task_id);
-    const score = Number(row?.score);
-    const total = Number(row?.total_items ?? row?.totalItems);
-    if (!group || !Number.isInteger(score) || !Number.isInteger(total) || total <= 0 || score < 0 || score > total) return;
+    const score = result.correctAnswers;
+    const total = result.totalQuestions;
     group.correct_answers += score;
     group.incorrect_answers += total - score;
     group.total_questions += total;
+    group.result_count += 1;
+    if (group.completion_status === 'not_recorded') group.completion_status = 'observed';
+    const encounterId = asText(row?.canonical_battle_id).toLowerCase();
+    const encounterLabel = canonicalEncounterDisplayLabel(group.canonical_task_id, encounterId);
+    if (encounterLabel) group.encounters.set(encounterId, encounterLabel);
+    includeMap(group, result.mapId || row?.map_id);
+    const resultAt = safeTimestamp(row?.played_at);
+    if (resultAt) group.result_timestamps.push(resultAt);
+    if (result.topicId && result.gradeLevel && (!currentGrade || result.gradeLevel === currentGrade)) {
+      const key = `${result.gradeLevel}:${result.topicId}`;
+      const topic = group.topic_totals.get(key) || {
+        topic_id: result.topicId,
+        topic: result.topic,
+        grade_level: result.gradeLevel,
+        correct_answers: 0,
+        incorrect_answers: 0,
+        total_questions: 0,
+      };
+      topic.correct_answers += score;
+      topic.incorrect_answers += total - score;
+      topic.total_questions += total;
+      group.topic_totals.set(key, topic);
+    }
     const responseSeconds = Number(row?.response_time_seconds);
     if (Number.isInteger(responseSeconds) && responseSeconds >= 0) {
       group._response_seconds_total += responseSeconds;
@@ -100,21 +165,51 @@ const buildQuestEvidence = ({ activityLogs = [], quizSessions = [] } = {}) => {
     }
   });
   return [...groups.values()]
-    .map((group) => ({
+    .map((group) => {
+      const locationLabels = [...group.map_ids]
+        .map((mapId) => canonicalMapDisplayLabel(group.canonical_task_id, mapId))
+        .filter(Boolean)
+        .sort();
+      const topicPerformance = [...group.topic_totals.values()]
+        .map((topic) => ({
+          ...topic,
+          accuracy: topic.total_questions > 0
+            ? Number(((topic.correct_answers / topic.total_questions) * 100).toFixed(2)) : null,
+        }))
+        .sort((left, right) => left.grade_level.localeCompare(right.grade_level) || left.topic.localeCompare(right.topic));
+      const encounters = [...group.encounters.entries()]
+        .map(([id, label]) => ({ id, label }))
+        .sort((left, right) => left.id.localeCompare(right.id));
+      return {
       canonical_task_id: group.canonical_task_id,
       label: group.label,
-      map_id: group.map_id,
+      quest_type: group.quest_type,
+      map_id: [...group.map_ids][0] || null,
+      map_ids: [...group.map_ids].sort(),
+      location_labels: locationLabels,
       duration_seconds: group.duration_seconds,
       correct_answers: group.correct_answers,
       incorrect_answers: group.incorrect_answers,
       total_questions: group.total_questions,
+      result_count: group.result_count,
       accuracy: group.total_questions > 0 ? Number(((group.correct_answers / group.total_questions) * 100).toFixed(2)) : null,
       average_response_seconds: group._response_seconds_count > 0
         ? Number((group._response_seconds_total / group._response_seconds_count).toFixed(2)) : null,
+      completion_date: group.completion_dates.sort()[0] || null,
+      last_result_at: group.result_timestamps.sort().at(-1) || null,
       completion_status: group.completion_status,
       requires_graded_questions: group.requires_graded_questions,
-    }))
-    .sort((left, right) => left.canonical_task_id.localeCompare(right.canonical_task_id));
+      encounter_reporting: encounters.length > 0 ? 'individual_recorded_encounters'
+        : group.total_questions > 0 ? 'task_aggregate' : 'unavailable',
+      encounters,
+      topic_performance: topicPerformance,
+      average_response_seconds: group._response_seconds_count > 0
+        ? Number((group._response_seconds_total / group._response_seconds_count).toFixed(2)) : null,
+    };})
+    .sort((left, right) => compareCanonicalTaskIdsByProgression(
+      left.canonical_task_id,
+      right.canonical_task_id
+    ));
 };
 
 function buildGroundedInsightInput({
@@ -124,6 +219,7 @@ function buildGroundedInsightInput({
   metrics = {},
   activityLogs = [],
   quizSessions = [],
+  completedMilestones = [],
 } = {}) {
   const difficulty = metrics.difficultyBreakdown || {};
   const studentGrade = normalizeGradeLevel(gradeLevel);
@@ -253,7 +349,7 @@ function buildGroundedInsightInput({
       ? metrics.unmappedTopicIncorrectAnswers : 0,
     topic_evidence_status: topicEvidenceStatus,
     playtime_minutes: metrics.playtimeMinutes ?? null,
-    quest_evidence: buildQuestEvidence({ activityLogs, quizSessions }),
+    quest_evidence: buildQuestEvidence({ activityLogs, quizSessions, completedMilestones, gradeLevel }),
   };
 }
 

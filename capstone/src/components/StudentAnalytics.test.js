@@ -148,6 +148,34 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(accuracyCard.querySelector('strong').textContent).toBe('75%');
   });
 
+  test('reports unclassified saved questions without inventing a topic or using result-row counts as question counts', async () => {
+    global.fetch = jest.fn((url) => String(url).startsWith('/api/activity-logs?')
+      ? jsonResponse({ data: [] })
+      : jsonResponse({
+        progress: { student_id: 44, student_name: 'Ava Santos', grade_level: 'Grade 1' },
+        metrics: {
+          validResultCount: 3,
+          totalQuestions: 5,
+          topicLinkedEvidenceCount: 2,
+          unmappedTopicQuestionCount: 3,
+          unmappedTopicIncorrectAnswers: 2,
+          topicPerformance: [{
+            topicId: 'addition', topic: 'Addition', gradeLevel: 'Grade 1',
+            correctAnswers: 2, incorrectAnswers: 0, totalQuestions: 2, accuracy: 100,
+          }],
+        },
+        aiInsight: { status: 'no_data', data_level: 'no_data' },
+      }));
+
+    await act(async () => root.render(<StudentAnalytics />));
+
+    expect(container.textContent).toContain('Topic-linked evidence: 2 of 5 recorded questions');
+    expect(container.textContent).toContain('3 saved questions do not have validated Mathematics topic metadata');
+    expect(container.textContent).toContain('2 of those questions were incorrect');
+    expect(container.textContent).toContain('Grade 1 Addition');
+    expect(container.textContent).not.toContain('Unclassified Mathematics');
+  });
+
   test('renders truthful zero counts and no-attempt labels before any graded result', async () => {
     global.fetch = jest.fn(() => jsonResponse({
       progress: { student_id: 44, student_name: 'Ava Santos' },

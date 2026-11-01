@@ -2,8 +2,22 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   PLAYER_FACING_TASKS, MAP_TASKS, calculateWeightedCompletion, calculateJourneyProgress,
-  canonicalTaskDisplayLabel, canonicalTaskWeight,
+  canonicalTaskDisplayLabel, canonicalTaskWeight, canonicalTaskEvidenceType, canonicalMapDisplayLabel,
+  compareCanonicalTaskIdsByProgression,
 } = require('./questGraph.utils');
+
+test('canonical task ordering follows campaign progression and sorts unknown IDs deterministically last', () => {
+  const unordered = [
+    'pinehill-bandits', 'unknown-z-task', 'deep-forest-bandits', 'tutorial',
+    'oakleaf-bandits', 'unknown-a-task', 'go-to-school',
+  ];
+
+  assert.deepEqual(unordered.sort(compareCanonicalTaskIdsByProgression), [
+    'tutorial', 'oakleaf-bandits', 'go-to-school', 'deep-forest-bandits',
+    'pinehill-bandits', 'unknown-a-task', 'unknown-z-task',
+  ]);
+  assert.equal(compareCanonicalTaskIdsByProgression('OAKLEAF-BANDITS', 'oakleaf-bandits'), 0);
+});
 
 test('quest graph separates Oakleaf, City, and Pinehill tasks', () => {
   assert.equal(PLAYER_FACING_TASKS.length, 18);
@@ -12,6 +26,18 @@ test('quest graph separates Oakleaf, City, and Pinehill tasks', () => {
   assert.equal(MAP_TASKS.pinehill.length, 6);
   assert.equal(canonicalTaskWeight('oakleaf-bandits'), 3);
   assert.equal(canonicalTaskWeight('oakleaf-boss-bandit'), 4);
+});
+
+test('canonical quest evidence types distinguish exploration, navigation, interactions, battles, bosses, and map transitions', () => {
+  assert.equal(canonicalTaskEvidenceType('go-to-teachers-house'), 'exploration');
+  assert.equal(canonicalTaskEvidenceType('go-to-school'), 'navigation');
+  assert.equal(canonicalTaskEvidenceType('talk-to-old-man'), 'npc_interaction');
+  assert.equal(canonicalTaskEvidenceType('pinehill-bandits'), 'mathematics_battle');
+  assert.equal(canonicalTaskEvidenceType('defeat-the-wizard'), 'boss_battle');
+  assert.equal(canonicalTaskEvidenceType('return-to-city-of-knowledge'), 'map_transition');
+  assert.equal(canonicalTaskEvidenceType('not-a-canonical-task'), null);
+  assert.equal(canonicalMapDisplayLabel('deep-forest-bandits', 'city_of_knowledge'), 'City of Knowledge — Forest Area');
+  assert.equal(canonicalMapDisplayLabel('pinehill-bandits', 'pinehill_village'), 'Pinehill Village');
 });
 
 test('weighted progress distinguishes first Bandit progress from completion', () => {

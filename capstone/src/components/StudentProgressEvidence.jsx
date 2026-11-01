@@ -67,7 +67,7 @@ export const ScoreTimelineTooltip = ({ active, payload }) => {
   );
 };
 
-export const ScoreOverTimeSection = ({ sessions = [], studentLabel = 'this Student' }) => {
+export const ScoreOverTimeSection = ({ sessions = [], studentLabel = 'this Student', historyNotice = '' }) => {
   const scoreTimeline = useMemo(() => buildScoreTimeline(sessions), [sessions]);
   return (
     <section className="child-activity-panel child-score-panel" aria-labelledby="student-score-history-title">
@@ -75,6 +75,7 @@ export const ScoreOverTimeSection = ({ sessions = [], studentLabel = 'this Stude
         <h2 id="student-score-history-title">Score Over Time</h2>
         <p>Most recent 20 recorded quiz results in chronological order. Hover a bar for topic and session details.</p>
       </div>
+      {historyNotice ? <p className="fallback-note child-score-history-notice" role="status">{historyNotice}</p> : null}
       {scoreTimeline.length === 0 ? (
         <div className="fallback-note">No quiz percentages recorded for {studentLabel}.</div>
       ) : (

@@ -114,7 +114,7 @@ const setup = async (t, answers = [1, 1, 1, 0], { providerSelection = null, aiGe
     playtime: [],
     milestones: [],
   };
-  const server = await new Promise((resolve) => { const running = app.listen(0, () => resolve(running)); });
+  const server = await new Promise((resolve) => { const running = app.listen(0, '127.0.0.1', () => resolve(running)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   const originalFetch = global.fetch;
   const originalApiKey = process.env.OPENAI_API_KEY;
@@ -486,6 +486,7 @@ for (const nextCycleAnswers of [[0, 0], []]) {
         metrics: expected,
         learningCycleVersion: fixture.progress.current_learning_cycle_version,
         learningCycleStartedAt: fixture.progress.current_learning_cycle_started_at,
+        completedMilestones: fixture.milestones,
       })),
         insight: { performance_insight: 'Recorded overall accuracy is 60%.', strengths: [], weaknesses: [], recommendations: [] },
         generated_at: '2026-09-07T00:00:00.000Z', stale_at: null,

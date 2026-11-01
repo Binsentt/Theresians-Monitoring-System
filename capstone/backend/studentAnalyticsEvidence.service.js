@@ -28,6 +28,7 @@ async function loadStudentEvidenceRows(progressRows, queryClient) {
   const results = await queryClient.query(
       `SELECT gr.resolved_student_id, gr.id, gr.question_id, gr.math_topic, gr.difficulty, gr.current_map,
               gr.map_id, gr.canonical_quest_id, gr.canonical_task_id, gr.quest_graph_version,
+              gr.canonical_battle_id, gr.canonical_milestone_id,
               gr.result_event_id, gr.session_id, gr.percentage, gr.score,
               gr.total_items, gr.played_at, gr.question_set_id,
               lf.topic_id AS canonical_topic_id,

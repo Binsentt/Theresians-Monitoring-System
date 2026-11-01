@@ -298,6 +298,8 @@ export default function StudentAnalytics() {
       || right.incorrect - left.incorrect
       || right.attempts - left.attempts
       || left.topic.localeCompare(right.topic)), [metrics]);
+  const unclassifiedTopicQuestions = toNullableNumber(metrics?.unmappedTopicQuestionCount);
+  const unclassifiedTopicIncorrectAnswers = toNullableNumber(metrics?.unmappedTopicIncorrectAnswers);
   const reportSummary = [
     { label: 'Correct Answers', value: formatCount(metrics?.correctAnswers) },
     { label: 'Incorrect Answers', value: formatCount(metrics?.incorrectAnswers) },
@@ -450,8 +452,16 @@ export default function StudentAnalytics() {
                 <h2 id="student-topic-performance-title">Topic Performance</h2>
                 <p>Validated current-cycle Mathematics topics only.</p>
                 <p className="student-topic-evidence-summary" aria-live="polite">
-                  Topic-linked evidence: {formatCount(metrics?.topicLinkedEvidenceCount)} of {formatCount(metrics?.validResultCount)} recorded answers
+                  Topic-linked evidence: {formatCount(metrics?.topicLinkedEvidenceCount)} of {formatCount(metrics?.totalQuestions)} recorded questions
                 </p>
+                {Number.isInteger(unclassifiedTopicQuestions) && unclassifiedTopicQuestions > 0 && (
+                  <p className="student-topic-metadata-gap" role="status">
+                    {unclassifiedTopicQuestions} saved questions do not have validated Mathematics topic metadata.
+                    {Number.isInteger(unclassifiedTopicIncorrectAnswers) && unclassifiedTopicIncorrectAnswers > 0
+                      ? ` ${unclassifiedTopicIncorrectAnswers} of those questions were incorrect; no topic has been inferred for them.`
+                      : ' No topic has been inferred for them.'}
+                  </p>
+                )}
               </div>
             </div>
             {topicRows.length > 0 ? (

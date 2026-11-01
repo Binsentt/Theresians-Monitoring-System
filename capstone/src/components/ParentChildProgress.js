@@ -29,6 +29,7 @@ export default function ParentChildProgress() {
   const [portalRole, setPortalRole] = useState('parent');
   const [parentAccountId, setParentAccountId] = useState(null);
   const [quizSessions, setQuizSessions] = useState([]);
+  const [quizHistoryNotice, setQuizHistoryNotice] = useState('');
   const [selectedChildMetrics, setSelectedChildMetrics] = useState(null);
   const [selectedChildProgress, setSelectedChildProgress] = useState(null);
   const [selectedChildAiInsight, setSelectedChildAiInsight] = useState(null);
@@ -123,6 +124,7 @@ export default function ParentChildProgress() {
     setInsightError('');
     if (!focusStudentId || !parentAccountId) {
       setQuizSessions([]);
+      setQuizHistoryNotice('');
       setActivityLogs([]);
       setSelectedChildMetrics(null);
       setSelectedChildProgress(null);
@@ -134,6 +136,7 @@ export default function ParentChildProgress() {
     let active = true;
     const loadChildGameDetails = async () => {
       setQuizSessions([]);
+      setQuizHistoryNotice('');
       setActivityLogs([]);
       setSelectedChildMetrics(null);
       setSelectedChildProgress(null);
@@ -162,9 +165,30 @@ export default function ParentChildProgress() {
         const analyticsPayload = analyticsResult.status === 'fulfilled' ? analyticsResult.value : null;
         setInsightError(analyticsResult.status === 'rejected' ? 'Student analytics are currently unavailable.' : '');
 
-        setQuizSessions(Array.isArray(analyticsPayload?.scoreHistory)
-          ? analyticsPayload.scoreHistory
-          : Array.isArray(quizzesPayload?.data) ? quizzesPayload.data : []);
+        if (Array.isArray(analyticsPayload?.scoreHistory)) {
+          // An explicit empty canonical history is authoritative and must not
+          // be replaced by a stale or less strongly verified legacy response.
+          setQuizSessions(analyticsPayload.scoreHistory);
+          setQuizHistoryNotice('');
+        } else {
+          const legacyRows = Array.isArray(quizzesPayload?.data) ? quizzesPayload.data : [];
+          const verification = quizzesPayload?.history_verification;
+          if (verification?.cycle_checked === true) {
+            setQuizSessions(legacyRows);
+            const hasUnverifiableRows = Number(verification.excluded_unverifiable_count) > 0;
+            const hasInvalidScores = Number(verification.excluded_invalid_score_count) > 0;
+            setQuizHistoryNotice([
+              hasUnverifiableRows
+                ? 'Some quiz results are hidden because their current learning cycle could not be verified.' : '',
+              hasInvalidScores ? 'Invalid score totals are also excluded.' : '',
+            ].filter(Boolean).join(' '));
+          } else {
+            setQuizSessions([]);
+            setQuizHistoryNotice(legacyRows.length > 0
+              ? 'Quiz history is unavailable because its current learning cycle could not be verified.'
+              : '');
+          }
+        }
         setSelectedChildMetrics(analyticsPayload?.metrics && typeof analyticsPayload.metrics === 'object' ? analyticsPayload.metrics : null);
         setSelectedChildProgress(analyticsPayload?.progress && typeof analyticsPayload.progress === 'object' ? analyticsPayload.progress : null);
         setSelectedChildAiInsight(analyticsPayload?.aiInsight && typeof analyticsPayload.aiInsight === 'object' ? analyticsPayload.aiInsight : null);
@@ -172,6 +196,7 @@ export default function ParentChildProgress() {
         console.error('Child game result load error:', err);
         if (!active) return;
         setQuizSessions([]);
+        setQuizHistoryNotice('');
         setActivityLogs([]);
         setSelectedChildMetrics(null);
         setSelectedChildProgress(null);
@@ -241,7 +266,10 @@ export default function ParentChildProgress() {
       setSelectedChildProgress(evidenceSnapshot.progress);
       setSelectedChildMetrics(evidenceSnapshot.metrics);
       setSelectedChildAiInsight(payload);
-      if (Array.isArray(evidenceSnapshot.scoreHistory)) setQuizSessions(evidenceSnapshot.scoreHistory);
+      if (Array.isArray(evidenceSnapshot.scoreHistory)) {
+        setQuizSessions(evidenceSnapshot.scoreHistory);
+        setQuizHistoryNotice('');
+      }
     } catch (err) {
       if (childRequestVersion.current !== requestVersion) return;
       console.error('Child grounded insight request failed:', err);
@@ -447,7 +475,11 @@ export default function ParentChildProgress() {
                     />
 
                     <div className="child-score-results">
-                      <ScoreOverTimeSection sessions={quizSessions} studentLabel="this child" />
+                      <ScoreOverTimeSection
+                        sessions={quizSessions}
+                        studentLabel="this child"
+                        historyNotice={quizHistoryNotice}
+                      />
                     </div>
 
                   </div>

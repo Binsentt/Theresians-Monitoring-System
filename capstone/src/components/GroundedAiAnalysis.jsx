@@ -32,6 +32,34 @@ const withoutVisibleQuestDuration = (value) => {
   return visibleClauses.join('; ').trim() || 'No canonical completion or graded evidence is recorded for this task yet.';
 };
 
+const formatQuestTimestamp = (value, includeTime = false) => {
+  if (!value || !Number.isFinite(new Date(value).getTime())) return null;
+  return new Date(value).toLocaleString(undefined, includeTime
+    ? { dateStyle: 'medium', timeStyle: 'short' }
+    : { dateStyle: 'medium' });
+};
+
+const QUEST_STATUS_LABELS = Object.freeze({
+  completed: 'Completed',
+  started: 'Started',
+  observed: 'Activity observed; completion not verified',
+  not_recorded: 'Not yet recorded',
+});
+
+const QUEST_TYPE_LABELS = Object.freeze({
+  exploration: 'Exploration',
+  navigation: 'Navigation',
+  npc_interaction: 'NPC interaction',
+  mathematics_battle: 'Mathematics battle',
+  boss_battle: 'Boss battle',
+  map_transition: 'Map transition',
+});
+
+const formatQuestType = (quest) => safeDisplayText(
+  quest.quest_type_label || QUEST_TYPE_LABELS[quest.quest_type],
+  'Quest',
+);
+
 export default function GroundedAiAnalysis({ aiInsight, error = '', loading = false, onRefresh }) {
   const state = aiInsight && typeof aiInsight === 'object' ? aiInsight : {};
   const insight = state.insight && typeof state.insight === 'object' ? state.insight : null;
@@ -173,9 +201,51 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
             <span className="student-card-icon blue"><MapPin size={20} aria-hidden="true" /></span>
             <div><h2>Per-Quest Evidence</h2><p>Structured facts from canonical quest records and graded results.</p></div>
           </div>
-          <ul>{questInsights.map((quest) => (
-            <li key={quest.canonical_task_id}><strong>{safeDisplayText(quest.label, quest.canonical_task_id)}</strong>: {withoutVisibleQuestDuration(quest.summary)}</li>
-          ))}</ul>
+          <ul>{questInsights.map((quest) => {
+            const scoreRecorded = Number.isInteger(quest.total_questions) && quest.total_questions > 0
+              && Number.isInteger(quest.correct_answers) && Number.isInteger(quest.incorrect_answers)
+              && quest.correct_answers + quest.incorrect_answers === quest.total_questions
+              && Number.isFinite(quest.accuracy);
+            const topics = Array.isArray(quest.topic_performance) ? quest.topic_performance : [];
+            const encounters = Array.isArray(quest.encounters) ? quest.encounters : [];
+            const locationLabels = Array.isArray(quest.location_labels) ? quest.location_labels : [];
+            const completionDate = formatQuestTimestamp(quest.completion_date);
+            const resultDate = formatQuestTimestamp(quest.last_result_at, true);
+            const averageResponse = Number.isFinite(quest.average_response_seconds)
+              && quest.average_response_seconds >= 0
+              ? `${Number(quest.average_response_seconds)}s average response time` : null;
+            return (
+              <li key={quest.canonical_task_id} className="grounded-ai-quest-evidence-item">
+                <strong>{safeDisplayText(quest.label, quest.canonical_task_id)}</strong>
+                <div className="grounded-ai-quest-evidence-facts">
+                  <span>Type: {formatQuestType(quest)}</span>
+                  <span>Status: {QUEST_STATUS_LABELS[quest.completion_status] || 'Not yet recorded'}</span>
+                  {quest.quiz_status === 'not_required' && <span>Quiz: Not required</span>}
+                  {quest.quiz_status === 'results_not_recorded' && <span>Quiz: Graded results not recorded</span>}
+                  {quest.quiz_status === 'results_recorded' && <span>Quiz: Results recorded</span>}
+                  {completionDate && <span>Completion date: {completionDate}</span>}
+                  {locationLabels.map((label) => <span key={label}>Location: {safeDisplayText(label)}</span>)}
+                  {encounters.length > 0 && <span>Recorded encounters: {encounters.map((encounter) => safeDisplayText(encounter.label)).join(', ')}</span>}
+                  {quest.encounter_reporting === 'task_aggregate' && (
+                    <span>Encounter detail: task-level aggregate; individual encounter IDs are unavailable.</span>
+                  )}
+                  {scoreRecorded && (
+                    <span>
+                      {quest.correct_answers} correct, {quest.incorrect_answers} incorrect of {quest.total_questions} questions ({Number(quest.accuracy).toFixed(0)}%)
+                    </span>
+                  )}
+                  {averageResponse && <span>{averageResponse}</span>}
+                  {topics.map((topic) => (
+                    <span key={`${topic.grade_level}-${topic.topic_id}`}>
+                      {safeDisplayText(topic.grade_level)} {safeDisplayText(topic.topic)}: {topic.correct_answers} correct, {topic.incorrect_answers} incorrect of {topic.total_questions} ({Number(topic.accuracy).toFixed(0)}%)
+                    </span>
+                  ))}
+                  {resultDate && <span>Latest saved result: {resultDate}</span>}
+                  {!scoreRecorded && <span>{withoutVisibleQuestDuration(quest.summary)}</span>}
+                </div>
+              </li>
+            );
+          })}</ul>
         </div>
       )}
     </section>
