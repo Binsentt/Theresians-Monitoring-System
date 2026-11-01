@@ -100,6 +100,7 @@ jobs:
           docker run --detach \
             --name tq-backend-test-postgres \
             --network none \
+            --user "${postgres_uid}:${postgres_gid}" \
             --read-only \
             --cap-drop=ALL \
             --security-opt=no-new-privileges \
