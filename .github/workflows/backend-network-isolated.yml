@@ -53,9 +53,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/tq-backend-dependencies" "$RUNNER_TEMP/tq-backend-npm-cache" "$RUNNER_TEMP/tq-backend-test-uploads" "$RUNNER_TEMP/tq-backend-logs" "$RUNNER_TEMP/tq-backend-logs/backend-file-tests"
+          mkdir -p "$RUNNER_TEMP/tq-backend-dependencies" "$RUNNER_TEMP/tq-backend-npm-cache" "$RUNNER_TEMP/tq-backend-test-uploads/.test-tmp" "$RUNNER_TEMP/tq-backend-logs" "$RUNNER_TEMP/tq-backend-logs/backend-file-tests"
           cp capstone/backend/package.json capstone/backend/package-lock.json "$RUNNER_TEMP/tq-backend-dependencies/"
-          cp -a capstone/backend/uploads/. "$RUNNER_TEMP/tq-backend-test-uploads/"
           chmod -R u+rwX "$RUNNER_TEMP/tq-backend-test-uploads"
           chmod 0755 "$RUNNER_TEMP/tq-backend-dependencies" "$RUNNER_TEMP/tq-backend-npm-cache" "$RUNNER_TEMP/tq-backend-test-uploads" "$RUNNER_TEMP/tq-backend-logs" "$RUNNER_TEMP/tq-backend-logs/backend-file-tests"
           git ls-files -- capstone/backend | grep -E '(^|/)([^/]+\.(test|spec)\.(js|mjs|cjs)|test-[^/]+\.(js|mjs|cjs)|tests?/.+\.(js|mjs|cjs)|__tests__/.+\.(js|mjs|cjs))$' | sed 's#^capstone/backend/##' | sort -u > "$RUNNER_TEMP/tq-backend-logs/backend-test-files.txt"
@@ -71,6 +70,23 @@ jobs:
           cat > "$RUNNER_TEMP/tq-backend-logs/backend-file-runner.sh" <<'RUNNER'
           #!/usr/bin/env bash
           set -euo pipefail
+          node -e '
+          const assert = require("node:assert/strict");
+          const fs = require("node:fs");
+          const os = require("node:os");
+          const path = require("node:path");
+          const uploadsDir = path.join(process.cwd(), "uploads");
+          const testTempDir = path.join(uploadsDir, ".test-tmp");
+          for (const name of ["TMPDIR", "TMP", "TEMP"]) {
+            assert.equal(process.env[name], testTempDir, `${name} must use synthetic uploads storage`);
+          }
+          assert.equal(os.tmpdir(), testTempDir, "Node temporary directory must be the synthetic test directory");
+          assert.equal(fs.statSync(testTempDir).dev, fs.statSync(uploadsDir).dev,
+            "temporary sources and upload destinations must share a filesystem");
+          fs.accessSync(testTempDir, fs.constants.W_OK);
+          fs.accessSync(uploadsDir, fs.constants.W_OK);
+          console.log("Upload filesystem preflight passed: Node temp and synthetic uploads are writable on the same filesystem.");
+          '
           status_file=/test-logs/backend-file-status.tsv
           printf 'test_file\tresult\texit_code\n' > "$status_file"
           overall_status=0
@@ -556,9 +572,9 @@ jobs:
             --user "$(id -u):$(id -g)" \
             --env NODE_PATH=/backend-deps/node_modules \
             --env HOME=/tmp \
-            --env TMPDIR=/tmp \
-            --env TMP=/tmp \
-            --env TEMP=/tmp \
+            --env TMPDIR=/workspace/capstone/backend/uploads/.test-tmp \
+            --env TMP=/workspace/capstone/backend/uploads/.test-tmp \
+            --env TEMP=/workspace/capstone/backend/uploads/.test-tmp \
             --env NODE_ENV \
             --env AI_RUNTIME_ENABLED \
             --env AI_GENERATION_ENABLED \
