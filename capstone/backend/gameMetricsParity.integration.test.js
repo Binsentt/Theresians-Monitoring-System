@@ -122,7 +122,7 @@ if (!isSafeDatabase(databaseUrl)) {
     else process.env.AI_GENERATION_ENABLED = previousAiEnabled;
   });
 
-  test('2 correct and 3 wrong stay identical across stored evidence and every consumer', async () => {
+  test('2 correct and 3 wrong stay aligned while leaderboard completion stays distinct from journey progress', async () => {
     const base = `http://127.0.0.1:${appServer.address().port}`;
     const adminHeaders = { Authorization: `Bearer ${token(adminId, 'admin')}` };
     const lease = await json(`${base}/api/playtime/start`, {
@@ -228,9 +228,9 @@ if (!isSafeDatabase(databaseUrl)) {
     const completedTaskIds = ['tutorial', 'go-to-teachers-house'];
     const reachedTaskIds = ['first-bandit-math-challenge'];
     const completionOnlyProgress = calculateWeightedCompletion(completedTaskIds);
-    const progress = calculateJourneyProgress({ completedTaskIds, reachedTaskIds });
+    const journeyProgress = calculateJourneyProgress({ completedTaskIds, reachedTaskIds });
     assert.equal(completionOnlyProgress, 5.56, 'completed milestone weight remains distinct from the reached journey position');
-    assert.equal(progress, 16.67, 'the canonical reached-task position advances weighted journey progress');
+    assert.equal(journeyProgress, 16.67, 'the canonical reached-task position advances weighted journey progress');
     const leaderboard = await json(`${base}/api/game/leaderboard`, {
       method: 'POST',
       body: JSON.stringify({ session_id: sessionId, session_credential: credential, learning_cycle_version: 0 }),
@@ -238,7 +238,7 @@ if (!isSafeDatabase(databaseUrl)) {
     assert.equal(leaderboard.status, 200);
     assert.equal(leaderboard.body.entries.length, 1);
     assert.equal(leaderboard.body.entries[0].display_name, studentName);
-    assertMetrics(leaderboard.body.entries[0], 'leaderboard', progress);
+    assertMetrics(leaderboard.body.entries[0], 'leaderboard completion', completionOnlyProgress);
     assert.equal(leaderboard.body.entries[0].quests_completed, 2);
 
     await pool.query(
@@ -272,12 +272,12 @@ if (!isSafeDatabase(databaseUrl)) {
 
     const list = await json(`${base}/api/students/progress?lifecycle=active`, { headers: adminHeaders });
     const listRow = list.body.find((row) => Number(row.student_id) === studentId);
-    assert.equal(list.status, 200); assert.ok(listRow); assertMetrics(listRow, 'list', progress);
+    assert.equal(list.status, 200); assert.ok(listRow); assertMetrics(listRow, 'list journey', journeyProgress);
     assert.equal(listRow.incorrect_answers, 3);
     assert.equal(listRow.current_quest, 'Talk to the Teacher', 'accepted completion stores the authoritative next quest, not the completed task');
 
     const detail = await json(`${base}/api/student-progress/${studentId}?lifecycle=active`, { headers: adminHeaders });
-    assert.equal(detail.status, 200); assertMetrics(detail.body.progress, 'detail', progress);
+    assert.equal(detail.status, 200); assertMetrics(detail.body.progress, 'detail journey', journeyProgress);
     assert.deepEqual({
       correct: detail.body.metrics.correctAnswers,
       wrong: detail.body.metrics.incorrectAnswers,
@@ -289,7 +289,7 @@ if (!isSafeDatabase(databaseUrl)) {
 
     const top = await json(`${base}/api/top-achievers`, { headers: adminHeaders });
     const topRow = top.body.find((row) => Number(row.student_id) === studentId);
-    assert.equal(top.status, 200); assert.ok(topRow); assertMetrics(topRow, 'top', progress);
+    assert.equal(top.status, 200); assert.ok(topRow); assertMetrics(topRow, 'top achievers journey', journeyProgress);
     assert.equal(topRow.total_quests_completed, 2);
     assert.equal(Number(topRow.total_playtime_seconds), 3180, 'Top Achievers uses the same 53-minute session total');
 

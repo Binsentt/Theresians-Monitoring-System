@@ -32,6 +32,12 @@ if (!databaseUrl) {
     const pool = require('./database/db');
     await schemaReady;
 
+    const teacherClassAssignmentsMigration = fs.readFileSync(
+      path.join(__dirname, 'migrations', '008_add_teacher_class_assignments.sql'),
+      'utf8',
+    );
+    await pool.query(teacherClassAssignmentsMigration);
+
     const migrationSql = fs.readFileSync(path.join(__dirname, 'migrations', '019_playtime_history_removal.sql'), 'utf8');
     const runMigration = async () => {
       for (const statement of migrationSql.split(';').map((part) => part.trim()).filter(Boolean)) await pool.query(`${statement};`);
