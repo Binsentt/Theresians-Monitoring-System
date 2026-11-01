@@ -192,9 +192,13 @@ const fisherYatesShuffle = (values) => {
   return shuffled;
 };
 
-const buildBalancedAnswerPositionPlan = (questionCount) => fisherYatesShuffle(
-  Array.from({ length: questionCount }, (_, index) => index % 4)
-);
+const buildBalancedAnswerPositionPlan = (questionCount) => {
+  // Vary which labels receive the remainder, including sets smaller than four.
+  const positionLabels = fisherYatesShuffle([0, 1, 2, 3]);
+  return fisherYatesShuffle(
+    Array.from({ length: questionCount }, (_, index) => positionLabels[index % 4])
+  );
+};
 
 const balanceCorrectAnswerPositions = (questions, positionPlan) => questions.map((question, index) => {
   const correctAnswer = question.correct_answer;

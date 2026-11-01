@@ -4,6 +4,15 @@ on:
   push:
     branches:
       - codex/student-progress-child-progress-ai-refresh-20261031
+      - main
+    paths:
+      - '.github/workflows/backend-network-isolated.yml'
+      - 'capstone/backend/**'
+      - 'capstone/src/components/activityLog.utils.js'
+      - 'capstone/src/components/activityLog.utils.test.js'
+  pull_request:
+    branches:
+      - main
     paths:
       - '.github/workflows/backend-network-isolated.yml'
       - 'capstone/backend/**'
@@ -20,7 +29,7 @@ concurrency:
 
 jobs:
   backend:
-    if: github.ref == 'refs/heads/codex/student-progress-child-progress-ai-refresh-20261031'
+    if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/codex/student-progress-child-progress-ai-refresh-20261031' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
