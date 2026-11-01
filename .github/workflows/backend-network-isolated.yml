@@ -53,9 +53,228 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/tq-backend-dependencies" "$RUNNER_TEMP/tq-backend-npm-cache" "$RUNNER_TEMP/tq-backend-logs"
+          mkdir -p "$RUNNER_TEMP/tq-backend-dependencies" "$RUNNER_TEMP/tq-backend-npm-cache" "$RUNNER_TEMP/tq-backend-test-uploads" "$RUNNER_TEMP/tq-backend-logs" "$RUNNER_TEMP/tq-backend-logs/backend-file-tests"
           cp capstone/backend/package.json capstone/backend/package-lock.json "$RUNNER_TEMP/tq-backend-dependencies/"
-          chmod 0755 "$RUNNER_TEMP/tq-backend-dependencies" "$RUNNER_TEMP/tq-backend-npm-cache" "$RUNNER_TEMP/tq-backend-logs"
+          cp -a capstone/backend/uploads/. "$RUNNER_TEMP/tq-backend-test-uploads/"
+          chmod -R u+rwX "$RUNNER_TEMP/tq-backend-test-uploads"
+          chmod 0755 "$RUNNER_TEMP/tq-backend-dependencies" "$RUNNER_TEMP/tq-backend-npm-cache" "$RUNNER_TEMP/tq-backend-test-uploads" "$RUNNER_TEMP/tq-backend-logs" "$RUNNER_TEMP/tq-backend-logs/backend-file-tests"
+          git ls-files -- capstone/backend | grep -E '(^|/)([^/]+\.(test|spec)\.(js|mjs|cjs)|test-[^/]+\.(js|mjs|cjs)|tests?/.+\.(js|mjs|cjs)|__tests__/.+\.(js|mjs|cjs))$' | sed 's#^capstone/backend/##' | sort -u > "$RUNNER_TEMP/tq-backend-logs/backend-test-files.txt"
+          test_file_count="$(wc -l < "$RUNNER_TEMP/tq-backend-logs/backend-test-files.txt")"
+          test "$test_file_count" -gt 0
+          echo "Tracked backend test files: $test_file_count"
+          cat "$RUNNER_TEMP/tq-backend-logs/backend-test-files.txt"
+
+      - name: Prepare bounded per-file runner and Parent PostgreSQL route probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/tq-backend-logs/backend-file-runner.sh" <<'RUNNER'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          status_file=/test-logs/backend-file-status.tsv
+          printf 'test_file\tresult\texit_code\n' > "$status_file"
+          overall_status=0
+          while IFS= read -r test_file; do
+            [[ -n "$test_file" ]] || continue
+            report_name="$(printf '%s' "$test_file" | tr '/' '_').tap"
+            report_path="/test-logs/backend-file-tests/$report_name"
+            echo "::group::Backend test file: $test_file"
+            echo "START test_file=$test_file at=$(date -u +%Y-%m-%dT%H:%M:%SZ) per_file_limit=30s"
+            set +e
+            timeout --signal=TERM --kill-after=5s 30s \
+              node --test --test-reporter=tap "$test_file" 2>&1 | tee "$report_path"
+            test_status=$?
+            set -e
+            if [[ "$test_status" -eq 0 ]]; then
+              result=passed
+            elif [[ "$test_status" -eq 124 ]]; then
+              result=timed_out
+              overall_status=1
+            else
+              result=failed
+              overall_status=1
+            fi
+            echo "END test_file=$test_file result=$result exit_code=$test_status at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf '%s\t%s\t%s\n' "$test_file" "$result" "$test_status" >> "$status_file"
+            echo "::endgroup::"
+          done < /test-logs/backend-test-files.txt
+          echo "Full test-file runner exit_code=$overall_status"
+          exit "$overall_status"
+          RUNNER
+          chmod 0644 "$RUNNER_TEMP/tq-backend-logs/backend-file-runner.sh"
+
+          cat > "$RUNNER_TEMP/tq-backend-logs/parent-route-postgres.integration.cjs" <<'PARENT_TEST'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const jwt = require('jsonwebtoken');
+          const { Pool } = require('pg');
+
+          const databaseUrl = process.env.DATABASE_URL;
+          const parsedDatabaseUrl = new URL(databaseUrl || '');
+          assert.equal(parsedDatabaseUrl.hostname, '127.0.0.1', 'Parent route probe must use loopback PostgreSQL');
+          assert.equal(parsedDatabaseUrl.pathname, '/tq_parent_route_test_ci', 'Parent route probe must use its disposable database');
+          assert.equal(process.env.AI_RUNTIME_ENABLED, 'false');
+          assert.equal(process.env.AI_GENERATION_ENABLED, 'false');
+
+          const tokenFor = (accountId, role) => jwt.sign(
+            { userId: accountId, role, sessionVersion: 0 },
+            process.env.JWT_SECRET,
+            { expiresIn: '5m' },
+          );
+
+          async function main() {
+            const bootstrap = new Pool({ connectionString: databaseUrl });
+            await bootstrap.query([
+              'CREATE TABLE IF NOT EXISTS public.accounts (',
+              'id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT, password TEXT,',
+              'role VARCHAR(50) NOT NULL, status VARCHAR(50) DEFAULT \'active\'',
+              ')',
+            ].join('\n'));
+            await bootstrap.end();
+
+            const backendRoot = '/workspace/capstone/backend';
+            const { app, schemaReady } = require(backendRoot + '/server');
+            const pool = require(backendRoot + '/database/db');
+            let httpServer = null;
+            try {
+              await schemaReady;
+              await pool.query(fs.readFileSync(
+                backendRoot + '/migrations/012_add_activity_log_event_idempotency.sql',
+                'utf8',
+              ));
+              const { applyReleaseMigrations } = require(backendRoot + '/releaseMigrations');
+              await applyReleaseMigrations({ client: pool });
+              await pool.query('TRUNCATE public.accounts RESTART IDENTITY CASCADE');
+
+              const parentResult = await pool.query([
+                'INSERT INTO public.accounts (name, email, password, role, status, is_archived, session_version, parent_id)',
+                'VALUES (\'CI Parent One\', \'parent-one@example.test\', \'unused\', \'parent\', \'active\', false, 0, \'902341\')',
+                'RETURNING id',
+              ].join('\n'));
+              const otherParentResult = await pool.query([
+                'INSERT INTO public.accounts (name, email, password, role, status, is_archived, session_version, parent_id)',
+                'VALUES (\'CI Parent Two\', \'parent-two@example.test\', \'unused\', \'parent\', \'active\', false, 0, \'902342\')',
+                'RETURNING id',
+              ].join('\n'));
+              const cycleStartedAt = new Date(Date.now() - 120000);
+              const studentResult = await pool.query([
+                'INSERT INTO public.accounts',
+                '(name, email, password, role, status, is_archived, session_version, game_student_id,',
+                ' grade_level, section, current_learning_cycle_version, current_learning_cycle_started_at)',
+                'VALUES (\'CI Linked Student\', \'student-one@example.test\', \'unused\', \'student\', \'active\', false, 0,',
+                '        \'24000001\', \'Grade 1\', \'Section A\', 1, $1)',
+                'RETURNING id',
+              ].join('\n'), [cycleStartedAt.toISOString()]);
+              const otherStudentResult = await pool.query([
+                'INSERT INTO public.accounts',
+                '(name, email, password, role, status, is_archived, session_version, game_student_id, grade_level, section)',
+                'VALUES (\'CI Unlinked Student\', \'student-two@example.test\', \'unused\', \'student\', \'active\', false, 0,',
+                '        \'24000002\', \'Grade 1\', \'Section A\')',
+                'RETURNING id',
+              ].join('\n'));
+              const parentId = Number(parentResult.rows[0].id);
+              const otherParentId = Number(otherParentResult.rows[0].id);
+              const studentId = Number(studentResult.rows[0].id);
+              const otherStudentId = Number(otherStudentResult.rows[0].id);
+              await pool.query(
+                'INSERT INTO public.teacher_student_relationships (teacher_id, student_id, relationship_type) VALUES ($1, $2, \'Parent\')',
+                [parentId, studentId],
+              );
+
+              const oldSession = await pool.query([
+                'INSERT INTO public.playtime_sessions',
+                '(student_id, parent_id, student_name, grade_level, section, start_time, end_time, status, learning_cycle_version)',
+                'VALUES ($1, \'902341\', \'CI Linked Student\', \'Grade 1\', \'Section A\', $2, $3, \'Offline\', 0)',
+                'RETURNING id',
+              ].join('\n'), [
+                studentId,
+                new Date(cycleStartedAt.getTime() - 120000).toISOString(),
+                new Date(cycleStartedAt.getTime() - 60000).toISOString(),
+              ]);
+              const currentSession = await pool.query([
+                'INSERT INTO public.playtime_sessions',
+                '(student_id, parent_id, student_name, grade_level, section, start_time, status, learning_cycle_version)',
+                'VALUES ($1, \'902341\', \'CI Linked Student\', \'Grade 1\', \'Section A\', $2, \'Playing\', 1)',
+                'RETURNING id',
+              ].join('\n'), [studentId, new Date(cycleStartedAt.getTime() + 5000).toISOString()]);
+
+              const insertResult = async ({ sessionId, playedAt, score, eventId }) => pool.query([
+                'INSERT INTO public.game_results',
+                '(parent_id, student_name, resolved_student_id, grade_level, difficulty, math_topic,',
+                ' score, total_items, percentage, played_at, playtime_session_id, result_event_id, is_unlinked)',
+                'VALUES (\'902341\', \'CI Linked Student\', $1, \'Grade 1\', \'Easy\', \'Addition\',',
+                '        $2, 4, $3, $4, $5, $6, false)',
+              ].join('\n'), [studentId, score, score * 25, playedAt, sessionId, eventId]);
+              await insertResult({
+                sessionId: Number(oldSession.rows[0].id),
+                playedAt: new Date(cycleStartedAt.getTime() - 30000).toISOString(),
+                score: 1,
+                eventId: 'parent-cycle-old',
+              });
+              await insertResult({
+                sessionId: Number(oldSession.rows[0].id),
+                playedAt: new Date(cycleStartedAt.getTime() + 10000).toISOString(),
+                score: 2,
+                eventId: 'parent-cycle-mismatch',
+              });
+              await insertResult({
+                sessionId: Number(currentSession.rows[0].id),
+                playedAt: new Date(cycleStartedAt.getTime() + 20000).toISOString(),
+                score: 3,
+                eventId: 'parent-cycle-current',
+              });
+
+              httpServer = await new Promise((resolve, reject) => {
+                const server = app.listen(0, '127.0.0.1', () => resolve(server));
+                server.once('error', reject);
+              });
+              const baseUrl = 'http://127.0.0.1:' + httpServer.address().port;
+              const fetchHistory = async (accountId, role, targetStudentId) => {
+                const response = await fetch(
+                  baseUrl + '/api/parent/children/' + targetStudentId + '/quizzes?page=1&limit=20',
+                  { headers: { Authorization: 'Bearer ' + tokenFor(accountId, role) } },
+                );
+                return { status: response.status, body: await response.json() };
+              };
+
+              const linkedResponse = await fetchHistory(parentId, 'parent', studentId);
+              assert.equal(linkedResponse.status, 200, JSON.stringify(linkedResponse.body));
+              assert.equal(linkedResponse.body.pagination.total, 1);
+              assert.equal(linkedResponse.body.data.length, 1);
+              assert.equal(Number(linkedResponse.body.data[0].score), 3);
+              assert.equal(Number(linkedResponse.body.data[0].total_items), 4);
+              assert.equal(linkedResponse.body.history_verification.cycle_checked, true);
+              assert.equal(linkedResponse.body.history_verification.excluded_unverifiable_count, 1);
+              assert.equal(linkedResponse.body.history_verification.excluded_invalid_score_count, 0);
+
+              const unrelatedParentResponse = await fetchHistory(otherParentId, 'parent', studentId);
+              assert.equal(unrelatedParentResponse.status, 403, JSON.stringify(unrelatedParentResponse.body));
+              const studentRoleResponse = await fetchHistory(otherStudentId, 'student', studentId);
+              assert.equal(studentRoleResponse.status, 403, JSON.stringify(studentRoleResponse.body));
+
+              const storedResults = await pool.query(
+                'SELECT COUNT(*)::INTEGER AS count FROM public.game_results WHERE resolved_student_id = $1',
+                [studentId],
+              );
+              assert.equal(storedResults.rows[0].count, 3);
+              assert.ok(otherStudentId > 0);
+              console.log('PASS: Parent quiz-history route executed real PostgreSQL queries, returned only the linked current-cycle result, and denied unrelated Parent and Student-role access.');
+              console.log('Synthetic test records only; disposable target is loopback tq_parent_route_test_ci.');
+            } finally {
+              if (httpServer) {
+                httpServer.closeAllConnections?.();
+                await new Promise((resolve) => httpServer.close(() => resolve()));
+              }
+              await pool.end();
+            }
+          }
+
+          main().catch((error) => {
+            console.error(error.stack || error.message);
+            process.exitCode = 1;
+          });
+          PARENT_TEST
+          chmod 0644 "$RUNNER_TEMP/tq-backend-logs/backend-file-runner.sh" "$RUNNER_TEMP/tq-backend-logs/parent-route-postgres.integration.cjs"
 
       - name: Pull Node 20 and disposable PostgreSQL images during preparation
         shell: bash
@@ -138,7 +357,11 @@ jobs:
             tq_backend_test_ci \
             tq_game_metrics_test_ci \
             tq_auth_recovery_test_ci \
-            tq_archived_progress_test_ci; do
+            tq_archived_progress_test_ci \
+            tq_screen_time_test_ci \
+            tq_student_id_migration_test_ci \
+            tq_website_session_migration_test_ci \
+            tq_parent_route_test_ci; do
             docker exec tq-backend-test-postgres createdb --host=127.0.0.1 --username=postgres "$database"
           done
           docker inspect --format='postgres network={{.HostConfig.NetworkMode}} published-ports={{json .HostConfig.PortBindings}}' tq-backend-test-postgres
@@ -190,19 +413,17 @@ jobs:
           });
           '
 
-      - name: Run the full backend suite in the isolated network namespace
-        id: full-backend
+      - name: Run Parent quiz-history against disposable PostgreSQL
+        id: parent-route-postgres
         continue-on-error: true
+        timeout-minutes: 8
         shell: bash
         env:
           NODE_ENV: test
           AI_RUNTIME_ENABLED: 'false'
           AI_GENERATION_ENABLED: 'false'
           JWT_SECRET: isolated-backend-ci-only-secret
-          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_backend_test_ci
-          GAME_METRICS_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_game_metrics_test_ci
-          AUTH_RECOVERY_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_auth_recovery_test_ci
-          ARCHIVED_PROGRESS_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_archived_progress_test_ci
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_parent_route_test_ci
         run: |
           set -euo pipefail
           set +e
@@ -211,12 +432,14 @@ jobs:
             --read-only \
             --cap-drop=ALL \
             --security-opt=no-new-privileges \
-            --pids-limit=512 \
-            --memory=7g \
-            --cpus=3 \
-            --tmpfs /tmp:rw,nosuid,nodev,size=1g,mode=1777 \
+            --pids-limit=256 \
+            --memory=3g \
+            --cpus=2 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777 \
             --volume "$GITHUB_WORKSPACE/capstone:/workspace/capstone:ro" \
             --volume "$RUNNER_TEMP/tq-backend-dependencies/node_modules:/backend-deps/node_modules:ro" \
+            --volume "$RUNNER_TEMP/tq-backend-test-uploads:/workspace/capstone/backend/uploads:rw" \
+            --volume "$RUNNER_TEMP/tq-backend-logs:/test-logs:rw" \
             --workdir /workspace/capstone/backend \
             --user "$(id -u):$(id -g)" \
             --env NODE_PATH=/backend-deps/node_modules \
@@ -229,20 +452,24 @@ jobs:
             --env AI_GENERATION_ENABLED \
             --env JWT_SECRET \
             --env DATABASE_URL \
-            --env GAME_METRICS_TEST_DATABASE_URL \
-            --env AUTH_RECOVERY_TEST_DATABASE_URL \
-            --env ARCHIVED_PROGRESS_TEST_DATABASE_URL \
             --env NO_COLOR=1 \
-            node:20-bookworm node --test --test-reporter=tap \
-            > "$RUNNER_TEMP/tq-backend-logs/backend-full.tap" 2>&1
+            node:20-bookworm node /test-logs/parent-route-postgres.integration.cjs \
+            > "$RUNNER_TEMP/tq-backend-logs/parent-route-postgres.log" 2>&1
           test_status=$?
           set -e
-          cat "$RUNNER_TEMP/tq-backend-logs/backend-full.tap"
+          cat "$RUNNER_TEMP/tq-backend-logs/parent-route-postgres.log"
+          if [[ "$test_status" -eq 0 ]]; then
+            printf 'passed\n' > "$RUNNER_TEMP/tq-backend-logs/parent-route-postgres.status"
+          else
+            printf 'failed\n' > "$RUNNER_TEMP/tq-backend-logs/parent-route-postgres.status"
+          fi
           echo "exit_code=$test_status" >> "$GITHUB_OUTPUT"
           exit "$test_status"
-      - name: Run server.parentGameResults.test.js explicitly in the same isolation
+
+      - name: Run server.parentGameResults.test.js independently (mocked route contract)
         id: parent-game-results
         continue-on-error: true
+        timeout-minutes: 5
         shell: bash
         env:
           NODE_ENV: test
@@ -264,10 +491,12 @@ jobs:
             --tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777 \
             --volume "$GITHUB_WORKSPACE/capstone:/workspace/capstone:ro" \
             --volume "$RUNNER_TEMP/tq-backend-dependencies/node_modules:/backend-deps/node_modules:ro" \
+            --volume "$RUNNER_TEMP/tq-backend-test-uploads:/workspace/capstone/backend/uploads:rw" \
+            --volume "$RUNNER_TEMP/tq-backend-logs:/test-logs:rw" \
             --workdir /workspace/capstone/backend \
             --user "$(id -u):$(id -g)" \
             --env NODE_PATH=/backend-deps/node_modules \
-            --env HOME=/tmp/home \
+            --env HOME=/tmp \
             --env TMPDIR=/tmp \
             --env TMP=/tmp \
             --env TEMP=/tmp \
@@ -282,9 +511,71 @@ jobs:
           test_status=$?
           set -e
           cat "$RUNNER_TEMP/tq-backend-logs/server-parent-game-results.tap"
+          if [[ "$test_status" -eq 0 ]]; then
+            printf 'passed\n' > "$RUNNER_TEMP/tq-backend-logs/parent-contract.status"
+          else
+            printf 'failed\n' > "$RUNNER_TEMP/tq-backend-logs/parent-contract.status"
+          fi
           echo "exit_code=$test_status" >> "$GITHUB_OUTPUT"
           exit "$test_status"
 
+      - name: Run every tracked backend test file with per-file timeout
+        id: full-backend
+        continue-on-error: true
+        timeout-minutes: 50
+        shell: bash
+        env:
+          NODE_ENV: test
+          AI_RUNTIME_ENABLED: 'false'
+          AI_GENERATION_ENABLED: 'false'
+          JWT_SECRET: isolated-backend-ci-only-secret
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_backend_test_ci
+          GAME_METRICS_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_game_metrics_test_ci
+          AUTH_RECOVERY_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_auth_recovery_test_ci
+          ARCHIVED_PROGRESS_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_archived_progress_test_ci
+          SCREEN_TIME_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_screen_time_test_ci
+          STUDENT_ID_MIGRATION_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_student_id_migration_test_ci
+          WEBSITE_SESSION_MIGRATION_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_website_session_migration_test_ci
+        run: |
+          set -euo pipefail
+          set +e
+          docker run --rm \
+            --network container:tq-backend-test-postgres \
+            --read-only \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --pids-limit=512 \
+            --memory=7g \
+            --cpus=3 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=1g,mode=1777 \
+            --volume "$GITHUB_WORKSPACE/capstone:/workspace/capstone:ro" \
+            --volume "$RUNNER_TEMP/tq-backend-dependencies/node_modules:/backend-deps/node_modules:ro" \
+            --volume "$RUNNER_TEMP/tq-backend-test-uploads:/workspace/capstone/backend/uploads:rw" \
+            --volume "$RUNNER_TEMP/tq-backend-logs:/test-logs:rw" \
+            --workdir /workspace/capstone/backend \
+            --user "$(id -u):$(id -g)" \
+            --env NODE_PATH=/backend-deps/node_modules \
+            --env HOME=/tmp \
+            --env TMPDIR=/tmp \
+            --env TMP=/tmp \
+            --env TEMP=/tmp \
+            --env NODE_ENV \
+            --env AI_RUNTIME_ENABLED \
+            --env AI_GENERATION_ENABLED \
+            --env JWT_SECRET \
+            --env DATABASE_URL \
+            --env GAME_METRICS_TEST_DATABASE_URL \
+            --env AUTH_RECOVERY_TEST_DATABASE_URL \
+            --env ARCHIVED_PROGRESS_TEST_DATABASE_URL \
+            --env SCREEN_TIME_TEST_DATABASE_URL \
+            --env STUDENT_ID_MIGRATION_TEST_DATABASE_URL \
+            --env WEBSITE_SESSION_MIGRATION_TEST_DATABASE_URL \
+            --env NO_COLOR=1 \
+            node:20-bookworm bash /test-logs/backend-file-runner.sh
+          test_status=$?
+          set -e
+          echo "Per-file backend suite exit_code=$test_status"
+          exit "$test_status"
       - name: Preserve isolated PostgreSQL diagnostics
         if: always()
         shell: bash
@@ -292,31 +583,126 @@ jobs:
           docker logs tq-backend-test-postgres > "$RUNNER_TEMP/tq-backend-logs/postgres.log" 2>&1 || true
 
       - name: Summarize backend test reports
+        id: backend-summary
         if: always()
         shell: bash
         run: |
-          {
-            echo "## Isolated backend regression"
-            echo
-            echo "- Source commit: $GITHUB_SHA"
-            echo "- Runtime: Node 20 in an unprivileged container."
-            echo "- Test network: shared with an ephemeral PostgreSQL container started with Docker network none; only loopback is available."
-            echo "- Database: disposable PostgreSQL databases with synthetic fixtures; no production URL or data."
-            echo
-            echo "### Full backend suite"
-            if [[ -f "$RUNNER_TEMP/tq-backend-logs/backend-full.tap" ]]; then
-              tail -n 12 "$RUNNER_TEMP/tq-backend-logs/backend-full.tap"
-            else
-              echo "No full-suite report was produced."
-            fi
-            echo
-            echo "### server.parentGameResults.test.js"
-            if [[ -f "$RUNNER_TEMP/tq-backend-logs/server-parent-game-results.tap" ]]; then
-              tail -n 12 "$RUNNER_TEMP/tq-backend-logs/server-parent-game-results.tap"
-            else
-              echo "No focused report was produced."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY'
+          import collections
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "tq-backend-logs"
+          inventory_file = root / "backend-test-files.txt"
+          inventory = inventory_file.read_text().splitlines() if inventory_file.exists() else []
+          status_file = root / "backend-file-status.tsv"
+          rows = []
+          if status_file.exists():
+              for line in status_file.read_text().splitlines()[1:]:
+                  fields = line.split("\t")
+                  if len(fields) == 3:
+                      rows.append((fields[0], fields[1], fields[2]))
+          file_counts = collections.Counter(result for _, result, _ in rows)
+          case_counts = collections.Counter()
+          partial_counts = collections.Counter()
+          incomplete = []
+          timed_out = []
+          failed = []
+          for test_file, result, _ in rows:
+              report_path = root / "backend-file-tests" / (test_file.replace("/", "_") + ".tap")
+              report = report_path.read_text(errors="replace") if report_path.exists() else ""
+              summary = {}
+              for key in ("tests", "pass", "fail", "cancelled", "skipped", "todo"):
+                  matches = re.findall(r"^# " + key + r" (\d+)\s*$", report, re.MULTILINE)
+                  if matches:
+                      summary[key] = int(matches[-1])
+              if all(key in summary for key in ("tests", "pass", "fail", "cancelled", "skipped", "todo")):
+                  case_counts.update(summary)
+              else:
+                  if result == "timed_out":
+                      timed_out.append(test_file)
+                  else:
+                      incomplete.append(test_file)
+                  for match in re.finditer(r"^(ok|not ok)\s+\d+(?:\s+.*)?$", report, re.MULTILINE):
+                      line = match.group(0)
+                      if "# SKIP" in line:
+                          partial_counts["skipped"] += 1
+                      elif match.group(1) == "ok":
+                          partial_counts["pass"] += 1
+                      else:
+                          partial_counts["fail"] += 1
+              if result == "failed":
+                  failed.append(test_file)
+          recorded = {test_file for test_file, _, _ in rows}
+          missing = sorted(set(inventory) - recorded)
+          unexpected = sorted(recorded - set(inventory))
+          parent_contract_path = root / "parent-contract.status"
+          parent_pg_path = root / "parent-route-postgres.status"
+          parent_contract = parent_contract_path.read_text().strip() if parent_contract_path.exists() else "not run"
+          parent_pg = parent_pg_path.read_text().strip() if parent_pg_path.exists() else "not run"
+          parent_tap_path = root / "server-parent-game-results.tap"
+          parent_tap = parent_tap_path.read_text(errors="replace") if parent_tap_path.exists() else ""
+          parent_counts = {}
+          for key in ("tests", "pass", "fail", "skipped"):
+              matches = re.findall(r"^# " + key + r" (\d+)\s*$", parent_tap, re.MULTILINE)
+              if matches:
+                  parent_counts[key] = int(matches[-1])
+
+          lines = [
+              "## Isolated backend regression",
+              "",
+              "- Source commit: " + os.environ.get("GITHUB_SHA", "unknown"),
+              "- Runtime: Node 20 in unprivileged test containers.",
+              "- Network: test containers share the disposable PostgreSQL container's Docker none network namespace; only loopback is available and no ports are published.",
+              "- Data: synthetic fixtures in disposable PostgreSQL databases; no production credentials or services are passed into test containers.",
+              "- Independent Parent PostgreSQL route probe: **" + parent_pg + "**",
+              "- Independent server.parentGameResults.test.js contract suite: **" + parent_contract + "**",
+              "",
+              "### Full backend test files",
+              "- Tracked test files: **" + str(len(inventory)) + "**",
+              "- Passed files: **" + str(file_counts["passed"]) + "**",
+              "- Failed files: **" + str(file_counts["failed"]) + "**",
+              "- Timed-out files: **" + str(file_counts["timed_out"]) + "**",
+              "- Other runner errors: **" + str(sum(value for key, value in file_counts.items() if key not in {"passed", "failed", "timed_out"})) + "**",
+              "- Missing status rows: **" + str(len(missing)) + "**",
+              "",
+              "### Complete TAP case totals",
+              "- Passed: **" + str(case_counts["pass"]) + "**",
+              "- Failed: **" + str(case_counts["fail"]) + "**",
+              "- Skipped: **" + str(case_counts["skipped"]) + "**",
+              "- Cancelled: **" + str(case_counts["cancelled"]) + "**",
+              "- Todo: **" + str(case_counts["todo"]) + "**",
+              "- Total cases from complete TAP reports: **" + str(case_counts["tests"]) + "**",
+              "- Case totals above include only files with a complete TAP summary; timed-out files are listed separately.",
+              "",
+              "### Partial TAP observations from incomplete files",
+              "- Passed status lines observed: **" + str(partial_counts["pass"]) + "**",
+              "- Failed status lines observed: **" + str(partial_counts["fail"]) + "**",
+              "- Skipped status lines observed: **" + str(partial_counts["skipped"]) + "**",
+              "- Timed-out files: " + (", ".join(timed_out) if timed_out else "none"),
+              "",
+              "### Parent route PostgreSQL verification",
+              "The workflow-generated probe seeds only synthetic accounts, sessions, and game results in the disposable tq_parent_route_test_ci database, then calls the real Parent quiz-history HTTP route and checks current-cycle filtering plus unrelated-Parent and Student-role rejection.",
+              "",
+              "### Full-suite diagnostics",
+              "- Every tracked test file runs sequentially with a 30-second limit plus a 5-second termination grace. Each file start is logged; TAP output is streamed and stored separately.",
+              "- Failed files: " + (", ".join(failed) if failed else "none"),
+              "- Incomplete non-timeout reports: " + (", ".join(incomplete) if incomplete else "none"),
+              "- Missing inventory rows: " + (", ".join(missing) if missing else "none"),
+              "- Unexpected inventory rows: " + (", ".join(unexpected) if unexpected else "none"),
+          ]
+          if parent_counts:
+              lines.extend([
+                  "",
+                  "### Independent mocked Parent contract TAP counts",
+                  "- Passed: **" + str(parent_counts.get("pass", 0)) + "**; failed: **" + str(parent_counts.get("fail", 0)) + "**; skipped: **" + str(parent_counts.get("skipped", 0)) + "**; total: **" + str(parent_counts.get("tests", 0)) + "**.",
+              ])
+          summary_text = "\n".join(lines) + "\n"
+          print(summary_text)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary_file:
+              summary_file.write(summary_text)
+          PY
 
       - name: Upload backend logs and test reports
         if: always()
@@ -332,7 +718,7 @@ jobs:
         shell: bash
         run: docker rm -f tq-backend-test-postgres >/dev/null 2>&1 || true
 
-      - name: Fail the job if either backend run failed
+      - name: Fail the job if any backend verification failed
         if: always()
         shell: bash
         env:
@@ -341,5 +727,23 @@ jobs:
         run: |
           if [[ "$FULL_RESULT" != success || "$PARENT_RESULT" != success ]]; then
             echo "Full backend outcome=$FULL_RESULT; parent game-result outcome=$PARENT_RESULT"
+            exit 1
+          fi
+          if [[ "$(cat "$RUNNER_TEMP/tq-backend-logs/parent-route-postgres.status" 2>/dev/null || true)" != passed ]]; then
+            echo "The Parent PostgreSQL route integration probe did not pass."
+            exit 1
+          fi
+          if [[ "$(cat "$RUNNER_TEMP/tq-backend-logs/parent-contract.status" 2>/dev/null || true)" != passed ]]; then
+            echo "The independent Parent contract test did not pass."
+            exit 1
+          fi
+          inventory_count="$(wc -l < "$RUNNER_TEMP/tq-backend-logs/backend-test-files.txt" 2>/dev/null || echo 0)"
+          status_count="$(awk 'END { if (NR > 0) print NR - 1; else print 0 }' "$RUNNER_TEMP/tq-backend-logs/backend-file-status.tsv" 2>/dev/null || echo 0)"
+          if [[ "$inventory_count" -eq 0 || "$status_count" -ne "$inventory_count" ]]; then
+            echo "Backend test-file inventory incomplete: expected=$inventory_count reported=$status_count"
+            exit 1
+          fi
+          if awk -F '\t' 'NR > 1 && $2 != "passed" { failed = 1 } END { exit failed ? 0 : 1 }' "$RUNNER_TEMP/tq-backend-logs/backend-file-status.tsv"; then
+            echo "At least one backend test file failed or timed out."
             exit 1
           fi
