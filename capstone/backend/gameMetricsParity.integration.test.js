@@ -187,11 +187,13 @@ if (!isSafeDatabase(databaseUrl)) {
     assert.equal(cacheAfterDuplicate.rows[0].row_version, cacheAfterEvidence.rows[0].row_version,
       'an unchanged duplicate result leaves the evidence cache row untouched');
 
+    let activityStartedAt = Date.parse('2026-01-01T00:00:00.000Z');
     for (const milestone of [
       ['tutorial', 'tutorial.complete', "Go to the Teacher's House", 90],
       ['go-to-teachers-house', 'oakleaf.go-to-teachers-house.complete', 'Talk to the Teacher', 60],
     ]) {
       const [taskId, milestoneId, currentQuest, durationSeconds] = milestone;
+      const activityCompletedAt = activityStartedAt + (durationSeconds * 1000);
       const activity = await json(`${base}/api/game/activity`, {
         method: 'POST',
         body: JSON.stringify({
@@ -202,13 +204,14 @@ if (!isSafeDatabase(databaseUrl)) {
            canonical_task_id: taskId, canonical_milestone_id: milestoneId,
           current_quest: currentQuest,
           map_id: 'oakleaf_village', is_player_facing: true,
-          started_at: '2026-01-01T00:00:00.000Z',
-          completed_at: new Date(Date.parse('2026-01-01T00:00:00.000Z') + (durationSeconds * 1000)).toISOString(),
+          started_at: new Date(activityStartedAt).toISOString(),
+          completed_at: new Date(activityCompletedAt).toISOString(),
           duration_seconds: durationSeconds,
         }),
       });
       assert.equal(activity.status, 201, taskId);
       assert.equal(activity.body.duplicate, false);
+      activityStartedAt = activityCompletedAt;
     }
     const banditActivity = await json(`${base}/api/game/activity`, {
       method: 'POST',
@@ -241,14 +244,6 @@ if (!isSafeDatabase(databaseUrl)) {
     assertMetrics(leaderboard.body.entries[0], 'leaderboard completion', completionOnlyProgress);
     assert.equal(leaderboard.body.entries[0].quests_completed, 2);
 
-    await pool.query(
-      `UPDATE public.playtime_sessions
-          SET status = 'Offline', end_time = start_time + INTERVAL '53 minutes',
-              total_playtime_minutes = 53, total_playtime_seconds = 3180
-        WHERE id = $1`,
-      [sessionId],
-    );
-
     const stored = await pool.query(`SELECT COUNT(*)::INTEGER AS count,
       COUNT(DISTINCT result_event_id)::INTEGER AS events,
       COALESCE(SUM(score), 0)::INTEGER AS game_score,
@@ -264,17 +259,47 @@ if (!isSafeDatabase(databaseUrl)) {
     const activityEvidence = await pool.query(
       `SELECT canonical_task_id, duration_seconds
          FROM public.activity_logs WHERE student_id = $1
+          AND canonical_task_id IS NOT NULL
          ORDER BY duration_seconds DESC`, [studentId],
     );
     assert.deepEqual(activityEvidence.rows.map((row) => [row.canonical_task_id, Number(row.duration_seconds)]), [
       ['first-bandit-math-challenge', 240], ['tutorial', 90], ['go-to-teachers-house', 60],
     ]);
 
+    // Canonical completion activities provide milestone evidence, but the Game's
+    // current quest is an authoritative snapshot committed at the manual Save boundary.
+    const savedCurrentQuest = 'Defeat All Bandits';
+    const savedProgress = await json(`${base}/api/game/progress`, {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: parentCode, student_id: studentCode, student_name: studentName,
+        grade_level: 'Grade 1', current_quest: savedCurrentQuest,
+        current_scene: 'city_of_knowledge.tscn', current_map: 'oakleaf_village',
+        difficulty_level: 'Easy', score: 2, correct_answers: 2, total_questions: 5,
+        accuracy_rate: 40, progress_percentage: journeyProgress,
+        total_quests_completed: 2, learning_cycle_version: 0,
+        playtime_session_id: sessionId, playtime_session_credential: credential,
+      }),
+    });
+    assert.equal(savedProgress.status, 201, 'manual Save accepts the linked Student in the current Learning Cycle');
+    assert.equal(savedProgress.body.parent.parent_id, parentCode, 'Save remains scoped to the fixture Parent');
+    assert.equal(Number(savedProgress.body.student.id), studentId, 'Save resolves to the linked registered Student');
+    assert.equal(Number(savedProgress.body.progress.student_id), studentId);
+    assert.equal(savedProgress.body.progress.current_quest, savedCurrentQuest);
+
+    await pool.query(
+      `UPDATE public.playtime_sessions
+          SET status = 'Offline', end_time = start_time + INTERVAL '53 minutes',
+              total_playtime_minutes = 53, total_playtime_seconds = 3180
+        WHERE id = $1`,
+      [sessionId],
+    );
+
     const list = await json(`${base}/api/students/progress?lifecycle=active`, { headers: adminHeaders });
     const listRow = list.body.find((row) => Number(row.student_id) === studentId);
     assert.equal(list.status, 200); assert.ok(listRow); assertMetrics(listRow, 'list journey', journeyProgress);
     assert.equal(listRow.incorrect_answers, 3);
-    assert.equal(listRow.current_quest, 'Talk to the Teacher', 'accepted completion stores the authoritative next quest, not the completed task');
+    assert.equal(listRow.current_quest, savedCurrentQuest, 'Student Progress reflects the quest from the accepted manual Save snapshot');
 
     const detail = await json(`${base}/api/student-progress/${studentId}?lifecycle=active`, { headers: adminHeaders });
     assert.equal(detail.status, 200); assertMetrics(detail.body.progress, 'detail journey', journeyProgress);
