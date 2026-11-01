@@ -97,7 +97,7 @@ jobs:
           set -euo pipefail
           postgres_uid="$(docker run --rm --network none postgres:16-bookworm id -u postgres)"
           postgres_gid="$(docker run --rm --network none postgres:16-bookworm id -g postgres)"
-          docker run --detach --rm \
+          docker run --detach \
             --name tq-backend-test-postgres \
             --network none \
             --read-only \
@@ -116,6 +116,13 @@ jobs:
             postgres:16-bookworm
           ready=false
           for attempt in $(seq 1 60); do
+            container_state="$(docker inspect --format='{{.State.Status}}' tq-backend-test-postgres 2>/dev/null || true)"
+            if [[ "$container_state" != running && "$container_state" != created ]]; then
+              echo "PostgreSQL container stopped before readiness (state=${container_state:-missing})."
+              docker inspect --format='exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}}' tq-backend-test-postgres || true
+              docker logs tq-backend-test-postgres || true
+              exit 1
+            fi
             if docker exec tq-backend-test-postgres pg_isready --host=127.0.0.1 --username=postgres --dbname=postgres >/dev/null 2>&1; then
               ready=true
               break
