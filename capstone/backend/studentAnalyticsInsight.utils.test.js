@@ -63,8 +63,9 @@ const inputFor = () => buildGroundedInsightInput({ gradeLevel: 'Grade 3', metric
 
 test('uses only minimized deterministic facts and policy version in grounded insight input', () => {
   const input = buildGroundedInsightInput({ gradeLevel: 'Grade 3', metrics, studentId: 44, name: 'Do not include' });
+  const { quest_evidence: questEvidence, ...minimizedInput } = input;
 
-  assert.deepEqual(input, {
+  assert.deepEqual(minimizedInput, {
     grounding_policy_version: GROUNDING_POLICY_VERSION,
     metrics_definition_version: 'student-metrics-v5',
     grade: 'Grade 3',
@@ -97,8 +98,8 @@ test('uses only minimized deterministic facts and policy version in grounded ins
     unmapped_topic_incorrect_answers: 0,
     topic_evidence_status: 'weaknesses_identified',
     playtime_minutes: 24,
-    quest_evidence: [],
   });
+  assert.equal(questEvidence.length, 19);
   assert.equal(JSON.stringify(input).includes('Do not include'), false);
   assert.equal(JSON.stringify(input).includes('44'), false);
 });
@@ -128,15 +129,44 @@ test('includes deterministic per-quest timing and graded evidence in the provide
     response_time_seconds: [8, 11, 45, 9, 52][index],
   }));
   const input = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics, activityLogs, quizSessions });
-  assert.deepEqual(input.quest_evidence.map((row) => row.canonical_task_id), ['go-to-teachers-house', 'oakleaf-bandits', 'tutorial']);
+  assert.equal(input.quest_evidence.length, 19);
+  assert.deepEqual(input.quest_evidence.map((quest) => quest.canonical_task_id), [
+    'tutorial', 'go-to-teachers-house', 'talk-to-the-teacher', 'first-bandit-math-challenge',
+    'oakleaf-bandits', 'oakleaf-boss-bandit', 'oakleaf-return-to-teacher',
+    'go-to-city-of-knowledge', 'go-to-school', 'talk-to-city-school-teacher',
+    'go-to-pinehill-village', 'deep-forest-bandits', 'pinehill-arrival', 'talk-to-old-man',
+    'pinehill-bandits', 'defeat-the-wizard', 'return-to-city-of-knowledge',
+    'return-to-city-school', 'final-teacher',
+  ]);
+  assert.ok(input.quest_evidence.some((row) => row.canonical_task_id === 'go-to-teachers-house'));
   assert.deepEqual(input.quest_evidence.find((row) => row.canonical_task_id === 'oakleaf-bandits'), {
     canonical_task_id: 'oakleaf-bandits', label: 'Oakleaf Bandits', map_id: 'oakleaf_village',
+    map_ids: ['oakleaf_village'], location_labels: ['Oakleaf Village'], quest_type: 'mathematics_battle',
     duration_seconds: 240, correct_answers: 2, incorrect_answers: 3, total_questions: 5,
+    result_count: 5, completion_date: null, last_result_at: null,
     accuracy: 40, average_response_seconds: 25,
     completion_status: 'observed', requires_graded_questions: true,
+    encounter_reporting: 'task_aggregate', encounters: [], topic_performance: [],
   });
   const changed = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics, activityLogs: activityLogs.map((row) => ({ ...row, duration_seconds: row.duration_seconds + 1 })), quizSessions });
   assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(changed));
+});
+
+test('case-variant historical task IDs group into one canonical campaign entry without changing evidence state', () => {
+  const input = buildGroundedInsightInput({
+    gradeLevel: 'Grade 1',
+    metrics,
+    activityLogs: [
+      { canonical_activity_id: 'task_triggered', canonical_task_id: 'Oakleaf-Bandits' },
+      { canonical_activity_id: 'task_completed', canonical_task_id: 'oakleaf-bandits' },
+    ],
+  });
+  const matching = input.quest_evidence.filter((quest) => quest.canonical_task_id === 'oakleaf-bandits');
+
+  assert.equal(matching.length, 1);
+  assert.equal(matching[0].completion_status, 'completed');
+  assert.equal(matching[0].requires_graded_questions, true);
+  assert.equal(matching[0].total_questions, 0);
 });
 
 test('metrics semantics and current difficulty are fingerprinted without changing the grounding policy', () => {
@@ -312,7 +342,8 @@ test('deduplicates repeated committed result events in per-quest grounded eviden
     { canonical_task_id: 'oakleaf-bandits', result_event_id: 'same-result', score: 0, total_items: 1 },
     { canonical_task_id: 'oakleaf-bandits', result_event_id: 'different-result', score: 1, total_items: 1 },
   ];
-  const [quest] = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics, quizSessions }).quest_evidence;
+  const quest = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics, quizSessions })
+    .quest_evidence.find((row) => row.canonical_task_id === 'oakleaf-bandits');
   assert.equal(quest.total_questions, 2);
   assert.equal(quest.correct_answers, 1);
   assert.equal(quest.incorrect_answers, 1);
@@ -344,15 +375,98 @@ test('keeps completed and started non-graded tasks distinct from missing graded 
     ],
   });
 
-  assert.deepEqual(input.quest_evidence.map((quest) => ({
-    canonical_task_id: quest.canonical_task_id,
-    completion_status: quest.completion_status,
-    requires_graded_questions: quest.requires_graded_questions,
-  })), [
-    { canonical_task_id: 'go-to-school', completion_status: 'completed', requires_graded_questions: false },
-    { canonical_task_id: 'oakleaf-bandits', completion_status: 'completed', requires_graded_questions: true },
-    { canonical_task_id: 'talk-to-city-school-teacher', completion_status: 'started', requires_graded_questions: false },
+  const byTask = new Map(input.quest_evidence.map((quest) => [quest.canonical_task_id, quest]));
+  assert.equal(input.quest_evidence.length, 19);
+  assert.equal(byTask.get('go-to-school').completion_status, 'completed');
+  assert.equal(byTask.get('go-to-school').requires_graded_questions, false);
+  assert.equal(byTask.get('oakleaf-bandits').completion_status, 'completed');
+  assert.equal(byTask.get('oakleaf-bandits').requires_graded_questions, true);
+  assert.equal(byTask.get('talk-to-city-school-teacher').completion_status, 'started');
+  assert.equal(byTask.get('talk-to-city-school-teacher').requires_graded_questions, false);
+});
+
+test('includes canonical quests with no observations and uses canonical labels and types', () => {
+  const input = buildGroundedInsightInput({
+    gradeLevel: 'Grade 1',
+    metrics: { ...metrics, validResultCount: 0, correctAnswers: 0, incorrectAnswers: 0, totalQuestions: 0 },
+  });
+  const byTask = new Map(input.quest_evidence.map((quest) => [quest.canonical_task_id, quest]));
+
+  assert.equal(input.quest_evidence.length, 19); // Tutorial plus the 18 player-facing graph tasks.
+  assert.equal(byTask.get('go-to-teachers-house').quest_type, 'exploration');
+  assert.equal(byTask.get('go-to-teachers-house').completion_status, 'not_recorded');
+  assert.equal(byTask.get('go-to-teachers-house').requires_graded_questions, false);
+  assert.equal(byTask.get('pinehill-bandits').quest_type, 'mathematics_battle');
+  assert.equal(byTask.get('defeat-the-wizard').quest_type, 'boss_battle');
+  assert.equal(byTask.get('go-to-pinehill-village').quest_type, 'map_transition');
+});
+
+test('uses current-cycle completion milestones and never lets freeform labels or map IDs replace canonical facts', () => {
+  const input = buildGroundedInsightInput({
+    gradeLevel: 'Grade 1',
+    metrics,
+    activityLogs: [{
+      canonical_activity_id: 'task_completed',
+      canonical_task_id: 'go-to-teachers-house',
+      current_quest: 'Freeform Deepest Forest Path text',
+      map_id: 'unrecognized-freeform-map',
+      completed_at: '2026-10-30T12:00:00.000Z',
+    }],
+    completedMilestones: [{
+      canonical_task_id: 'oakleaf-bandits', player_facing: true,
+      quest_graph_version: 'oakleaf-city-pinehill-v1', completed_at: '2026-10-30T12:05:00.000Z',
+    }, {
+      canonical_task_id: 'pinehill-bandits', player_facing: false,
+      quest_graph_version: 'oakleaf-city-pinehill-v1', completed_at: '2026-10-30T12:06:00.000Z',
+    }],
+  });
+  const byTask = new Map(input.quest_evidence.map((quest) => [quest.canonical_task_id, quest]));
+
+  assert.equal(byTask.get('go-to-teachers-house').label, "Go to the Teacher's House");
+  assert.equal(byTask.get('go-to-teachers-house').map_id, null);
+  assert.equal(byTask.get('go-to-teachers-house').completion_status, 'completed');
+  assert.equal(byTask.get('go-to-teachers-house').completion_date, '2026-10-30T12:00:00.000Z');
+  assert.equal(byTask.get('oakleaf-bandits').completion_status, 'completed');
+  assert.equal(byTask.get('oakleaf-bandits').completion_date, '2026-10-30T12:05:00.000Z');
+  assert.equal(byTask.get('pinehill-bandits').completion_status, 'not_recorded');
+});
+
+test('maps saved Pinehill Guard IDs to recorded encounters and aggregates only supported battle results', () => {
+  const quizSessions = [
+    {
+      canonical_task_id: 'pinehill-bandits', canonical_battle_id: 'pinehill_bandits2',
+      quest_graph_version: 'oakleaf-city-pinehill-v1', map_id: 'pinehill_village',
+      score: 1, total_items: 1, result_event_id: 'guard-two-answer', played_at: '2026-10-30T12:08:00.000Z',
+      question_set_id: 92, canonical_topic_id: 'addition', canonical_grade_level: 'Grade 1',
+      canonical_difficulty: 'Normal', question_topic_ids: [], question_math_topics: [],
+    },
+    {
+      canonical_task_id: 'pinehill-bandits', canonical_battle_id: 'pinehill_bandits4',
+      quest_graph_version: 'oakleaf-city-pinehill-v1', map_id: 'pinehill_village',
+      score: 0, total_items: 1, result_event_id: 'guard-four-answer', played_at: '2026-10-30T12:09:00.000Z',
+      question_set_id: 92, canonical_topic_id: 'addition', canonical_grade_level: 'Grade 1',
+      canonical_difficulty: 'Normal', question_topic_ids: [], question_math_topics: [],
+    },
+  ];
+  const quest = buildGroundedInsightInput({ gradeLevel: 'Grade 1', metrics, quizSessions })
+    .quest_evidence.find((row) => row.canonical_task_id === 'pinehill-bandits');
+
+  assert.deepEqual(quest.encounters, [
+    { id: 'pinehill_bandits2', label: 'Guard 2' },
+    { id: 'pinehill_bandits4', label: 'Guard 4' },
   ]);
+  assert.equal(quest.encounter_reporting, 'individual_recorded_encounters');
+  assert.deepEqual(quest.location_labels, ['Pinehill Village']);
+  assert.equal(quest.correct_answers, 1);
+  assert.equal(quest.incorrect_answers, 1);
+  assert.equal(quest.total_questions, 2);
+  assert.equal(quest.accuracy, 50);
+  assert.deepEqual(quest.topic_performance, [{
+    topic_id: 'addition', topic: 'Addition', grade_level: 'Grade 1',
+    correct_answers: 1, incorrect_answers: 1, total_questions: 2, accuracy: 50,
+  }]);
+  assert.equal(quest.last_result_at, '2026-10-30T12:09:00.000Z');
+  assert.equal(quest.completion_status, 'observed');
 });
 
 test('uses a mocked claim selection and returns only backend-rendered text', async () => {

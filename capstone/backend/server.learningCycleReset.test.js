@@ -58,7 +58,7 @@ try {
 const { app } = serverExports;
 const authHeaders = (token) => ({ Authorization: `Bearer ${token}` });
 const listen = () => new Promise((resolve) => {
-  const server = app.listen(0, () => resolve(server));
+  const server = app.listen(0, '127.0.0.1', () => resolve(server));
 });
 const close = (server) => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 const requestJson = async (baseUrl, requestPath, options = {}) => {

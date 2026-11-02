@@ -97,7 +97,11 @@ const successPayloadForUrl = (url, childrenPayload) => {
       aiIntegration: { ready: true },
     },
   });
-  if (url.includes('/quizzes?')) return jsonResponse({ data: [], pagination: { page: 1, limit: 20, total: 0, pages: 1 } });
+  if (url.includes('/quizzes?')) return jsonResponse({
+    data: [],
+    history_verification: { cycle_checked: true, excluded_unverifiable_count: 0, excluded_invalid_score_count: 0 },
+    pagination: { page: 1, limit: 20, total: 0, pages: 1 },
+  });
   if (url.includes('/topics?')) return jsonResponse([]);
   throw new Error(`Unexpected URL: ${url}`);
 };
@@ -197,6 +201,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
             percentage: 80,
             played_at: '2026-08-27T00:00:00.000Z',
           }],
+        history_verification: { cycle_checked: true, excluded_unverifiable_count: 0, excluded_invalid_score_count: 0 },
         });
       }
       return successPayloadForUrl(url, {
@@ -217,6 +222,97 @@ describe('ParentChildProgress child selection and game warnings', () => {
 
     expect(container.textContent).toContain('Difficult');
     expect(container.textContent).not.toContain('(Hard)');
+  });
+
+  test('does not use legacy quiz rows when current-cycle verification metadata is absent', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url.includes('/quizzes?')) return jsonResponse({ data: [{
+        id: 901, math_topic: 'Addition', difficulty: 'Difficult', score: 4,
+        total_items: 5, percentage: 80, played_at: '2026-10-20T08:00:00.000Z',
+      }] });
+      return successPayloadForUrl(url, {
+        children: [{ id: 44, student_name: 'Ava Santos', grade_level: 'Grade 3' }],
+        unlinked_count: 0,
+      });
+    });
+
+    await act(async () => root.render(<ParentChildProgress />));
+
+    expect(container.textContent).toContain('Quiz history is unavailable because its current learning cycle could not be verified.');
+    expect(container.textContent).not.toContain('Q1:80%');
+    expect(container.textContent).not.toContain('Addition');
+  });
+
+  test('an explicit empty canonical score history takes precedence over verified legacy fallback rows', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url.includes('/quizzes?')) return jsonResponse({
+        data: [{ id: 901, score: 4, total_items: 5, percentage: 80, played_at: '2026-10-20T08:00:00.000Z' }],
+        history_verification: { cycle_checked: true, excluded_unverifiable_count: 0, excluded_invalid_score_count: 0 },
+      });
+      if (url.startsWith('/api/student-progress/44?')) return jsonResponse({
+        progress: { student_id: 44, student_name: 'Ava Santos' },
+        metrics: { gameScore: 0, accuracy: null, totalProgress: null, totalQuestions: 0 },
+        scoreHistory: [],
+      });
+      return successPayloadForUrl(url, {
+        children: [{ id: 44, student_name: 'Ava Santos', grade_level: 'Grade 3' }],
+        unlinked_count: 0,
+      });
+    });
+
+    await act(async () => root.render(<ParentChildProgress />));
+
+    expect(container.textContent).not.toContain('Q1:80%');
+    expect(container.textContent).toContain('No quiz percentages recorded for this child.');
+    expect(container.textContent).not.toContain('current learning cycle could not be verified');
+  });
+
+  test('shows a clear partial-history notice while displaying only verified fallback results', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url.includes('/quizzes?')) return jsonResponse({
+        data: [{ id: 901, session_id: null, math_topic: 'Addition', difficulty: 'Difficult', score: 0,
+          total_items: 5, percentage: 0, played_at: '2026-10-20T08:00:00.000Z' }],
+        history_verification: { cycle_checked: true, excluded_unverifiable_count: 2, excluded_invalid_score_count: 1 },
+      });
+      return successPayloadForUrl(url, {
+        children: [{ id: 44, student_name: 'Ava Santos', grade_level: 'Grade 3' }],
+        unlinked_count: 0,
+      });
+    });
+
+    await act(async () => root.render(<ParentChildProgress />));
+
+    expect(container.textContent).toContain('Q1:0%');
+    expect(container.textContent).toContain('Some quiz results are hidden because their current learning cycle could not be verified.');
+  });
+
+  test('fresh canonical score history replaces an unverifiable legacy state and clears its warning', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url.startsWith('/api/student-progress/44/ai-insight?')) return jsonResponse({
+        status: 'regenerated',
+        insight: { performance_insight: 'Fresh current-cycle evidence is available.', strengths: [], weaknesses: [], recommendations: [] },
+        evidence_snapshot: {
+          progress: { student_id: 44, student_name: 'Ava Santos' },
+          metrics: { currentQuest: 'Tutorial', correctAnswers: 0, incorrectAnswers: 1, totalQuestions: 1, accuracy: 0, totalProgress: 5 },
+          scoreHistory: [{ id: 902, session_id: null, math_topic: 'Addition', difficulty: 'Easy', score: 0, total_items: 1, percentage: 0, played_at: '2026-10-21T08:30:00.000Z' }],
+        },
+      });
+      if (url.includes('/quizzes?')) return jsonResponse({ data: [{ id: 901, score: 4, total_items: 5, percentage: 80 }] });
+      return successPayloadForUrl(url, {
+        children: [{ id: 44, student_name: 'Ava Santos', grade_level: 'Grade 3' }],
+        unlinked_count: 0,
+      });
+    });
+
+    await act(async () => root.render(<ParentChildProgress />));
+    expect(container.textContent).toContain('Quiz history is unavailable because its current learning cycle could not be verified.');
+    expect(container.textContent).not.toContain('Q1:80%');
+
+    await act(async () => Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Refresh AI Insight').click());
+
+    expect(container.textContent).toContain('Q1:0%');
+    expect(container.textContent).not.toContain('Quiz history is unavailable because its current learning cycle could not be verified.');
   });
 
   test('shows historical progress for an active child despite a legacy progress archive marker', async () => {
@@ -410,11 +506,11 @@ describe('ParentChildProgress child selection and game warnings', () => {
 
   test('uses compact chronological chart labels and keeps topic details in the timeline data', () => {
     expect(buildScoreTimeline([
-      { id: 2, math_topic: 'Subtraction', difficulty: 'Difficult', percentage: 80, played_at: '2026-10-21T10:00:00.000Z' },
-      { id: 1, math_topic: 'Addition', difficulty: 'Easy', percentage: 60, played_at: '2026-10-20T10:00:00.000Z' },
+      { id: 2, session_id: 'session-2', math_topic: 'Subtraction', difficulty: 'Difficult', percentage: 80, played_at: '2026-10-21T10:00:00.000Z' },
+      { id: 1, session_id: 'session-1', math_topic: 'Addition', difficulty: 'Easy', percentage: 60, played_at: '2026-10-20T10:00:00.000Z' },
     ])).toEqual([
-      expect.objectContaining({ label: 'Q1', percentage: 60, topic: 'Addition', difficulty: 'Easy', sessionId: 1 }),
-      expect.objectContaining({ label: 'Q2', percentage: 80, topic: 'Subtraction', difficulty: 'Difficult', sessionId: 2 }),
+      expect.objectContaining({ label: 'Q1', percentage: 60, topic: 'Addition', difficulty: 'Easy', resultId: 1, sessionId: 'session-1' }),
+      expect.objectContaining({ label: 'Q2', percentage: 80, topic: 'Subtraction', difficulty: 'Difficult', resultId: 2, sessionId: 'session-2' }),
     ]);
   });
 
@@ -426,17 +522,18 @@ describe('ParentChildProgress child selection and game warnings', () => {
       { id: 'malformed', percentage: 'not-a-score', played_at: '2026-10-19T13:00:00.000Z' },
       { id: 'negative', percentage: -1, played_at: '2026-10-19T14:00:00.000Z' },
       { id: 'over-100', percentage: 101, played_at: '2026-10-19T15:00:00.000Z' },
-      { id: 2, percentage: 50, score: 5, total_items: 10, played_at: '2026-10-21T10:00:00.000Z' },
-      { id: 1, percentage: 0, score: 0, total_items: 10, played_at: '2026-10-20T10:00:00.000Z' },
+      { id: 2, session_id: null, percentage: 50, score: 5, total_items: 10, played_at: '2026-10-21T10:00:00.000Z' },
+      { id: 1, session_id: undefined, percentage: 0, score: 0, total_items: 10, played_at: '2026-10-20T10:00:00.000Z' },
     ])).toEqual([
-      expect.objectContaining({ label: 'Q1', percentage: 0, score: 0, totalItems: 10, sessionId: 1 }),
-      expect.objectContaining({ label: 'Q2', percentage: 50, score: 5, totalItems: 10, sessionId: 2 }),
+      expect.objectContaining({ label: 'Q1', percentage: 0, score: 0, totalItems: 10, resultId: 1, sessionId: null }),
+      expect.objectContaining({ label: 'Q2', percentage: 50, score: 5, totalItems: 10, resultId: 2, sessionId: null }),
     ]);
   });
 
   test('score timeline tooltip shows topic, difficulty, date, authoritative score, and percentage', async () => {
     const [point] = buildScoreTimeline([{
       id: 9,
+      session_id: 'playtime-session-9',
       math_topic: 'Addition',
       difficulty: 'Normal',
       percentage: 0,
@@ -450,9 +547,27 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('Q1');
     expect(container.textContent).toContain('Topic: Addition');
     expect(container.textContent).toContain('Difficulty: Normal');
+    expect(container.textContent).toContain('Session ID: playtime-session-9');
     expect(container.textContent).toContain('Date:');
     expect(container.textContent).toContain('Score: 0 / 5');
     expect(container.textContent).toContain('Percentage: 0%');
+  });
+
+  test('score timeline tooltip reports unavailable when no real session ID exists', async () => {
+    const [point] = buildScoreTimeline([{
+      id: 321,
+      math_topic: 'Addition',
+      difficulty: 'Easy',
+      percentage: 50,
+      played_at: '2026-10-20T10:00:00.000Z',
+    }]);
+
+    expect(point.resultId).toBe(321);
+    expect(point.sessionId).toBeNull();
+    await act(async () => root.render(<ScoreTimelineTooltip active payload={[{ payload: point }]} />));
+
+    expect(container.textContent).toContain('Session ID: unavailable');
+    expect(container.textContent).not.toContain('Session ID: 321');
   });
 
   test('does not display a zero score for ungraded story activity', () => {
@@ -538,9 +653,12 @@ describe('ParentChildProgress child selection and game warnings', () => {
         if (value.includes('student_id=45')) return jsonResponse({ data: [{ id: 2, student_id: 45, activity_description: 'Noah activity' }] });
         return jsonResponse({ data: [] });
       }
-      if (value.startsWith('/api/parent/children/44/quizzes?')) return jsonResponse({ data: [{
-        id: 1, percentage: 80, score: 4, total_items: 5, math_topic: 'Addition', difficulty: 'Easy', played_at: '2026-10-20T10:00:00.000Z',
-      }] });
+      if (value.startsWith('/api/parent/children/44/quizzes?')) return jsonResponse({
+        data: [{
+          id: 1, percentage: 80, score: 4, total_items: 5, math_topic: 'Addition', difficulty: 'Easy', played_at: '2026-10-20T10:00:00.000Z',
+        }],
+        history_verification: { cycle_checked: true, excluded_unverifiable_count: 0, excluded_invalid_score_count: 0 },
+      });
       if (value.startsWith('/api/parent/children/45/quizzes?')) return pendingBQuizzes;
       return successPayloadForUrl(value, { children, unlinked_count: 0 });
     });
@@ -630,6 +748,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
               accuracy: 60,
               totalProgress: 35,
             },
+            scoreHistory: [{ id: 901, session_id: 'parent-session-901', math_topic: 'Addition', difficulty: 'Easy', score: 4, total_items: 5, percentage: 80, played_at: '2026-10-21T08:20:00.000Z' }],
           },
         });
       }
@@ -650,6 +769,7 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('Deepest Forest Bandits');
     expect(container.textContent).toContain('Correct Answers3');
     expect(container.textContent).toContain('Incorrect Answers2');
+    expect(container.textContent).toContain('Q1:80%');
   });
 
   test('Refresh AI Insight recovers a no-data child view when new committed answers arrive', async () => {

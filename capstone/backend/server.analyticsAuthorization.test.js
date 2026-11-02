@@ -309,6 +309,7 @@ test('grounded insight endpoint returns a current cache without another provider
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const originalFetch = global.fetch;
   const originalAiGenerationEnabled = process.env.AI_GENERATION_ENABLED;
+  let providerCalls = 0;
   process.env.AI_GENERATION_ENABLED = 'false';
   t.after(async () => {
     global.fetch = originalFetch;
@@ -357,6 +358,7 @@ test('grounded insight endpoint returns a current cache without another provider
   };
   global.fetch = async (url, options) => {
     if (String(url).startsWith(baseUrl)) return originalFetch(url, options);
+    providerCalls += 1;
     throw new Error('provider must not be called for a current cache');
   };
 
@@ -369,13 +371,27 @@ test('grounded insight endpoint returns a current cache without another provider
   assert.equal(response.body.status, 'paused');
   assert.equal(response.body.code, 'AI_PAUSED');
   assert.equal(response.body.is_stale, false);
-  assert.deepEqual(response.body.insight, {
-    ...cachedInsight,
-    weaknesses: ['2 incorrect answers were recorded. This is limited evidence and does not identify a persistent Math weakness or a verified topic.'],
-    recommendations: ['Review the 2 missed questions and continue regular Math practice. More topic-linked results are needed for a specific recommendation.'],
-    topic_evidence_status: 'topic_metadata_unavailable',
-    quest_insights: [],
-  });
+  assert.equal(providerCalls, 0, 'a current cached response does not call an AI provider');
+  const insight = response.body.insight;
+  assert.equal(insight.performance_insight, cachedInsight.performance_insight);
+  assert.deepEqual(insight.strengths, []);
+  assert.deepEqual(insight.weaknesses, ['2 incorrect answers were recorded. This is limited evidence and does not identify a persistent Math weakness or a verified topic.']);
+  assert.deepEqual(insight.recommendations, ['Review the 2 missed questions and continue regular Math practice. More topic-linked results are needed for a specific recommendation.']);
+  assert.equal(insight.topic_evidence_status, 'topic_metadata_unavailable');
+  assert.ok(Array.isArray(insight.quest_insights) && insight.quest_insights.length > 0, 'the separate canonical quest evidence catalog remains available');
+  for (const quest of insight.quest_insights) {
+    assert.equal(quest.completion_status, 'not_recorded');
+    assert.equal(quest.completion_date, null);
+    assert.equal(quest.correct_answers, null);
+    assert.equal(quest.incorrect_answers, null);
+    assert.equal(quest.total_questions, 0);
+    assert.equal(quest.accuracy, null);
+    assert.equal(quest.result_count, 0);
+    assert.equal(quest.map_id, null);
+    assert.deepEqual(quest.location_labels, []);
+    assert.deepEqual(quest.encounters, []);
+    assert.deepEqual(quest.topic_performance, []);
+  }
 });
 
 test('grounded insight treats four valid results as preliminary and generates once', async (t) => {

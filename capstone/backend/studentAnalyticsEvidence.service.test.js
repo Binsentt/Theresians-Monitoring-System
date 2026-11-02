@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { loadStudentAnalyticsEvidence } = require('./studentAnalyticsEvidence.service');
+const { buildGroundedInsightInput } = require('./studentAnalyticsInsight.utils');
 
 test('joins committed game results to their canonical question-set Grade/topic before aggregation', async () => {
   const queries = [];
@@ -42,6 +43,7 @@ test('joins committed game results to their canonical question-set Grade/topic b
   assert.match(resultQuery.sql, /result_question\.topic_id AS exact_question_topic_id/i);
   assert.match(resultQuery.sql, /lf\.topic_id AS canonical_topic_id/i);
   assert.match(resultQuery.sql, /lf\.grade_level AS canonical_grade_level/i);
+  assert.match(resultQuery.sql, /gr\.canonical_battle_id/i);
   assert.deepEqual(evidence[0].metrics.topicPerformance, [{
     topicId: 'subtraction',
     topic: 'Subtraction',
@@ -303,4 +305,42 @@ test('recovers Current Quest only from canonical activity inside the Student cur
   assert.match(activityQuery, /activity_timestamp/i);
   assert.equal(evidence.activityLogs.length, 1);
   assert.equal(evidence.metrics.currentQuest, 'Pinehill Bandits');
+});
+
+test('only current-learning-cycle completion milestones feed Per-Quest Evidence', async () => {
+  const client = {
+    async query(sql) {
+      const normalized = String(sql).replace(/\s+/g, ' ').trim();
+      if (normalized.startsWith('SELECT progress')) return { rows: [{
+        student_id: 18,
+        grade_level: 'Grade 1',
+        current_learning_cycle_version: 2,
+        current_learning_cycle_started_at: '2026-10-01T00:00:00.000Z',
+      }] };
+      if (normalized.startsWith('SELECT student_id, milestone_id')) return { rows: [
+        { student_id: 18, canonical_task_id: 'go-to-teachers-house', milestone_id: 'go-to-teachers-house', learning_cycle_version: 2, player_facing: true, completed_at: '2026-10-02T00:00:00.000Z' },
+        { student_id: 18, canonical_task_id: 'oakleaf-bandits', milestone_id: 'oakleaf-bandits', learning_cycle_version: 1, player_facing: true, completed_at: '2026-09-02T00:00:00.000Z' },
+        { student_id: 18, canonical_task_id: 'talk-to-old-man', milestone_id: 'talk-to-old-man', learning_cycle_version: 2, player_facing: false, completed_at: '2026-10-03T00:00:00.000Z' },
+      ] };
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const [evidence] = await loadStudentAnalyticsEvidence({
+    progressQuery: 'SELECT progress FROM public.student_progress',
+  }, { connect: async () => client });
+  const insightInput = buildGroundedInsightInput({
+    gradeLevel: evidence.progress.grade_level,
+    metrics: evidence.metrics,
+    completedMilestones: evidence.completedMilestones,
+  });
+  const byTask = new Map(insightInput.quest_evidence.map((quest) => [quest.canonical_task_id, quest]));
+
+  assert.deepEqual(
+    evidence.completedMilestones.map((row) => row.canonical_task_id).sort(),
+    ['go-to-teachers-house', 'talk-to-old-man'],
+  );
+  assert.equal(byTask.get('go-to-teachers-house').completion_status, 'completed');
+  assert.equal(byTask.get('oakleaf-bandits').completion_status, 'not_recorded');
+  assert.equal(byTask.get('talk-to-old-man').completion_status, 'not_recorded');
 });

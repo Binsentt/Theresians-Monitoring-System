@@ -33,9 +33,12 @@
   --card-shadow: rgba(0,0,0,0.05);
 
   /* Status colors */
-  --success-color: #16a34a;
-  --warning-color: #d97706;
-  --error-color: #dc2626;
+  --success-color: #15803d;
+  --warning-color: #b45309;
+  --error-color: #b91c1c;
+  --success-surface-color: #15803d;
+  --warning-surface-color: #b45309;
+  --error-surface-color: #b91c1c;
   --validation-error-color: #b91c1c;
   --info-color: #2563eb;
   --accent-color: #2563eb;
@@ -199,6 +202,12 @@ th {
   --header-bg: #0f1720;
   --text-primary: #f1f5f9;
   --text-muted: #94a3b8;
+  --success-color: #4ade80;
+  --warning-color: #fbbf24;
+  --error-color: #f87171;
+  --success-surface-color: #166534;
+  --warning-surface-color: #78350f;
+  --error-surface-color: #7f1d1d;
   --validation-error-color: #f87171;
   --border-color: #374151;
   --card-shadow: rgba(0,0,0,0.6);
@@ -212,7 +221,7 @@ th {
 [data-theme='dark'] .sts-data-table thead { background: rgba(255,255,255,0.02); }
 [data-theme='dark'] .empty-table-msg { color: var(--text-muted); }
 [data-theme='dark'] .metric-label { color: var(--text-muted); }
-[data-theme='dark'] .metric-value { color: var(--status-color) !important; }
+[data-theme='dark'] .metric-value { color: var(--text-primary) !important; }
 
 /* Shared dark surfaces for legacy screens that still use plain HTML controls. */
 [data-theme='dark'] table,
@@ -528,4 +537,57 @@ textarea.error,
 [data-theme='dark'] .activity-log-reset-input.error {
   border-color: var(--validation-error-color, #f87171) !important;
   box-shadow: 0 0 0 1px var(--validation-error-color, #f87171);
+}
+
+/* Keep nested status and validation surfaces readable in dark mode. */
+[data-theme='dark'] .announcement-banner-success {
+  background: rgba(20, 83, 45, 0.72) !important;
+  border-color: rgba(74, 222, 128, 0.42) !important;
+  color: #dcfce7 !important;
+}
+
+[data-theme='dark'] .announcement-banner-error {
+  background: rgba(127, 29, 29, 0.68) !important;
+  border-color: rgba(248, 113, 113, 0.42) !important;
+  color: #fee2e2 !important;
+}
+
+[data-theme='dark'] .al-error {
+  background: rgba(127, 29, 29, 0.68) !important;
+  border-color: rgba(248, 113, 113, 0.42) !important;
+  color: var(--validation-error-color, #f87171) !important;
+}
+
+[data-theme='dark'] .temporary-password-warning,
+[data-theme='dark'] .temporary-password-settings-warning,
+[data-theme='dark'] .manager-ai-pause-banner,
+[data-theme='dark'] .parent-progress-archived-notice,
+[data-theme='dark'] .grounded-ai-status.preliminary {
+  background: rgba(120, 53, 15, 0.62) !important;
+  border-color: rgba(251, 191, 36, 0.45) !important;
+  color: #fef3c7 !important;
+}
+
+[data-theme='dark'] .grounded-ai-status.warning,
+[data-theme='dark'] .fixed-question-validation-review,
+[data-theme='dark'] .generated-question-card.invalid {
+  background: rgba(127, 29, 29, 0.54) !important;
+  border-color: rgba(248, 113, 113, 0.42) !important;
+  color: #fee2e2 !important;
+}
+
+[data-theme='dark'] .manager-status-pill.staged,
+[data-theme='dark'] .manager-status-pill.generating {
+  background: rgba(120, 53, 15, 0.72) !important;
+  color: #fef3c7 !important;
+}
+
+[data-theme='dark'] .manager-status-pill.superseded {
+  background: #374151 !important;
+  color: #e5e7eb !important;
+}
+
+[data-theme='dark'] .manager-status-pill.failed {
+  background: rgba(127, 29, 29, 0.72) !important;
+  color: #fee2e2 !important;
 }

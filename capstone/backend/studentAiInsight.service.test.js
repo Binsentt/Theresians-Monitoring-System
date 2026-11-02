@@ -127,8 +127,37 @@ test('zero valid results retain authoritative completed non-graded quest evidenc
   assert.equal(state.data_level, 'no_data');
   assert.equal(state.valid_result_count, 0);
   assert.equal(state.insight.performance_insight, undefined);
-  assert.equal(state.insight.quest_insights[0].canonical_task_id, 'go-to-school');
-  assert.equal(state.insight.quest_insights[0].summary, 'Quest completed — no graded questions required.');
+  const quest = state.insight.quest_insights.find((item) => item.canonical_task_id === 'go-to-school');
+  assert.equal(quest.completion_status, 'completed');
+  assert.equal(quest.summary, 'Quest completed — no graded questions required.');
+  assert.equal(providerCalls, 0);
+  assert.equal(harness.getSaved(), null);
+});
+
+test('current-cycle completion milestones reach Per-Quest Evidence without being treated as quiz results', async () => {
+  const harness = createHarness();
+  let providerCalls = 0;
+  const state = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics: metricsFor([]),
+    completedMilestones: [{
+      canonical_task_id: 'go-to-teachers-house',
+      player_facing: true,
+      completed_at: '2026-10-30T12:00:00.000Z',
+      learning_cycle_version: 3,
+    }],
+    pool: harness.pool,
+    generateInsight: async () => { providerCalls += 1; return generatedInsight('unused'); },
+  });
+  const quest = state.insight.quest_insights.find((item) => item.canonical_task_id === 'go-to-teachers-house');
+
+  assert.equal(state.status, 'no_data');
+  assert.equal(quest.completion_status, 'completed');
+  assert.equal(quest.quiz_status, 'not_required');
+  assert.equal(quest.completion_date, '2026-10-30T12:00:00.000Z');
+  assert.equal(quest.summary, 'Quest completed — no graded questions required.');
+  assert.equal(quest.total_questions, 0);
   assert.equal(providerCalls, 0);
   assert.equal(harness.getSaved(), null);
 });
@@ -336,7 +365,8 @@ test('current canonical non-graded completion replaces stale cached per-quest no
   });
 
   assert.equal(state.status, 'cached');
-  assert.equal(state.insight.quest_insights[0].summary, 'Quest completed — no graded questions required.');
+  const completedSchool = state.insight.quest_insights.find((quest) => quest.canonical_task_id === 'go-to-school');
+  assert.equal(completedSchool.summary, 'Quest completed — no graded questions required.');
 });
 
 test('paused insight with no cache returns a stable state without provider, transaction, or write', async () => {
@@ -590,6 +620,21 @@ test('provider failure keeps and marks the prior cached insight while canonical 
   assert.equal(state.topic_evidence_status, 'topic_metadata_unavailable');
   assert.deepEqual(harness.getSaved(), before);
   assert.ok(harness.calls.some(({ sql }) => sql === 'rollback'));
+
+  const retry = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    metrics: metricsFor([1, 1, 1, 1, 0]),
+    actorId: 2,
+    forceRefresh: true,
+    pool: harness.pool,
+    generateInsight: async () => generatedInsight('A later refresh succeeded.'),
+  });
+
+  assert.equal(retry.status, 'regenerated');
+  assert.equal(retry.is_stale, false);
+  assert.equal(retry.insight.performance_insight, 'A later refresh succeeded.');
+  assert.equal(harness.getSaved().insight.performance_insight, 'A later refresh succeeded.');
 });
 
 test('persistence failure reports a safe persistence diagnostic without changing the unavailable UX', async () => {

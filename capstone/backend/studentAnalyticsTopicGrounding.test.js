@@ -113,7 +113,27 @@ test('topic-only Grade/topic evidence supports a weakness without inventing ques
   assert.match(insight.recommendations[0], /Grade 1 Addition/);
   assert.equal(insight.topic_evidence_status, 'weaknesses_identified');
   assert.equal(catalog.weakness.some((claim) => claim.id.startsWith('quest_')), false);
-  assert.doesNotMatch(JSON.stringify(insight), /Oakleaf|Pinehill/i);
+  const mathematicsCopy = [
+    insight.performance_insight,
+    ...insight.strengths,
+    ...insight.weaknesses,
+    ...insight.recommendations,
+  ].join(' ');
+  assert.doesNotMatch(mathematicsCopy, /Oakleaf|Pinehill/i, 'quest labels cannot be presented as Mathematics topic claims');
+  assert.ok(Array.isArray(insight.quest_insights) && insight.quest_insights.length > 0, 'the separate Per-Quest Evidence catalog remains available');
+  for (const quest of insight.quest_insights) {
+    assert.equal(quest.completion_status, 'not_recorded');
+    assert.equal(quest.completion_date, null);
+    assert.equal(quest.correct_answers, null);
+    assert.equal(quest.incorrect_answers, null);
+    assert.equal(quest.total_questions, 0);
+    assert.equal(quest.accuracy, null);
+    assert.equal(quest.result_count, 0);
+    assert.equal(quest.map_id, null);
+    assert.deepEqual(quest.location_labels, []);
+    assert.deepEqual(quest.encounters, []);
+    assert.deepEqual(quest.topic_performance, []);
+  }
 });
 
 test('perfect recorded scores produce an explicit no-weakness and no-practice state', () => {

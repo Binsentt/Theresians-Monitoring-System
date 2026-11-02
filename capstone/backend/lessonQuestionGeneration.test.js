@@ -118,10 +118,7 @@ test('lesson generation sends only lesson context to the server-side Responses A
     assert.deepEqual(new Set(question.options), new Set(validQuestions[index].options));
     assert.equal(question.options.filter((option) => option === question.correct_answer).length, 1);
   });
-  assert.deepEqual(
-    questions.map((question) => question.options.indexOf(question.correct_answer)).sort(),
-    [0, 1]
-  );
+  assert.equal(new Set(questions.map((question) => question.options.indexOf(question.correct_answer))).size, 2);
 });
 
 test('lesson generation does not route or prompt on optional Topic metadata', async () => {
@@ -711,3 +708,94 @@ test('one provider response rejects repeated question content even when options 
     (error) => error instanceof QuestionGenerationError && error.code === 'QUESTION_AI_INVALID_RESPONSE'
   );
 });
+
+// Controlled Fisher-Yates draws cover four cyclic orders of the position
+// labels. Remaining shuffles use a fixed draw, so these tests never rely on
+// random chance to reach a particular correct-answer position.
+const answerPositionScenarios = [
+  [0.99, 0.99, 0.99],
+  [0, 0, 0],
+  [0.25, 0, 0.75],
+  [0.5, 1 / 3, 0],
+];
+
+const verifyControlledAnswerPositions = async (t, questionCount, generate) => {
+  const random = t.mock.method(Math, 'random', () => 0.5);
+  const totals = [0, 0, 0, 0];
+  const remainderPositions = new Set();
+  const sequences = new Set();
+  const source = Array.from({ length: questionCount }, (_, index) => ({
+    question: `Synthetic question ${index + 1}`,
+    options: [`correct-${index}`, `wrong-${index}-a`, `wrong-${index}-b`, `wrong-${index}-c`],
+    correct_answer: `correct-${index}`,
+  }));
+
+  for (const scenario of answerPositionScenarios) {
+    let draw = 0;
+    random.mock.mockImplementation(() => scenario[draw++] ?? 0.5);
+    const questions = await generate(source);
+    assert.equal(questions.length, questionCount);
+    const counts = [0, 0, 0, 0];
+    const positions = questions.map((question, index) => {
+      assert.equal(question.question, source[index].question);
+      assert.equal(question.correct_answer, source[index].correct_answer);
+      assert.equal(question.options.length, 4);
+      assert.ok(question.options.every((option) => typeof option === 'string' && option.trim()));
+      assert.deepEqual(new Set(question.options), new Set(source[index].options));
+      assert.equal(question.options.filter((option) => option === question.correct_answer).length, 1);
+      const position = question.options.indexOf(question.correct_answer);
+      counts[position] += 1;
+      totals[position] += 1;
+      return position;
+    });
+    assert.ok(Math.max(...counts) - Math.min(...counts) <= 1);
+    counts.forEach((count, position) => {
+      if (count > Math.floor(questionCount / 4)) remainderPositions.add(position);
+    });
+    sequences.add(positions.join(','));
+  }
+
+  // Each label receives the same aggregate count across the controlled sets,
+  // including sets smaller than four and totals with a remainder.
+  assert.deepEqual(totals, [questionCount, questionCount, questionCount, questionCount]);
+  if (questionCount % 4 !== 0) {
+    assert.deepEqual([...remainderPositions].sort(), [0, 1, 2, 3]);
+  }
+  assert.ok(sequences.size > 1, 'answer positions must vary across generated sets');
+};
+
+for (const questionCount of [1, 2, 3, 5, 17, 20]) {
+  test(`controlled single-request answer positions cover A-D for ${questionCount} questions`, async (t) => {
+    await verifyControlledAnswerPositions(t, questionCount, (source) => generateLessonQuestions({
+      lessonText: 'A synthetic addition lesson.',
+      title: 'Synthetic lesson',
+      gradeLevel: 'Grade 1',
+      difficulty: 'Easy',
+      questionCount,
+      apiKey: 'test-key',
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({ output_text: JSON.stringify({ questions: source }) }),
+      }),
+    }));
+  });
+
+  test(`controlled batched answer positions preserve persisted mappings for ${questionCount} questions`, async (t) => {
+    await verifyControlledAnswerPositions(t, questionCount, async (source) => {
+      let offset = 0;
+      const persisted = [];
+      const questions = await require('./lessonQuestionGeneration').generateLessonQuestionsInBatches({
+        questionCount,
+        batchSize: 5,
+        generateBatch: async ({ questionCount: batchCount }) => {
+          const batch = source.slice(offset, offset + batchCount);
+          offset += batchCount;
+          return batch;
+        },
+        onBatch: async ({ batch }) => persisted.push(...JSON.parse(JSON.stringify(batch))),
+      });
+      assert.deepEqual(persisted, questions);
+      return questions;
+    });
+  });
+}

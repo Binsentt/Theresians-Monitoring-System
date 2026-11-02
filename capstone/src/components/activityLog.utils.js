@@ -105,12 +105,15 @@ const parseDurationSeconds = (value) => {
 };
 
 export function formatActivityLogDuration(record) {
-  const formatted = String(record?.duration || '').trim();
-  if (formatted && !/^\d+$/.test(formatted)) return formatted;
+  const hasCanonicalDuration = Object.prototype.hasOwnProperty.call(record || {}, 'duration_seconds');
+  if (!hasCanonicalDuration) {
+    const formatted = String(record?.duration || '').trim();
+    if (formatted && !/^\d+$/.test(formatted)) return formatted;
+  }
 
-  const seconds = parseDurationSeconds(
-    record?.duration_seconds ?? record?.total_play_time ?? record?.duration
-  );
+  const seconds = parseDurationSeconds(hasCanonicalDuration
+    ? record.duration_seconds
+    : record?.total_play_time ?? record?.duration);
   if (seconds === null) return 'N/A';
   if (seconds < 60) return `${seconds}s`;
 

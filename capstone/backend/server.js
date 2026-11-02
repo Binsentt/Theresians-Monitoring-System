@@ -160,6 +160,8 @@ const {
 const {
   aggregateStudentAccuracy,
   buildStudentAnalyticsMetrics,
+  buildStudentAnalyticsScoreHistory,
+  sanitizeParentQuizHistoryRow,
 } = require('./studentAnalyticsMetrics.utils');
 const {
   PLAYER_FACING_TASKS,
@@ -10987,38 +10989,81 @@ app.get('/api/parent/children/:studentId/quizzes', requireParentAnalyticsAccess,
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
     const offset = (page - 1) * limit;
     const { studentId } = req.parentChildAccess;
+    const parentQuizHistoryCte = `
+      WITH parent_quiz_history_candidates AS (
+        SELECT gr.id, gr.parent_id, gr.student_name, gr.resolved_student_id, gr.grade_level, gr.difficulty,
+               gr.math_topic, gr.score, gr.total_items, gr.played_at,
+               gr.session_id AS source_session_id,
+               gr.playtime_session_id AS source_playtime_session_id,
+               student.current_learning_cycle_version,
+               student.current_learning_cycle_started_at,
+               linked_session.id AS linked_session_id,
+               linked_session.student_id AS linked_session_student_id,
+               linked_session.learning_cycle_version AS linked_session_learning_cycle_version,
+               CASE
+                 WHEN gr.session_id IS NULL AND gr.playtime_session_id IS NULL THEN
+                   COALESCE(student.current_learning_cycle_version, 0) = 0
+                   AND student.current_learning_cycle_started_at IS NULL
+                 WHEN linked_session.id IS NULL THEN false
+                 ELSE linked_session.learning_cycle_version IS NOT NULL
+                   AND linked_session.learning_cycle_version = COALESCE(student.current_learning_cycle_version, 0)
+                   AND (gr.session_id IS NULL OR gr.session_id = linked_session.id)
+                   AND (gr.playtime_session_id IS NULL OR gr.playtime_session_id = linked_session.id)
+               END AS cycle_verified,
+               CASE
+                 WHEN gr.score IS NOT NULL AND gr.score >= 0
+                   AND gr.total_items IS NOT NULL AND gr.total_items > 0
+                   AND gr.score <= gr.total_items THEN true
+                 ELSE false
+               END AS score_valid
+        FROM public.game_results gr
+        JOIN public.accounts student ON student.id = gr.resolved_student_id
+        LEFT JOIN public.playtime_sessions linked_session
+          ON linked_session.id = COALESCE(gr.session_id, gr.playtime_session_id)
+         AND linked_session.student_id = gr.resolved_student_id
+        WHERE gr.resolved_student_id = $1
+          AND (
+            student.current_learning_cycle_started_at IS NULL
+            OR gr.played_at >= student.current_learning_cycle_started_at
+          )
+      )
+    `;
 
     const [quizzesResult, countResult] = await Promise.all([
       pool.query(
-        `SELECT gr.id, gr.parent_id, gr.student_name, gr.resolved_student_id, gr.grade_level, gr.difficulty,
-                gr.math_topic, gr.score, gr.total_items, gr.percentage, gr.played_at
-         FROM public.game_results gr
-         JOIN public.accounts student ON student.id = gr.resolved_student_id
-         WHERE gr.resolved_student_id = $1
-           AND (
-             student.current_learning_cycle_started_at IS NULL
-             OR gr.played_at >= student.current_learning_cycle_started_at
-           )
+        `${parentQuizHistoryCte}
+         SELECT id, parent_id, student_name, resolved_student_id, grade_level, difficulty,
+                math_topic, score, total_items,
+                ROUND((score::NUMERIC * 100) / NULLIF(total_items, 0), 2) AS percentage,
+                played_at, current_learning_cycle_version, current_learning_cycle_started_at,
+                source_session_id, source_playtime_session_id, linked_session_id,
+                linked_session_student_id, linked_session_learning_cycle_version
+         FROM parent_quiz_history_candidates
+         WHERE cycle_verified IS TRUE AND score_valid IS TRUE
          ORDER BY played_at DESC NULLS LAST, id DESC
          LIMIT $2 OFFSET $3`,
         [studentId, limit, offset]
       ),
       pool.query(
-        `SELECT COUNT(*)::INTEGER AS total
-         FROM public.game_results gr
-         JOIN public.accounts student ON student.id = gr.resolved_student_id
-         WHERE gr.resolved_student_id = $1
-           AND (
-             student.current_learning_cycle_started_at IS NULL
-             OR gr.played_at >= student.current_learning_cycle_started_at
-           )`,
+        `${parentQuizHistoryCte}
+         SELECT COUNT(*) FILTER (WHERE cycle_verified IS TRUE AND score_valid IS TRUE) AS total,
+                COUNT(*) FILTER (WHERE cycle_verified IS NOT TRUE AND score_valid IS TRUE) AS excluded_unverifiable_count,
+                COUNT(*) FILTER (WHERE score_valid IS NOT TRUE) AS excluded_invalid_score_count
+         FROM parent_quiz_history_candidates`,
         [studentId]
       ),
     ]);
 
-    const total = countResult.rows[0]?.total || 0;
+    const countRow = countResult.rows[0] || {};
+    const total = Number(countRow.total) || 0;
+    const data = quizzesResult.rows.map(sanitizeParentQuizHistoryRow).filter(Boolean);
     res.json({
-      data: quizzesResult.rows,
+      data,
+      history_verification: {
+        cycle_checked: true,
+        excluded_unverifiable_count: Number(countRow.excluded_unverifiable_count) || 0,
+        excluded_invalid_score_count: Number(countRow.excluded_invalid_score_count) || 0,
+      },
       pagination: {
         page,
         limit,
@@ -11383,7 +11428,7 @@ app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, 
       progressQuery, params: [studentId], normalizeProgress: normalizeStudentProgressRow,
     }, pool);
     if (!evidence) return res.status(404).json({ error: 'Student progress not found' });
-    const { progress, metrics, activityLogs, quizSessions } = evidence;
+    const { progress, metrics, activityLogs, quizSessions, completedMilestones } = evidence;
     const progressSnapshot = withStudentAnalyticsAliases(evidence);
     const aiInsight = await resolveStudentAiInsight({
       studentId,
@@ -11393,13 +11438,14 @@ app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, 
       metrics,
       activityLogs,
       quizSessions,
+      completedMilestones,
       forceRefresh: req.body?.refresh === true,
       actorId: req.authenticatedUser.id,
       pool,
     });
     return res.status(aiInsight.status === 'no_data' ? 422 : 200).json({
       ...aiInsight,
-      evidence_snapshot: { progress: progressSnapshot, metrics },
+      evidence_snapshot: { progress: progressSnapshot, metrics, scoreHistory: buildStudentAnalyticsScoreHistory(quizSessions) },
     });
   } catch (err) {
     console.error('Generate grounded student insight failed:', err.message);
@@ -11448,6 +11494,7 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
       metrics,
       activityLogs: evidence.activityLogs,
       quizSessions: evidence.quizSessions,
+      completedMilestones: evidence.completedMilestones,
       actorId: req.authenticatedUser.id,
       pool,
     });
@@ -11457,7 +11504,7 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
       quizSessions,
       activityLogs: activityResult.rows,
     });
-    res.json({ progress, metrics, analysis, analyticsReadiness, aiInsight });
+    res.json({ progress, metrics, analysis, analyticsReadiness, aiInsight, scoreHistory: buildStudentAnalyticsScoreHistory(quizSessions) });
   } catch (err) {
     console.error('Fetch student progress failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch student progress' });

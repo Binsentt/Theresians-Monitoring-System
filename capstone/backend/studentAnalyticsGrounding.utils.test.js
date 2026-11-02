@@ -7,6 +7,7 @@ const {
   buildClaimSelectionSchema,
   validateClaimSelection,
   renderValidatedClaimSelection,
+  renderQuestInsights,
 } = require('./studentAnalyticsGrounding.utils');
 
 const input = {
@@ -176,10 +177,73 @@ test('renders authoritative non-graded quest completion without inventing quiz e
   const insight = renderValidatedClaimSelection(validSelection, catalog);
 
   assert.deepEqual(insight.quest_insights.map((quest) => [quest.canonical_task_id, quest.summary]), [
-    ['go-to-school', 'Quest completed — no graded questions required.'],
     ['oakleaf-bandits', 'Quest completed; no graded question result is recorded for this task yet.'],
+    ['go-to-school', 'Quest completed — no graded questions required.'],
     ['talk-to-city-school-teacher', 'Quest started — no graded questions required.'],
   ]);
+});
+
+test('renders canonical per-quest evidence in campaign order and omits unknown task IDs deterministically', () => {
+  const rendered = renderQuestInsights([
+    { canonical_task_id: 'final-teacher', completion_status: 'completed' },
+    { canonical_task_id: 'unknown-task-z', completion_status: 'completed' },
+    { canonical_task_id: 'go-to-school', completion_status: 'started' },
+    { canonical_task_id: 'tutorial', completion_status: 'completed' },
+    { canonical_task_id: 'oakleaf-bandits', completion_status: 'observed' },
+    { canonical_task_id: 'unknown-task-a', completion_status: 'completed' },
+  ]);
+
+  assert.deepEqual(rendered.map((quest) => quest.canonical_task_id), [
+    'tutorial', 'oakleaf-bandits', 'go-to-school', 'final-teacher',
+  ]);
+  assert.deepEqual(rendered.map((quest) => quest.completion_status), [
+    'completed', 'observed', 'started', 'completed',
+  ]);
+});
+
+test('renders exploration status, canonical type, verified completion date, and supported battle details separately', () => {
+  const [exploration, battle] = renderQuestInsights([
+    {
+      canonical_task_id: 'go-to-teachers-house', label: "Go to the Teacher's House",
+      quest_type: 'exploration', completion_status: 'not_recorded',
+      requires_graded_questions: false, completion_date: null,
+    },
+    {
+      canonical_task_id: 'pinehill-bandits', label: 'Pinehill Bandits',
+      quest_type: 'mathematics_battle', completion_status: 'completed',
+      requires_graded_questions: true, completion_date: '2026-10-30T12:00:00.000Z',
+      map_id: 'pinehill_village',
+      encounter_reporting: 'individual_recorded_encounters',
+      encounters: [{ id: 'pinehill_bandits2', label: 'Guard 2' }],
+      correct_answers: 8, incorrect_answers: 2, total_questions: 10, accuracy: 80,
+      average_response_seconds: 25,
+      topic_performance: [{
+        topic_id: 'multiplication', topic: 'Multiplication', grade_level: 'Grade 1',
+        correct_answers: 8, incorrect_answers: 2, total_questions: 10, accuracy: 80,
+      }],
+      last_result_at: '2026-10-30T11:59:00.000Z',
+    },
+  ]);
+
+  assert.equal(exploration.quest_type, 'exploration');
+  assert.equal(exploration.completion_status, 'not_recorded');
+  assert.equal(exploration.quiz_status, 'not_required');
+  assert.equal(exploration.summary, 'Not yet recorded; quiz not required.');
+  assert.equal(battle.quest_type, 'mathematics_battle');
+  assert.equal(battle.completion_status, 'completed');
+  assert.equal(battle.completion_date, '2026-10-30T12:00:00.000Z');
+  assert.equal(battle.correct_answers, 8);
+  assert.equal(battle.incorrect_answers, 2);
+  assert.equal(battle.total_questions, 10);
+  assert.equal(battle.accuracy, 80);
+  assert.deepEqual(battle.encounters, [{ id: 'pinehill_bandits2', label: 'Guard 2' }]);
+  assert.deepEqual(battle.location_labels, ['Pinehill Village']);
+  assert.deepEqual(battle.topic_performance, [{
+    topic_id: 'multiplication', topic: 'Multiplication', grade_level: 'Grade 1',
+    correct_answers: 8, incorrect_answers: 2, total_questions: 10, accuracy: 80,
+  }]);
+  assert.equal(battle.last_result_at, '2026-10-30T11:59:00.000Z');
+  assert.equal(battle.average_response_seconds, 25);
 });
 
 test('difficulty remains descriptive while canonical Grade-topic evidence supports weaknesses', () => {

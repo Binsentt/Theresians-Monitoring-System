@@ -302,8 +302,10 @@ describe('GroundedAiAnalysis', () => {
           quest_insights: [{
             canonical_task_id: 'first-bandit-math-challenge', label: 'Bandit challenge',
             map_id: 'oakleaf_village', duration_seconds: 240,
+            quest_type: 'mathematics_battle',
             correct_answers: 2, incorrect_answers: 3, total_questions: 5,
             accuracy: 40, average_response_time_seconds: 25,
+            average_response_seconds: 25,
             summary: 'Bandit challenge: 2 correct and 3 incorrect across 5 graded answers (40% accuracy); 4m 0s recorded activity; 25s average response time.',
           }],
         },
@@ -312,10 +314,48 @@ describe('GroundedAiAnalysis', () => {
 
     expect(container.textContent).toContain('Per-Quest Evidence');
     expect(container.textContent).toContain('Bandit challenge');
-    expect(container.textContent).toContain('2 correct and 3 incorrect');
+    expect(container.textContent).toContain('Type: Mathematics battle');
+    expect(container.textContent).toContain('2 correct, 3 incorrect of 5 questions (40%)');
     expect(container.textContent).toContain('25s average response time');
     expect(container.textContent).not.toContain('4m 0s recorded activity');
     expect(container.textContent).not.toContain('canonical task timing');
+  });
+
+  test('shows quest type, recording state, location, completion date, and only saved Guard encounters', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis aiInsight={{
+        status: 'generated', data_level: 'sufficient_data', valid_result_count: 5,
+        insight: {
+          performance_insight: 'Recorded overall accuracy is 40%.',
+          strengths: [], weaknesses: [], recommendations: [],
+          quest_insights: [{
+            canonical_task_id: 'pinehill-bandits', label: 'Pinehill Bandits',
+            quest_type: 'mathematics_battle', completion_status: 'completed',
+            completion_date: '2026-10-30T12:00:00.000Z',
+            requires_graded_questions: true, quiz_status: 'results_recorded',
+            location_labels: ['Pinehill Village'],
+            encounters: [{ id: 'pinehill_bandits2', label: 'Guard 2' }],
+            correct_answers: 1, incorrect_answers: 1, total_questions: 2, accuracy: 50,
+            topic_performance: [{
+              topic_id: 'addition', topic: 'Addition', grade_level: 'Grade 1',
+              correct_answers: 1, incorrect_answers: 1, total_questions: 2, accuracy: 50,
+            }],
+            last_result_at: '2026-10-30T11:59:00.000Z',
+            summary: 'Recorded evidence: 1 correct and 1 incorrect (50%).',
+          }],
+        },
+      }} />
+    ));
+
+    expect(container.textContent).toContain('Type: Mathematics battle');
+    expect(container.textContent).toContain('Status: Completed');
+    expect(container.textContent).toContain('Pinehill Village');
+    expect(container.textContent).toContain('Guard 2');
+    expect(container.textContent).toContain('1 correct, 1 incorrect of 2 questions (50%)');
+    expect(container.textContent).toContain('Grade 1 Addition');
+    expect(container.textContent).not.toContain('Guard 1');
+    expect(container.textContent).not.toContain('Guard 3');
+    expect(container.textContent).not.toContain('Guard 4');
   });
 
   test('hides canonical quest duration from presentation without mutating graded or response-time evidence', async () => {

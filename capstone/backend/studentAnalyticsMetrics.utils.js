@@ -157,6 +157,106 @@ const normalizeResult = (row = {}) => {
   };
 };
 
+const hasIdentifier = (value) => value !== null && value !== undefined
+  && !(typeof value === 'string' && value.trim() === '');
+
+const sameDatabaseId = (left, right) => {
+  const normalizedLeft = toNonNegativeInteger(left);
+  const normalizedRight = toNonNegativeInteger(right);
+  return normalizedLeft !== null && normalizedRight !== null && normalizedLeft === normalizedRight;
+};
+
+const isParentQuizHistoryRowCurrentCycle = (row = {}) => {
+  const currentCycleVersion = toNonNegativeInteger(row.current_learning_cycle_version);
+  if (currentCycleVersion === null) return false;
+
+  const sourceSessionId = hasIdentifier(row.source_session_id) ? row.source_session_id : null;
+  const sourcePlaytimeSessionId = hasIdentifier(row.source_playtime_session_id)
+    ? row.source_playtime_session_id : null;
+  const hasSessionReference = sourceSessionId !== null || sourcePlaytimeSessionId !== null;
+  const cycleStartedAt = row.current_learning_cycle_started_at ?? null;
+
+  if (!hasSessionReference) {
+    // Pre-session legacy rows are verifiable only while the Student remains in
+    // the original cycle and no later reset boundary exists.
+    return currentCycleVersion === 0 && cycleStartedAt === null
+      && !hasIdentifier(row.linked_session_id);
+  }
+
+  const linkedSessionId = toNonNegativeInteger(row.linked_session_id);
+  const linkedSessionCycleVersion = toNonNegativeInteger(row.linked_session_learning_cycle_version);
+  if (linkedSessionId === null || linkedSessionCycleVersion === null
+    || linkedSessionCycleVersion !== currentCycleVersion
+    || !sameDatabaseId(row.linked_session_student_id, row.resolved_student_id)) return false;
+  if (sourceSessionId !== null && !sameDatabaseId(sourceSessionId, linkedSessionId)) return false;
+  if (sourcePlaytimeSessionId !== null && !sameDatabaseId(sourcePlaytimeSessionId, linkedSessionId)) return false;
+
+  if (cycleStartedAt !== null) {
+    const boundary = new Date(cycleStartedAt).getTime();
+    const playedAt = new Date(row.played_at).getTime();
+    if (!Number.isFinite(boundary) || !Number.isFinite(playedAt) || playedAt < boundary) return false;
+  }
+
+  return true;
+};
+
+const sanitizeParentQuizHistoryRow = (row = {}) => {
+  if (!isParentQuizHistoryRowCurrentCycle(row)) return null;
+  const result = normalizeResult(row);
+  if (!result) return null;
+
+  return {
+    id: row.id ?? null,
+    parent_id: row.parent_id ?? null,
+    student_name: row.student_name ?? null,
+    resolved_student_id: row.resolved_student_id ?? null,
+    grade_level: row.grade_level ?? null,
+    difficulty: row.difficulty ?? null,
+    math_topic: row.math_topic ?? null,
+    score: result.correctAnswers,
+    total_items: result.totalQuestions,
+    percentage: toPercentage(result.correctAnswers, result.totalQuestions),
+    played_at: row.played_at ?? null,
+    // This is the real linked playtime-session ID; never derive it from the
+    // result-row ID or from a missing legacy field.
+    session_id: hasIdentifier(row.linked_session_id) ? row.linked_session_id : null,
+  };
+};
+
+const buildStudentAnalyticsScoreHistory = (quizSessions = [], limit = 20) => {
+  if (!Array.isArray(quizSessions)) return [];
+  const maxRows = Math.max(0, Math.min(Number.parseInt(limit, 10) || 20, 20));
+  const seenResultEventIds = new Set();
+  const validResults = quizSessions
+    .map((row, index) => ({ row, index, result: normalizeResult(row) }))
+    .filter(({ result }) => Boolean(result))
+    .filter(({ row }) => {
+      const eventId = normalizeTopic(row.result_event_id);
+      if (!eventId) return true;
+      if (seenResultEventIds.has(eventId)) return false;
+      seenResultEventIds.add(eventId);
+      return true;
+    })
+    .sort((left, right) => {
+      const leftTime = new Date(left.row.played_at || 0).getTime();
+      const rightTime = new Date(right.row.played_at || 0).getTime();
+      const safeLeftTime = Number.isFinite(leftTime) ? leftTime : 0;
+      const safeRightTime = Number.isFinite(rightTime) ? rightTime : 0;
+      return safeLeftTime - safeRightTime || left.index - right.index;
+    })
+    .slice(-maxRows);
+
+  return validResults.map(({ row, result }) => ({
+    id: row.id ?? null,
+    session_id: row.session_id ?? null,
+    math_topic: result.topic,
+    difficulty: ({ easy: 'Easy', medium: 'Normal', hard: 'Difficult' })[result.difficulty] || null,
+    score: result.correctAnswers,
+    total_items: result.totalQuestions,
+    percentage: Number(((result.correctAnswers / result.totalQuestions) * 100).toFixed(2)),
+    played_at: row.played_at || null,
+  }));
+};
 const emptyDifficultyBreakdown = () => ({
   easy: { correctAnswers: 0, totalQuestions: 0, accuracy: null },
   medium: { correctAnswers: 0, totalQuestions: 0, accuracy: null },
@@ -444,9 +544,12 @@ function buildStudentAnalyticsMetrics({
 }
 
 module.exports = {
+  buildStudentAnalyticsScoreHistory,
   aggregateStudentAccuracy,
   buildStudentAnalyticsMetrics,
   normalizeDifficulty,
   normalizeResult,
+  isParentQuizHistoryRowCurrentCycle,
+  sanitizeParentQuizHistoryRow,
   toPercentage,
 };

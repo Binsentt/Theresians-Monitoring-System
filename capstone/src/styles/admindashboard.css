@@ -218,18 +218,28 @@
 }
 
 .status-tag.active {
-    background-color: #e6fffa;
-    color: #38a169;
+    background-color: #dcfce7;
+    color: var(--success-color, #15803d);
 }
 
 .status-tag.offline {
     background-color: #edf2f7;
-    color: #718096;
+    color: #475569;
+}
+
+[data-theme='dark'] .status-tag.active {
+    background-color: #14532d;
+    color: #dcfce7;
+}
+
+[data-theme='dark'] .status-tag.offline {
+    background-color: #374151;
+    color: #e5e7eb;
 }
 
 [data-theme='dark'] .dashboard-sts-container { background-color: var(--bg-primary) !important; }
 [data-theme='dark'] .sts-header-bar { background: var(--header-bg) !important; color: var(--text-primary) !important; }
-[data-theme='dark'] .metric-value { color: var(--status-color) !important; }
+[data-theme='dark'] .metric-value { color: var(--text-primary) !important; }
 [data-theme='dark'] .sts-metric-card { background: var(--panel-bg) !important; box-shadow: 0 4px 6px var(--card-shadow) !important; }
 [data-theme='dark'] .table-container { background: var(--panel-bg) !important; }
 [data-theme='dark'] .sts-data-table thead { background: rgba(255,255,255,0.02) !important; }

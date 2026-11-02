@@ -95,9 +95,22 @@ describe('normalizeActivityLogPayload', () => {
     expect(getActivityLogActivity({ activity_description: 'Gameplay Session' })).toBe('No active quest');
     expect(formatActivityLogDuration({ duration_seconds: 125 })).toBe('2m 5s');
     expect(formatActivityLogDuration({ total_play_time: 3600 })).toBe('1h 0m');
+    expect(formatActivityLogDuration({ duration_seconds: null, total_play_time: 3600 })).toBe('N/A');
     expect(formatActivityLogDuration({ duration: '7m 30s' })).toBe('7m 30s');
     expect(formatActivityLogDuration({})).toBe('N/A');
     expect(formatActivityLogDuration({ duration_seconds: 0 })).toBe('0s');
+  });
+
+  test('uses the canonical duration whenever the field is present', () => {
+    expect(formatActivityLogDuration({ duration_seconds: null, duration: '7m 30s' })).toBe('N/A');
+    expect(formatActivityLogDuration({ duration_seconds: null, total_play_time: 3600 })).toBe('N/A');
+    expect(formatActivityLogDuration({ duration_seconds: 0, duration: '7m 30s' })).toBe('0s');
+    expect(formatActivityLogDuration({ duration_seconds: 125, duration: '7m 30s' })).toBe('2m 5s');
+    expect(formatActivityLogDuration({ duration_seconds: undefined, duration: '7m 30s', total_play_time: 3600 })).toBe('N/A');
+    expect(formatActivityLogDuration({ duration_seconds: 'invalid', duration: '7m 30s', total_play_time: 3600 })).toBe('N/A');
+    expect(formatActivityLogDuration({ duration: '7m 30s' })).toBe('7m 30s');
+    expect(formatActivityLogDuration({ total_play_time: 3600 })).toBe('1h 0m');
+    expect(formatActivityLogDuration({})).toBe('N/A');
   });
 
   test('renders stored canonical quests with only meaningful stored difficulty', () => {

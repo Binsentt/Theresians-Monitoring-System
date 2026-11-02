@@ -23,6 +23,7 @@ describe('AnalyticsSidebar role items', () => {
     expect(getSidebarItemsForRole('admin').map((item) => item.label)).toContain('Screen Time Monitoring');
     expect(getSidebarItemsForRole('teacher').map((item) => item.label)).toContain('Screen Time Monitoring');
     expect(getSidebarItemsForRole('parent').map((item) => item.label)).toContain('My Child Screen Time');
+    expect(getSidebarItemsForRole('parent').map((item) => item.label)).toContain('Child Activity Log');
 
     const parentTeacherTeacherLabels = getSidebarItemsForRole('parent_teacher', 'teacher').map((item) => item.label);
     const parentTeacherParentLabels = getSidebarItemsForRole('parent_teacher', 'parent').map((item) => item.label);
@@ -51,7 +52,7 @@ describe('AnalyticsSidebar role items', () => {
       'Child Progress',
       'Parent Screen Time',
       'Parent Announcements',
-      'Parent Activity',
+      'Child Activity Log',
       'Teacher Dashboard',
       'Settings',
       'Logout',

@@ -1020,21 +1020,52 @@ test('parent game results routes and access middleware', async (t) => {
   });
 
   await t.test('returns paginated child quizzes for a linked parent', async () => {
+    let quizHistorySql = '';
     setQueryHandler(async (sql) => {
       if (sql.includes('from public.teacher_student_relationships') && sql.startsWith('select 1')) {
         return resultRows([{ linked: true }]);
       }
-      if (sql.startsWith('select gr.id, gr.parent_id') && sql.includes('from public.game_results')) {
+      if (sql.startsWith('with parent_quiz_history_candidates as') && sql.includes('select id, parent_id')) {
+        quizHistorySql = sql;
         return resultRows([{
           id: 12,
+          parent_id: 19,
+          student_name: 'Ava Santos',
+          resolved_student_id: 44,
+          grade_level: 'Grade 3',
+          difficulty: 'Difficult',
           math_topic: 'Fractions',
-          score: 8,
+          score: 0,
           total_items: 10,
-          percentage: '80.00',
+          percentage: '90.00',
+          played_at: '2026-10-21T08:00:00.000Z',
+          current_learning_cycle_version: 2,
+          current_learning_cycle_started_at: '2026-10-20T00:00:00.000Z',
+          source_session_id: 700,
+          source_playtime_session_id: 700,
+          linked_session_id: 700,
+          linked_session_student_id: 44,
+          linked_session_learning_cycle_version: 2,
+        }, {
+          id: 13,
+          parent_id: 19,
+          student_name: 'Ava Santos',
+          resolved_student_id: 44,
+          score: 4,
+          total_items: 5,
+          played_at: '2026-10-21T08:01:00.000Z',
+          current_learning_cycle_version: 2,
+          current_learning_cycle_started_at: '2026-10-20T00:00:00.000Z',
+          source_session_id: 701,
+          source_playtime_session_id: null,
+          linked_session_id: 701,
+          linked_session_student_id: 44,
+          linked_session_learning_cycle_version: 1,
         }]);
       }
-      if (sql.startsWith('select count(*)::integer as total') && sql.includes('from public.game_results')) {
-        return resultRows([{ total: 1 }]);
+      if (sql.startsWith('with parent_quiz_history_candidates as') && sql.includes('count(*) filter')) {
+        quizHistorySql = sql;
+        return resultRows([{ total: 1, excluded_unverifiable_count: 2, excluded_invalid_score_count: 1 }]);
       }
       return emptyResult;
     });
@@ -1044,7 +1075,19 @@ test('parent game results routes and access middleware', async (t) => {
     });
 
     assert.equal(response.status, 200);
+    assert.deepEqual(response.body.data.map((row) => row.id), [12]);
     assert.equal(response.body.data[0].math_topic, 'Fractions');
+    assert.equal(response.body.data[0].score, 0);
+    assert.equal(response.body.data[0].percentage, 0);
+    assert.equal(response.body.data[0].session_id, 700);
+    assert.deepEqual(response.body.history_verification, {
+      cycle_checked: true,
+      excluded_unverifiable_count: 2,
+      excluded_invalid_score_count: 1,
+    });
+    assert.match(quizHistorySql, /left join public\.playtime_sessions linked_session/i);
+    assert.match(quizHistorySql, /linked_session\.learning_cycle_version\s*=\s*coalesce\(student\.current_learning_cycle_version, 0\)/i);
+    assert.match(quizHistorySql, /gr\.played_at\s*>=\s*student\.current_learning_cycle_started_at/i);
     assert.deepEqual(response.body.pagination, {
       page: 1,
       limit: 20,

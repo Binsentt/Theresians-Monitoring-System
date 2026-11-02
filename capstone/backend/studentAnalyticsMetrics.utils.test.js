@@ -1,7 +1,102 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { aggregateStudentAccuracy, buildStudentAnalyticsMetrics } = require('./studentAnalyticsMetrics.utils');
+const {
+  aggregateStudentAccuracy,
+  buildStudentAnalyticsMetrics,
+  isParentQuizHistoryRowCurrentCycle,
+  sanitizeParentQuizHistoryRow,
+} = require('./studentAnalyticsMetrics.utils');
+
+const parentHistoryRow = (overrides = {}) => ({
+  id: 901,
+  parent_id: 19,
+  student_name: 'Ava Santos',
+  resolved_student_id: 44,
+  grade_level: 'Grade 3',
+  difficulty: 'Difficult',
+  math_topic: 'Addition',
+  score: 0,
+  total_items: 5,
+  percentage: 999,
+  played_at: '2026-10-21T08:00:00.000Z',
+  current_learning_cycle_version: 3,
+  current_learning_cycle_started_at: '2026-10-20T00:00:00.000Z',
+  source_session_id: 501,
+  source_playtime_session_id: 501,
+  linked_session_id: 501,
+  linked_session_student_id: 44,
+  linked_session_learning_cycle_version: 3,
+  ...overrides,
+});
+
+test('sanitizes linked Parent quiz history using current-cycle session version and authoritative score totals', () => {
+  const row = parentHistoryRow();
+
+  assert.equal(isParentQuizHistoryRowCurrentCycle(row), true);
+  assert.deepEqual(sanitizeParentQuizHistoryRow(row), {
+    id: 901,
+    parent_id: 19,
+    student_name: 'Ava Santos',
+    resolved_student_id: 44,
+    grade_level: 'Grade 3',
+    difficulty: 'Difficult',
+    math_topic: 'Addition',
+    score: 0,
+    total_items: 5,
+    percentage: 0,
+    played_at: '2026-10-21T08:00:00.000Z',
+    session_id: 501,
+  });
+});
+
+test('withholds Parent quiz rows whose linked session has a stale, missing, or mismatched cycle version', () => {
+  assert.equal(isParentQuizHistoryRowCurrentCycle(parentHistoryRow({ linked_session_learning_cycle_version: 2 })), false);
+  assert.equal(isParentQuizHistoryRowCurrentCycle(parentHistoryRow({ linked_session_learning_cycle_version: null })), false);
+  assert.equal(isParentQuizHistoryRowCurrentCycle(parentHistoryRow({ linked_session_student_id: 45 })), false);
+  assert.equal(isParentQuizHistoryRowCurrentCycle(parentHistoryRow({
+    source_playtime_session_id: 502,
+  })), false);
+  assert.equal(sanitizeParentQuizHistoryRow(parentHistoryRow({ linked_session_learning_cycle_version: 2 })), null);
+});
+
+test('permits an unlinked legacy result only for a verifiable initial cycle and never invents a session ID', () => {
+  const initialCycleRow = parentHistoryRow({
+    current_learning_cycle_version: 0,
+    current_learning_cycle_started_at: null,
+    source_session_id: null,
+    source_playtime_session_id: null,
+    linked_session_id: null,
+    linked_session_student_id: null,
+    linked_session_learning_cycle_version: null,
+  });
+
+  assert.equal(isParentQuizHistoryRowCurrentCycle(initialCycleRow), true);
+  assert.equal(sanitizeParentQuizHistoryRow(initialCycleRow).session_id, null);
+  assert.equal(isParentQuizHistoryRowCurrentCycle(parentHistoryRow({
+    current_learning_cycle_version: null,
+    source_session_id: null,
+    source_playtime_session_id: null,
+    linked_session_id: null,
+    linked_session_student_id: null,
+    linked_session_learning_cycle_version: null,
+  })), false);
+  assert.equal(isParentQuizHistoryRowCurrentCycle(parentHistoryRow({
+    current_learning_cycle_version: 2,
+    source_session_id: null,
+    source_playtime_session_id: null,
+    linked_session_id: null,
+    linked_session_student_id: null,
+    linked_session_learning_cycle_version: null,
+  })), false);
+});
+
+test('excludes invalid score totals and verifies the current-cycle start boundary', () => {
+  assert.equal(sanitizeParentQuizHistoryRow(parentHistoryRow({ score: 6 })), null);
+  assert.equal(sanitizeParentQuizHistoryRow(parentHistoryRow({ total_items: 0 })), null);
+  assert.equal(isParentQuizHistoryRowCurrentCycle(parentHistoryRow({ played_at: '2026-10-19T23:59:59.000Z' })), false);
+  assert.equal(isParentQuizHistoryRowCurrentCycle(parentHistoryRow({ played_at: null })), false);
+});
 
 test('aggregates cohort accuracy from authoritative answer totals instead of averaging student percentages', () => {
   assert.deepEqual(aggregateStudentAccuracy([

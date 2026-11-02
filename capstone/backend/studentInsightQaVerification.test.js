@@ -106,23 +106,39 @@ test('successful insight generation persists once and unchanged evidence verifie
   assert.equal(result.second.status, 'cached');
   assert.equal(result.cacheVerification, 'hit');
   assert.equal(providerCalls, 1);
-  assert.deepEqual(harness.getSaved().insight, {
-    ...generatedInsight,
-    weaknesses: [
-      '2 incorrect answers were recorded. This is limited evidence and does not identify a persistent Math weakness or a verified topic.',
-    ],
-    recommendations: [
-      'Review the 2 missed questions and continue regular Math practice. More topic-linked results are needed for a specific recommendation.',
-    ],
-    topic_evidence_status: 'topic_metadata_unavailable',
-    quest_insights: [],
-  });
-  assert.deepEqual(harness.getSaved().insight.weaknesses, [
+  const persistedInsight = harness.getSaved().insight;
+  assert.deepEqual(result.first.insight, persistedInsight, 'the initial generated response matches the persisted insight');
+  assert.deepEqual(result.second.insight, persistedInsight, 'the cache hit returns the same persisted insight');
+  assert.equal(persistedInsight.performance_insight, generatedInsight.performance_insight);
+  assert.deepEqual(persistedInsight.strengths, []);
+  assert.deepEqual(persistedInsight.weaknesses, [
     '2 incorrect answers were recorded. This is limited evidence and does not identify a persistent Math weakness or a verified topic.',
   ]);
-  assert.deepEqual(harness.getSaved().insight.recommendations, [
+  assert.deepEqual(persistedInsight.recommendations, [
     'Review the 2 missed questions and continue regular Math practice. More topic-linked results are needed for a specific recommendation.',
   ]);
+  assert.equal(persistedInsight.topic_evidence_status, 'topic_metadata_unavailable');
+  assert.ok(Array.isArray(persistedInsight.quest_insights) && persistedInsight.quest_insights.length > 0, 'the deterministic canonical quest catalog is persisted');
+  const mathematicsCopy = [
+    persistedInsight.performance_insight,
+    ...persistedInsight.strengths,
+    ...persistedInsight.weaknesses,
+    ...persistedInsight.recommendations,
+  ].join(' ');
+  assert.doesNotMatch(mathematicsCopy, /Oakleaf|Pinehill/i, 'quest labels do not become Mathematics claims');
+  for (const quest of persistedInsight.quest_insights) {
+    assert.equal(quest.completion_status, 'not_recorded');
+    assert.equal(quest.completion_date, null);
+    assert.equal(quest.correct_answers, null);
+    assert.equal(quest.incorrect_answers, null);
+    assert.equal(quest.total_questions, 0);
+    assert.equal(quest.accuracy, null);
+    assert.equal(quest.result_count, 0);
+    assert.equal(quest.map_id, null);
+    assert.deepEqual(quest.location_labels, []);
+    assert.deepEqual(quest.encounters, []);
+    assert.deepEqual(quest.topic_performance, []);
+  }
 });
 
 const withQaArtifact = async (callback) => {

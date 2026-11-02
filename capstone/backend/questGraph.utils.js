@@ -31,6 +31,71 @@ const CANONICAL_TASK_LABELS = Object.freeze({
   'final-teacher': 'Final Teacher',
 });
 
+const CANONICAL_TASK_EVIDENCE_TYPES = Object.freeze({
+  tutorial: 'exploration',
+  'go-to-teachers-house': 'exploration',
+  'talk-to-the-teacher': 'npc_interaction',
+  'first-bandit-math-challenge': 'mathematics_battle',
+  'oakleaf-bandits': 'mathematics_battle',
+  'oakleaf-boss-bandit': 'boss_battle',
+  'oakleaf-return-to-teacher': 'npc_interaction',
+  'go-to-city-of-knowledge': 'map_transition',
+  'go-to-school': 'navigation',
+  'talk-to-city-school-teacher': 'npc_interaction',
+  'go-to-pinehill-village': 'map_transition',
+  'deep-forest-bandits': 'mathematics_battle',
+  'pinehill-arrival': 'exploration',
+  'talk-to-old-man': 'npc_interaction',
+  'pinehill-bandits': 'mathematics_battle',
+  'defeat-the-wizard': 'boss_battle',
+  'return-to-city-of-knowledge': 'map_transition',
+  'return-to-city-school': 'map_transition',
+  'final-teacher': 'boss_battle',
+});
+
+const CANONICAL_ENCOUNTER_LABELS = Object.freeze({
+  'first-bandit-math-challenge': Object.freeze({ bandits: 'Bandit Encounter' }),
+  'oakleaf-bandits': Object.freeze({ oakleaf_bandits: 'Oakleaf Bandits' }),
+  'oakleaf-boss-bandit': Object.freeze({ oakleaf_boss_bandit: 'Boss Bandit' }),
+  'deep-forest-bandits': Object.freeze({ deepest_forest_bandits: 'City Forest Bandits' }),
+  'pinehill-bandits': Object.freeze({
+    pinehill_bandits: 'Pinehill Guards (aggregate)',
+    pinehill_bandits1: 'Guard 1',
+    pinehill_bandits2: 'Guard 2',
+    pinehill_bandits3: 'Guard 3',
+    pinehill_bandits4: 'Guard 4',
+  }),
+  'defeat-the-wizard': Object.freeze({ pinehill_wizard: 'Wizard' }),
+  'final-teacher': Object.freeze({ final_teacher: 'Final Teacher' }),
+});
+
+const CANONICAL_MAP_LABELS = Object.freeze({
+  oakleaf_village: 'Oakleaf Village',
+  city_of_knowledge: 'City of Knowledge',
+  pinehill_village: 'Pinehill Village',
+});
+
+const canonicalTaskEvidenceType = (taskId) => {
+  const normalized = normalizeCanonicalTaskId(taskId);
+  return CANONICAL_TASK_EVIDENCE_TYPES[normalized] || null;
+};
+
+const canonicalEncounterDisplayLabel = (taskId, battleId) => {
+  const task = normalizeCanonicalTaskId(taskId);
+  const encounter = normalizeCanonicalTaskId(battleId);
+  return CANONICAL_ENCOUNTER_LABELS[task]?.[encounter] || null;
+};
+
+const canonicalMapDisplayLabel = (taskId, mapId) => {
+  const task = normalizeCanonicalTaskId(taskId);
+  const map = normalizeCanonicalTaskId(mapId);
+  if (task === 'deep-forest-bandits'
+    && ['city_of_knowledge', 'deepest_forest', 'deepest_forest_path'].includes(map)) {
+    return 'City of Knowledge — Forest Area';
+  }
+  return CANONICAL_MAP_LABELS[map] || null;
+};
+
 const MAP_TASKS = Object.freeze({
   oakleaf: Object.freeze([
     'go-to-teachers-house', 'talk-to-the-teacher', 'first-bandit-math-challenge',
@@ -65,6 +130,20 @@ const canonicalTaskRequiresGradedEvidence = (taskId) => {
 const canonicalTaskWeight = (taskId) => MILESTONE_WEIGHTS[taskWeightType(taskId)] || 1;
 
 const normalizeCanonicalTaskId = (value) => String(value || '').trim().toLowerCase();
+
+const compareCanonicalTaskIdsByProgression = (left, right) => {
+  const leftId = normalizeCanonicalTaskId(left);
+  const rightId = normalizeCanonicalTaskId(right);
+  if (leftId === rightId) return 0;
+
+  const getPosition = (taskId) => {
+    if (taskId === 'tutorial') return 0;
+    const taskIndex = PLAYER_FACING_TASKS.indexOf(taskId);
+    return taskIndex >= 0 ? taskIndex + 1 : Number.MAX_SAFE_INTEGER;
+  };
+  const positionDifference = getPosition(leftId) - getPosition(rightId);
+  return positionDifference || leftId.localeCompare(rightId);
+};
 
 const canonicalTaskDisplayLabel = (taskId) => {
   const normalized = normalizeCanonicalTaskId(taskId);
@@ -126,9 +205,14 @@ module.exports = {
   MAP_TASKS,
   MILESTONE_WEIGHTS,
   CANONICAL_TASK_LABELS,
+  CANONICAL_TASK_EVIDENCE_TYPES,
+  canonicalTaskEvidenceType,
+  canonicalEncounterDisplayLabel,
+  canonicalMapDisplayLabel,
   canonicalTaskWeight,
   canonicalTaskRequiresGradedEvidence,
   canonicalTaskDisplayLabel,
+  compareCanonicalTaskIdsByProgression,
   calculateJourneyProgress,
   calculateWeightedCompletion,
 };

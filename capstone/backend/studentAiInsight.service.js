@@ -122,6 +122,7 @@ async function resolveStudentAiInsight({
   metrics = {},
   activityLogs = [],
   quizSessions = [],
+  completedMilestones = [],
   actorId = null,
   aiGenerationEnabled = isAiGenerationEnabled(),
   forceRefresh = false,
@@ -140,6 +141,7 @@ async function resolveStudentAiInsight({
     metrics,
     activityLogs,
     quizSessions,
+    completedMilestones,
     learningCycleVersion,
     learningCycleStartedAt,
   });

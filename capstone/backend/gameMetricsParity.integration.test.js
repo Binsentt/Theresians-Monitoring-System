@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
-const { calculateWeightedCompletion } = require('./questGraph.utils');
+const { calculateJourneyProgress, calculateWeightedCompletion } = require('./questGraph.utils');
 const { applyReleaseMigrations } = require('./releaseMigrations');
 
 const databaseUrl = process.env.GAME_METRICS_TEST_DATABASE_URL || '';
@@ -122,7 +122,7 @@ if (!isSafeDatabase(databaseUrl)) {
     else process.env.AI_GENERATION_ENABLED = previousAiEnabled;
   });
 
-  test('2 correct and 3 wrong stay identical across stored evidence and every consumer', async () => {
+  test('2 correct and 3 wrong stay aligned while leaderboard completion stays distinct from journey progress', async () => {
     const base = `http://127.0.0.1:${appServer.address().port}`;
     const adminHeaders = { Authorization: `Bearer ${token(adminId, 'admin')}` };
     const lease = await json(`${base}/api/playtime/start`, {
@@ -187,11 +187,13 @@ if (!isSafeDatabase(databaseUrl)) {
     assert.equal(cacheAfterDuplicate.rows[0].row_version, cacheAfterEvidence.rows[0].row_version,
       'an unchanged duplicate result leaves the evidence cache row untouched');
 
+    let activityStartedAt = Date.parse('2026-01-01T00:00:00.000Z');
     for (const milestone of [
       ['tutorial', 'tutorial.complete', "Go to the Teacher's House", 90],
       ['go-to-teachers-house', 'oakleaf.go-to-teachers-house.complete', 'Talk to the Teacher', 60],
     ]) {
       const [taskId, milestoneId, currentQuest, durationSeconds] = milestone;
+      const activityCompletedAt = activityStartedAt + (durationSeconds * 1000);
       const activity = await json(`${base}/api/game/activity`, {
         method: 'POST',
         body: JSON.stringify({
@@ -202,13 +204,14 @@ if (!isSafeDatabase(databaseUrl)) {
            canonical_task_id: taskId, canonical_milestone_id: milestoneId,
           current_quest: currentQuest,
           map_id: 'oakleaf_village', is_player_facing: true,
-          started_at: '2026-01-01T00:00:00.000Z',
-          completed_at: new Date(Date.parse('2026-01-01T00:00:00.000Z') + (durationSeconds * 1000)).toISOString(),
+          started_at: new Date(activityStartedAt).toISOString(),
+          completed_at: new Date(activityCompletedAt).toISOString(),
           duration_seconds: durationSeconds,
         }),
       });
       assert.equal(activity.status, 201, taskId);
       assert.equal(activity.body.duplicate, false);
+      activityStartedAt = activityCompletedAt;
     }
     const banditActivity = await json(`${base}/api/game/activity`, {
       method: 'POST',
@@ -225,7 +228,12 @@ if (!isSafeDatabase(databaseUrl)) {
     });
     assert.equal(banditActivity.status, 201);
 
-    const progress = calculateWeightedCompletion(['tutorial', 'go-to-teachers-house']);
+    const completedTaskIds = ['tutorial', 'go-to-teachers-house'];
+    const reachedTaskIds = ['first-bandit-math-challenge'];
+    const completionOnlyProgress = calculateWeightedCompletion(completedTaskIds);
+    const journeyProgress = calculateJourneyProgress({ completedTaskIds, reachedTaskIds });
+    assert.equal(completionOnlyProgress, 5.56, 'completed milestone weight remains distinct from the reached journey position');
+    assert.equal(journeyProgress, 16.67, 'the canonical reached-task position advances weighted journey progress');
     const leaderboard = await json(`${base}/api/game/leaderboard`, {
       method: 'POST',
       body: JSON.stringify({ session_id: sessionId, session_credential: credential, learning_cycle_version: 0 }),
@@ -233,16 +241,8 @@ if (!isSafeDatabase(databaseUrl)) {
     assert.equal(leaderboard.status, 200);
     assert.equal(leaderboard.body.entries.length, 1);
     assert.equal(leaderboard.body.entries[0].display_name, studentName);
-    assertMetrics(leaderboard.body.entries[0], 'leaderboard', progress);
+    assertMetrics(leaderboard.body.entries[0], 'leaderboard completion', completionOnlyProgress);
     assert.equal(leaderboard.body.entries[0].quests_completed, 2);
-
-    await pool.query(
-      `UPDATE public.playtime_sessions
-          SET status = 'Offline', end_time = start_time + INTERVAL '53 minutes',
-              total_playtime_minutes = 53, total_playtime_seconds = 3180
-        WHERE id = $1`,
-      [sessionId],
-    );
 
     const stored = await pool.query(`SELECT COUNT(*)::INTEGER AS count,
       COUNT(DISTINCT result_event_id)::INTEGER AS events,
@@ -259,20 +259,50 @@ if (!isSafeDatabase(databaseUrl)) {
     const activityEvidence = await pool.query(
       `SELECT canonical_task_id, duration_seconds
          FROM public.activity_logs WHERE student_id = $1
+          AND canonical_task_id IS NOT NULL
          ORDER BY duration_seconds DESC`, [studentId],
     );
     assert.deepEqual(activityEvidence.rows.map((row) => [row.canonical_task_id, Number(row.duration_seconds)]), [
       ['first-bandit-math-challenge', 240], ['tutorial', 90], ['go-to-teachers-house', 60],
     ]);
 
+    // Canonical completion activities provide milestone evidence, but the Game's
+    // current quest is an authoritative snapshot committed at the manual Save boundary.
+    const savedCurrentQuest = 'Defeat All Bandits';
+    const savedProgress = await json(`${base}/api/game/progress`, {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_id: parentCode, student_id: studentCode, student_name: studentName,
+        grade_level: 'Grade 1', current_quest: savedCurrentQuest,
+        current_scene: 'city_of_knowledge.tscn', current_map: 'oakleaf_village',
+        difficulty_level: 'Easy', score: 2, correct_answers: 2, total_questions: 5,
+        accuracy_rate: 40, progress_percentage: journeyProgress,
+        total_quests_completed: 2, learning_cycle_version: 0,
+        playtime_session_id: sessionId, playtime_session_credential: credential,
+      }),
+    });
+    assert.equal(savedProgress.status, 201, 'manual Save accepts the linked Student in the current Learning Cycle');
+    assert.equal(savedProgress.body.parent.parent_id, parentCode, 'Save remains scoped to the fixture Parent');
+    assert.equal(Number(savedProgress.body.student.id), studentId, 'Save resolves to the linked registered Student');
+    assert.equal(Number(savedProgress.body.progress.student_id), studentId);
+    assert.equal(savedProgress.body.progress.current_quest, savedCurrentQuest);
+
+    await pool.query(
+      `UPDATE public.playtime_sessions
+          SET status = 'Offline', end_time = start_time + INTERVAL '53 minutes',
+              total_playtime_minutes = 53, total_playtime_seconds = 3180
+        WHERE id = $1`,
+      [sessionId],
+    );
+
     const list = await json(`${base}/api/students/progress?lifecycle=active`, { headers: adminHeaders });
     const listRow = list.body.find((row) => Number(row.student_id) === studentId);
-    assert.equal(list.status, 200); assert.ok(listRow); assertMetrics(listRow, 'list', progress);
+    assert.equal(list.status, 200); assert.ok(listRow); assertMetrics(listRow, 'list journey', journeyProgress);
     assert.equal(listRow.incorrect_answers, 3);
-    assert.equal(listRow.current_quest, 'Talk to the Teacher', 'accepted completion stores the authoritative next quest, not the completed task');
+    assert.equal(listRow.current_quest, savedCurrentQuest, 'Student Progress reflects the quest from the accepted manual Save snapshot');
 
     const detail = await json(`${base}/api/student-progress/${studentId}?lifecycle=active`, { headers: adminHeaders });
-    assert.equal(detail.status, 200); assertMetrics(detail.body.progress, 'detail', progress);
+    assert.equal(detail.status, 200); assertMetrics(detail.body.progress, 'detail journey', journeyProgress);
     assert.deepEqual({
       correct: detail.body.metrics.correctAnswers,
       wrong: detail.body.metrics.incorrectAnswers,
@@ -284,7 +314,7 @@ if (!isSafeDatabase(databaseUrl)) {
 
     const top = await json(`${base}/api/top-achievers`, { headers: adminHeaders });
     const topRow = top.body.find((row) => Number(row.student_id) === studentId);
-    assert.equal(top.status, 200); assert.ok(topRow); assertMetrics(topRow, 'top', progress);
+    assert.equal(top.status, 200); assert.ok(topRow); assertMetrics(topRow, 'top achievers journey', journeyProgress);
     assert.equal(topRow.total_quests_completed, 2);
     assert.equal(Number(topRow.total_playtime_seconds), 3180, 'Top Achievers uses the same 53-minute session total');
 
@@ -332,11 +362,37 @@ if (!isSafeDatabase(databaseUrl)) {
     assert.ok(ended.body.session.end_time);
     assert.ok(Number(ended.body.session.total_playtime_seconds) >= 119);
 
+    const persistedEndedSession = await pool.query(
+      `SELECT status, end_time, total_playtime_seconds
+         FROM public.playtime_sessions
+        WHERE id = $1 AND student_id = $2`,
+      [sessionId, studentId],
+    );
+    assert.equal(persistedEndedSession.rowCount, 1, 'the ended session remains persisted under its exact ID');
+    assert.equal(persistedEndedSession.rows[0].status, 'Completed');
+    assert.ok(persistedEndedSession.rows[0].end_time, 'the persisted session has a final end time');
+    assert.ok(Number(persistedEndedSession.rows[0].total_playtime_seconds) >= 119, 'the persisted duration covers the simulated elapsed time');
+
     const offline = await json(`${base}/api/playtime?search=${encodeURIComponent(studentCode)}&limit=20`, { headers: adminHeaders });
-    const offlineRow = offline.body.data.find((row) => Number(row.id) === sessionId);
-    assert.equal(offlineRow.status, 'Offline');
-    assert.ok(offlineRow.end_time);
-    assert.ok(Number(offlineRow.total_playtime_seconds) >= 119);
+    const offlineRow = offline.body.data.find((row) => Number(row.student_id) === studentId);
+    assert.ok(offlineRow, 'Screen Time returns the Student summary row');
+    assert.notEqual(offlineRow.status, 'Playing', 'the Student is no longer shown as Playing');
+    assert.equal(offline.body.summary.playing_count, 0);
+    const persistedStudentPlaytime = await pool.query(
+      `SELECT COALESCE(SUM(
+                CASE
+                  WHEN COALESCE(ps.server_started_at, ps.start_time) < COALESCE(a.screen_time_reset_at, '-infinity'::timestamptz) THEN 0
+                  ELSE COALESCE(NULLIF(ps.total_playtime_seconds, 0), ps.total_playtime_minutes * 60, 0)
+                END
+              ), 0)::BIGINT AS total_playtime_seconds
+         FROM public.playtime_sessions ps
+         LEFT JOIN public.accounts a ON a.id = ps.student_id
+        WHERE ps.student_id = $1`,
+      [studentId],
+    );
+    assert.equal(Number(offline.body.summary.total_playtime_seconds), Number(persistedStudentPlaytime.rows[0].total_playtime_seconds));
+    assert.equal(Number(offlineRow.total_playtime_seconds), Number(persistedStudentPlaytime.rows[0].total_playtime_seconds));
+    assert.equal(Number(offlineRow.total_playtime_minutes), Math.floor(Number(persistedStudentPlaytime.rows[0].total_playtime_seconds) / 60));
 
     const top = await json(`${base}/api/top-achievers`, { headers: adminHeaders });
     const topRow = top.body.find((row) => Number(row.student_id) === studentId);

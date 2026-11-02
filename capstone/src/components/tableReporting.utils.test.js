@@ -56,6 +56,19 @@ describe('table reporting utilities', () => {
     expect(matchesTableSearch(row, '000087', ['student_name', 'game_student_id'])).toBe(false);
   });
 
+  test('matches Student, Parent, and Teacher IDs by leading prefix without losing zeroes', () => {
+    const student = { game_student_id: '001234' };
+    const parent = { parent_id: '001234' };
+    const teacher = { teacher_id: '17-000087' };
+
+    expect(matchesTableSearch(student, '001', ['game_student_id'])).toBe(true);
+    expect(matchesTableSearch(student, '1234', ['game_student_id'])).toBe(false);
+    expect(matchesTableSearch(parent, '0012', ['parent_id'])).toBe(true);
+    expect(matchesTableSearch(teacher, '17-0', ['teacher_id'])).toBe(true);
+    expect(matchesTableSearch(teacher, '1700', ['teacher_id'])).toBe(true);
+    expect(matchesTableSearch(teacher, '-', ['teacher_id'])).toBe(false);
+  });
+
   test('paginates the already filtered rows and clamps an invalid page', () => {
     expect(paginateTableRows(rows, 3, 2)).toEqual({
       rows: [rows[2]],

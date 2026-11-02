@@ -6,7 +6,15 @@ const MAX_SELECTION_ITEMS = 5;
 const MAX_TOPIC_LABEL_LENGTH = 80;
 const MAX_RENDERED_PERFORMANCE_LENGTH = 900;
 const { SCOPES, getTopicById, normalizeGradeLevel, normalizeTopicId } = require('./curriculumScopeRegistry');
-const { canonicalTaskDisplayLabel, PLAYER_FACING_TASKS } = require('./questGraph.utils');
+const {
+  canonicalTaskDisplayLabel,
+  canonicalTaskEvidenceType,
+  canonicalTaskRequiresGradedEvidence,
+  canonicalEncounterDisplayLabel,
+  canonicalMapDisplayLabel,
+  compareCanonicalTaskIdsByProgression,
+  PLAYER_FACING_TASKS,
+} = require('./questGraph.utils');
 
 const INSIGHT_VALIDATION_STAGES = Object.freeze({
   RESPONSE_SHAPE_INVALID: 'RESPONSE_SHAPE_INVALID',
@@ -486,18 +494,77 @@ function renderGroup(ids, catalog, category, separator = '\n') {
   return category === 'performance' ? text.join(separator) : text;
 }
 
+const safeQuestTimestamp = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+};
+
 function renderQuestInsights(questEvidence = []) {
+  const questTypeLabels = {
+    exploration: 'Exploration',
+    navigation: 'Navigation',
+    npc_interaction: 'NPC interaction',
+    mathematics_battle: 'Mathematics battle',
+    boss_battle: 'Boss battle',
+    map_transition: 'Map transition',
+  };
   return (Array.isArray(questEvidence) ? questEvidence : []).map((quest) => {
+    const taskId = asSafeQuestLabel(quest.canonical_task_id).toLowerCase();
+    if (taskId !== 'tutorial' && !PLAYER_FACING_TASKS.includes(taskId)) return null;
+    const questType = canonicalTaskEvidenceType(taskId);
+    const completionStatus = ['completed', 'started', 'observed', 'not_recorded']
+      .includes(String(quest.completion_status || '').trim().toLowerCase())
+      ? String(quest.completion_status).trim().toLowerCase() : 'not_recorded';
+    const requiresGradedQuestions = canonicalTaskRequiresGradedEvidence(taskId);
+    const totalQuestions = isNonNegativeInteger(quest.total_questions) ? quest.total_questions : 0;
+    const correctAnswers = isNonNegativeInteger(quest.correct_answers) ? quest.correct_answers : 0;
+    const incorrectAnswers = isNonNegativeInteger(quest.incorrect_answers) ? quest.incorrect_answers : 0;
+    const validScore = totalQuestions > 0 && correctAnswers + incorrectAnswers === totalQuestions;
+    const accuracy = validScore ? Number(((correctAnswers / totalQuestions) * 100).toFixed(2)) : null;
+    const completionDate = completionStatus === 'completed' ? safeQuestTimestamp(quest.completion_date) : null;
+    const lastResultAt = safeQuestTimestamp(quest.last_result_at);
+    const locationLabels = [...new Set((Array.isArray(quest.map_ids) ? quest.map_ids : [quest.map_id])
+      .map((mapId) => canonicalMapDisplayLabel(taskId, mapId))
+      .filter(Boolean))].sort();
+    const encounters = (Array.isArray(quest.encounters) ? quest.encounters : [])
+      .map((encounter) => {
+        const id = asSafeQuestLabel(encounter?.id).toLowerCase();
+        const label = canonicalEncounterDisplayLabel(taskId, id);
+        return label ? { id, label } : null;
+      })
+      .filter(Boolean)
+      .filter((encounter, index, rows) => rows.findIndex((row) => row.id === encounter.id) === index)
+      .sort((left, right) => left.id.localeCompare(right.id));
+    const topicPerformance = (Array.isArray(quest.topic_performance) ? quest.topic_performance : [])
+      .map((topic) => {
+        const topicId = normalizeTopicId(topic?.topic_id);
+        const gradeLevel = normalizeGradeLevel(topic?.grade_level);
+        const canonicalTopic = topicId ? getTopicById(topicId) : null;
+        const topicCorrect = isNonNegativeInteger(topic?.correct_answers) ? topic.correct_answers : null;
+        const topicIncorrect = isNonNegativeInteger(topic?.incorrect_answers) ? topic.incorrect_answers : null;
+        const topicTotal = isNonNegativeInteger(topic?.total_questions) ? topic.total_questions : null;
+        const belongsToGrade = Boolean(gradeLevel && topicId && SCOPES.some((scope) => (
+          scope.grade_level === gradeLevel && scope.topic_ids.includes(topicId)
+        )));
+        if (!canonicalTopic || !belongsToGrade || topicCorrect === null || topicIncorrect === null
+          || topicTotal === null || topicTotal < 1 || topicCorrect + topicIncorrect !== topicTotal) return null;
+        return {
+          topic_id: topicId,
+          topic: canonicalTopic.display_label,
+          grade_level: gradeLevel,
+          correct_answers: topicCorrect,
+          incorrect_answers: topicIncorrect,
+          total_questions: topicTotal,
+          accuracy: Number(((topicCorrect / topicTotal) * 100).toFixed(2)),
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => left.grade_level.localeCompare(right.grade_level) || left.topic.localeCompare(right.topic));
     const facts = [];
     if (isFiniteNumber(quest.duration_seconds)) facts.push(`recorded duration ${formatNumber(quest.duration_seconds)} seconds`);
-    if (isNonNegativeInteger(quest.total_questions) && quest.total_questions > 0
-      && isNonNegativeInteger(quest.correct_answers) && isNonNegativeInteger(quest.incorrect_answers)
-      && isFiniteNumber(quest.accuracy)) {
-      facts.push(`${quest.correct_answers} correct and ${quest.incorrect_answers} incorrect (${formatPercentage(quest.accuracy)})`);
-    }
+    if (validScore) facts.push(`${correctAnswers} correct and ${incorrectAnswers} incorrect (${formatPercentage(accuracy)})`);
     if (isFiniteNumber(quest.average_response_seconds)) facts.push(`average recorded response time ${formatNumber(quest.average_response_seconds)} seconds`);
-    const completionStatus = String(quest.completion_status || '').trim().toLowerCase();
-    const requiresGradedQuestions = quest.requires_graded_questions === true;
     const lifecycleSummary = completionStatus === 'completed'
       ? (requiresGradedQuestions
         ? 'Quest completed; no graded question result is recorded for this task yet.'
@@ -511,18 +578,39 @@ function renderQuestInsights(questEvidence = []) {
             ? 'Canonical quest activity is recorded, but no graded question result is recorded for this task yet.'
             : 'Canonical quest activity is recorded, but completion is not confirmed and no graded questions are required.')
           : (requiresGradedQuestions
-            ? 'No canonical completion or graded question evidence is recorded for this task yet.'
-            : 'No canonical completion evidence is recorded for this non-graded quest yet.');
+          ? 'Not yet recorded; graded results are required for this task.'
+            : 'Not yet recorded; quiz not required.');
+    const resultCount = isNonNegativeInteger(quest.result_count) ? quest.result_count : 0;
     return {
-      canonical_task_id: asSafeQuestLabel(quest.canonical_task_id),
-      label: asSafeQuestLabel(quest.label) || asSafeQuestLabel(quest.canonical_task_id),
-      map_id: asSafeQuestLabel(quest.map_id),
-      completion_status: completionStatus || 'unknown',
+      canonical_task_id: taskId,
+      label: canonicalTaskDisplayLabel(taskId),
+      quest_type: questType,
+      quest_type_label: questTypeLabels[questType] || 'Quest',
+      map_id: locationLabels.length > 0 ? asSafeQuestLabel(quest.map_id) : null,
+      location_labels: locationLabels,
+      completion_status: completionStatus,
+      completion_date: completionDate,
       requires_graded_questions: requiresGradedQuestions,
+      quiz_status: !requiresGradedQuestions ? 'not_required' : validScore ? 'results_recorded' : 'results_not_recorded',
+      result_count: resultCount,
+      encounter_reporting: encounters.length > 0 ? 'individual_recorded_encounters'
+        : resultCount > 0 ? 'task_aggregate' : 'unavailable',
+      encounters,
+      correct_answers: validScore ? correctAnswers : null,
+      incorrect_answers: validScore ? incorrectAnswers : null,
+      total_questions: validScore ? totalQuestions : 0,
+      accuracy,
+      topic_performance: topicPerformance,
+      average_response_seconds: isFiniteNumber(quest.average_response_seconds)
+        && quest.average_response_seconds >= 0 ? Number(quest.average_response_seconds) : null,
+      last_result_at: lastResultAt,
       summary: facts.length ? `Recorded evidence: ${facts.join('; ')}.` : lifecycleSummary,
     };
-  }).filter((quest) => quest.canonical_task_id)
-    .sort((left, right) => left.canonical_task_id.localeCompare(right.canonical_task_id));
+  }).filter(Boolean)
+    .sort((left, right) => compareCanonicalTaskIdsByProgression(
+      left.canonical_task_id,
+      right.canonical_task_id
+    ));
 }
 
 function renderValidatedClaimSelection(selection, catalog) {
