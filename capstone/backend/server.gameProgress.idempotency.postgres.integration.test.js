@@ -376,6 +376,8 @@ if (!isSafeDisposableDatabase(databaseUrl)) {
   });
 
   test('failed activity insertion rolls back the actual receipt and progress transaction', async () => {
+    const session = await startCurrentSession();
+    assert.equal(session.status, 201);
     const before = await pool.query(
       'SELECT id, score, updated_at FROM public.student_game_progress WHERE student_id = $1', [studentId]);
     await pool.query(`
@@ -395,12 +397,15 @@ if (!isSafeDisposableDatabase(databaseUrl)) {
 
     try {
       const body = progressPayload('db:rollback', {
+        learning_cycle_version: 1,
+        playtime_session_id: session.body.session_id,
+        playtime_session_credential: session.body.session_credential,
         score: 99,
         activity_description: 'tq-test-force-activity-failure',
       });
       const failed = await requestJson(body);
       assert.equal(failed.status, 500);
-      assert.deepEqual(await rowCountsFor(studentId, body.save_commit_id, 0), { receipts: 0, activities: 0 });
+      assert.deepEqual(await rowCountsFor(studentId, body.save_commit_id, 1), { receipts: 0, activities: 0 });
       const after = await pool.query(
         'SELECT id, score, updated_at FROM public.student_game_progress WHERE student_id = $1', [studentId]);
       assert.deepEqual(after.rows, before.rows, 'the attempted progress update rolled back with the receipt');
