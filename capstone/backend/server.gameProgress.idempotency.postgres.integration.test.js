@@ -319,15 +319,28 @@ if (!isSafeDisposableDatabase(databaseUrl)) {
 
   test('lost-response retry is idempotent; learning-cycle changes reject stale replay but permit the same ID in the new cycle', async () => {
     const firstBody = progressPayload('db:cycle-scoped');
-    const droppedResponse = await fetch(`${baseUrl}/api/game/progress`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(firstBody),
-    });
-    assert.equal(droppedResponse.status, 201);
-    // Deliberately discard the first response body as if the client could not
-    // persist the acknowledgement after the server transaction committed.
-    await droppedResponse.body?.cancel();
+    const originalJson = serverExports.app.response.json;
+    serverExports.app.response.json = function dropPostCommitResponse(body, ...args) {
+      if (this.req.originalUrl === '/api/game/progress'
+        && this.req.body?.save_commit_id === firstBody.save_commit_id
+        && this.statusCode === 201) {
+        // This method is reached only after the route's PostgreSQL COMMIT.
+        // Closing here gives the real HTTP client no success status or body.
+        this.destroy();
+        return this;
+      }
+      return originalJson.call(this, body, ...args);
+    };
+    try {
+      await assert.rejects(fetch(`${baseUrl}/api/game/progress`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(firstBody),
+      }));
+    } finally {
+      serverExports.app.response.json = originalJson;
+    }
+    assert.deepEqual(await rowCountsFor(studentId, firstBody.save_commit_id, 0), { receipts: 1, activities: 1 });
     const retry = await requestJson(firstBody);
     assert.equal(retry.status, 201);
     assert.deepEqual(await rowCountsFor(studentId, 'db:cycle-scoped', 0), { receipts: 1, activities: 1 });
