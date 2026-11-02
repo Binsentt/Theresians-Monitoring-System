@@ -11,6 +11,7 @@ const RELEASE_MIGRATIONS = Object.freeze([
   { version: 23, file: '023_quest_evidence_and_playtime_tombstones.sql' },
   { version: 24, file: '024_remove_legacy_six_digit_students.sql' },
   { version: 25, file: '025_add_game_result_question_traceability.sql' },
+  { version: 26, file: '026_game_progress_save_commit_idempotency.sql' },
 ]);
 
 const ADVISORY_LOCK_KEY = 4819020;
@@ -120,7 +121,7 @@ async function runReleaseMigrations({
 
 if (require.main === module) {
   runReleaseMigrations()
-    .then(() => console.log('Release migrations applied: 018, 019, 020, 021, 022, 023, 024, 025'))
+    .then(() => console.log('Release migrations applied: 018, 019, 020, 021, 022, 023, 024, 025, 026'))
     .catch((error) => {
       console.error(`Release migrations failed: ${error.message}`);
       process.exitCode = 1;
