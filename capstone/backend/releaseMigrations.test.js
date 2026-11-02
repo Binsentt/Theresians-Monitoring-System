@@ -12,15 +12,15 @@ test('release manifest includes migration 026 for game progress save commit idem
 
 test('save commit receipt migration is additive and enforces scoped idempotency constraints', () => {
   const sql = fs.readFileSync(path.join(__dirname, 'migrations', '026_game_progress_save_commit_idempotency.sql'), 'utf8');
-  assert.match(sql, /CREATE TABLE IF NOT EXISTS public\\.game_progress_save_commits/i);
-  assert.match(sql, /student_id INTEGER NOT NULL[\\s\\S]*REFERENCES public\\.accounts\\(id\\) ON DELETE CASCADE/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS public\.game_progress_save_commits/i);
+  assert.match(sql, /student_id INTEGER NOT NULL[\s\S]*REFERENCES public\.accounts\(id\) ON DELETE CASCADE/i);
   assert.match(sql, /learning_cycle_version INTEGER NOT NULL/i);
-  assert.match(sql, /PRIMARY KEY \\(student_id, learning_cycle_version, save_commit_id_hash\\)/i);
+  assert.match(sql, /PRIMARY KEY \(student_id, learning_cycle_version, save_commit_id_hash\)/i);
   assert.match(sql, /payload_sha256 TEXT NOT NULL/i);
   assert.match(sql, /activity_event_key TEXT NOT NULL/i);
   assert.match(sql, /response_body JSONB/i);
-  assert.match(sql, /UNIQUE \\(student_id, activity_event_key\\)/i);
-  assert.doesNotMatch(sql, /\\b(DROP|TRUNCATE|DELETE FROM|UPDATE public\\.(student_game_progress|activity_logs))\\b/i);
+  assert.match(sql, /UNIQUE \(student_id, activity_event_key\)/i);
+  assert.doesNotMatch(sql, /\b(DROP|TRUNCATE|DELETE FROM|UPDATE public\.(student_game_progress|activity_logs))\b/i);
 });
 
 test('question traceability migration is nullable, referential, and performs no historical guess or backfill', () => {
