@@ -5,25 +5,15 @@ const path = require('node:path');
 const { Client, Pool } = require('pg');
 const { RELEASE_MIGRATIONS, applyReleaseMigrations, runReleaseMigrations } = require('./releaseMigrations');
 const { buildProgressActivityEventKey, hashSaveCommitId } = require('./gameProgressSaveCommit.utils');
+const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('./testSafety/disposablePostgres');
 
 const databaseUrl = process.env.DATABASE_URL || '';
-const isSafeDisposableDatabase = (value) => {
-  try {
-    const url = new URL(value);
-    return ['postgres:', 'postgresql:'].includes(url.protocol)
-      && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(url.hostname.toLowerCase())
-      && decodeURIComponent(url.pathname) === '/tq_backend_test_ci'
-      && process.env.NODE_ENV === 'test';
-  } catch (_error) {
-    return false;
-  }
-};
-
-if (!isSafeDisposableDatabase(databaseUrl)) {
+if (!databaseUrl) {
   test('game progress idempotency PostgreSQL integration', {
-    skip: 'requires NODE_ENV=test and the disposable loopback tq_backend_test_ci database',
+    skip: 'DATABASE_URL is required for the run-marked disposable PostgreSQL integration test',
   }, () => {});
 } else {
+  assertDisposablePostgresUrl({ connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
   const parentCode = '930001';
   const otherParentCode = '930002';
   const studentCode = '24000011';
@@ -108,27 +98,34 @@ if (!isSafeDisposableDatabase(databaseUrl)) {
 
   test.before(async () => {
     const bootstrap = new Pool({ connectionString: databaseUrl });
-    await bootstrap.query(`CREATE TABLE IF NOT EXISTS public.accounts (
-      id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT, password TEXT,
-      role VARCHAR(50) NOT NULL, status VARCHAR(50) DEFAULT 'active'
-    )`);
-    await bootstrap.end();
+    try {
+      await assertDisposablePostgresDatabase({ client: bootstrap, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
+      await bootstrap.query(`CREATE TABLE IF NOT EXISTS public.accounts (
+        id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT, password TEXT,
+        role VARCHAR(50) NOT NULL, status VARCHAR(50) DEFAULT 'active'
+      )`);
+    } finally {
+      await bootstrap.end();
+    }
 
     serverExports = require('./server');
     pool = require('./database/db');
     await serverExports.schemaReady;
+    await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
 
     const activityIdempotencyMigration = await fs.readFile(
       path.join(__dirname, 'migrations', '012_add_activity_log_event_idempotency.sql'),
       'utf8',
     );
     await pool.query(activityIdempotencyMigration);
+    await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
     await pool.query('TRUNCATE public.accounts RESTART IDENTITY CASCADE');
 
     const priorReleaseMigrations = RELEASE_MIGRATIONS.filter(({ version }) => version < 26);
     const migrationClient = new Client({ connectionString: databaseUrl });
     await migrationClient.connect();
     try {
+      await assertDisposablePostgresDatabase({ client: migrationClient, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
       await applyReleaseMigrations({ client: migrationClient, migrations: priorReleaseMigrations });
     } finally {
       await migrationClient.end();
@@ -184,6 +181,7 @@ if (!isSafeDisposableDatabase(databaseUrl)) {
     };
 
     process.env.RELEASE_MIGRATIONS_APPROVED = 'true';
+    await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
     await runReleaseMigrations();
     appServer = await new Promise((resolve) => {
       const listening = serverExports.app.listen(0, '127.0.0.1', () => resolve(listening));
@@ -194,8 +192,10 @@ if (!isSafeDisposableDatabase(databaseUrl)) {
   test.after(async () => {
     if (appServer) await new Promise((resolve) => appServer.close(resolve));
     if (pool) {
+      await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
       await pool.query('DROP TRIGGER IF EXISTS tq_test_fail_activity_insert ON public.activity_logs').catch(() => {});
       await pool.query('DROP FUNCTION IF EXISTS public.tq_test_fail_activity_insert()').catch(() => {});
+      await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
       await pool.query('TRUNCATE public.accounts RESTART IDENTITY CASCADE').catch(() => {});
       await pool.end();
     }
@@ -226,6 +226,7 @@ if (!isSafeDisposableDatabase(databaseUrl)) {
     assert.ok(indexes.rows.some((row) => row.indexname === 'game_progress_save_commits_pkey'));
     assert.ok(indexes.rows.some((row) => row.indexname === 'game_progress_save_commits_activity_event_unique'));
 
+    await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
     await runReleaseMigrations();
     const after = await pool.query(`
       SELECT version, filename, checksum FROM public.schema_migrations WHERE version = 26`);
@@ -285,6 +286,58 @@ if (!isSafeDisposableDatabase(databaseUrl)) {
     assert.deepEqual(await rowCountsFor(studentId, body.save_commit_id, 0), { receipts: 1, activities: 1 });
   });
 
+  test('concurrent conflicting payloads yield one 201 and one 409 with no partial transaction state', async () => {
+    const commitId = 'db:concurrent-conflict-payload';
+    const payloadA = progressPayload(commitId, {
+      score: 4,
+      current_quest: 'Concurrent accepted quest A',
+      activity_description: 'Concurrent accepted activity A',
+    });
+    const payloadB = progressPayload(commitId, {
+      score: 9,
+      current_quest: 'Concurrent conflicting quest B',
+      activity_description: 'Concurrent conflicting activity B',
+    });
+    const beforeProgress = await pool.query(
+      'SELECT id, score, current_quest, updated_at FROM public.student_game_progress WHERE student_id = $1',
+      [studentId],
+    );
+    const responses = await Promise.all([requestJson(payloadA), requestJson(payloadB)]);
+    assert.deepEqual(responses.map(({ status }) => status).sort((a, b) => a - b), [201, 409]);
+    const successIndex = responses.findIndex(({ status }) => status === 201);
+    const success = responses[successIndex];
+    const conflict = responses[1 - successIndex];
+    const accepted = successIndex === 0 ? payloadA : payloadB;
+    assert.equal(conflict.body.code, 'SAVE_COMMIT_ID_REUSED');
+
+    assert.deepEqual(await rowCountsFor(studentId, commitId, 0), { receipts: 1, activities: 1 });
+    const receipt = await pool.query(
+      `SELECT response_status, response_body
+       FROM public.game_progress_save_commits
+       WHERE student_id = $1 AND learning_cycle_version = 0 AND save_commit_id_hash = $2`,
+      [studentId, hashSaveCommitId(commitId)],
+    );
+    assert.equal(receipt.rowCount, 1);
+    assert.equal(receipt.rows[0].response_status, 201);
+    assert.deepEqual(receipt.rows[0].response_body, success.body);
+
+    const committedProgress = await pool.query(
+      'SELECT id, score, current_quest, updated_at FROM public.student_game_progress WHERE student_id = $1',
+      [studentId],
+    );
+    assert.equal(committedProgress.rowCount, 1);
+    assert.equal(Number(committedProgress.rows[0].score), accepted.score);
+    assert.equal(committedProgress.rows[0].current_quest, accepted.current_quest);
+    assert.notDeepEqual(committedProgress.rows, beforeProgress.rows, 'only the successful request updated progress');
+
+    const committedActivity = await pool.query(
+      `SELECT activity_description FROM public.activity_logs
+       WHERE student_id = $1 AND event_key = $2`,
+      [studentId, eventKeyFor(commitId, 0)],
+    );
+    assert.deepEqual(committedActivity.rows, [{ activity_description: accepted.activity_description }]);
+  });
+
   test('distinct IDs with identical progress create distinct activities, and IDs are isolated by student', async () => {
     const sharedPayload = { score: 3, correct_answers: 3, total_questions: 5 };
     const first = progressPayload('db:distinct-a', sharedPayload);
@@ -309,6 +362,7 @@ if (!isSafeDisposableDatabase(databaseUrl)) {
       [secondStudentId],
     );
     assert.ok(beforeDelete.rows[0].count > 0);
+    await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
     await pool.query('DELETE FROM public.accounts WHERE id = $1', [secondStudentId]);
     const afterDelete = await pool.query(
       'SELECT COUNT(*)::INTEGER AS count FROM public.game_progress_save_commits WHERE student_id = $1',

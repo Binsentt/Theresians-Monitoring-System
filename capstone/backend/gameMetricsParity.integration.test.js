@@ -6,26 +6,16 @@ const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const { calculateJourneyProgress, calculateWeightedCompletion } = require('./questGraph.utils');
 const { applyReleaseMigrations } = require('./releaseMigrations');
+const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('./testSafety/disposablePostgres');
 
 const databaseUrl = process.env.GAME_METRICS_TEST_DATABASE_URL || '';
 
-const isSafeDatabase = (value) => {
-  try {
-    const url = new URL(value);
-    const name = decodeURIComponent(url.pathname.replace(/^\//, ''));
-    return ['postgres:', 'postgresql:'].includes(url.protocol)
-      && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(url.hostname.toLowerCase())
-      && /^tq_game_metrics_test_[a-z0-9_]+$/i.test(name);
-  } catch (_error) {
-    return false;
-  }
-};
-
-if (!isSafeDatabase(databaseUrl)) {
+if (!databaseUrl) {
   test('canonical game metrics local PostgreSQL integration', {
-    skip: 'GAME_METRICS_TEST_DATABASE_URL must target a loopback tq_game_metrics_test_* database',
+    skip: 'GAME_METRICS_TEST_DATABASE_URL is required for the run-marked disposable PostgreSQL integration',
   }, () => {});
 } else {
+  assertDisposablePostgresUrl({ connectionString: databaseUrl, expectedDatabaseName: 'tq_game_metrics_test_ci' });
   const previousDatabaseUrl = process.env.DATABASE_URL;
   const previousAiEnabled = process.env.AI_GENERATION_ENABLED;
   process.env.DATABASE_URL = databaseUrl;
@@ -63,20 +53,27 @@ if (!isSafeDatabase(databaseUrl)) {
 
   test.before(async () => {
     const bootstrap = new Pool({ connectionString: databaseUrl });
-    await bootstrap.query(`CREATE TABLE IF NOT EXISTS public.accounts (
-      id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT, password TEXT,
-      role VARCHAR(50) NOT NULL, status VARCHAR(50) DEFAULT 'active'
-    )`);
-    await bootstrap.end();
+    try {
+      await assertDisposablePostgresDatabase({ client: bootstrap, connectionString: databaseUrl, expectedDatabaseName: 'tq_game_metrics_test_ci' });
+      await bootstrap.query(`CREATE TABLE IF NOT EXISTS public.accounts (
+        id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT, password TEXT,
+        role VARCHAR(50) NOT NULL, status VARCHAR(50) DEFAULT 'active'
+      )`);
+    } finally {
+      await bootstrap.end();
+    }
 
     const { app, schemaReady } = require('./server');
     pool = require('./database/db');
     await schemaReady;
+    await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_game_metrics_test_ci' });
     await pool.query(fs.readFileSync(
       path.join(__dirname, 'migrations', '012_add_activity_log_event_idempotency.sql'),
       'utf8',
     ));
+    await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_game_metrics_test_ci' });
     await applyReleaseMigrations({ client: pool });
+    await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_game_metrics_test_ci' });
     await pool.query('TRUNCATE public.accounts RESTART IDENTITY CASCADE');
 
     const admin = await pool.query(`INSERT INTO public.accounts
@@ -113,6 +110,7 @@ if (!isSafeDatabase(databaseUrl)) {
   test.after(async () => {
     if (appServer) await new Promise((resolve) => appServer.close(resolve));
     if (pool) {
+      await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_game_metrics_test_ci' });
       await pool.query('TRUNCATE public.accounts RESTART IDENTITY CASCADE').catch(() => {});
       await pool.end();
     }

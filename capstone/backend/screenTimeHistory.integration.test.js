@@ -4,28 +4,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
+const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('./testSafety/disposablePostgres');
 
 const databaseUrl = process.env.SCREEN_TIME_TEST_DATABASE_URL || '';
-
-const isSafeDatabaseUrl = (value) => {
-  try {
-    const parsed = new URL(value);
-    const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
-    return ['postgres:', 'postgresql:'].includes(parsed.protocol)
-      && ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)
-      && /^tq_screen_time_test_[a-z0-9_]+$/i.test(databaseName);
-  } catch {
-    return false;
-  }
-};
 
 if (!databaseUrl) {
   test('Screen Time history local PostgreSQL integration (set SCREEN_TIME_TEST_DATABASE_URL to run)', {
     skip: 'isolated local PostgreSQL URL not provided',
   }, () => {});
 } else {
-  assert.equal(isSafeDatabaseUrl(databaseUrl), true,
-    'integration DB must be an isolated loopback tq_screen_time_test_* database');
+  assertDisposablePostgresUrl({ connectionString: databaseUrl, expectedDatabaseName: 'tq_screen_time_test_ci' });
   process.env.DATABASE_URL = databaseUrl;
   process.env.AI_RUNTIME_ENABLED = 'false';
 
@@ -60,21 +48,27 @@ if (!databaseUrl) {
 
   test.before(async () => {
     const bootstrapPool = new Pool({ connectionString: databaseUrl });
-    await bootstrapPool.query(`CREATE TABLE IF NOT EXISTS public.accounts (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      email TEXT,
-      password TEXT,
-      role VARCHAR(50) NOT NULL,
-      status VARCHAR(50) DEFAULT 'active'
-    )`);
-    await bootstrapPool.query("ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active'");
-    await bootstrapPool.end();
+    try {
+      await assertDisposablePostgresDatabase({ client: bootstrapPool, connectionString: databaseUrl, expectedDatabaseName: 'tq_screen_time_test_ci' });
+      await bootstrapPool.query(`CREATE TABLE IF NOT EXISTS public.accounts (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT,
+        password TEXT,
+        role VARCHAR(50) NOT NULL,
+        status VARCHAR(50) DEFAULT 'active'
+      )`);
+      await bootstrapPool.query("ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active'");
+    } finally {
+      await bootstrapPool.end();
+    }
     ({ app, schemaReady } = require('./server'));
     pool = require('./database/db');
     await schemaReady;
+    await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_screen_time_test_ci' });
     await runMigration();
     await runMigration();
+    await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_screen_time_test_ci' });
     await pool.query('TRUNCATE public.admin_audit_logs, public.playtime_sessions, public.accounts RESTART IDENTITY CASCADE');
     await pool.query(`INSERT INTO public.accounts (id, name, email, password, role, status, is_archived, session_version)
       VALUES (1, 'Local Screen Time Admin', 'screen-time-admin@example.test', 'unused', 'admin', 'active', false, 0),
