@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
 const { migrationChecksum } = require('../releaseMigrations');
@@ -320,4 +321,17 @@ test('preflight SQL opens a read-only transaction and contains only SELECT inspe
   assert.match(sql, /to_regclass/i);
   assert.match(sql, /COUNT\(\*\)/i);
   assert.doesNotMatch(sql, /^\s*(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b/im);
+});
+
+test('the supported release CLI stops before connecting when approval is absent', () => {
+  const script = path.resolve(__dirname, 'run-release-migrations.js');
+  const result = spawnSync(process.execPath, [script], {
+    cwd: path.resolve(__dirname, '..'),
+    encoding: 'utf8',
+    env: { PATH: process.env.PATH || '' },
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /RELEASE_MIGRATIONS_APPROVED=true/);
+  assert.doesNotMatch(result.stderr, /connect|database URL/i);
 });
