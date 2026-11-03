@@ -299,9 +299,12 @@ if (!databaseUrl) {
       activity_description: 'Concurrent conflicting activity B',
     });
     const beforeProgress = await pool.query(
-      'SELECT id, score, current_quest, updated_at FROM public.student_game_progress WHERE student_id = $1',
-      [studentId],
+      `SELECT id, score, current_quest, updated_at
+       FROM public.student_game_progress
+       WHERE student_id = $1 AND current_quest IN ($2, $3)`,
+      [studentId, payloadA.current_quest, payloadB.current_quest],
     );
+    assert.equal(beforeProgress.rowCount, 0, 'unique concurrent fixture quests are absent before the requests');
     const responses = await Promise.all([requestJson(payloadA), requestJson(payloadB)]);
     assert.deepEqual(responses.map(({ status }) => status).sort((a, b) => a - b), [201, 409]);
     const successIndex = responses.findIndex(({ status }) => status === 201);
@@ -322,10 +325,12 @@ if (!databaseUrl) {
     assert.deepEqual(receipt.rows[0].response_body, success.body);
 
     const committedProgress = await pool.query(
-      'SELECT id, score, current_quest, updated_at FROM public.student_game_progress WHERE student_id = $1',
-      [studentId],
+      `SELECT id, score, current_quest, updated_at
+       FROM public.student_game_progress
+       WHERE student_id = $1 AND current_quest IN ($2, $3)`,
+      [studentId, payloadA.current_quest, payloadB.current_quest],
     );
-    assert.equal(committedProgress.rowCount, 1);
+    assert.equal(committedProgress.rowCount, 1, 'the conflicting request did not create or update a second progress row');
     assert.equal(Number(committedProgress.rows[0].score), accepted.score);
     assert.equal(committedProgress.rows[0].current_quest, accepted.current_quest);
     assert.notDeepEqual(committedProgress.rows, beforeProgress.rows, 'only the successful request updated progress');
