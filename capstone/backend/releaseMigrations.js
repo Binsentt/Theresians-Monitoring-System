@@ -97,25 +97,11 @@ async function applyReleaseMigrations({
   }
 }
 
-async function runReleaseMigrations({
-  databaseConfig = buildReleaseDatabaseConfig(process.env),
-  migrationDir = path.join(__dirname, 'migrations'),
-} = {}) {
-  if (process.env.RELEASE_MIGRATIONS_APPROVED !== 'true') {
-    throw new Error('set RELEASE_MIGRATIONS_APPROVED=true for an authorized release migration run');
-  }
-  if (!databaseConfig) {
-    throw new Error('DATABASE_URL or Railway PostgreSQL connection variables are required for release migrations');
-  }
-
-  const { Client } = require('pg');
-  const client = new Client(databaseConfig);
-  await client.connect();
-  try {
-    await applyReleaseMigrations({ client, migrationDir });
-  } finally {
-    await client.end();
-  }
+async function runReleaseMigrations(options = {}) {
+  // Defer loading the gate until module exports are initialized when run directly.
+  await Promise.resolve();
+  const { runApprovedReleaseMigrations } = require('./scripts/run-approved-release-migrations');
+  return runApprovedReleaseMigrations(options);
 }
 
 if (require.main === module) {
