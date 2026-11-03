@@ -1,7 +1,6 @@
 \set ON_ERROR_STOP on
 
--- Use a read-only database role and PGOPTIONS:
--- -c default_transaction_read_only=on -c statement_timeout=30000
+-- Run with a dedicated read-only role. No row-level identifiers are selected.
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '30s';
 
@@ -27,17 +26,15 @@ FROM (VALUES
 ) AS objects(object_name)
 ORDER BY object_name;
 
-SELECT (to_regclass('public.schema_migrations') IS NOT NULL) AS ledger_present \gset
+SELECT to_regclass('public.schema_migrations') IS NOT NULL AS ledger_present \gset
 \if :ledger_present
-  \echo 'Migration ledger exists; continuing with read-only inspection.'
+  \echo 'Migration ledger exists.'
 \else
-  \echo 'STOP: schema_migrations is absent. Reconcile target history; no ledger was created.'
+  \echo 'STOP: schema_migrations is absent. Reconcile migration history; no ledger was created.'
   \quit 3
 \endif
 
--- Compare the returned ledger checksum to sha256sum of the exact migration
--- source files at the approved release commit. This query does not infer that
--- a missing ledger means all migrations are pending.
+-- A missing ledger row is reported as PENDING, never inferred as already applied.
 WITH expected(version, filename) AS (
   VALUES
     (18, '018_website_sessions_and_audit_metadata.sql'),
@@ -83,7 +80,7 @@ SELECT EXISTS (
   WHERE m.filename <> e.filename
 ) AS filename_mismatch \gset
 \if :filename_mismatch
-  \echo 'STOP: migration ledger filename mismatch. No preflight counts are trusted.'
+  \echo 'STOP: migration filename mismatch; do not approve a migration.'
   \quit 3
 \endif
 
@@ -91,14 +88,12 @@ SELECT EXISTS (
   SELECT 1 FROM public.schema_migrations WHERE version > 26
 ) AS newer_migration_present \gset
 \if :newer_migration_present
-  \echo 'STOP: ledger contains migration versions newer than this release source.'
+  \echo 'STOP: database ledger contains a version newer than this source.'
   \quit 3
 \endif
 
-
--- Account, progress, and activity schema metadata only. A missing optional
--- receipt table returns no rows; if 026 is already recorded as applied but
--- its table is missing, treat that as a stop condition.
+-- Compare each applied checksum with SHA-256 of the exact SQL source file at
+-- the reviewed commit. The script reports ledger values only.
 SELECT table_name, column_name, data_type, udt_name, is_nullable,
        character_maximum_length, column_default
 FROM information_schema.columns
@@ -128,20 +123,20 @@ ORDER BY table_name, c.conname;
 SELECT EXISTS (
          SELECT 1 FROM public.schema_migrations WHERE version = 26
        ) AS migration_026_applied,
-       (to_regclass('public.accounts') IS NOT NULL) AS accounts_present,
-       (to_regclass('public.activity_logs') IS NOT NULL) AS activity_logs_present,
-       (to_regclass('public.game_progress_save_commits') IS NOT NULL) AS receipts_present \gset
+       to_regclass('public.accounts') IS NOT NULL AS accounts_present,
+       to_regclass('public.activity_logs') IS NOT NULL AS activity_logs_present,
+       to_regclass('public.game_progress_save_commits') IS NOT NULL AS receipts_present \gset
 \if :migration_026_applied
   \if :receipts_present
     \echo 'Migration 026 is recorded and the receipt table exists; review its complete shape above.'
   \else
-    \echo 'STOP: migration 026 is recorded but the receipt table is absent.'
+    \echo 'STOP: migration 026 is recorded but its receipt table is absent.'
     \quit 3
   \endif
 \else
   \if :accounts_present
     \if :activity_logs_present
-      \echo 'Migration 026 prerequisites are present or will be checked against pending migration order.'
+      \echo 'Migration 026 prerequisite tables are present; compare their columns to migration 026.'
     \else
       \echo 'STOP: activity_logs is absent while migration 026 is not recorded.'
       \quit 3
@@ -158,14 +153,13 @@ WHERE schemaname = 'public'
   AND tablename IN ('activity_logs', 'game_progress_save_commits')
 ORDER BY tablename, indexname;
 
--- Only calculate deletion impact when migration 024 is still pending.
 SELECT NOT EXISTS (
   SELECT 1 FROM public.schema_migrations WHERE version = 24
 ) AS migration_024_pending \gset
 \if :migration_024_pending
-  SELECT (to_regclass('public.accounts') IS NOT NULL) AS accounts_present,
-         (to_regclass('public.game_results') IS NOT NULL) AS game_results_present,
-         (to_regclass('public.playtime_sessions') IS NOT NULL) AS playtime_sessions_present \gset
+  SELECT to_regclass('public.accounts') IS NOT NULL AS accounts_present,
+         to_regclass('public.game_results') IS NOT NULL AS game_results_present,
+         to_regclass('public.playtime_sessions') IS NOT NULL AS playtime_sessions_present \gset
   \if :accounts_present
     \if :game_results_present
       \if :playtime_sessions_present
@@ -200,8 +194,6 @@ SELECT NOT EXISTS (
   FROM public.playtime_sessions AS ps
   JOIN candidates AS c ON c.id = ps.student_id;
 
-  -- Known FK effects defined by migrations 018, 019, 021, 023, and 026.
-  -- Missing optional tables are skipped; review their pending versions above.
   SELECT to_regclass('public.website_sessions') IS NOT NULL AS website_sessions_present,
          to_regclass('public.student_quest_milestones') IS NOT NULL AS milestones_present,
          to_regclass('public.game_progress_save_commits') IS NOT NULL AS receipts_present,
@@ -212,7 +204,7 @@ SELECT NOT EXISTS (
       WHERE LOWER(role) = 'student'
         AND BTRIM(COALESCE(game_student_id, '')) ~ '^[0-9]{6}$'
     )
-    SELECT 'website_sessions.account_id (ON DELETE CASCADE)' AS impact, COUNT(*) AS row_count
+    SELECT 'website_sessions.account_id (CASCADE)' AS impact, COUNT(*) AS row_count
     FROM public.website_sessions AS ws
     JOIN candidates AS c ON c.id = ws.account_id;
   \endif
@@ -222,7 +214,7 @@ SELECT NOT EXISTS (
       WHERE LOWER(role) = 'student'
         AND BTRIM(COALESCE(game_student_id, '')) ~ '^[0-9]{6}$'
     )
-    SELECT 'student_quest_milestones.student_id (ON DELETE CASCADE)' AS impact, COUNT(*) AS row_count
+    SELECT 'student_quest_milestones.student_id (CASCADE)' AS impact, COUNT(*) AS row_count
     FROM public.student_quest_milestones AS sqm
     JOIN candidates AS c ON c.id = sqm.student_id;
   \endif
@@ -232,7 +224,7 @@ SELECT NOT EXISTS (
       WHERE LOWER(role) = 'student'
         AND BTRIM(COALESCE(game_student_id, '')) ~ '^[0-9]{6}$'
     )
-    SELECT 'game_progress_save_commits.student_id (ON DELETE CASCADE)' AS impact, COUNT(*) AS row_count
+    SELECT 'game_progress_save_commits.student_id (CASCADE)' AS impact, COUNT(*) AS row_count
     FROM public.game_progress_save_commits AS sc
     JOIN candidates AS c ON c.id = sc.student_id;
   \endif
@@ -240,66 +232,9 @@ SELECT NOT EXISTS (
     WITH candidates AS (
       SELECT id FROM public.accounts
       WHERE LOWER(role) = 'student'
-        AND BTRIM(COALESCE(game_student_id, '')) ~ '^[0-9]{6} for all direct inbound FK constraints and CASCADE
-  -- descendants. Operators must derive count-only joins for every additional
-  -- baseline relation shown here before approving migration 024.
-  SELECT confrelid::regclass::text AS referenced_parent,
-         conrelid::regclass::text AS referencing_child,
-         conname,
-         CASE confdeltype
-           WHEN 'a' THEN 'NO ACTION'
-           WHEN 'r' THEN 'RESTRICT'
-           WHEN 'c' THEN 'CASCADE'
-           WHEN 'n' THEN 'SET NULL'
-           WHEN 'd' THEN 'SET DEFAULT'
-         END AS on_delete,
-         pg_get_constraintdef(oid) AS definition
-  FROM pg_constraint
-  WHERE contype = 'f'
-    AND confrelid IN (
-      'public.accounts'::regclass,
-      'public.game_results'::regclass,
-      'public.playtime_sessions'::regclass
+        AND BTRIM(COALESCE(game_student_id, '')) ~ '^[0-9]{6}$'
     )
-  ORDER BY referenced_parent, referencing_child, conname;
-
-  WITH RECURSIVE cascade_edges(parent_oid, child_oid, constraint_oid, depth, path) AS (
-    SELECT c.confrelid, c.conrelid, c.oid, 1,
-           ARRAY[c.confrelid, c.conrelid]::oid[]
-    FROM pg_constraint AS c
-    WHERE c.contype = 'f'
-      AND c.confdeltype = 'c'
-      AND c.confrelid IN (
-        'public.accounts'::regclass,
-        'public.game_results'::regclass,
-        'public.playtime_sessions'::regclass
-      )
-    UNION ALL
-    SELECT c.confrelid, c.conrelid, c.oid, e.depth + 1,
-           e.path || c.conrelid
-    FROM cascade_edges AS e
-    JOIN pg_constraint AS c
-      ON c.contype = 'f'
-     AND c.confdeltype = 'c'
-     AND c.confrelid = e.child_oid
-    WHERE NOT c.conrelid = ANY(e.path)
-  )
-  SELECT DISTINCT e.depth,
-         e.parent_oid::regclass::text AS parent_table,
-         e.child_oid::regclass::text AS child_table,
-         c.conname,
-         pg_get_constraintdef(c.oid) AS definition
-  FROM cascade_edges AS e
-  JOIN pg_constraint AS c ON c.oid = e.constraint_oid
-  ORDER BY e.depth, parent_table, child_table, c.conname;
-\else
-  \echo 'Migration 024 is recorded as applied; no 024 deletion counts were run.'
-\endif
-
-ROLLBACK;
-
-    )
-    SELECT 'playtime_deletion_tombstones.deleted_by (ON DELETE SET NULL)' AS impact, COUNT(*) AS row_count
+    SELECT 'playtime_deletion_tombstones.deleted_by (SET NULL)' AS impact, COUNT(*) AS row_count
     FROM public.playtime_deletion_tombstones AS t
     JOIN candidates AS c ON c.id = t.deleted_by;
   \endif
@@ -307,66 +242,9 @@ ROLLBACK;
     WITH candidates AS (
       SELECT id FROM public.accounts
       WHERE LOWER(role) = 'student'
-        AND BTRIM(COALESCE(game_student_id, '')) ~ '^[0-9]{6} for all direct inbound FK constraints and CASCADE
-  -- descendants. Operators must derive count-only joins for every additional
-  -- baseline relation shown here before approving migration 024.
-  SELECT confrelid::regclass::text AS referenced_parent,
-         conrelid::regclass::text AS referencing_child,
-         conname,
-         CASE confdeltype
-           WHEN 'a' THEN 'NO ACTION'
-           WHEN 'r' THEN 'RESTRICT'
-           WHEN 'c' THEN 'CASCADE'
-           WHEN 'n' THEN 'SET NULL'
-           WHEN 'd' THEN 'SET DEFAULT'
-         END AS on_delete,
-         pg_get_constraintdef(oid) AS definition
-  FROM pg_constraint
-  WHERE contype = 'f'
-    AND confrelid IN (
-      'public.accounts'::regclass,
-      'public.game_results'::regclass,
-      'public.playtime_sessions'::regclass
+        AND BTRIM(COALESCE(game_student_id, '')) ~ '^[0-9]{6}$'
     )
-  ORDER BY referenced_parent, referencing_child, conname;
-
-  WITH RECURSIVE cascade_edges(parent_oid, child_oid, constraint_oid, depth, path) AS (
-    SELECT c.confrelid, c.conrelid, c.oid, 1,
-           ARRAY[c.confrelid, c.conrelid]::oid[]
-    FROM pg_constraint AS c
-    WHERE c.contype = 'f'
-      AND c.confdeltype = 'c'
-      AND c.confrelid IN (
-        'public.accounts'::regclass,
-        'public.game_results'::regclass,
-        'public.playtime_sessions'::regclass
-      )
-    UNION ALL
-    SELECT c.confrelid, c.conrelid, c.oid, e.depth + 1,
-           e.path || c.conrelid
-    FROM cascade_edges AS e
-    JOIN pg_constraint AS c
-      ON c.contype = 'f'
-     AND c.confdeltype = 'c'
-     AND c.confrelid = e.child_oid
-    WHERE NOT c.conrelid = ANY(e.path)
-  )
-  SELECT DISTINCT e.depth,
-         e.parent_oid::regclass::text AS parent_table,
-         e.child_oid::regclass::text AS child_table,
-         c.conname,
-         pg_get_constraintdef(c.oid) AS definition
-  FROM cascade_edges AS e
-  JOIN pg_constraint AS c ON c.oid = e.constraint_oid
-  ORDER BY e.depth, parent_table, child_table, c.conname;
-\else
-  \echo 'Migration 024 is recorded as applied; no 024 deletion counts were run.'
-\endif
-
-ROLLBACK;
-
-    )
-    SELECT 'playtime_sessions.deleted_by (ON DELETE SET NULL, excluding direct deletes)' AS impact,
+    SELECT 'playtime_sessions.deleted_by (SET NULL; not directly deleted)' AS impact,
            COUNT(*) AS row_count
     FROM public.playtime_sessions AS ps
     JOIN candidates AS deleter ON deleter.id = ps.deleted_by
@@ -376,9 +254,9 @@ ROLLBACK;
     );
   \endif
 
-  -- Catalog inventory for all direct inbound FK constraints and CASCADE
-  -- descendants. Operators must derive count-only joins for every additional
-  -- baseline relation shown here before approving migration 024.
+  -- Inventory every direct FK into tables explicitly deleted by migration 024
+  -- and every recursive CASCADE. Count-only joins are still needed for any
+  -- additional database-specific edges listed below.
   SELECT confrelid::regclass::text AS referenced_parent,
          conrelid::regclass::text AS referencing_child,
          conname,
@@ -412,7 +290,7 @@ ROLLBACK;
       )
     UNION ALL
     SELECT c.confrelid, c.conrelid, c.oid, e.depth + 1,
-           e.path || c.conrelid
+           array_append(e.path, c.conrelid)
     FROM cascade_edges AS e
     JOIN pg_constraint AS c
       ON c.contype = 'f'
@@ -429,7 +307,7 @@ ROLLBACK;
   JOIN pg_constraint AS c ON c.oid = e.constraint_oid
   ORDER BY e.depth, parent_table, child_table, c.conname;
 \else
-  \echo 'Migration 024 is recorded as applied; no 024 deletion counts were run.'
+  \echo 'Migration 024 is already recorded; no 024 deletion counts were run.'
 \endif
 
 ROLLBACK;
