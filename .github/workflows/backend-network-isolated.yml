@@ -32,6 +32,8 @@ jobs:
     if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/codex/student-progress-child-progress-ai-refresh-20261031' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      CI: 'true'
 
     steps:
       - name: Check out candidate without persisting credentials
@@ -135,8 +137,16 @@ jobs:
           const fs = require('node:fs');
           const jwt = require('jsonwebtoken');
           const { Pool } = require('pg');
+          const {
+            assertDisposablePostgresUrl,
+            assertDisposablePostgresDatabase,
+          } = require('/workspace/capstone/backend/testSafety/disposablePostgres');
 
           const databaseUrl = process.env.DATABASE_URL;
+          assertDisposablePostgresUrl({
+            connectionString: databaseUrl,
+            expectedDatabaseName: 'tq_parent_route_test_ci',
+          });
           const parsedDatabaseUrl = new URL(databaseUrl || '');
           assert.equal(parsedDatabaseUrl.hostname, '127.0.0.1', 'Parent route probe must use loopback PostgreSQL');
           assert.equal(parsedDatabaseUrl.pathname, '/tq_parent_route_test_ci', 'Parent route probe must use its disposable database');
@@ -151,13 +161,21 @@ jobs:
 
           async function main() {
             const bootstrap = new Pool({ connectionString: databaseUrl });
-            await bootstrap.query([
-              'CREATE TABLE IF NOT EXISTS public.accounts (',
-              'id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT, password TEXT,',
-              'role VARCHAR(50) NOT NULL, status VARCHAR(50) DEFAULT \'active\'',
-              ')',
-            ].join('\n'));
-            await bootstrap.end();
+            try {
+              await assertDisposablePostgresDatabase({
+                client: bootstrap,
+                connectionString: databaseUrl,
+                expectedDatabaseName: 'tq_parent_route_test_ci',
+              });
+              await bootstrap.query([
+                'CREATE TABLE IF NOT EXISTS public.accounts (',
+                'id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT, password TEXT,',
+                'role VARCHAR(50) NOT NULL, status VARCHAR(50) DEFAULT \'active\'',
+                ')',
+              ].join('\n'));
+            } finally {
+              await bootstrap.end();
+            }
 
             const backendRoot = '/workspace/capstone/backend';
             const { app, schemaReady } = require(backendRoot + '/server');
@@ -165,12 +183,22 @@ jobs:
             let httpServer = null;
             try {
               await schemaReady;
+              await assertDisposablePostgresDatabase({
+                client: pool,
+                connectionString: databaseUrl,
+                expectedDatabaseName: 'tq_parent_route_test_ci',
+              });
               await pool.query(fs.readFileSync(
                 backendRoot + '/migrations/012_add_activity_log_event_idempotency.sql',
                 'utf8',
               ));
               const { applyReleaseMigrations } = require(backendRoot + '/releaseMigrations');
               await applyReleaseMigrations({ client: pool });
+              await assertDisposablePostgresDatabase({
+                client: pool,
+                connectionString: databaseUrl,
+                expectedDatabaseName: 'tq_parent_route_test_ci',
+              });
               await pool.query('TRUNCATE public.accounts RESTART IDENTITY CASCADE');
 
               const parentResult = await pool.query([
@@ -391,6 +419,32 @@ jobs:
             tq_parent_route_test_ci; do
             docker exec tq-backend-test-postgres createdb --host=127.0.0.1 --username=postgres "$database"
           done
+          disposable_sentinel="$(openssl rand -hex 24)"
+          if [[ ! "$disposable_sentinel" =~ ^[a-f0-9]{48}$ ]]; then
+            echo "Unable to generate the run-specific disposable PostgreSQL sentinel." >&2
+            exit 1
+          fi
+          for database in \
+            tq_backend_test_ci \
+            tq_game_metrics_test_ci \
+            tq_auth_recovery_test_ci \
+            tq_archived_progress_test_ci \
+            tq_screen_time_test_ci \
+            tq_student_id_migration_test_ci \
+            tq_website_session_migration_test_ci \
+            tq_parent_route_test_ci; do
+            if [[ ! "$database" =~ ^tq_[a-z0-9_]+_test_ci$ ]]; then
+              echo "Refusing to mark an unrecognized PostgreSQL test database: $database" >&2
+              exit 1
+            fi
+            docker exec tq-backend-test-postgres psql \
+              --username=postgres \
+              --dbname="$database" \
+              --no-psqlrc \
+              --set=ON_ERROR_STOP=1 \
+              --command "COMMENT ON DATABASE \"$database\" IS 'tq-disposable-ci:${disposable_sentinel}';" >/dev/null
+          done
+          echo "TQ_DISPOSABLE_DB_SENTINEL=${disposable_sentinel}" >> "$GITHUB_ENV"
           docker inspect --format='postgres network={{.HostConfig.NetworkMode}} published-ports={{json .HostConfig.PortBindings}}' tq-backend-test-postgres
 
       - name: Verify isolated test container networking and local PostgreSQL
@@ -415,12 +469,15 @@ jobs:
             --workdir /workspace/capstone/backend \
             --user "$(id -u):$(id -g)" \
             --env NODE_ENV \
+            --env CI \
             --env DATABASE_URL \
+            --env TQ_DISPOSABLE_DB_SENTINEL \
             --env NODE_PATH \
             --env HOME=/tmp \
             node:20-bookworm node -e '
           const assert = require("node:assert/strict");
           const os = require("node:os");
+          const { assertDisposablePostgresDatabase } = require("./testSafety/disposablePostgres");
           const interfaces = Object.entries(os.networkInterfaces()).flatMap(
             ([name, entries]) => (entries || []).map((entry) => ({ name, ...entry }))
           );
@@ -431,7 +488,11 @@ jobs:
           (async () => {
             const client = new Client({ connectionString: process.env.DATABASE_URL });
             await client.connect();
-            await client.query("SELECT 1");
+            await assertDisposablePostgresDatabase({
+              client,
+              connectionString: process.env.DATABASE_URL,
+              expectedDatabaseName: "tq_backend_test_ci",
+            });
             await client.end();
             console.log("Node " + process.version + "; uid " + process.getuid() + "; only loopback interfaces; isolated PostgreSQL reachable");
           })().catch((error) => {
@@ -475,10 +536,12 @@ jobs:
             --env TMP=/tmp \
             --env TEMP=/tmp \
             --env NODE_ENV \
+            --env CI \
             --env AI_RUNTIME_ENABLED \
             --env AI_GENERATION_ENABLED \
             --env JWT_SECRET \
             --env DATABASE_URL \
+            --env TQ_DISPOSABLE_DB_SENTINEL \
             --env NO_COLOR=1 \
             node:20-bookworm node /test-logs/parent-route-postgres.integration.cjs \
             > "$RUNNER_TEMP/tq-backend-logs/parent-route-postgres.log" 2>&1
@@ -587,10 +650,12 @@ jobs:
             --env TMP=/workspace/capstone/backend/uploads/.test-tmp \
             --env TEMP=/workspace/capstone/backend/uploads/.test-tmp \
             --env NODE_ENV \
+            --env CI \
             --env AI_RUNTIME_ENABLED \
             --env AI_GENERATION_ENABLED \
             --env JWT_SECRET \
             --env DATABASE_URL \
+            --env TQ_DISPOSABLE_DB_SENTINEL \
             --env GAME_METRICS_TEST_DATABASE_URL \
             --env AUTH_RECOVERY_TEST_DATABASE_URL \
             --env ARCHIVED_PROGRESS_TEST_DATABASE_URL \
