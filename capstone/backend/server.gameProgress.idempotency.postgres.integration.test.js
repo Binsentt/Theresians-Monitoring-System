@@ -263,6 +263,7 @@ if (!databaseUrl) {
       migration024Counts: { accounts: 0, gameResults: 0, playtimeSessions: 0 },
     });
     process.env.RELEASE_EXPECTED_PENDING_MIGRATIONS = '26';
+    delete process.env.RELEASE_MIGRATION_024_APPROVED;
     await assert.rejects(runReleaseMigrations(), /pending migration list changed/);
 
     await setReleaseMigrationApproval(pool, {
