@@ -182,7 +182,6 @@ const { resolveStudentAiInsight } = require('./studentAiInsight.service');
 const {
   archiveParentFamily,
   restoreParentFamily,
-  permanentlyDeleteLegacySixDigitStudents,
   permanentlyDeleteManagedStudent,
   permanentlyDeleteStudentAccount,
   permanentlyDeleteParentFamily,
@@ -749,18 +748,7 @@ const schemaReady = ensureSchema();
 // Legacy Student cleanup is deliberately decoupled from request startup.
 // A cleanup failure must never take the API process down or make every request
 // wait on an optional data-maintenance operation.
-const legacySixDigitStudentCleanupReady = schemaReady
-  .then(() => permanentlyDeleteLegacySixDigitStudents(pool))
-  .then((result) => {
-    if (result.deletedStudents.length > 0) {
-      console.log('Legacy 6-digit Student cleanup completed:', result.deletedStudents.length);
-    }
-    return result;
-  })
-  .catch((error) => {
-    console.error('Legacy 6-digit Student cleanup skipped:', error.message);
-    return { deletedStudents: [], skipped: true };
-  });
+// Legacy six-digit Student cleanup is performed only through explicitly approved migration 024.
 
 const generateRandomPassword = () => createTemporaryPassword();
 
@@ -4202,8 +4190,6 @@ const markStudentInsightStale = async (queryClient, studentId) => {
 app.use('/api', async (req, res, next) => {
   try {
     await schemaReady;
-    // Do not block API requests on the maintenance cleanup.
-    void legacySixDigitStudentCleanupReady;
     next();
   } catch (error) {
     res.status(503).json({ error: 'Database schema is not ready.' });
