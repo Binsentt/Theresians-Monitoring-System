@@ -745,9 +745,6 @@ const ensureSchema = async () => {
 
 const schemaReady = ensureSchema();
 
-// Legacy Student cleanup is deliberately decoupled from request startup.
-// A cleanup failure must never take the API process down or make every request
-// wait on an optional data-maintenance operation.
 // Legacy six-digit Student cleanup is performed only through explicitly approved migration 024.
 
 const generateRandomPassword = () => createTemporaryPassword();
