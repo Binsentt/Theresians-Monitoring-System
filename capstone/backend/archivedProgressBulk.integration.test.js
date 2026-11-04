@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
+const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('./testSafety/disposablePostgres');
 
 const databaseUrl = process.env.ARCHIVED_PROGRESS_TEST_DATABASE_URL;
 
@@ -16,21 +17,26 @@ if (!databaseUrl) {
   });
 
   test('retired progress-only archive and deletion endpoints preserve Student data', async () => {
-    assert.match(databaseUrl, /^postgres(?:ql)?:\/\/[^/]+\/tq_archived_progress_test_[a-z0-9_]+$/i, 'integration DB must be an isolated tq_archived_progress_test_* database');
+    assertDisposablePostgresUrl({ connectionString: databaseUrl, expectedDatabaseName: 'tq_archived_progress_test_ci' });
     process.env.DATABASE_URL = databaseUrl;
     process.env.AI_RUNTIME_ENABLED = 'false';
     const bootstrapPool = new Pool({ connectionString: databaseUrl });
-    await bootstrapPool.query(`CREATE TABLE IF NOT EXISTS public.accounts (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      email TEXT,
-      password TEXT,
-      role VARCHAR(50) NOT NULL
-    )`);
-    await bootstrapPool.end();
+    try {
+      await assertDisposablePostgresDatabase({ client: bootstrapPool, connectionString: databaseUrl, expectedDatabaseName: 'tq_archived_progress_test_ci' });
+      await bootstrapPool.query(`CREATE TABLE IF NOT EXISTS public.accounts (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT,
+        password TEXT,
+        role VARCHAR(50) NOT NULL
+      )`);
+    } finally {
+      await bootstrapPool.end();
+    }
     const { app, schemaReady } = require('./server');
     const pool = require('./database/db');
     await schemaReady;
+    await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_archived_progress_test_ci' });
 
     const teacherClassAssignmentsMigration = fs.readFileSync(
       path.join(__dirname, 'migrations', '008_add_teacher_class_assignments.sql'),
@@ -40,11 +46,13 @@ if (!databaseUrl) {
 
     const migrationSql = fs.readFileSync(path.join(__dirname, 'migrations', '019_playtime_history_removal.sql'), 'utf8');
     const runMigration = async () => {
+      await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_archived_progress_test_ci' });
       for (const statement of migrationSql.split(';').map((part) => part.trim()).filter(Boolean)) await pool.query(`${statement};`);
     };
     await runMigration();
     await runMigration();
 
+    await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_archived_progress_test_ci' });
     await pool.query('TRUNCATE public.admin_audit_logs, public.activity_logs, public.playtime_sessions, public.student_ai_insights, public.game_results, public.student_game_progress, public.teacher_student_relationships, public.accounts RESTART IDENTITY CASCADE');
     await pool.query(`INSERT INTO public.accounts (id, name, email, password, role, parent_id, game_student_id, grade_level, section, is_archived, current_learning_cycle_version, progress_archived_at)
       VALUES (1, 'Local Admin', 'bulk-admin@example.test', 'unused', 'admin', NULL, NULL, NULL, NULL, false, 0, NULL),

@@ -3,18 +3,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const { Client } = require('pg');
+const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('../testSafety/disposablePostgres');
 
 const migrationPath = path.join(__dirname, '018_website_sessions_and_audit_metadata.sql');
 const migration = fs.readFileSync(migrationPath, 'utf8');
 const migrationTestUrl = process.env.WEBSITE_SESSION_MIGRATION_TEST_DATABASE_URL || '';
-
-const requireDisposableDatabase = () => {
-  const parsed = new URL(migrationTestUrl);
-  assert.ok(['localhost', '127.0.0.1', '::1'].includes(parsed.hostname), 'migration test must use local PostgreSQL');
-  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
-  assert.match(databaseName, /^tq_website_session_migration_test_[a-z0-9_]+$/);
-  return databaseName;
-};
 
 test('018 is an additive, transactional migration for audit metadata and website sessions', () => {
   assert.match(migration, /^\s*BEGIN;/i);
@@ -32,10 +25,11 @@ test('018 is an additive, transactional migration for audit metadata and website
 test('018 supports fresh install, prior-schema upgrade, repeat application, and record preservation', {
   skip: migrationTestUrl ? false : 'WEBSITE_SESSION_MIGRATION_TEST_DATABASE_URL is required for the disposable local PostgreSQL test',
 }, async () => {
-  requireDisposableDatabase();
+  assertDisposablePostgresUrl({ connectionString: migrationTestUrl, expectedDatabaseName: 'tq_website_session_migration_test_ci' });
   const client = new Client({ connectionString: migrationTestUrl });
   await client.connect();
   try {
+    await assertDisposablePostgresDatabase({ client, connectionString: migrationTestUrl, expectedDatabaseName: 'tq_website_session_migration_test_ci' });
     await client.query('DROP TABLE IF EXISTS public.website_sessions, public.admin_audit_logs, public.accounts CASCADE');
     await client.query(`CREATE TABLE public.accounts (
       id SERIAL PRIMARY KEY,
@@ -130,7 +124,11 @@ test('018 supports fresh install, prior-schema upgrade, repeat application, and 
       await secondClient.end();
     }
   } finally {
-    await client.query('DROP TABLE IF EXISTS public.website_sessions, public.admin_audit_logs, public.accounts CASCADE');
-    await client.end();
+    try {
+      await assertDisposablePostgresDatabase({ client, connectionString: migrationTestUrl, expectedDatabaseName: 'tq_website_session_migration_test_ci' });
+      await client.query('DROP TABLE IF EXISTS public.website_sessions, public.admin_audit_logs, public.accounts CASCADE');
+    } finally {
+      await client.end();
+    }
   }
 });
