@@ -577,6 +577,7 @@ ORDER BY table_name, ordinal_position;
 WITH expected_types(table_name, column_name, expected_data_type) AS (
   VALUES
     ('accounts', 'id', 'integer'),
+    ('accounts', 'game_student_id', 'character varying'),
     ('accounts', 'current_learning_cycle_version', 'integer'),
     ('accounts', 'session_version', 'integer'),
     ('activity_logs', 'id', 'integer'),
@@ -622,6 +623,21 @@ FROM type_mismatches
 \else
   \echo 'STOP: one or more core column types do not match the source contract.'
   SELECT 'preflight stopped: required core column type mismatch'::integer;
+\endif
+
+SELECT COALESCE((
+         SELECT data_type = 'character varying' AND character_maximum_length = 8
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'accounts'
+           AND column_name = 'game_student_id'
+       ), false) AS game_student_id_width_ok
+\gset
+\if :game_student_id_width_ok
+  \echo 'accounts.game_student_id is VARCHAR(8), as required by migration 017.'
+\else
+  \echo 'STOP: accounts.game_student_id must be VARCHAR(8) as required by migration 017.'
+  SELECT 'preflight stopped: accounts.game_student_id must be VARCHAR(8)'::integer;
 \endif
 
 SELECT c.conrelid::regclass::text AS table_name,

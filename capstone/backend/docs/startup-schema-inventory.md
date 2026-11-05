@@ -11,7 +11,7 @@ complete SQL schema or production readiness.
 
 | Table | Required columns | Tracked canonical `CREATE TABLE` source | Startup-contract gap / review note |
 | --- | ---: | --- | --- |
-| `accounts` | 32 | `Database_Table.sql` | `screen_time_reset_at`, `session_version`, `temporary_password_issued_at`, and `temporary_password_expires_at` have no tracked baseline/migration definition. Learning-cycle and archive fields are in migrations 009/010; OTP challenge fields are in 020. |
+| `accounts` | 32 | `Database_Table.sql` | `screen_time_reset_at`, `session_version`, `temporary_password_issued_at`, and `temporary_password_expires_at` have no tracked baseline/migration definition. Learning-cycle and archive fields are in migrations 009/010; OTP challenge fields are in 020. Migration 017 establishes `game_student_id VARCHAR(8)`; the preflight now checks its type and width because migration 024 trims this field. |
 | `activity_logs` | 36 | `Database_Table.sql` | Event and telemetry fields are split across migrations 001, 009, 021, and 022. Review nullable `student_id` differences between baseline/runtime DDL and migration history before formalizing the full contract. |
 | `admin_audit_logs` | 11 | **None** | Migration 018 only adds metadata columns and assumes the table exists. Base columns, types, defaults, constraints, and index are only represented by removed startup DDL/test fixtures. |
 | `announcements` | 7 | `Database_Table.sql` | Baseline definition exists; old startup code also applied additional repairs. Review the baseline and repair history before asserting exact constraints. |

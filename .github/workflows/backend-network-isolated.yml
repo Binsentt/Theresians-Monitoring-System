@@ -397,6 +397,7 @@ jobs:
             tq_preflight_missing_table_test_ci \
             tq_preflight_missing_column_test_ci \
             tq_preflight_incompatible_type_test_ci \
+            tq_preflight_game_student_id_width_test_ci \
             tq_preflight_malformed_ledger_test_ci \
             tq_preflight_pending_024_test_ci; do
             docker exec tq-backend-test-postgres createdb --host=127.0.0.1 --username=postgres "$database"
@@ -421,6 +422,7 @@ jobs:
             tq_preflight_missing_table_test_ci \
             tq_preflight_missing_column_test_ci \
             tq_preflight_incompatible_type_test_ci \
+            tq_preflight_game_student_id_width_test_ci \
             tq_preflight_malformed_ledger_test_ci \
             tq_preflight_pending_024_test_ci; do
             if [[ ! "$database" =~ ^tq_[a-z0-9_]+_test_ci$ ]]; then

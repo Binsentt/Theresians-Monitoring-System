@@ -70,6 +70,8 @@ test('operator migration preflight mirrors the runtime table and column contract
   for (const entry of entries) assert.ok(preflight.includes(entry), `preflight is missing ${entry}`);
   assert.match(preflight, /^\\set ON_ERROR_STOP on/m);
   assert.doesNotMatch(preflight, /\\quit\s+\d/);
+  assert.match(preflight, /\('accounts', 'game_student_id', 'character varying'\)/);
+  assert.match(preflight, /game_student_id must be VARCHAR\(8\)/);
 });
 
 test('playtime soft-delete fields used by live routes are required at startup', () => {

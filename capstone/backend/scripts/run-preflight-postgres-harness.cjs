@@ -18,6 +18,7 @@ const CASES = Object.freeze({
   missingTable: 'tq_preflight_missing_table_test_ci',
   missingColumn: 'tq_preflight_missing_column_test_ci',
   incompatibleType: 'tq_preflight_incompatible_type_test_ci',
+  incompatibleGameStudentIdWidth: 'tq_preflight_game_student_id_width_test_ci',
   malformedLedger: 'tq_preflight_malformed_ledger_test_ci',
   pending024: 'tq_preflight_pending_024_test_ci',
 });
@@ -75,6 +76,9 @@ function assertCiContainer() {
 
 function sqlType(table, column, mode) {
   if (mode === 'incompatibleType' && table === 'accounts' && column === 'current_learning_cycle_version') return 'text';
+  if (table === 'accounts' && column === 'game_student_id') {
+    return mode === 'incompatibleGameStudentIdWidth' ? 'character varying(6)' : 'character varying(8)';
+  }
   const critical = new Map([
     ['accounts.id', 'integer'],
     ['accounts.current_learning_cycle_version', 'integer'],
@@ -254,6 +258,11 @@ assert.equal(incompatible.status, 3, `incompatible type must fail closed: ${inco
 assert.match(incompatible.stdout, /accounts.*current_learning_cycle_version.*integer.*text/s);
 assert.match(incompatible.stdout, /STOP: one or more core column types do not match/);
 console.log('PASS: incompatible core type fails closed');
+
+const gameStudentIdWidth = invokePreflight(CASES.incompatibleGameStudentIdWidth);
+assert.equal(gameStudentIdWidth.status, 3, `incompatible game_student_id width must fail closed: ${gameStudentIdWidth.stderr}\n${gameStudentIdWidth.stdout}`);
+assert.match(gameStudentIdWidth.stdout, /STOP: accounts\.game_student_id must be VARCHAR\(8\)/);
+console.log('PASS: incompatible accounts.game_student_id width fails closed');
 
 const malformed = invokePreflight(CASES.malformedLedger);
 assert.equal(malformed.status, 3, `malformed migration metadata must fail closed: ${malformed.stderr}\n${malformed.stdout}`);
