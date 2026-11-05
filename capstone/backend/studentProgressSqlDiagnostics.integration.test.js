@@ -126,7 +126,7 @@ if (!isApprovedDisposableDatabase(databaseUrl)) {
     try {
       const endpoint = await bootstrap.query(`
         SELECT current_database() AS database_name,
-               inet_server_addr()::TEXT AS server_address,
+               host(inet_server_addr()) AS server_address,
                current_setting('transaction_read_only') AS transaction_read_only,
                shobj_description(db.oid, 'pg_database') AS database_comment
         FROM pg_database db
