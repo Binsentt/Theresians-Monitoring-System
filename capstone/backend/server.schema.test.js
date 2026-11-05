@@ -1,154 +1,104 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const Module = require('node:module');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const {
+  REQUIRED_SCHEMA,
+  SCHEMA_READINESS_SQL,
+  assertStartupSchemaReady,
+} = require('./database/startupSchemaReadiness');
 
-const schemaStatements = [];
-const compactSql = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
+test('startup schema readiness issues one SELECT-only catalog check for the complete schema contract', async () => {
+  const calls = [];
+  await assertStartupSchemaReady({
+    async query(sql, params) {
+      calls.push({ sql: String(sql), params });
+      return { rows: [] };
+    },
+  });
 
-const mockPool = {
-  query: async (sql) => {
-    schemaStatements.push(compactSql(sql));
-    return { rows: [] };
-  },
-};
-
-const dbPath = require.resolve('./database/db');
-require.cache[dbPath] = {
-  id: dbPath,
-  filename: dbPath,
-  loaded: true,
-  exports: mockPool,
-};
-
-const createMiddleware = () => (req, res, next) => next();
-const multerStub = () => ({
-  single: createMiddleware,
-  array: createMiddleware,
-  fields: createMiddleware,
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /^\s*WITH\b/i);
+  assert.match(calls[0].sql, /pg_catalog\.pg_(?:namespace|class|attribute)/);
+  assert.doesNotMatch(calls[0].sql, /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b/i);
+  assert.deepEqual(JSON.parse(calls[0].params[0]), Object.entries(REQUIRED_SCHEMA).map(([table_name, columns]) => ({ table_name, columns })));
+  assert.equal(calls[0].sql, SCHEMA_READINESS_SQL);
 });
 
-const serverDependencyStubs = {
-  bcrypt: {
-    compare: async () => false,
-    hash: async (value) => value,
-  },
-  cors: () => createMiddleware(),
-  jsonwebtoken: {
-    sign: () => 'token',
-    verify: () => ({}),
-  },
-  multer: multerStub,
-  'pdf-parse': async () => ({ text: '' }),
-};
+test('missing required schema returns a controlled readiness error without attempting repair', async () => {
+  const calls = [];
+  await assert.rejects(
+    assertStartupSchemaReady({
+      async query(sql) {
+        calls.push(String(sql));
+        return { rows: [{ missing_object: 'accounts' }, { missing_object: 'game_results.question_id' }] };
+      },
+    }),
+    /database schema is not ready: accounts, game_results\.question_id; apply separately approved schema migrations/,
+  );
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /^\s*WITH\b/i);
+  assert.doesNotMatch(calls[0], /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b/i);
+});
 
-const originalLoad = Module._load;
-Module._load = function loadWithServerStubs(request, parent, isMain) {
-  if (Object.prototype.hasOwnProperty.call(serverDependencyStubs, request)) {
-    return serverDependencyStubs[request];
+test('catalog-check failures stop readiness without exposing repair fallbacks', async () => {
+  await assert.rejects(
+    assertStartupSchemaReady({ query: async () => { throw new Error('fixture connection error'); } }),
+    /^Error: read-only database schema compatibility check failed$/,
+  );
+});
+
+test('operator migration preflight mirrors the runtime table and column contract', () => {
+  const preflight = fs.readFileSync(
+    path.join(__dirname, 'scripts', 'release-migration-preflight.sql'),
+    'utf8',
+  );
+  const entries = Object.entries(REQUIRED_SCHEMA).flatMap(([table, columns]) => (
+    columns.map((column) => `('${table}', '${column}')`)
+  ));
+  const contractStart = preflight.indexOf('-- Compare the runtime startup contract');
+  const contractEnd = preflight.indexOf('SELECT c.conrelid::regclass::text AS table_name,', contractStart);
+  const recordedSection = preflight.slice(contractStart, contractEnd);
+  const valuesStart = recordedSection.indexOf('  VALUES') + '  VALUES'.length;
+  const valuesEnd = recordedSection.indexOf('), schema_contract AS', valuesStart);
+  const recordedContract = recordedSection.slice(valuesStart, valuesEnd);
+  const recordedContractEntries = recordedContract.match(/\('[a-z0-9_]+', '[a-z0-9_]+'\)/g) || [];
+
+  assert.equal(Object.keys(REQUIRED_SCHEMA).length, 18);
+  assert.equal(entries.length, 278);
+  assert.equal(recordedContractEntries.length, entries.length);
+  for (const entry of entries) assert.ok(preflight.includes(entry), `preflight is missing ${entry}`);
+  assert.match(preflight, /^\\set ON_ERROR_STOP on/m);
+  assert.doesNotMatch(preflight, /\\quit\s+\d/);
+  assert.match(preflight, /\('accounts', 'game_student_id', 'character varying'\)/);
+  assert.match(preflight, /game_student_id must be VARCHAR\(8\)/);
+  const migration026 = fs.readFileSync(path.join(__dirname, 'migrations', '026_game_progress_save_commit_idempotency.sql'), 'utf8');
+  const migration026Checksum = crypto.createHash('sha256').update(migration026, 'utf8').digest('hex');
+  assert.match(preflight, new RegExp(`\\(26, '026_game_progress_save_commit_idempotency\\.sql', '${migration026Checksum}'\\)`));
+  for (const constraint of [
+    'game_progress_save_commits_pkey',
+    'game_progress_save_commits_activity_event_unique',
+    'game_progress_save_commits_student_id_fkey',
+    'game_progress_save_commits_learning_cycle_version_check',
+    'game_progress_save_commits_save_commit_id_hash_check',
+    'game_progress_save_commits_payload_sha256_check',
+    'game_progress_save_commits_response_status_check',
+    'game_progress_save_commits_completion_consistency',
+  ]) assert.ok(preflight.includes(constraint), `preflight must check ${constraint}`);
+});
+
+test('playtime soft-delete fields used by live routes are required at startup', () => {
+  const expectedTypes = {
+    deleted_at: 'timestamp with time zone',
+    deleted_by: 'integer',
+    deletion_operation_id: 'uuid',
+    deletion_reason: 'character varying',
+  };
+  const preflight = fs.readFileSync(path.join(__dirname, 'scripts', 'release-migration-preflight.sql'), 'utf8');
+  for (const [column, type] of Object.entries(expectedTypes)) {
+    assert.ok(REQUIRED_SCHEMA.playtime_sessions.includes(column), `${column} must be part of startup readiness`);
+    assert.ok(preflight.includes(`('playtime_sessions', '${column}', '${type}')`),
+      `preflight must validate the migration-defined type for ${column}`);
   }
-  return originalLoad.call(this, request, parent, isMain);
-};
-
-try {
-  require('./server');
-} finally {
-  Module._load = originalLoad;
-}
-
-const waitForSchemaInitialization = async () => {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (schemaStatements.some((sql) => sql.includes('idx_questions_grade_difficulty_topic'))) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-};
-
-test('startup schema creates game_results for future game integration', async () => {
-  await waitForSchemaInitialization();
-
-  assert.ok(
-    schemaStatements.some((sql) => sql.startsWith('create table if not exists public.game_results')),
-    'game_results table should be created during startup schema initialization'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('idx_game_results_parent_id')),
-    'game_results parent_id index should be created during startup schema initialization'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('idx_game_results_resolved_student_id')),
-    'game_results resolved_student_id index should be created during startup schema initialization'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('add column if not exists question_set_id integer')),
-    'game_results should keep a nullable question_set_id for backward-compatible traceability'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('idx_game_results_question_set_id')),
-    'game_results question_set_id index should support historical traceability queries'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('game_results_question_set_id_fkey') && sql.includes('on delete restrict')),
-    'game_results question_set_id should use a restrictive foreign key so permanent deletion cannot race historical result insertion'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('add column if not exists question_id integer')),
-    'game_results should add nullable exact question traceability without rewriting existing results'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('idx_game_results_question_id')),
-    'exact question lookup should be indexed for analytics and integrity checks'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('game_results_question_set_question_fkey') && sql.includes('on delete restrict')),
-    'exact result question and question-set pair should be constrained to the same canonical question row'
-  );
-});
-
-test('startup schema keeps nullable canonical topic IDs for learning files and questions', async () => {
-  await waitForSchemaInitialization();
-
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('alter table public.learning_files add column if not exists topic_id varchar(100)')),
-    'learning_files should add a nullable canonical topic_id without rewriting legacy rows'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('alter table public.questions add column if not exists topic_id varchar(100)')),
-    'questions should add a nullable canonical topic_id without rewriting legacy rows'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('learning_files_scope_topic_id_index')),
-    'learning_files should index canonical encounter scopes'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('questions_learning_file_topic_id_index')),
-    'questions should index canonical question metadata'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('learning_files_source_learning_file_id_index')),
-    'startup schema should use migration 015\'s canonical source lineage index name'
-  );
-  assert.ok(
-    !schemaStatements.some((sql) => sql.includes('idx_learning_files_source_learning_file_id')),
-    'startup schema must not create a duplicate source lineage index with a second name'
-  );
-});
-
-test('startup schema includes audit metadata and durable website sessions before readiness', async () => {
-  await waitForSchemaInitialization();
-
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('alter table public.admin_audit_logs add column if not exists before_metadata jsonb')),
-    'startup compatibility should add structured before metadata'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('alter table public.admin_audit_logs add column if not exists after_metadata jsonb')),
-    'startup compatibility should add structured after metadata'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.startsWith('create table if not exists public.website_sessions')),
-    'website sessions must be durable PostgreSQL records'
-  );
-  assert.ok(
-    schemaStatements.some((sql) => sql.includes('website_sessions_account_presence_index')),
-    'presence lookup must have its tracked partial index'
-  );
 });

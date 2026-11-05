@@ -4,6 +4,8 @@ const fs = require('node:fs/promises');
 const Module = require('node:module');
 const bcrypt = require('bcrypt');
 const { Client } = require('pg');
+const { applySyntheticTestSchema, assertSyntheticDatabase } = require('./testSupport/applySyntheticTestSchema');
+const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('./testSafety/disposablePostgres');
 
 const databaseUrl = process.env.AUTH_RECOVERY_TEST_DATABASE_URL;
 
@@ -26,31 +28,19 @@ const extractCode = (message) => {
 };
 
 test('recovery and login OTP contracts pass against isolated PostgreSQL with captured mail', { skip: !databaseUrl }, async (t) => {
+  process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = databaseUrl;
   process.env.JWT_SECRET = 'isolated-auth-recovery-test-secret';
-  process.env.NODE_ENV = 'test';
+  assertDisposablePostgresUrl({ connectionString: databaseUrl, expectedDatabaseName: 'tq_auth_recovery_test_ci' });
   const bootstrap = new Client({ connectionString: databaseUrl });
   await bootstrap.connect();
-  await bootstrap.query(`
-    CREATE TABLE IF NOT EXISTS public.accounts (
-      id SERIAL PRIMARY KEY,
-      name VARCHAR(100) NOT NULL,
-      email VARCHAR(100) NOT NULL UNIQUE,
-      password VARCHAR(255) NOT NULL,
-      mobile_number VARCHAR(20),
-      role VARCHAR(50) NOT NULL DEFAULT 'Parent',
-      parent_id VARCHAR(6),
-      employee_id VARCHAR(50),
-      otp_code VARCHAR(10),
-      otp_expires_at TIMESTAMPTZ,
-      is_archived BOOLEAN DEFAULT false,
-      must_change_password BOOLEAN DEFAULT false,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      address VARCHAR(255), birthday DATE, gender VARCHAR(20), status VARCHAR(20) DEFAULT 'Offline',
-      session_version INTEGER DEFAULT 0
-    );
-  `);
-  await bootstrap.end();
+  try {
+    await assertDisposablePostgresDatabase({ client: bootstrap, connectionString: databaseUrl, expectedDatabaseName: 'tq_auth_recovery_test_ci' });
+    await assertSyntheticDatabase(bootstrap, databaseUrl);
+    await applySyntheticTestSchema(bootstrap, databaseUrl);
+  } finally {
+    await bootstrap.end();
+  }
 
   const capturedMessages = [];
   const emailDeliveryStub = {

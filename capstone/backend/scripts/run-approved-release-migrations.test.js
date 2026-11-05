@@ -320,6 +320,19 @@ test('preflight SQL opens a read-only transaction and contains only SELECT inspe
   assert.match(sql, /ROLLBACK;/i);
   assert.match(sql, /to_regclass/i);
   assert.match(sql, /COUNT\(\*\)/i);
+  assert.match(sql, /expected_database/);
+  assert.match(sql, /expected_role/);
+  assert.match(sql, /expected_server_address/);
+  assert.match(sql, /expected_server_port/);
+  assert.match(sql, /pg_auth_members/);
+  assert.match(sql, /has_sequence_privilege/);
+  assert.match(sql, /^\\set ON_ERROR_STOP on/m);
+  assert.doesNotMatch(sql, /\\quit\s+\d/);
+  assert.match(sql, /SELECT 'preflight stopped:/);
+  assert.match(sql, /\\gexec/);
+  assert.match(sql, /direct FK edge/i);
+  assert.match(sql, /game_progress_save_commits/);
+  assert.match(sql, /game_progress_save_commits_completion_consistency/);
   assert.doesNotMatch(sql, /^\s*(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b/im);
 });
 
