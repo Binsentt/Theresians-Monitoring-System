@@ -245,6 +245,7 @@ if (!databaseUrl) {
     assert.ok(indexes.rows.some((row) => row.indexname === 'game_progress_save_commits_activity_event_unique'));
 
     await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
+    process.env.RELEASE_EXPECTED_PENDING_MIGRATIONS = 'none';
     await runReleaseMigrations();
     const after = await pool.query(`
       SELECT version, filename, checksum FROM public.schema_migrations WHERE version = 26`);
