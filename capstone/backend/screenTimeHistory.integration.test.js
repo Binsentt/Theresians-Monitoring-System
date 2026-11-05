@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
+const { applySyntheticTestSchema, assertSyntheticDatabase } = require('./testSupport/applySyntheticTestSchema');
 
 const databaseUrl = process.env.SCREEN_TIME_TEST_DATABASE_URL || '';
 
@@ -26,6 +27,7 @@ if (!databaseUrl) {
 } else {
   assert.equal(isSafeDatabaseUrl(databaseUrl), true,
     'integration DB must be an isolated loopback tq_screen_time_test_* database');
+  process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = databaseUrl;
   process.env.AI_RUNTIME_ENABLED = 'false';
 
@@ -60,6 +62,7 @@ if (!databaseUrl) {
 
   test.before(async () => {
     const bootstrapPool = new Pool({ connectionString: databaseUrl });
+    await assertSyntheticDatabase(bootstrapPool, databaseUrl);
     await bootstrapPool.query(`CREATE TABLE IF NOT EXISTS public.accounts (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
@@ -69,6 +72,7 @@ if (!databaseUrl) {
       status VARCHAR(50) DEFAULT 'active'
     )`);
     await bootstrapPool.query("ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active'");
+    await applySyntheticTestSchema(bootstrapPool, databaseUrl);
     await bootstrapPool.end();
     ({ app, schemaReady } = require('./server'));
     pool = require('./database/db');

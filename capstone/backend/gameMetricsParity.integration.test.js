@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const { calculateJourneyProgress, calculateWeightedCompletion } = require('./questGraph.utils');
 const { applyReleaseMigrations } = require('./releaseMigrations');
+const { applySyntheticTestSchema, assertSyntheticDatabase } = require('./testSupport/applySyntheticTestSchema');
 
 const databaseUrl = process.env.GAME_METRICS_TEST_DATABASE_URL || '';
 
@@ -28,6 +29,7 @@ if (!isSafeDatabase(databaseUrl)) {
 } else {
   const previousDatabaseUrl = process.env.DATABASE_URL;
   const previousAiEnabled = process.env.AI_GENERATION_ENABLED;
+  process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = databaseUrl;
   process.env.AI_GENERATION_ENABLED = 'false';
 
@@ -63,10 +65,12 @@ if (!isSafeDatabase(databaseUrl)) {
 
   test.before(async () => {
     const bootstrap = new Pool({ connectionString: databaseUrl });
+    await assertSyntheticDatabase(bootstrap, databaseUrl);
     await bootstrap.query(`CREATE TABLE IF NOT EXISTS public.accounts (
       id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT, password TEXT,
       role VARCHAR(50) NOT NULL, status VARCHAR(50) DEFAULT 'active'
     )`);
+    await applySyntheticTestSchema(bootstrap, databaseUrl);
     await bootstrap.end();
 
     const { app, schemaReady } = require('./server');

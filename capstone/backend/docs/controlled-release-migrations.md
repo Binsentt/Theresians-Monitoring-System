@@ -2,6 +2,89 @@
 
 This procedure separates ordinary Railway application deployments from database migrations. It does not itself authorize a production migration or deployment.
 
+## Startup schema safety and the Railway deployment incident
+
+The production-linked Railway services both started a deployment for commit
+`9f4075ff` at `2026-11-04T07:37:35.152Z`, about two seconds after PR #32 merged to
+`main`. The primary deployment succeeded and serves the production domains; the
+secondary service crashed. Both deployment records report `reason=deploy` and
+source branch `main`. The only tracked GitHub workflow is isolated backend CI,
+not a deploy workflow. Railway's read API does not expose the Auto Deploy toggle.
+The owner has confirmed Auto Deploy is disabled on both services, but that could
+not be independently verified through the API.
+
+The secondary logs repeatedly report schema initialization failure and legacy
+cleanup skipped, with the error detail blank. The primary logs show the server
+listening. Available metadata does not identify whether the deployment was
+started by Railway's Git integration, a manual dashboard action, CLI/API action,
+or a queued/redeploy operation. Treat the trigger as unresolved. Before another
+`main` merge, an operator must inspect Railway's deployment/audit timeline at
+the timestamps above, confirm the source/repository/branch and Auto Deploy state
+for both services in the dashboard, and verify no deployments are queued or
+running. If that evidence does not explain the event, keep `main` unchanged and
+have the Railway owner choose an approved deployment-control change. No Railway
+configuration was changed during this work.
+
+On `main` before this remediation, importing `server.js` called `ensureSchema()`
+and then ran `permanentlyDeleteLegacySixDigitStudents()` after schema readiness.
+PR #34 removes that deletion path. This startup-safety change is based on PR #34
+and removes the remaining schema writes. The replacement startup check performs
+one parameterized `SELECT` against `pg_catalog` to confirm the required tables
+and columns exist. It does not create or repair schema. Missing requirements
+cause readiness to fail, the listener is not started, and the database pool is
+closed.
+
+The compatibility check proves table/column presence only. It does not prove
+every SQL type, default, index, trigger, or foreign-key definition; compare those
+to the migration ledger and catalog in the existing read-only preflight before
+deployment. This PR must not be deployed until that preflight confirms the live
+schema is compatible or separately reviewed migrations cover every missing
+prerequisite.
+
+### Removed startup database writes
+
+The previous `ensureSchema()` made 177 direct `pool.query` calls: 15 `CREATE
+TABLE IF NOT EXISTS` calls, 39 index calls (31 ordinary and 8 unique), 8 fixed
+`UPDATE` calls, 2 guarded `DO` blocks, and the remaining schema calls. The SQL
+contains 115 `ALTER TABLE` statements, including statements inside the guarded
+blocks. In addition, it awaited a Parent-code backfill that ran one `SELECT` and
+one `UPDATE` per missing Parent ID. The fixed updates normalized nullable
+account flags and cycle versions, cleared malformed Parent IDs, copied legacy
+trash timestamps, and populated learning-file generation/publish/deletion
+state. None of these repairs/backfills now run at startup, and they have not
+been silently converted into a production migration: the live schema/data state
+is unknown, so any replacement migration set must follow the authorized
+preflight and isolated restore rehearsal.
+
+`ensureSchema()` itself did not contain `DELETE` or `TRUNCATE`. The separate
+six-digit Student cleanup was startup-triggered on `main` and is removed by PR
+#34. Migration 024 remains destructive: it deletes qualifying legacy Student
+accounts and directly related `game_results` and `playtime_sessions`; foreign-key
+cascades can extend the impact. Keep its existing approval, count, cascade-review,
+and write-quiescence gates.
+
+Ordinary authenticated route writes remain route-scoped, not startup work.
+Lesson-generation jobs are scheduled in response to requests; `server.js` has no
+process-start timer. Startup still creates/checks the uploads directory on the
+filesystem, which does not alter the database.
+
+### Startup-safety test isolation
+
+The synthetic schema helper requires `NODE_ENV=test`, `CI=true`, a loopback
+allow-listed `tq_*_test_ci` database, and a run-specific database comment marker.
+CI creates and stamps the database inside its disposable PostgreSQL 16 container,
+which has no external network. The new startup integration test seeds only
+synthetic records, starts the app as a `SELECT`-only role with read-only
+transactions, checks readiness for a complete schema and rejection for an empty
+schema, and verifies the sentinel records did not change. It does not contact
+Railway or school data.
+
+The compatibility refactor intentionally blocks service startup on an
+incomplete schema. Do not merge/deploy this change until the operator has
+verified that the currently deployed database already has the required shape
+and historical backfills, or separately approved migration work has been
+prepared and rehearsed against an isolated restore.
+
 ## Release controls
 
 - Keep Railway Auto Deploy disabled for both production-linked services: overflowing-insight and natural-imagination. Do not re-enable it.
@@ -25,6 +108,12 @@ From capstone/backend in a trusted clean checkout of the exact release source:
 The service alias must be configured through the approved secure operator mechanism. Do not substitute a password-bearing URI on the command line. Confirm the returned database name, role, server address/port, PostgreSQL version, and transaction_read_only=on against the approved change record. Stop if the target is wrong or any required table/ledger is missing.
 
 The script lists versions 018–026, filenames, ledger checksums, and pending state. In the same clean checkout, compare each applied checksum to the exact source file bytes:
+
+It also compares the startup compatibility contract (17 tables and 265 required
+columns) to `pg_catalog`, returning counts and missing schema-object names only.
+Any missing table or column is a stop condition. The check does not validate
+column types/defaults or every index/trigger/FK; review those from the migration
+ledger and catalog output before deployment.
 
     sha256sum \
       migrations/018_website_sessions_and_audit_metadata.sql \
