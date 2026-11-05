@@ -5,6 +5,12 @@ const dns = require('dns');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const {
+  inspectSaveCommitId,
+  hashProgressSavePayload,
+  hashSaveCommitId,
+  buildProgressActivityEventKey,
+} = require('./gameProgressSaveCommit.utils');
 const fs = require('fs');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
@@ -841,7 +847,9 @@ const validateProgressLearningCycleLease = async (client, {
   }
   // Legacy cycle-zero clients did not attach a lease to progress writes. They
   // remain compatible until the Student's lifecycle has advanced.
-  if (currentVersion === 0 && (!sessionId || !sessionCredential)) return { ok: true };
+  if (currentVersion === 0 && (!sessionId || !sessionCredential)) {
+    return { ok: true, learningCycleVersion: currentVersion };
+  }
   if (!sessionId || !sessionCredential) {
     return {
       ok: false,
@@ -891,7 +899,7 @@ const validateProgressLearningCycleLease = async (client, {
       },
     };
   }
-  return { ok: true };
+  return { ok: true, learningCycleVersion: currentVersion };
 };
 
 const requireAccountManagementAdmin = (req, res, next) => {
@@ -7005,6 +7013,14 @@ app.get('/api/game/profile/check/:student_id', async (req, res) => {
 });
 
 app.post('/api/game/progress', async (req, res) => {
+  const saveCommitInput = inspectSaveCommitId(req.body || {});
+  if (!saveCommitInput.valid) {
+    return res.status(400).json({
+      error: 'save_commit_id must be 1-128 ASCII letters, digits, colons, periods, underscores, or hyphens.',
+    });
+  }
+  const saveCommitId = saveCommitInput.provided ? saveCommitInput.value : null;
+
   const {
     parent_id,
     student_name,
@@ -7185,6 +7201,72 @@ app.post('/api/game/progress', async (req, res) => {
     const accuracyRateValue = resolveAccuracyRate(normalizedProgressPayload);
     const totalPlayTimeValue = Math.round(toNullableNumber(total_play_time) ?? 0);
     const totalQuestsCompletedValue = Math.round(toNullableNumber(req.body?.total_quests_completed ?? req.body?.quests_completed) ?? 0);
+    const learningCycleVersion = Number(lifecycleLease.learningCycleVersion);
+    let saveCommitIdHash = null;
+    let activityEventKey = null;
+
+    if (saveCommitId !== null) {
+      saveCommitIdHash = hashSaveCommitId(saveCommitId);
+      activityEventKey = buildProgressActivityEventKey(learningCycleVersion, saveCommitIdHash);
+      const normalizedBusinessPayload = {
+        parentAccountId: Number(parent.id),
+        studentId: Number(student.id),
+        learningCycleVersion,
+        currentQuest: current_quest || null,
+        score: scoreValue,
+        correctAnswers: correctAnswersValue,
+        totalQuestions: totalQuestionsValue,
+        accuracyRate: accuracyRateValue,
+        progressPercentage: progressPercentageValue,
+        questProgress: questProgressValue,
+        lessonProgress: lessonProgressValue,
+        totalQuestsCompleted: totalQuestsCompletedValue,
+        totalPlayTime: totalPlayTimeValue,
+        currentScene: current_scene || null,
+        currentMap: current_map || null,
+        difficultyLevel: difficulty_level,
+        saveStatus: save_status,
+        activityDescription: activity_description,
+        loginTime: login_time || activityTimestamp || null,
+        logoutTime: logout_time || null,
+      };
+      const payloadSha256 = hashProgressSavePayload(normalizedBusinessPayload);
+      const receiptInsert = await client.query(
+        `INSERT INTO public.game_progress_save_commits (
+          student_id, learning_cycle_version, save_commit_id_hash, payload_sha256, activity_event_key
+        ) VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (student_id, learning_cycle_version, save_commit_id_hash) DO NOTHING
+        RETURNING save_commit_id_hash`,
+        [student.id, learningCycleVersion, saveCommitIdHash, payloadSha256, activityEventKey]
+      );
+
+      if (receiptInsert.rows.length === 0) {
+        const priorReceipt = await client.query(
+          `SELECT payload_sha256, response_status, response_body
+           FROM public.game_progress_save_commits
+           WHERE student_id = $1
+             AND learning_cycle_version = $2
+             AND save_commit_id_hash = $3
+           FOR UPDATE`,
+          [student.id, learningCycleVersion, saveCommitIdHash]
+        );
+        const receipt = priorReceipt.rows[0];
+        if (!receipt) throw new Error('Save commit uniqueness conflict has no committed receipt.');
+        if (receipt.payload_sha256 !== payloadSha256) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({
+            success: false,
+            code: 'SAVE_COMMIT_ID_REUSED',
+            error: 'save_commit_id was already used with different progress data.',
+          });
+        }
+        if (!receipt.response_body || !Number.isInteger(Number(receipt.response_status))) {
+          throw new Error('The committed save receipt is incomplete.');
+        }
+        await client.query('COMMIT');
+        return res.status(Number(receipt.response_status)).json(receipt.response_body);
+      }
+    }
 
     const existingProgress = await client.query(
       `SELECT id
@@ -7279,10 +7361,10 @@ app.post('/api/game/progress', async (req, res) => {
         student_id, student_name, grade_level, section, current_quest,
         save_status, total_play_time, last_played, quest_progress, lesson_progress,
         difficulty_level, role, status, activity_description, current_scene, current_map,
-        login_time, logout_time, session_date, activity_timestamp, created_at
+        login_time, logout_time, session_date, activity_timestamp, created_at, event_key
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, COALESCE($12, NOW()), $8, $9, $10, 'Student', 'Online', $11, $14, $15,
-        COALESCE($12, NOW()), $13, CURRENT_DATE, COALESCE($12, NOW()), NOW()
+        COALESCE($12, NOW()), $13, CURRENT_DATE, COALESCE($12, NOW()), NOW(), $16
       )
       RETURNING *`,
       [
@@ -7301,17 +7383,38 @@ app.post('/api/game/progress', async (req, res) => {
         logout_time || null,
         current_scene,
         current_map,
+        activityEventKey,
       ]
     );
 
+    const responseBody = saveCommitIdHash !== null
+      ? {
+        success: true,
+        progress_id: progressResult.rows[0]?.id ?? null,
+        activity_log_id: activityResult.rows[0]?.id ?? null,
+      }
+      : {
+        success: true,
+        parent,
+        student: serializeUser(student),
+        progress: progressResult.rows[0],
+        activityLog: activityResult.rows[0],
+      };
+    if (saveCommitIdHash !== null) {
+      const receiptUpdate = await client.query(
+        `UPDATE public.game_progress_save_commits
+         SET response_status = 201, response_body = $4::jsonb, completed_at = NOW()
+         WHERE student_id = $1
+           AND learning_cycle_version = $2
+           AND save_commit_id_hash = $3
+         RETURNING save_commit_id_hash`,
+        [student.id, learningCycleVersion, saveCommitIdHash, JSON.stringify(responseBody)]
+      );
+      if (receiptUpdate.rows.length !== 1) throw new Error('Unable to complete the save commit receipt.');
+    }
+
     await client.query('COMMIT');
-    res.status(201).json({
-      success: true,
-      parent,
-      student: serializeUser(student),
-      progress: progressResult.rows[0],
-      activityLog: activityResult.rows[0],
-    });
+    return res.status(201).json(responseBody);
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Save game progress failed:', err.message);

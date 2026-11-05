@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
@@ -62,16 +63,29 @@ test('operator migration preflight mirrors the runtime table and column contract
   const valuesStart = recordedSection.indexOf('  VALUES') + '  VALUES'.length;
   const valuesEnd = recordedSection.indexOf('), schema_contract AS', valuesStart);
   const recordedContract = recordedSection.slice(valuesStart, valuesEnd);
-  const recordedContractEntries = recordedContract.match(/\('[a-z_]+', '[a-z_]+'\)/g) || [];
+  const recordedContractEntries = recordedContract.match(/\('[a-z0-9_]+', '[a-z0-9_]+'\)/g) || [];
 
-  assert.equal(Object.keys(REQUIRED_SCHEMA).length, 17);
-  assert.equal(entries.length, 269);
+  assert.equal(Object.keys(REQUIRED_SCHEMA).length, 18);
+  assert.equal(entries.length, 278);
   assert.equal(recordedContractEntries.length, entries.length);
   for (const entry of entries) assert.ok(preflight.includes(entry), `preflight is missing ${entry}`);
   assert.match(preflight, /^\\set ON_ERROR_STOP on/m);
   assert.doesNotMatch(preflight, /\\quit\s+\d/);
   assert.match(preflight, /\('accounts', 'game_student_id', 'character varying'\)/);
   assert.match(preflight, /game_student_id must be VARCHAR\(8\)/);
+  const migration026 = fs.readFileSync(path.join(__dirname, 'migrations', '026_game_progress_save_commit_idempotency.sql'), 'utf8');
+  const migration026Checksum = crypto.createHash('sha256').update(migration026, 'utf8').digest('hex');
+  assert.match(preflight, new RegExp(`\\(26, '026_game_progress_save_commit_idempotency\\.sql', '${migration026Checksum}'\\)`));
+  for (const constraint of [
+    'game_progress_save_commits_pkey',
+    'game_progress_save_commits_activity_event_unique',
+    'game_progress_save_commits_student_id_fkey',
+    'game_progress_save_commits_learning_cycle_version_check',
+    'game_progress_save_commits_save_commit_id_hash_check',
+    'game_progress_save_commits_payload_sha256_check',
+    'game_progress_save_commits_response_status_check',
+    'game_progress_save_commits_completion_consistency',
+  ]) assert.ok(preflight.includes(constraint), `preflight must check ${constraint}`);
 });
 
 test('playtime soft-delete fields used by live routes are required at startup', () => {

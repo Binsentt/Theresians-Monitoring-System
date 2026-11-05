@@ -21,6 +21,7 @@ const CASES = Object.freeze({
   incompatibleGameStudentIdWidth: 'tq_preflight_game_student_id_width_test_ci',
   malformedLedger: 'tq_preflight_malformed_ledger_test_ci',
   pending024: 'tq_preflight_pending_024_test_ci',
+  invalidReceiptConstraint: 'tq_preflight_invalid_receipt_test_ci',
 });
 
 function docker(args, input = undefined) {
@@ -132,10 +133,15 @@ function fixtureSql(mode) {
   }
   for (const [table, columns] of Object.entries(REQUIRED_SCHEMA)) {
     if (mode === 'missingTable' && table === 'student_ai_insights') continue;
+    if (table === 'game_progress_save_commits') continue;
     const definitions = columns
       .filter((column) => !(mode === 'missingColumn' && table === 'accounts' && column === 'address'))
       .map((column) => `${column} ${sqlType(table, column, mode)}${column === 'id' ? ' PRIMARY KEY' : ''}`);
     statements.push(`CREATE TABLE public.${table} (${definitions.join(', ')});`);
+  }
+  statements.push(fs.readFileSync(require('node:path').join(__dirname, '../migrations/026_game_progress_save_commit_idempotency.sql'), 'utf8'));
+  if (mode === 'invalidReceiptConstraint') {
+    statements.push('ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_activity_event_unique;');
   }
   statements.push(`
     ALTER TABLE public.student_game_progress
@@ -225,8 +231,8 @@ for (const [mode, database] of Object.entries(CASES)) {
 
 const valid = invokePreflight(CASES.valid);
 assert.equal(valid.status, 0, `valid disposable schema must pass: ${valid.stderr}\n${valid.stdout}`);
-assert.match(valid.stdout, /Startup schema contract is complete: 17 tables and 269 required columns are present/);
-console.log('PASS: compatible 17-table/269-column schema and migration ledger');
+assert.match(valid.stdout, /Startup schema contract is complete: 18 tables and 278 required columns are present/);
+console.log('PASS: compatible 18-table/278-column schema and migration ledger');
 
 const wrongTarget = invokePreflight(CASES.valid, { expected_database: 'unexpected_target' });
 assert.equal(wrongTarget.status, 3, `wrong target fingerprint must fail closed: ${wrongTarget.stderr}\n${wrongTarget.stdout}`);
@@ -252,6 +258,12 @@ for (const [mode, phrase] of [
   assert.match(result.stdout, /STOP: one or more required tables or columns are missing/);
   console.log(`PASS: ${mode} fails closed with a schema-only diagnostic`);
 }
+
+const invalidReceiptConstraint = invokePreflight(CASES.invalidReceiptConstraint);
+assert.equal(invalidReceiptConstraint.status, 3,
+  `missing migration 026 uniqueness must fail closed: ${invalidReceiptConstraint.stderr}\n${invalidReceiptConstraint.stdout}`);
+assert.match(invalidReceiptConstraint.stdout, /migration 026 receipt schema is incomplete or incompatible/);
+console.log('PASS: missing migration 026 activity uniqueness constraint fails closed');
 
 const incompatible = invokePreflight(CASES.incompatibleType);
 assert.equal(incompatible.status, 3, `incompatible type must fail closed: ${incompatible.stderr}\n${incompatible.stdout}`);
@@ -286,4 +298,4 @@ assert.match(
 assert.doesNotMatch(pending024.stdout, /synthetic-only-name|123456/);
 console.log('PASS: migration 024 emits aggregate impact, discloses no fixture values, then stops');
 
-console.log('Preflight integration result: 10/10 disposable PostgreSQL scenarios passed.');
+console.log('Preflight integration result: 11/11 disposable PostgreSQL scenarios passed.');

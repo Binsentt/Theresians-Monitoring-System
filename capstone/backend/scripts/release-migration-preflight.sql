@@ -198,7 +198,8 @@ WITH expected(version, filename, source_sha256) AS (
     (22, '022_game_telemetry_contract.sql', '5a45ef2133bc0d69fe117f7164eeb9af65eb16bcf6f4a1215804bd14919e3c76'),
     (23, '023_quest_evidence_and_playtime_tombstones.sql', '2df0959d48efd554a8e7403ebbf331bfdfb6971b2d66e43a6ae267c02642f12d'),
     (24, '024_remove_legacy_six_digit_students.sql', '2595a35fe97699376b611f21cc19aa4b7e26d495463fe7585bf7e1c96370e111'),
-    (25, '025_add_game_result_question_traceability.sql', '2a1b904056274c73903cfb713703c6db8e6c2ea37f9c8fd1863f9a3004e42e68')
+    (25, '025_add_game_result_question_traceability.sql', '2a1b904056274c73903cfb713703c6db8e6c2ea37f9c8fd1863f9a3004e42e68'),
+    (26, '026_game_progress_save_commit_idempotency.sql', '334f7b73ddc1c8d6ddcdafd547181f75fbeac85df713d4ba73995fb9c4d23b12')
 )
 SELECT e.version,
        e.filename AS expected_filename,
@@ -225,7 +226,8 @@ WITH expected(version, filename, source_sha256) AS (
     (22, '022_game_telemetry_contract.sql', '5a45ef2133bc0d69fe117f7164eeb9af65eb16bcf6f4a1215804bd14919e3c76'),
     (23, '023_quest_evidence_and_playtime_tombstones.sql', '2df0959d48efd554a8e7403ebbf331bfdfb6971b2d66e43a6ae267c02642f12d'),
     (24, '024_remove_legacy_six_digit_students.sql', '2595a35fe97699376b611f21cc19aa4b7e26d495463fe7585bf7e1c96370e111'),
-    (25, '025_add_game_result_question_traceability.sql', '2a1b904056274c73903cfb713703c6db8e6c2ea37f9c8fd1863f9a3004e42e68')
+    (25, '025_add_game_result_question_traceability.sql', '2a1b904056274c73903cfb713703c6db8e6c2ea37f9c8fd1863f9a3004e42e68'),
+    (26, '026_game_progress_save_commit_idempotency.sql', '334f7b73ddc1c8d6ddcdafd547181f75fbeac85df713d4ba73995fb9c4d23b12')
 )
 SELECT EXISTS (
   SELECT 1
@@ -240,15 +242,14 @@ SELECT EXISTS (
 \endif
 
 SELECT EXISTS (
-  SELECT 1 FROM public.schema_migrations WHERE version > 25
+  SELECT 1 FROM public.schema_migrations WHERE version > 26
 ) AS newer_migration_present \gset
 \if :newer_migration_present
   \echo 'STOP: database ledger contains a version newer than this source.'
   SELECT 'preflight stopped: database migration ledger is newer than this source'::integer;
 \endif
 
--- The checksums above are tied to migrations 018-025 in this PR's source tree.
--- Migration 026 is intentionally excluded until PR #31 is integrated.
+-- The checksums above are tied to migrations 018-026 in this integration candidate.
 
 -- Compare the runtime startup contract against every required table/column.
 -- This reports schema metadata and counts only; no application rows are read.
@@ -373,6 +374,15 @@ WITH required_columns(table_name, column_name) AS (
   ('game_results', 'student_name'),
   ('game_results', 'telemetry_contract_version'),
   ('game_results', 'total_items'),
+  ('game_progress_save_commits', 'activity_event_key'),
+  ('game_progress_save_commits', 'completed_at'),
+  ('game_progress_save_commits', 'created_at'),
+  ('game_progress_save_commits', 'learning_cycle_version'),
+  ('game_progress_save_commits', 'payload_sha256'),
+  ('game_progress_save_commits', 'response_body'),
+  ('game_progress_save_commits', 'response_status'),
+  ('game_progress_save_commits', 'save_commit_id_hash'),
+  ('game_progress_save_commits', 'student_id'),
   ('learning_files', 'content_role'),
   ('learning_files', 'deleted_at'),
   ('learning_files', 'difficulty'),
@@ -554,7 +564,7 @@ NOT EXISTS (SELECT 1 FROM missing) AS startup_schema_ready
 \gset
 \echo Startup schema result: :startup_schema_preflight
 \if :startup_schema_ready
-  \echo 'Startup schema contract is complete: 17 tables and 269 required columns are present.'
+  \echo 'Startup schema contract is complete: 18 tables and 278 required columns are present.'
 \else
   \echo 'STOP: one or more required tables or columns are missing; do not deploy this source.'
   SELECT 'preflight stopped: required startup table or column is missing'::integer;
@@ -567,7 +577,7 @@ FROM information_schema.columns
 WHERE table_schema = 'public'
   AND table_name IN (
     'accounts', 'activity_logs', 'admin_audit_logs', 'announcements', 'folders',
-    'game_results', 'learning_files', 'login_otp_device_skips',
+    'game_progress_save_commits', 'game_results', 'learning_files', 'login_otp_device_skips',
     'playtime_deletion_tombstones', 'playtime_sessions', 'questions',
     'student_ai_insights', 'student_game_progress', 'student_quest_milestones',
     'teacher_class_assignments', 'teacher_student_relationships', 'website_sessions'
@@ -586,6 +596,15 @@ WITH expected_types(table_name, column_name, expected_data_type) AS (
     ('game_results', 'id', 'integer'),
     ('game_results', 'resolved_student_id', 'integer'),
     ('game_results', 'response_time_seconds', 'integer'),
+    ('game_progress_save_commits', 'student_id', 'integer'),
+    ('game_progress_save_commits', 'learning_cycle_version', 'integer'),
+    ('game_progress_save_commits', 'save_commit_id_hash', 'text'),
+    ('game_progress_save_commits', 'payload_sha256', 'text'),
+    ('game_progress_save_commits', 'activity_event_key', 'text'),
+    ('game_progress_save_commits', 'response_status', 'smallint'),
+    ('game_progress_save_commits', 'response_body', 'jsonb'),
+    ('game_progress_save_commits', 'created_at', 'timestamp with time zone'),
+    ('game_progress_save_commits', 'completed_at', 'timestamp with time zone'),
     ('student_game_progress', 'id', 'integer'),
     ('student_game_progress', 'student_id', 'integer'),
     ('student_ai_insights', 'id', 'integer'),
@@ -625,6 +644,50 @@ FROM type_mismatches
   SELECT 'preflight stopped: required core column type mismatch'::integer;
 \endif
 
+-- Verify the migration 026 receipt columns, nullability, defaults, and constraints.
+WITH receipt_columns AS (
+  SELECT column_name, is_nullable, column_default
+  FROM information_schema.columns
+  WHERE table_schema = 'public' AND table_name = 'game_progress_save_commits'
+), receipt_constraints AS (
+  SELECT conname, contype, confdeltype, confrelid, pg_get_constraintdef(oid) AS definition
+  FROM pg_catalog.pg_constraint
+  WHERE conrelid = 'public.game_progress_save_commits'::regclass
+), expected_shape AS (
+  SELECT COUNT(*) FILTER (
+           WHERE column_name IN ('student_id', 'learning_cycle_version', 'save_commit_id_hash', 'payload_sha256', 'activity_event_key', 'response_status', 'response_body', 'created_at', 'completed_at')
+         ) = 9
+     AND BOOL_AND(
+       CASE
+         WHEN column_name IN ('response_body', 'completed_at') THEN is_nullable = 'YES'
+         WHEN column_name IN ('student_id', 'learning_cycle_version', 'save_commit_id_hash', 'payload_sha256', 'activity_event_key', 'response_status', 'created_at') THEN is_nullable = 'NO'
+         ELSE true
+       END
+     )
+     AND BOOL_OR(column_name = 'response_status' AND BTRIM(column_default) = '201')
+     AND BOOL_OR(column_name = 'created_at' AND column_default ILIKE '%CURRENT_TIMESTAMP%')
+     AS columns_ok
+  FROM receipt_columns
+)
+SELECT columns_ok
+       AND EXISTS (SELECT 1 FROM receipt_constraints WHERE conname = 'game_progress_save_commits_pkey' AND contype = 'p' AND definition ILIKE '%PRIMARY KEY (student_id, learning_cycle_version, save_commit_id_hash)%')
+       AND EXISTS (SELECT 1 FROM receipt_constraints WHERE conname = 'game_progress_save_commits_activity_event_unique' AND contype = 'u' AND definition ILIKE '%UNIQUE (student_id, activity_event_key)%')
+       AND EXISTS (SELECT 1 FROM receipt_constraints WHERE conname = 'game_progress_save_commits_student_id_fkey' AND contype = 'f' AND confdeltype = 'c' AND confrelid = 'public.accounts'::regclass)
+       AND EXISTS (SELECT 1 FROM receipt_constraints WHERE conname = 'game_progress_save_commits_learning_cycle_version_check' AND contype = 'c' AND definition ILIKE '%learning_cycle_version >= 0%')
+       AND EXISTS (SELECT 1 FROM receipt_constraints WHERE conname = 'game_progress_save_commits_save_commit_id_hash_check' AND contype = 'c' AND definition ILIKE '%save_commit_id_hash ~%')
+       AND EXISTS (SELECT 1 FROM receipt_constraints WHERE conname = 'game_progress_save_commits_payload_sha256_check' AND contype = 'c' AND definition ILIKE '%payload_sha256 ~%')
+       AND EXISTS (SELECT 1 FROM receipt_constraints WHERE conname = 'game_progress_save_commits_response_status_check' AND contype = 'c' AND definition ILIKE '%response_status >= 200%')
+       AND EXISTS (SELECT 1 FROM receipt_constraints WHERE conname = 'game_progress_save_commits_completion_consistency' AND contype = 'c' AND definition ILIKE '%response_body IS NULL%completed_at IS NULL%')
+       AS save_commit_receipt_shape_ok
+FROM expected_shape
+\gset
+\if :save_commit_receipt_shape_ok
+  \echo 'Migration 026 receipt nullability, defaults, keys, foreign key, and checks are valid.'
+\else
+  \echo 'STOP: migration 026 receipt schema is incomplete or incompatible.'
+  SELECT 'preflight stopped: migration 026 receipt schema is incompatible'::integer;
+\endif
+
 SELECT COALESCE((
          SELECT data_type = 'character varying' AND character_maximum_length = 8
          FROM information_schema.columns
@@ -657,7 +720,7 @@ JOIN pg_catalog.pg_namespace AS schema_namespace ON schema_namespace.oid = relat
 WHERE schema_namespace.nspname = 'public'
   AND relation.relname IN (
     'accounts', 'activity_logs', 'admin_audit_logs', 'announcements', 'folders',
-    'game_results', 'learning_files', 'login_otp_device_skips',
+    'game_progress_save_commits', 'game_results', 'learning_files', 'login_otp_device_skips',
     'playtime_deletion_tombstones', 'playtime_sessions', 'questions',
     'student_ai_insights', 'student_game_progress', 'student_quest_milestones',
     'teacher_class_assignments', 'teacher_student_relationships', 'website_sessions'
@@ -669,7 +732,7 @@ FROM pg_indexes
 WHERE schemaname = 'public'
   AND tablename IN (
     'accounts', 'activity_logs', 'admin_audit_logs', 'announcements', 'folders',
-    'game_results', 'learning_files', 'login_otp_device_skips',
+    'game_progress_save_commits', 'game_results', 'learning_files', 'login_otp_device_skips',
     'playtime_deletion_tombstones', 'playtime_sessions', 'questions',
     'student_ai_insights', 'student_game_progress', 'student_quest_milestones',
     'teacher_class_assignments', 'teacher_student_relationships', 'website_sessions'
@@ -687,7 +750,7 @@ WHERE schema_namespace.nspname = 'public'
   AND NOT trigger_record.tgisinternal
   AND relation.relname IN (
     'accounts', 'activity_logs', 'admin_audit_logs', 'announcements', 'folders',
-    'game_results', 'learning_files', 'login_otp_device_skips',
+    'game_progress_save_commits', 'game_results', 'learning_files', 'login_otp_device_skips',
     'playtime_deletion_tombstones', 'playtime_sessions', 'questions',
     'student_ai_insights', 'student_game_progress', 'student_quest_milestones',
     'teacher_class_assignments', 'teacher_student_relationships', 'website_sessions'

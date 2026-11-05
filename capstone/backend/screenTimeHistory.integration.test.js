@@ -5,6 +5,7 @@ const path = require('node:path');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const { applySyntheticTestSchema } = require('./testSupport/applySyntheticTestSchema');
+const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('./testSafety/disposablePostgres');
 
 const databaseUrl = process.env.SCREEN_TIME_TEST_DATABASE_URL || '';
 
@@ -30,6 +31,7 @@ if (!databaseUrl) {
   process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = databaseUrl;
   process.env.AI_RUNTIME_ENABLED = 'false';
+  assertDisposablePostgresUrl({ connectionString: databaseUrl, expectedDatabaseName: 'tq_screen_time_test_ci' });
 
   let app;
   let schemaReady;
@@ -62,8 +64,12 @@ if (!databaseUrl) {
 
   test.before(async () => {
     const bootstrapPool = new Pool({ connectionString: databaseUrl });
-    await applySyntheticTestSchema(bootstrapPool, databaseUrl);
-    await bootstrapPool.end();
+    try {
+      await assertDisposablePostgresDatabase({ client: bootstrapPool, connectionString: databaseUrl, expectedDatabaseName: 'tq_screen_time_test_ci' });
+      await applySyntheticTestSchema(bootstrapPool, databaseUrl);
+    } finally {
+      await bootstrapPool.end();
+    }
     ({ app, schemaReady } = require('./server'));
     pool = require('./database/db');
     await schemaReady;

@@ -331,7 +331,8 @@ test('preflight SQL opens a read-only transaction and contains only SELECT inspe
   assert.match(sql, /SELECT 'preflight stopped:/);
   assert.match(sql, /\\gexec/);
   assert.match(sql, /direct FK edge/i);
-  assert.doesNotMatch(sql, /game_progress_save_commits/);
+  assert.match(sql, /game_progress_save_commits/);
+  assert.match(sql, /game_progress_save_commits_completion_consistency/);
   assert.doesNotMatch(sql, /^\s*(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b/im);
 });
 

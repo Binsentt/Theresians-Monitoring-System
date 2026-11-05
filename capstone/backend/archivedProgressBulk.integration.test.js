@@ -5,6 +5,7 @@ const path = require('node:path');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const { applySyntheticTestSchema } = require('./testSupport/applySyntheticTestSchema');
+const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('./testSafety/disposablePostgres');
 
 const databaseUrl = process.env.ARCHIVED_PROGRESS_TEST_DATABASE_URL;
 
@@ -17,13 +18,17 @@ if (!databaseUrl) {
   });
 
   test('retired progress-only archive and deletion endpoints preserve Student data', async () => {
-    assert.match(databaseUrl, /^postgres(?:ql)?:\/\/[^/]+\/tq_archived_progress_test_[a-z0-9_]+$/i, 'integration DB must be an isolated tq_archived_progress_test_* database');
+    assertDisposablePostgresUrl({ connectionString: databaseUrl, expectedDatabaseName: 'tq_archived_progress_test_ci' });
     process.env.NODE_ENV = 'test';
     process.env.DATABASE_URL = databaseUrl;
     process.env.AI_RUNTIME_ENABLED = 'false';
     const bootstrapPool = new Pool({ connectionString: databaseUrl });
-    await applySyntheticTestSchema(bootstrapPool, databaseUrl);
-    await bootstrapPool.end();
+    try {
+      await assertDisposablePostgresDatabase({ client: bootstrapPool, connectionString: databaseUrl, expectedDatabaseName: 'tq_archived_progress_test_ci' });
+      await applySyntheticTestSchema(bootstrapPool, databaseUrl);
+    } finally {
+      await bootstrapPool.end();
+    }
     const { app, schemaReady } = require('./server');
     const pool = require('./database/db');
     await schemaReady;

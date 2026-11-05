@@ -7,6 +7,7 @@ const { Pool } = require('pg');
 const { calculateJourneyProgress, calculateWeightedCompletion } = require('./questGraph.utils');
 const { applyReleaseMigrations } = require('./releaseMigrations');
 const { applySyntheticTestSchema } = require('./testSupport/applySyntheticTestSchema');
+const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('./testSafety/disposablePostgres');
 
 const databaseUrl = process.env.GAME_METRICS_TEST_DATABASE_URL || '';
 
@@ -32,6 +33,7 @@ if (!isSafeDatabase(databaseUrl)) {
   process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = databaseUrl;
   process.env.AI_GENERATION_ENABLED = 'false';
+  assertDisposablePostgresUrl({ connectionString: databaseUrl, expectedDatabaseName: 'tq_game_metrics_test_ci' });
 
   let appServer;
   let pool;
@@ -65,8 +67,12 @@ if (!isSafeDatabase(databaseUrl)) {
 
   test.before(async () => {
     const bootstrap = new Pool({ connectionString: databaseUrl });
-    await applySyntheticTestSchema(bootstrap, databaseUrl);
-    await bootstrap.end();
+    try {
+      await assertDisposablePostgresDatabase({ client: bootstrap, connectionString: databaseUrl, expectedDatabaseName: 'tq_game_metrics_test_ci' });
+      await applySyntheticTestSchema(bootstrap, databaseUrl);
+    } finally {
+      await bootstrap.end();
+    }
 
     const { app, schemaReady } = require('./server');
     pool = require('./database/db');

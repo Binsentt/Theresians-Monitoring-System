@@ -461,6 +461,11 @@ const applySyntheticTestSchema = async (pool, databaseUrl) => {
       'utf8',
     );
     await pool.query(teacherAssignmentsSql);
+    const saveCommitReceiptsSql = fs.readFileSync(
+      path.join(__dirname, '..', 'migrations', '026_game_progress_save_commit_idempotency.sql'),
+      'utf8',
+    );
+    await pool.query(saveCommitReceiptsSql);
   } catch (err) {
     console.error('Synthetic test schema bootstrap failed:', err.message);
     throw err;

@@ -113,9 +113,9 @@ From capstone/backend in a trusted clean checkout of the exact release source:
 
 The service alias must be configured through the approved secure operator mechanism. Do not substitute a password-bearing URI on the command line. The SQL begins `BEGIN READ ONLY`, verifies the expected database, role, TCP server address and port, and fails with nonzero status on a missing/malformed ledger, required startup object, core type mismatch, migration filename/checksum mismatch, or newer ledger version. Confirm the returned target fingerprint and PostgreSQL version against the approved change record. The script emits metadata and aggregate counts only; store output only in the restricted operations record.
 
-The script lists versions 018–025 in this PR #35 source tree, filenames, ledger checksums, and pending state. Migration 026 from PR #31 is intentionally excluded. Compare applied checksums to the exact source file bytes in the same clean checkout:
+The integration candidate lists versions 018–026, filenames, ledger checksums, and pending state. Migration 026 is included because this candidate's startup gate requires its receipt table. Compare applied checksums to the exact source file bytes in the same clean checkout:
 
-It also compares the startup compatibility contract (17 tables and 269 required
+It also compares the startup compatibility contract (18 tables and 278 required
 columns) to `pg_catalog`, returning counts and missing schema-object names only.
 Any missing table or column is a stop condition. Core runtime types are checked
 explicitly; the script emits all visible column types, nullability, defaults,
@@ -131,7 +131,8 @@ table's complete canonical shape has been validated. See
       migrations/022_game_telemetry_contract.sql \
       migrations/023_quest_evidence_and_playtime_tombstones.sql \
       migrations/024_remove_legacy_six_digit_students.sql \
-      migrations/025_add_game_result_question_traceability.sql
+      migrations/025_add_game_result_question_traceability.sql \
+      migrations/026_game_progress_save_commit_idempotency.sql
 
 A missing schema_migrations ledger is a stop condition; do not infer all versions are pending and do not let the release runner create the ledger. A ledger filename/checksum mismatch, unknown version newer than this checkout, or incomplete migration output is a stop condition.
 
@@ -148,9 +149,9 @@ Migration 024 physically deletes candidate accounts and the direct game_results/
 
 The exact-count guard in the migration command compares the three direct counts again immediately before applying the migrations. The required write-quiescence value is an operator attestation; it does not itself block application writes. Because an application write can race a count check, do not run 024 while matching save writes remain possible. Use an owner-approved maintenance/write-quiescence procedure, or keep 024 blocked until the migration is redesigned with an atomic impact guard.
 
-### Later migration 026 integration
+### Migration 026 integration prerequisite
 
-PR #35 does not contain migration 026 and its current startup gate is 17 tables / 269 required columns. When PR #31 is rebased and reviewed against this source, the combined startup contract must be updated to 18 tables / 278 columns only as part of that approved integration. It must not be activated before migration 026 is separately approved and applied. Migration 026 adds the student/cycle/save-ID receipt table and cascades receipt deletion with account deletion; the owner must separately approve receipt retention and account-deletion behavior.
+The combined candidate's startup contract is 18 tables / 278 required columns, including the migration 026 receipt table. The application fails readiness until migration 026 is separately approved and applied. Migration 026 adds the student/cycle/save-ID receipt table and cascades receipt deletion with account deletion; the owner must separately approve receipt retention and account-deletion behavior.
 
 ## Explicit migration command gate
 

@@ -138,8 +138,16 @@ jobs:
           const jwt = require('jsonwebtoken');
           const { Pool } = require('pg');
           const { applySyntheticTestSchema } = require('/workspace/capstone/backend/testSupport/applySyntheticTestSchema');
+          const {
+            assertDisposablePostgresUrl,
+            assertDisposablePostgresDatabase,
+          } = require('/workspace/capstone/backend/testSafety/disposablePostgres');
 
           const databaseUrl = process.env.DATABASE_URL;
+          assertDisposablePostgresUrl({
+            connectionString: databaseUrl,
+            expectedDatabaseName: 'tq_parent_route_test_ci',
+          });
           const parsedDatabaseUrl = new URL(databaseUrl || '');
           assert.equal(parsedDatabaseUrl.hostname, '127.0.0.1', 'Parent route probe must use loopback PostgreSQL');
           assert.equal(parsedDatabaseUrl.pathname, '/tq_parent_route_test_ci', 'Parent route probe must use its disposable database');
@@ -155,6 +163,11 @@ jobs:
           async function main() {
             const bootstrap = new Pool({ connectionString: databaseUrl });
             try {
+              await assertDisposablePostgresDatabase({
+                client: bootstrap,
+                connectionString: databaseUrl,
+                expectedDatabaseName: 'tq_parent_route_test_ci',
+              });
               await applySyntheticTestSchema(bootstrap, databaseUrl);
             } finally {
               await bootstrap.end();
@@ -399,7 +412,8 @@ jobs:
             tq_preflight_incompatible_type_test_ci \
             tq_preflight_game_student_id_width_test_ci \
             tq_preflight_malformed_ledger_test_ci \
-            tq_preflight_pending_024_test_ci; do
+            tq_preflight_pending_024_test_ci \
+            tq_preflight_invalid_receipt_test_ci; do
             docker exec tq-backend-test-postgres createdb --host=127.0.0.1 --username=postgres "$database"
           done
           disposable_sentinel="$(openssl rand -hex 24)"
@@ -424,7 +438,8 @@ jobs:
             tq_preflight_incompatible_type_test_ci \
             tq_preflight_game_student_id_width_test_ci \
             tq_preflight_malformed_ledger_test_ci \
-            tq_preflight_pending_024_test_ci; do
+            tq_preflight_pending_024_test_ci \
+            tq_preflight_invalid_receipt_test_ci; do
             if [[ ! "$database" =~ ^tq_[a-z0-9_]+_test_ci$ ]]; then
               echo "Refusing to mark an unrecognized PostgreSQL test database: $database" >&2
               exit 1
@@ -437,6 +452,7 @@ jobs:
               --command "COMMENT ON DATABASE \"$database\" IS 'tq-disposable-ci:${disposable_sentinel}';" >/dev/null
           done
           echo "sentinel=${disposable_sentinel}" >> "$GITHUB_OUTPUT"
+          echo "TQ_DISPOSABLE_DB_SENTINEL=${disposable_sentinel}" >> "$GITHUB_ENV"
           docker inspect --format='postgres network={{.HostConfig.NetworkMode}} published-ports={{json .HostConfig.PortBindings}}' tq-backend-test-postgres
 
       - name: Validate operator preflight against disposable PostgreSQL
@@ -577,7 +593,6 @@ jobs:
             --env AI_GENERATION_ENABLED \
             --env JWT_SECRET \
             --env DATABASE_URL \
-            --env CI \
             --env TQ_DISPOSABLE_DB_SENTINEL \
             --env NO_COLOR=1 \
             node:20-bookworm node /test-logs/parent-route-postgres.integration.cjs \
@@ -693,7 +708,6 @@ jobs:
             --env AI_GENERATION_ENABLED \
             --env JWT_SECRET \
             --env DATABASE_URL \
-            --env CI \
             --env TQ_DISPOSABLE_DB_SENTINEL \
             --env GAME_METRICS_TEST_DATABASE_URL \
             --env AUTH_RECOVERY_TEST_DATABASE_URL \
