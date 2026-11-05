@@ -50,7 +50,8 @@ SELECT current_database() = :'expected_database'
   \quit 3
 \endif
 
-SELECT EXISTS (
+WITH role_checks AS (
+  SELECT EXISTS (
          SELECT 1
          FROM pg_catalog.pg_roles AS role_record
          WHERE role_record.rolname = current_user
@@ -64,14 +65,14 @@ SELECT EXISTS (
              FROM pg_catalog.pg_auth_members AS membership
              WHERE membership.member = role_record.oid
            )
-       )
-       AND NOT has_database_privilege(current_user, current_database(), 'CREATE')
-       AND NOT EXISTS (
+       ) AS role_is_non_admin,
+       NOT has_database_privilege(current_user, current_database(), 'CREATE') AS database_create_denied,
+       NOT EXISTS (
          SELECT 1
          FROM pg_catalog.pg_namespace AS namespace_record
          WHERE has_schema_privilege(current_user, namespace_record.oid, 'CREATE')
-       )
-       AND NOT EXISTS (
+       ) AS schema_create_denied,
+       NOT EXISTS (
          SELECT 1
          FROM pg_catalog.pg_class AS relation
          WHERE relation.relkind IN ('r', 'p', 'v', 'm', 'f')
@@ -83,8 +84,8 @@ SELECT EXISTS (
              OR has_table_privilege(current_user, relation.oid, 'REFERENCES')
              OR has_table_privilege(current_user, relation.oid, 'TRIGGER')
            )
-       )
-       AND NOT EXISTS (
+       ) AS table_write_privileges_denied,
+       NOT EXISTS (
          SELECT 1
          FROM pg_catalog.pg_class AS sequence_relation
          WHERE sequence_relation.relkind = 'S'
@@ -92,8 +93,22 @@ SELECT EXISTS (
              has_sequence_privilege(current_user, sequence_relation.oid, 'USAGE')
              OR has_sequence_privilege(current_user, sequence_relation.oid, 'UPDATE')
            )
-       ) AS role_read_only_ok
+       ) AS sequence_write_privileges_denied
+), role_summary AS (
+  SELECT *,
+         role_is_non_admin
+           AND database_create_denied
+           AND schema_create_denied
+           AND table_write_privileges_denied
+           AND sequence_write_privileges_denied AS role_read_only_ok
+  FROM role_checks
+)
+SELECT role_is_non_admin, database_create_denied, schema_create_denied,
+       table_write_privileges_denied, sequence_write_privileges_denied,
+       role_read_only_ok
+FROM role_summary
 \gset
+\echo 'Read-only role audit: non_admin=:role_is_non_admin database_create_denied=:database_create_denied schema_create_denied=:schema_create_denied table_write_denied=:table_write_privileges_denied sequence_write_denied=:sequence_write_privileges_denied'
 \if :role_read_only_ok
   \echo 'Database role is non-admin and has no persistent write privileges on public objects.'
 \else
