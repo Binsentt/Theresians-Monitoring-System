@@ -326,8 +326,9 @@ test('preflight SQL opens a read-only transaction and contains only SELECT inspe
   assert.match(sql, /expected_server_port/);
   assert.match(sql, /pg_auth_members/);
   assert.match(sql, /has_sequence_privilege/);
-  assert.match(sql, /\\quit 3/);
-  assert.match(sql, /\\quit 4/);
+  assert.match(sql, /^\\set ON_ERROR_STOP on/m);
+  assert.doesNotMatch(sql, /\\quit\s+\d/);
+  assert.match(sql, /SELECT 'preflight stopped:/);
   assert.match(sql, /\\gexec/);
   assert.match(sql, /direct FK edge/i);
   assert.doesNotMatch(sql, /game_progress_save_commits/);

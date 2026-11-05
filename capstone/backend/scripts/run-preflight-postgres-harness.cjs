@@ -266,7 +266,7 @@ assert.match(missingLedger.stdout, /STOP: schema_migrations is absent/);
 console.log('PASS: missing migration ledger fails closed');
 
 const pending024 = invokePreflight(CASES.pending024);
-assert.equal(pending024.status, 4, `pending migration 024 must report impact then stop: ${pending024.stderr}\n${pending024.stdout}`);
+assert.equal(pending024.status, 3, `pending migration 024 must report impact then stop: ${pending024.stderr}\n${pending024.stdout}`);
 assert.match(pending024.stdout, /Migration 024 direct count-only impact follows/);
 assert.match(pending024.stdout, /fixture_progress_student_fk/);
 assert.match(pending024.stdout, /STOP: migration 024 is pending/);

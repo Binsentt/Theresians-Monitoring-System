@@ -8,22 +8,22 @@
 \if :{?expected_database}
 \else
   \echo 'STOP: -v expected_database is required.'
-  \quit 3
+  SELECT 'preflight stopped: expected_database is required'::integer;
 \endif
 \if :{?expected_role}
 \else
   \echo 'STOP: -v expected_role is required.'
-  \quit 3
+  SELECT 'preflight stopped: expected_role is required'::integer;
 \endif
 \if :{?expected_server_address}
 \else
   \echo 'STOP: -v expected_server_address is required.'
-  \quit 3
+  SELECT 'preflight stopped: expected_server_address is required'::integer;
 \endif
 \if :{?expected_server_port}
 \else
   \echo 'STOP: -v expected_server_port is required.'
-  \quit 3
+  SELECT 'preflight stopped: expected_server_port is required'::integer;
 \endif
 
 BEGIN READ ONLY;
@@ -47,7 +47,7 @@ SELECT current_database() = :'expected_database'
   \echo 'Target database identity and read-only transaction match the approved values.'
 \else
   \echo 'STOP: target database identity or read-only transaction does not match the approved values.'
-  \quit 3
+  SELECT 'preflight stopped: target database identity or read-only transaction mismatch'::integer;
 \endif
 
 WITH role_checks AS (
@@ -123,7 +123,7 @@ FROM role_summary
   \echo 'Database role is non-admin and has no persistent write privileges on application schemas.'
 \else
   \echo 'STOP: expected a dedicated non-admin read-only database role.'
-  \quit 3
+  SELECT 'preflight stopped: database role is not dedicated and read-only'::integer;
 \endif
 
 SELECT object_name,
@@ -145,7 +145,7 @@ SELECT to_regclass('public.schema_migrations') IS NOT NULL AS ledger_present \gs
   \echo 'Migration ledger exists.'
 \else
   \echo 'STOP: schema_migrations is absent. Reconcile migration history; no ledger was created.'
-  \quit 3
+  SELECT 'preflight stopped: schema_migrations is absent'::integer;
 \endif
 
 WITH ledger_columns AS (
@@ -185,7 +185,7 @@ FROM ledger_columns
   \echo 'Migration ledger columns and version primary key are valid.'
 \else
   \echo 'STOP: schema_migrations has an incompatible or incomplete shape.'
-  \quit 3
+  SELECT 'preflight stopped: schema_migrations shape is incompatible'::integer;
 \endif
 
 -- A missing ledger row is reported as PENDING, never inferred as already applied.
@@ -236,7 +236,7 @@ SELECT EXISTS (
 ) AS migration_metadata_mismatch \gset
 \if :migration_metadata_mismatch
   \echo 'STOP: applied migration filename or checksum differs from reviewed source.'
-  \quit 3
+  SELECT 'preflight stopped: migration filename or checksum mismatch'::integer;
 \endif
 
 SELECT EXISTS (
@@ -244,7 +244,7 @@ SELECT EXISTS (
 ) AS newer_migration_present \gset
 \if :newer_migration_present
   \echo 'STOP: database ledger contains a version newer than this source.'
-  \quit 3
+  SELECT 'preflight stopped: database migration ledger is newer than this source'::integer;
 \endif
 
 -- The checksums above are tied to migrations 018-025 in this PR's source tree.
@@ -557,7 +557,7 @@ NOT EXISTS (SELECT 1 FROM missing) AS startup_schema_ready
   \echo 'Startup schema contract is complete: 17 tables and 269 required columns are present.'
 \else
   \echo 'STOP: one or more required tables or columns are missing; do not deploy this source.'
-  \quit 3
+  SELECT 'preflight stopped: required startup table or column is missing'::integer;
 \endif
 
 -- Catalog details below contain schema metadata only, not application row values.
@@ -621,7 +621,7 @@ FROM type_mismatches
   \echo 'Core type checks passed.'
 \else
   \echo 'STOP: one or more core column types do not match the source contract.'
-  \quit 3
+  SELECT 'preflight stopped: required core column type mismatch'::integer;
 \endif
 
 SELECT c.conrelid::regclass::text AS table_name,
@@ -693,7 +693,7 @@ SELECT EXISTS (
   \echo 'Teacher-class assignment validation trigger is enabled.'
 \else
   \echo 'STOP: required teacher-class assignment validation trigger is missing or disabled.'
-  \quit 3
+  SELECT 'preflight stopped: teacher-class-assignment trigger is missing or disabled'::integer;
 \endif
 
 SELECT NOT EXISTS (
@@ -710,15 +710,15 @@ SELECT NOT EXISTS (
         \echo 'Migration 024 direct count-only impact follows; no identifiers are selected.'
       \else
         \echo 'STOP: playtime_sessions is absent while migration 024 is pending.'
-        \quit 3
+        SELECT 'preflight stopped: playtime_sessions is absent while migration 024 is pending'::integer;
       \endif
     \else
       \echo 'STOP: game_results is absent while migration 024 is pending.'
-      \quit 3
+      SELECT 'preflight stopped: game_results is absent while migration 024 is pending'::integer;
     \endif
   \else
     \echo 'STOP: accounts is absent while migration 024 is pending.'
-    \quit 3
+    SELECT 'preflight stopped: accounts is absent while migration 024 is pending'::integer;
   \endif
 
   WITH candidates AS (
@@ -854,5 +854,5 @@ SELECT NOT EXISTS (
 ROLLBACK;
 \if :migration_024_review_required
   \echo 'STOP: migration 024 is pending. These counts are a preflight input only; complete and approve every recursive cascade/SET NULL impact before any migration run.'
-  \quit 4
+  SELECT 'preflight stopped: migration 024 is pending and requires separate impact approval'::integer;
 \endif
