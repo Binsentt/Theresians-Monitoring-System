@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   backend:
-    if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/codex/student-progress-child-progress-ai-refresh-20261031' || github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/codex/student-progress-child-progress-ai-refresh-20261031' || github.ref == 'refs/heads/codex/read-only-startup-schema-safety-20261105' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
