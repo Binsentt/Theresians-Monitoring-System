@@ -13,12 +13,40 @@ const diagnosticsDir = path.join(__dirname, 'diagnostics');
 const query1 = fs.readFileSync(path.join(diagnosticsDir, 'student-progress-query-1.sql'), 'utf8');
 const query2 = fs.readFileSync(path.join(diagnosticsDir, 'student-progress-query-2.sql'), 'utf8');
 const preflightSql = fs.readFileSync(path.join(diagnosticsDir, 'student-progress-diagnostics-preflight.sql'), 'utf8');
-const isolatedWorkflow = fs.readFileSync(path.resolve(__dirname, '../../.github/workflows/backend-network-isolated.yml'), 'utf8');
+const workflowRelativePath = path.join('.github', 'workflows', 'backend-network-isolated.yml');
+const resolveIsolatedWorkflowPath = (
+  backendDirectory = __dirname,
+  workflowPathOverride = process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH,
+  fileExists = fs.existsSync
+) => {
+  const candidates = [
+    workflowPathOverride,
+    path.resolve(backendDirectory, '..', workflowRelativePath),
+    path.resolve(backendDirectory, '..', '..', workflowRelativePath),
+  ].filter(Boolean);
+  return candidates.find((candidate) => fileExists(candidate)) || null;
+};
+const isolatedWorkflowPath = resolveIsolatedWorkflowPath();
+if (!isolatedWorkflowPath) {
+  throw new Error(`Unable to locate ${workflowRelativePath}; expose it read-only or set STUDENT_PROGRESS_CI_WORKFLOW_PATH.`);
+}
+const isolatedWorkflow = fs.readFileSync(isolatedWorkflowPath, 'utf8');
 const studentId = 501;
 const currentCycle = 2;
 const studentNameSentinel = 'SYNTHETIC_PRIVATE_STUDENT_NAME';
 const questionSentinel = 'SYNTHETIC_PRIVATE_QUESTION_TEXT';
 const answerSentinel = 'SYNTHETIC_PRIVATE_ANSWER_TEXT';
+
+test('isolated workflow lookup supports app-root, repository-root, and mounted CI layouts', () => {
+  const backendDirectory = path.resolve('synthetic-worktree', 'capstone', 'backend');
+  const appRootWorkflow = path.resolve(backendDirectory, '..', workflowRelativePath);
+  const repositoryRootWorkflow = path.resolve(backendDirectory, '..', '..', workflowRelativePath);
+  const mountedWorkflow = path.resolve('workflow-config', 'workflows', 'backend-network-isolated.yml');
+
+  assert.equal(resolveIsolatedWorkflowPath(backendDirectory, null, (candidate) => candidate === appRootWorkflow), appRootWorkflow);
+  assert.equal(resolveIsolatedWorkflowPath(backendDirectory, null, (candidate) => candidate === repositoryRootWorkflow), repositoryRootWorkflow);
+  assert.equal(resolveIsolatedWorkflowPath(backendDirectory, mountedWorkflow, (candidate) => candidate === mountedWorkflow), mountedWorkflow);
+});
 
 test('diagnostic preflight covers all Query 2 columns and column-level write privileges', () => {
   assert.match(preflightSql, /\('game_results',\s*'grade_level'\)/);
@@ -41,6 +69,8 @@ test('isolated CI marks and forwards only the diagnostics database as disposable
   assert.match(isolatedWorkflow, /COMMENT ON DATABASE[\s\S]*tq-disposable-ci:/);
   assert.match(isolatedWorkflow, /TQ_DISPOSABLE_DB_SENTINEL/);
   assert.match(isolatedWorkflow, /--env TQ_DISPOSABLE_DB_SENTINEL/);
+  assert.match(isolatedWorkflow, /--volume "\$GITHUB_WORKSPACE\/\.github:\/workflow-config:ro"/);
+  assert.match(isolatedWorkflow, /--env STUDENT_PROGRESS_CI_WORKFLOW_PATH=\/workflow-config\/workflows\/backend-network-isolated\.yml/);
 });
 
 const isApprovedDisposableDatabase = (value, env = process.env) => {

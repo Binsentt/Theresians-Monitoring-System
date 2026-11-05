@@ -1191,10 +1191,19 @@ test('lesson upload fails gracefully and persists a failed source record without
 
   let insertCalled = false;
   let failedStatusPersisted = false;
-  setQueryHandler(async (sql) => {
+  let insertedLearningFileParams = null;
+  setQueryHandler(async (sql, params) => {
     if (sql.startsWith('insert into public.learning_files')) {
       insertCalled = true;
-      return resultRows([{ id: 303 }]);
+      insertedLearningFileParams = params;
+      return resultRows([{
+        id: 303,
+        grade_level: params[3],
+        difficulty: params[4],
+        math_topic: params[5],
+        topic_id: params[6],
+        generation_status: 'generating',
+      }]);
     }
     if (sql.startsWith('update public.learning_files') && sql.includes("generation_status = 'failed'")) {
       failedStatusPersisted = true;
@@ -1210,6 +1219,7 @@ test('lesson upload fails gracefully and persists a failed source record without
       grade_level: 'Grade 1',
       difficulty: 'Easy',
       math_topic: 'Basic Addition',
+      topic_id: 'basic_addition',
       file_type: 'lesson',
       expected_question_count: '2',
     }),
@@ -1219,6 +1229,12 @@ test('lesson upload fails gracefully and persists a failed source record without
   assert.equal(response.body.error, 'Question AI is temporarily unavailable. Please contact the administrator.');
   assert.equal(response.body.code, 'QUESTION_AI_NOT_CONFIGURED');
   assert.equal(insertCalled, true);
+  assert.deepEqual(insertedLearningFileParams.slice(3, 7), [
+    'Grade 1',
+    'Easy',
+    'Basic Addition',
+    'basic_addition',
+  ]);
   assert.equal(failedStatusPersisted, true);
 });
 
@@ -1648,7 +1664,7 @@ test('lesson upload generates exactly the requested staged questions through the
   assert.equal(learningFileInsertParams[11], 1);
 });
 
-test('lesson generation coalesces concurrent duplicate uploads and replays the completed idempotency key', async (t) => {
+test('lesson generation replays identical uploads and rejects a conflicting idempotency key', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lesson-idempotency-test-'));
@@ -1737,9 +1753,10 @@ test('lesson generation coalesces concurrent duplicate uploads and replays the c
       const record = {
         id: 800 + records.length,
         title: 'Addition lesson',
-        grade_level: 'Grade 1',
-        difficulty: 'Easy',
-        math_topic: 'Basic Addition',
+        grade_level: params[3],
+        difficulty: params[4],
+        math_topic: params[5],
+        topic_id: params[6],
         file_type: 'lesson',
         source: 'lesson',
         published: false,
@@ -1765,6 +1782,7 @@ test('lesson generation coalesces concurrent duplicate uploads and replays the c
     grade_level: 'Grade 1',
     difficulty: 'Easy',
     math_topic: 'Basic Addition',
+    topic_id: 'basic_addition',
     file_type: 'lesson',
     expected_question_count: '2',
   };
@@ -1805,11 +1823,12 @@ test('lesson generation coalesces concurrent duplicate uploads and replays the c
     mimetype: 'application/pdf',
     size: fs.statSync(uploadPaths[3]).size,
   };
-  const topicCompatibilityResponse = await requestJson(baseUrl, '/api/learning-files/upload', {
+  const conflictingTopicResponse = await requestJson(baseUrl, '/api/learning-files/upload', {
     ...options,
-    body: JSON.stringify({ ...body, math_topic: 'Shapes' }),
+    body: JSON.stringify({ ...body, math_topic: 'Shapes', topic_id: 'shapes' }),
   });
-  assert.equal(topicCompatibilityResponse.status, 200);
+  assert.equal(conflictingTopicResponse.status, 409);
+  assert.equal(conflictingTopicResponse.body.code, 'AI_GENERATION_IDEMPOTENCY_CONFLICT');
   assert.equal(providerCalls, 1);
   assert.equal(records.length, 1);
 });

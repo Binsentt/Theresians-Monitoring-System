@@ -591,12 +591,14 @@ jobs:
             --cpus=3 \
             --tmpfs /tmp:rw,nosuid,nodev,size=1g,mode=1777 \
             --volume "$GITHUB_WORKSPACE/capstone:/workspace/capstone:ro" \
+            --volume "$GITHUB_WORKSPACE/.github:/workflow-config:ro" \
             --volume "$RUNNER_TEMP/tq-backend-dependencies/node_modules:/backend-deps/node_modules:ro" \
             --volume "$RUNNER_TEMP/tq-backend-test-uploads:/workspace/capstone/backend/uploads:rw" \
             --volume "$RUNNER_TEMP/tq-backend-logs:/test-logs:rw" \
             --workdir /workspace/capstone/backend \
             --user "$(id -u):$(id -g)" \
             --env NODE_PATH=/backend-deps/node_modules \
+            --env STUDENT_PROGRESS_CI_WORKFLOW_PATH=/workflow-config/workflows/backend-network-isolated.yml \
             --env HOME=/tmp \
             --env TMPDIR=/workspace/capstone/backend/uploads/.test-tmp \
             --env TMP=/workspace/capstone/backend/uploads/.test-tmp \
