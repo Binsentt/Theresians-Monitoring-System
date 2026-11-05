@@ -588,6 +588,7 @@ jobs:
             --env TMPDIR=/tmp \
             --env TMP=/tmp \
             --env TEMP=/tmp \
+            --env CI=true \
             --env NODE_ENV \
             --env AI_RUNTIME_ENABLED \
             --env AI_GENERATION_ENABLED \
@@ -703,6 +704,7 @@ jobs:
             --env TMPDIR=/workspace/capstone/backend/uploads/.test-tmp \
             --env TMP=/workspace/capstone/backend/uploads/.test-tmp \
             --env TEMP=/workspace/capstone/backend/uploads/.test-tmp \
+            --env CI=true \
             --env NODE_ENV \
             --env AI_RUNTIME_ENABLED \
             --env AI_GENERATION_ENABLED \
