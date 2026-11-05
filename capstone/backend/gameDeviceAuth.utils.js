@@ -36,6 +36,25 @@ const verifyOpaqueCredential = (credential, storedHash, expectedKind = null) => 
   return crypto.timingSafeEqual(Buffer.from(presentedHash, 'hex'), Buffer.from(storedHash, 'hex'));
 };
 
+const credentialPersistenceRecord = ({ credentialHash, parentId, studentId, expiresAt } = {}) => {
+  if (typeof credentialHash !== 'string' || !SHA256_HEX_PATTERN.test(credentialHash)) {
+    throw new TypeError('A SHA-256 credential digest is required.');
+  }
+  const normalizedParentId = typeof parentId === 'string' ? parentId.trim() : '';
+  const normalizedStudentId = typeof studentId === 'string' ? studentId.trim() : '';
+  if (!normalizedParentId || normalizedParentId.length > 128 || !normalizedStudentId || normalizedStudentId.length > 128) {
+    throw new TypeError('Bounded Parent and Student scope identifiers are required.');
+  }
+  const expiry = expiresAt instanceof Date ? expiresAt.toISOString() : String(expiresAt ?? '').trim();
+  if (!expiry || !Number.isFinite(Date.parse(expiry))) throw new TypeError('A valid credential expiry is required.');
+  return Object.freeze({
+    credential_hash: credentialHash,
+    parent_id: normalizedParentId,
+    student_id: normalizedStudentId,
+    expires_at: expiry,
+  });
+};
+
 const deny = (code) => Object.freeze({ authorized: false, code });
 
 /**
@@ -81,6 +100,7 @@ const authorizeDeviceWrite = ({ device, parent, relationship, student, request =
 
 module.exports = {
   authorizeDeviceWrite,
+  credentialPersistenceRecord,
   hashOpaqueCredential,
   issueOpaqueCredential,
   verifyOpaqueCredential,

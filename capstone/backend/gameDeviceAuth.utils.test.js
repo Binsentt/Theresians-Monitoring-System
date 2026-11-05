@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   authorizeDeviceWrite,
+  credentialPersistenceRecord,
   hashOpaqueCredential,
   issueOpaqueCredential,
   verifyOpaqueCredential,
@@ -26,14 +27,21 @@ const validContext = () => ({
 
 test('issued credentials contain 256 random bits and persistence receives only a digest', () => {
   const issued = issueOpaqueCredential('access');
-  const tokenBytes = Buffer.from(issued.credential.split('_').at(-1), 'base64url');
+  const tokenBytes = Buffer.from(issued.credential.slice('tq_access_v1_'.length), 'base64url');
   assert.equal(tokenBytes.length, 32);
   assert.match(issued.credentialHash, /^[a-f0-9]{64}$/);
   assert.notEqual(issued.credentialHash, issued.credential);
   assert.equal(Object.keys(issued).sort().join(','), 'credential,credentialHash');
-  const persistedRecord = { credential_hash: issued.credentialHash };
-  assert.equal(Object.hasOwn(persistedRecord, 'credential'), false);
+  const persistedRecord = credentialPersistenceRecord({
+    ...issued,
+    parentId: 'parent-db-1',
+    studentId: 'student-db-7',
+    expiresAt: '2030-01-01T00:00:00.000Z',
+  });
+  assert.deepEqual(Object.keys(persistedRecord).sort(), ['credential_hash', 'expires_at', 'parent_id', 'student_id']);
+  assert.equal(JSON.stringify(persistedRecord).includes(issued.credential), false);
   assert.equal(verifyOpaqueCredential(issued.credential, persistedRecord.credential_hash, 'access'), true);
+  assert.throws(() => credentialPersistenceRecord({ credentialHash: issued.credential, parentId: 'p', studentId: 's', expiresAt: '2030-01-01' }), /SHA-256/);
 });
 
 test('separate credential issuance does not reuse a secret', () => {
