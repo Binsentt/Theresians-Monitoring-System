@@ -347,6 +347,18 @@ test('preflight SQL opens a read-only transaction and contains only SELECT inspe
   assert.doesNotMatch(pending024Branch, /\\gexec/i, 'pending 024 must not run dynamic SQL');
 });
 
+test('preflight column metadata checks use catalogs visible without application-table SELECT', () => {
+  const sql = fs.readFileSync(path.join(__dirname, 'release-migration-preflight.sql'), 'utf8');
+  assert.doesNotMatch(sql, /information_schema\.columns/i);
+  assert.match(sql, /pg_catalog\.pg_namespace/i);
+  assert.match(sql, /pg_catalog\.pg_class/i);
+  assert.match(sql, /pg_catalog\.pg_attribute/i);
+  assert.match(sql, /pg_catalog\.pg_type/i);
+  assert.match(sql, /pg_catalog\.format_type\s*\(/i);
+  assert.match(sql, /attnum\s*>\s*0[\s\S]*?attisdropped/i);
+  assert.match(sql, /game_student_id[\s\S]*?character varying\(8\)/i);
+});
+
 test('the supported release CLI stops before connecting when approval is absent', () => {
   const script = path.resolve(__dirname, 'run-release-migrations.js');
   const result = spawnSync(process.execPath, [script], {

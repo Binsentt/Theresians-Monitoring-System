@@ -115,14 +115,16 @@ The service alias must be configured through the approved secure operator mechan
 
 If migration 024 is pending, the script stops with a nonzero exit immediately after ledger validation. It does not query `accounts`, `game_results`, `playtime_sessions`, or related application rows, and it does not generate or execute impact-count SQL. Any migration-024 impact analysis is separate and requires its own approval.
 
-The script lists versions 018–025 in this PR #35 source tree, filenames, ledger checksums, and pending state. Migration 026 from PR #31 is intentionally excluded. Compare applied checksums to the exact source file bytes in the same clean checkout:
+The script lists versions 018–025 in this release source tree, filenames, ledger checksums, and pending state. Migration 026 from PR #31 is intentionally excluded. Compare applied checksums to the exact source file bytes in the same clean checkout:
 
 It also compares the startup compatibility contract (17 tables and 269 required
 columns) to `pg_catalog`, returning counts and missing schema-object names only.
-Any missing table or column is a stop condition. Core runtime types are checked
-explicitly; the script emits all visible column types, nullability, defaults,
-constraints, indexes, and triggers for review. It does not claim that every
-table's complete canonical shape has been validated. See
+Any missing table or column is a stop condition. Core runtime types and the
+`accounts.game_student_id` width are checked through PostgreSQL catalogs, so
+these checks do not require application-table `SELECT` grants. The script emits
+catalog-derived column types, nullability, defaults, constraints, indexes, and
+triggers for review. It does not claim that every table's complete canonical
+shape has been validated. See
 `startup-schema-inventory.md` for source gaps and required follow-up.
 
     sha256sum \
@@ -139,16 +141,21 @@ A missing schema_migrations ledger is a stop condition; do not infer all version
 
 ### Migration 024 impact
 
-If version 024 is pending, the preflight emits count-only results for:
-- candidate Student accounts with a trimmed six-digit game_student_id;
-- game_results rows matched by resolved_student_id;
-- playtime_sessions rows matched by student_id;
-- each actual direct foreign-key edge into accounts, game_results, and playtime_sessions, including its ON DELETE action;
-- the full recursive CASCADE edge graph.
+If version 024 is pending, after migration-ledger validation the preflight
+immediately emits an explicit STOP and exits nonzero. It does not query
+`accounts`, `game_results`, `playtime_sessions`, or related application rows,
+and does not generate or execute impact-count SQL. A pending 024 therefore
+cannot pass this release preflight. Migration 024 physically deletes candidate
+accounts and associated results/session rows; its impact analysis must be
+performed separately under its own authorization and review procedure. The
+preflight does not provide or imply that impact analysis.
 
-Migration 024 physically deletes candidate accounts and the direct game_results/playtime_sessions rows. The SQL deliberately returns a nonzero psql status whenever 024 is pending, after printing the counts and graph. This is not a successful deployment preflight: the operator must count every recursively affected row and each SET NULL/SET DEFAULT effect, inspect RESTRICT/NO ACTION edges, and document the complete impact before a separate deletion approval. The guarded migration runner only rechecks the three direct deletion counts, so it is not a substitute for full impact review. Stop if any edge or descendant cannot be fully counted or if concurrent writes are possible.
-
-The exact-count guard in the migration command compares the three direct counts again immediately before applying the migrations. The required write-quiescence value is an operator attestation; it does not itself block application writes. Because an application write can race a count check, do not run 024 while matching save writes remain possible. Use an owner-approved maintenance/write-quiescence procedure, or keep 024 blocked until the migration is redesigned with an atomic impact guard.
+The release migration runner retains a separate exact-count guard and explicit
+approval gate for 024. Its write-quiescence value is an operator attestation;
+it does not itself block application writes. Because an application write can
+race a count check, do not run 024 while matching save writes remain possible.
+Use an owner-approved maintenance/write-quiescence procedure, or keep 024
+blocked until the migration is redesigned with an atomic impact guard.
 
 ### Later migration 026 integration
 

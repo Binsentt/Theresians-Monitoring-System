@@ -572,18 +572,55 @@ NOT EXISTS (SELECT 1 FROM missing) AS startup_schema_ready
 \endif
 
 -- Catalog details below contain schema metadata only, not application row values.
-SELECT table_name, column_name, data_type, udt_name, is_nullable,
-       character_maximum_length, numeric_precision, numeric_scale, column_default
-FROM information_schema.columns
-WHERE table_schema = 'public'
-  AND table_name IN (
+SELECT relation_record.relname AS table_name,
+       attribute_record.attname AS column_name,
+       pg_catalog.format_type(type_record.oid, NULL) AS data_type,
+       type_record.typname AS udt_name,
+       CASE WHEN attribute_record.attnotnull THEN 'NO' ELSE 'YES' END AS is_nullable,
+       CASE
+         WHEN type_record.typname IN ('varchar', 'bpchar') AND attribute_record.atttypmod >= 4
+           THEN attribute_record.atttypmod - 4
+         ELSE NULL
+       END AS character_maximum_length,
+       CASE
+         WHEN type_record.typname = 'numeric' AND attribute_record.atttypmod >= 4
+           THEN ((attribute_record.atttypmod - 4) >> 16) & 65535
+         WHEN type_record.typname = 'int2' THEN 16
+         WHEN type_record.typname = 'int4' THEN 32
+         WHEN type_record.typname = 'int8' THEN 64
+         WHEN type_record.typname = 'float4' THEN 24
+         WHEN type_record.typname = 'float8' THEN 53
+         ELSE NULL
+       END AS numeric_precision,
+       CASE
+         WHEN type_record.typname = 'numeric' AND attribute_record.atttypmod >= 4
+           THEN (((attribute_record.atttypmod - 4) & 2047) # 1024) - 1024
+         WHEN type_record.typname IN ('int2', 'int4', 'int8') THEN 0
+         ELSE NULL
+       END AS numeric_scale,
+       pg_catalog.pg_get_expr(default_record.adbin, default_record.adrelid) AS column_default
+FROM pg_catalog.pg_namespace AS namespace_record
+JOIN pg_catalog.pg_class AS relation_record
+  ON relation_record.relnamespace = namespace_record.oid
+JOIN pg_catalog.pg_attribute AS attribute_record
+  ON attribute_record.attrelid = relation_record.oid
+JOIN pg_catalog.pg_type AS type_record
+  ON type_record.oid = attribute_record.atttypid
+LEFT JOIN pg_catalog.pg_attrdef AS default_record
+  ON default_record.adrelid = relation_record.oid
+ AND default_record.adnum = attribute_record.attnum
+WHERE namespace_record.nspname = 'public'
+  AND relation_record.relkind IN ('r', 'p', 'v', 'm', 'f')
+  AND attribute_record.attnum > 0
+  AND NOT attribute_record.attisdropped
+  AND relation_record.relname IN (
     'accounts', 'activity_logs', 'admin_audit_logs', 'announcements', 'folders',
     'game_results', 'learning_files', 'login_otp_device_skips',
     'playtime_deletion_tombstones', 'playtime_sessions', 'questions',
     'student_ai_insights', 'student_game_progress', 'student_quest_milestones',
     'teacher_class_assignments', 'teacher_student_relationships', 'website_sessions'
   )
-ORDER BY table_name, ordinal_position;
+ORDER BY table_name, attribute_record.attnum;
 
 WITH expected_types(table_name, column_name, expected_data_type) AS (
   VALUES
@@ -611,13 +648,27 @@ WITH expected_types(table_name, column_name, expected_data_type) AS (
     ('playtime_sessions', 'deletion_operation_id', 'uuid'),
     ('playtime_sessions', 'deletion_reason', 'character varying')
 ), type_mismatches AS (
-  SELECT e.table_name, e.column_name, e.expected_data_type, c.data_type AS actual_data_type
+  SELECT e.table_name,
+         e.column_name,
+         e.expected_data_type,
+         pg_catalog.format_type(type_record.oid, NULL) AS actual_data_type
   FROM expected_types AS e
-  LEFT JOIN information_schema.columns AS c
-    ON c.table_schema = 'public'
-   AND c.table_name = e.table_name
-   AND c.column_name = e.column_name
-  WHERE c.column_name IS NULL OR c.data_type <> e.expected_data_type
+  LEFT JOIN pg_catalog.pg_namespace AS namespace_record
+    ON namespace_record.nspname = 'public'
+  LEFT JOIN pg_catalog.pg_class AS relation_record
+    ON relation_record.relnamespace = namespace_record.oid
+   AND relation_record.relname = e.table_name
+   AND relation_record.relkind IN ('r', 'p', 'v', 'm', 'f')
+  LEFT JOIN pg_catalog.pg_attribute AS attribute_record
+    ON attribute_record.attrelid = relation_record.oid
+   AND attribute_record.attname = e.column_name
+   AND attribute_record.attnum > 0
+   AND NOT attribute_record.attisdropped
+  LEFT JOIN pg_catalog.pg_type AS type_record
+    ON type_record.oid = attribute_record.atttypid
+  WHERE attribute_record.attname IS NULL
+     OR type_record.oid IS NULL
+     OR pg_catalog.format_type(type_record.oid, NULL) IS DISTINCT FROM e.expected_data_type
 )
 SELECT COALESCE(jsonb_agg(jsonb_build_object(
          'table', table_name,
@@ -637,11 +688,22 @@ FROM type_mismatches
 \endif
 
 SELECT COALESCE((
-         SELECT data_type = 'character varying' AND character_maximum_length = 8
-         FROM information_schema.columns
-         WHERE table_schema = 'public'
-           AND table_name = 'accounts'
-           AND column_name = 'game_student_id'
+         SELECT type_record.oid = 'pg_catalog.varchar'::regtype
+                AND attribute_record.atttypmod = 8 + 4
+                AND pg_catalog.format_type(type_record.oid, attribute_record.atttypmod) = 'character varying(8)'
+         FROM pg_catalog.pg_namespace AS namespace_record
+         JOIN pg_catalog.pg_class AS relation_record
+           ON relation_record.relnamespace = namespace_record.oid
+         JOIN pg_catalog.pg_attribute AS attribute_record
+           ON attribute_record.attrelid = relation_record.oid
+         JOIN pg_catalog.pg_type AS type_record
+           ON type_record.oid = attribute_record.atttypid
+         WHERE namespace_record.nspname = 'public'
+           AND relation_record.relname = 'accounts'
+           AND relation_record.relkind IN ('r', 'p')
+           AND attribute_record.attname = 'game_student_id'
+           AND attribute_record.attnum > 0
+           AND NOT attribute_record.attisdropped
        ), false) AS game_student_id_width_ok
 \gset
 \if :game_student_id_width_ok
