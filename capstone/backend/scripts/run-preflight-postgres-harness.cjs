@@ -50,7 +50,15 @@ function assertCiContainer() {
   assert.match(process.env.TQ_DISPOSABLE_DB_SENTINEL || '', /^[a-f0-9]{48}$/, 'run-specific disposable sentinel is required');
   const inspect = docker(['inspect', '--format={{.HostConfig.NetworkMode}}|{{.HostConfig.ReadonlyRootfs}}|{{json .HostConfig.PortBindings}}', CONTAINER]);
   assert.equal(inspect.status, 0, inspect.stderr);
-  assert.equal(inspect.stdout.trim(), 'none|true|null', 'PostgreSQL must be network-isolated, read-only-rootfs, and have no published ports');
+  const [networkMode, readOnlyRootfs, portBindingsJson] = inspect.stdout.trim().split('|');
+  assert.equal(networkMode, 'none', 'PostgreSQL must have no network');
+  assert.equal(readOnlyRootfs, 'true', 'PostgreSQL root filesystem must be read-only');
+  const portBindings = JSON.parse(portBindingsJson);
+  assert.ok(
+    portBindings === null
+      || (portBindings && typeof portBindings === 'object' && Object.keys(portBindings).length === 0),
+    'PostgreSQL must have no published ports',
+  );
 
   for (const database of Object.values(CASES)) {
     assert.match(database, /^tq_preflight_[a-z0-9_]+_test_ci$/);
