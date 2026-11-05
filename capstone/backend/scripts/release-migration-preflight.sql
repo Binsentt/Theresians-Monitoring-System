@@ -31,7 +31,7 @@ SET LOCAL statement_timeout = '30s';
 
 SELECT current_database() AS database_name,
        current_user AS database_role,
-       inet_server_addr()::text AS server_address,
+       host(inet_server_addr()) AS server_address,
        inet_server_port() AS server_port,
        current_setting('server_version') AS server_version,
        current_setting('transaction_read_only') AS transaction_read_only;
@@ -39,7 +39,7 @@ SELECT current_database() AS database_name,
 SELECT current_database() = :'expected_database'
          AND current_user = :'expected_role'
          AND session_user = current_user
-         AND inet_server_addr()::text = :'expected_server_address'
+         AND host(inet_server_addr()) = :'expected_server_address'
          AND inet_server_port() = :'expected_server_port'::integer
          AND current_setting('transaction_read_only') = 'on' AS target_identity_ok
 \gset
