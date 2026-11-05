@@ -552,7 +552,7 @@ SELECT jsonb_build_object(
 ) AS startup_schema_preflight,
 NOT EXISTS (SELECT 1 FROM missing) AS startup_schema_ready
 \gset
-\echo 'Startup schema result: :startup_schema_preflight'
+\echo Startup schema result: :startup_schema_preflight
 \if :startup_schema_ready
   \echo 'Startup schema contract is complete: 17 tables and 269 required columns are present.'
 \else
@@ -616,7 +616,7 @@ SELECT COALESCE(jsonb_agg(jsonb_build_object(
        NOT EXISTS (SELECT 1 FROM type_mismatches) AS core_types_compatible
 FROM type_mismatches
 \gset
-\echo 'Core type compatibility: :core_type_mismatches'
+\echo Core type compatibility: :core_type_mismatches
 \if :core_types_compatible
   \echo 'Core type checks passed.'
 \else
