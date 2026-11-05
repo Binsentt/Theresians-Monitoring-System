@@ -70,12 +70,18 @@ WITH role_checks AS (
        NOT EXISTS (
          SELECT 1
          FROM pg_catalog.pg_namespace AS namespace_record
-         WHERE has_schema_privilege(current_user, namespace_record.oid, 'CREATE')
+         WHERE namespace_record.nspname <> 'information_schema'
+           AND namespace_record.nspname !~ '^pg_'
+           AND has_schema_privilege(current_user, namespace_record.oid, 'CREATE')
        ) AS schema_create_denied,
        NOT EXISTS (
          SELECT 1
          FROM pg_catalog.pg_class AS relation
+         JOIN pg_catalog.pg_namespace AS relation_namespace
+           ON relation_namespace.oid = relation.relnamespace
          WHERE relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+           AND relation_namespace.nspname <> 'information_schema'
+           AND relation_namespace.nspname !~ '^pg_'
            AND (
              has_table_privilege(current_user, relation.oid, 'INSERT')
              OR has_table_privilege(current_user, relation.oid, 'UPDATE')
@@ -88,7 +94,11 @@ WITH role_checks AS (
        NOT EXISTS (
          SELECT 1
          FROM pg_catalog.pg_class AS sequence_relation
+         JOIN pg_catalog.pg_namespace AS sequence_namespace
+           ON sequence_namespace.oid = sequence_relation.relnamespace
          WHERE sequence_relation.relkind = 'S'
+           AND sequence_namespace.nspname <> 'information_schema'
+           AND sequence_namespace.nspname !~ '^pg_'
            AND (
              has_sequence_privilege(current_user, sequence_relation.oid, 'USAGE')
              OR has_sequence_privilege(current_user, sequence_relation.oid, 'UPDATE')
@@ -110,7 +120,7 @@ FROM role_summary
 \gset
 \echo Read-only role audit: non_admin=:role_is_non_admin database_create_denied=:database_create_denied schema_create_denied=:schema_create_denied table_write_denied=:table_write_privileges_denied sequence_write_denied=:sequence_write_privileges_denied
 \if :role_read_only_ok
-  \echo 'Database role is non-admin and has no persistent write privileges on public objects.'
+  \echo 'Database role is non-admin and has no persistent write privileges on application schemas.'
 \else
   \echo 'STOP: expected a dedicated non-admin read-only database role.'
   \quit 3
