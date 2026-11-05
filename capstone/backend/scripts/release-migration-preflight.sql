@@ -108,7 +108,7 @@ SELECT role_is_non_admin, database_create_denied, schema_create_denied,
        role_read_only_ok
 FROM role_summary
 \gset
-\echo 'Read-only role audit: non_admin=:role_is_non_admin database_create_denied=:database_create_denied schema_create_denied=:schema_create_denied table_write_denied=:table_write_privileges_denied sequence_write_denied=:sequence_write_privileges_denied'
+\echo Read-only role audit: non_admin=:role_is_non_admin database_create_denied=:database_create_denied schema_create_denied=:schema_create_denied table_write_denied=:table_write_privileges_denied sequence_write_denied=:sequence_write_privileges_denied
 \if :role_read_only_ok
   \echo 'Database role is non-admin and has no persistent write privileges on public objects.'
 \else
