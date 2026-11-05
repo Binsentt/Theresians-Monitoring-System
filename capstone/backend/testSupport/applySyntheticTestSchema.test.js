@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { assertSyntheticDatabase, createSyntheticAccountsSchema } = require('./applySyntheticTestSchema');
+const { assertSyntheticDatabase, applySyntheticTestSchema, createSyntheticAccountsSchema } = require('./applySyntheticTestSchema');
 
 const setSafeTestEnvironment = () => {
   const previous = {
@@ -122,6 +122,37 @@ test('synthetic account fixture creates the canonical baseline columns only afte
     ]) assert.ok(calls[accountDdl].includes(column), `canonical fixture includes ${column}`);
     assert.match(calls[accountDdl], /email VARCHAR\(100\) NOT NULL/);
     assert.match(calls[accountDdl], /CONSTRAINT accounts_email_key UNIQUE \(email\)/);
+  } finally {
+    restore();
+  }
+});
+
+test('synthetic playtime fixture includes the migration 019 history-removal contract', async () => {
+  const restore = setSafeTestEnvironment();
+  const sentinel = process.env.TQ_DISPOSABLE_DB_SENTINEL;
+  const calls = [];
+  try {
+    await applySyntheticTestSchema({
+      query: async (sql) => {
+        const text = String(sql);
+        calls.push(text);
+        if (text.includes('pg_catalog.pg_database')) {
+          return { rows: [{ database_name: 'tq_backend_test_ci', database_comment: `tq-disposable-ci:${sentinel}` }] };
+        }
+        return { rows: [] };
+      },
+    }, 'postgresql://postgres@127.0.0.1:5432/tq_backend_test_ci');
+
+    const playtime019 = calls.find((sql) => sql.includes('ALTER TABLE public.playtime_sessions')
+      && sql.includes('ADD COLUMN IF NOT EXISTS deleted_at'));
+    assert.ok(playtime019, 'synthetic fixture applies the migration 019 nullable columns');
+    for (const field of [
+      'deleted_at TIMESTAMPTZ',
+      'deleted_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL',
+      'deletion_reason VARCHAR(1000)',
+      'deletion_operation_id UUID',
+    ]) assert.ok(playtime019.includes(field), `synthetic fixture includes ${field}`);
+    assert.ok(calls.some((sql) => sql.includes('idx_playtime_sessions_visible_history')));
   } finally {
     restore();
   }

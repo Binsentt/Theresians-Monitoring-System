@@ -286,4 +286,4 @@ assert.match(
 assert.doesNotMatch(pending024.stdout, /synthetic-only-name|123456/);
 console.log('PASS: migration 024 emits aggregate impact, discloses no fixture values, then stops');
 
-console.log('Preflight integration result: 9/9 disposable PostgreSQL scenarios passed.');
+console.log('Preflight integration result: 10/10 disposable PostgreSQL scenarios passed.');

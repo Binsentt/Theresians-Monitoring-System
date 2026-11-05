@@ -273,11 +273,19 @@ const applySyntheticTestSchema = async (pool, databaseUrl) => {
     await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS session_credential_hash VARCHAR(64)');
     await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS learning_cycle_version INTEGER NOT NULL DEFAULT 0');
+    // Keep the synthetic schema aligned with migration 019 and the read-only
+    // startup readiness contract used by current playtime routes.
+    await pool.query(`ALTER TABLE public.playtime_sessions
+      ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS deleted_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS deletion_reason VARCHAR(1000),
+      ADD COLUMN IF NOT EXISTS deletion_operation_id UUID`);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_student_date ON public.playtime_sessions(student_id, date_played)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_parent_id ON public.playtime_sessions(parent_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_status ON public.playtime_sessions(status)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_expiry ON public.playtime_sessions(status, expires_at)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_student_cycle ON public.playtime_sessions(student_id, learning_cycle_version, status)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_visible_history ON public.playtime_sessions(deleted_at, date_played)');
 
     await pool.query(`CREATE TABLE IF NOT EXISTS public.announcements (
       id SERIAL PRIMARY KEY,
