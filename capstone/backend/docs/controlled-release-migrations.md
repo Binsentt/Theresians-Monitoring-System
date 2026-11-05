@@ -43,18 +43,19 @@ prerequisite.
 
 ### Removed startup database writes
 
-The previous `ensureSchema()` made 177 direct `pool.query` calls: 15 `CREATE
-TABLE IF NOT EXISTS` calls, 39 index calls (31 ordinary and 8 unique), 8 fixed
-`UPDATE` calls, 2 guarded `DO` blocks, and the remaining schema calls. The SQL
-contains 115 `ALTER TABLE` statements, including statements inside the guarded
-blocks. In addition, it awaited a Parent-code backfill that ran one `SELECT` and
-one `UPDATE` per missing Parent ID. The fixed updates normalized nullable
-account flags and cycle versions, cleared malformed Parent IDs, copied legacy
-trash timestamps, and populated learning-file generation/publish/deletion
-state. None of these repairs/backfills now run at startup, and they have not
-been silently converted into a production migration: the live schema/data state
-is unknown, so any replacement migration set must follow the authorized
-preflight and isolated restore rehearsal.
+The previous `ensureSchema()` had 177 direct `pool.query` call sites. One is a
+loop over announcement-repair statements, so the actual query count could be
+higher depending on that statement list. Its SQL contains 15 `CREATE TABLE IF
+NOT EXISTS` statements, 39 index statements (31 ordinary and 8 unique), 115
+`ALTER TABLE` statements (including statements inside 2 guarded `DO` blocks),
+and 8 fixed `UPDATE` statements. It also awaited a Parent-code backfill that ran
+one `SELECT` and one `UPDATE` per missing Parent ID. The fixed updates normalized
+nullable account flags and cycle versions, cleared malformed Parent IDs,
+copied legacy trash timestamps, and populated learning-file
+generation/publish/deletion state. None of these repairs/backfills now run at
+startup, and they have not been silently converted into a production migration:
+the live schema/data state is unknown, so any replacement migration set must
+follow the authorized preflight and isolated restore rehearsal.
 
 `ensureSchema()` itself did not contain `DELETE` or `TRUNCATE`. The separate
 six-digit Student cleanup was startup-triggered on `main` and is removed by PR
