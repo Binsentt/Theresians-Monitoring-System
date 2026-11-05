@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Pool } = require('pg');
-const { applySyntheticTestSchema, assertSyntheticDatabase } = require('./testSupport/applySyntheticTestSchema');
+const { applySyntheticTestSchema, assertSyntheticDatabase, createSyntheticAccountsSchema } = require('./testSupport/applySyntheticTestSchema');
 const { assertStartupSchemaReady } = require('./database/startupSchemaReadiness');
 
 const databaseUrl = process.env.STARTUP_SAFETY_TEST_DATABASE_URL || '';
@@ -73,16 +73,13 @@ if (!isSafeDatabaseUrl(databaseUrl)) {
 
     await assert.rejects(assertStartupSchemaReady(admin), /database schema is not ready: accounts/);
 
-    await admin.query(`CREATE TABLE public.accounts (
-      id SERIAL PRIMARY KEY, name VARCHAR(100) NOT NULL, email VARCHAR(100),
-      password VARCHAR(255), role VARCHAR(50) NOT NULL, status VARCHAR(50)
-    )`);
+    await createSyntheticAccountsSchema(admin, databaseUrl);
     await applySyntheticTestSchema(admin, databaseUrl);
 
     await admin.query(`INSERT INTO public.accounts
       (name, email, password, role, parent_id, game_student_id, is_archived,
        session_version, current_learning_cycle_version)
-      VALUES ('Synthetic Parent', 'parent@example.test', 'unused', 'parent', NULL, NULL, NULL, NULL, NULL),
+      VALUES ('Synthetic Parent', 'parent@example.test', 'unused', 'parent', NULL, NULL, NULL, NULL, 0),
              ('Synthetic Legacy Student', 'student@example.test', 'unused', 'student', NULL, '123456', false, 0, 0)`);
     await admin.query(`INSERT INTO public.folders (name, trashed_at, deleted_at)
       VALUES ('Synthetic trashed folder', TIMESTAMPTZ '2026-01-01 00:00:00+00', NULL)`);

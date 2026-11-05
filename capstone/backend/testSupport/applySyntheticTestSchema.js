@@ -31,8 +31,35 @@ async function assertSyntheticDatabase(pool, databaseUrl) {
   }
 }
 
-const applySyntheticTestSchema = async (pool, databaseUrl) => {
+const createSyntheticAccountsSchema = async (pool, databaseUrl) => {
   await assertSyntheticDatabase(pool, databaseUrl);
+  await pool.query(`CREATE TABLE IF NOT EXISTS public.accounts (
+    id SERIAL NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100) NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    mobile_number VARCHAR(20),
+    role VARCHAR(50) NOT NULL DEFAULT 'Parent',
+    parent_id VARCHAR(6),
+    employee_id VARCHAR(50),
+    otp_code VARCHAR(10),
+    otp_expires_at TIMESTAMPTZ,
+    is_archived BOOLEAN DEFAULT false,
+    must_change_password BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    address VARCHAR(255),
+    birthday DATE,
+    gender VARCHAR(20),
+    status VARCHAR(20) DEFAULT 'Offline',
+    CONSTRAINT accounts_pkey PRIMARY KEY (id),
+    CONSTRAINT accounts_email_key UNIQUE (email),
+    CONSTRAINT accounts_parent_id_key UNIQUE (parent_id),
+    CONSTRAINT accounts_employee_id_key UNIQUE (employee_id)
+  )`);
+};
+
+const applySyntheticTestSchema = async (pool, databaseUrl) => {
+  await createSyntheticAccountsSchema(pool, databaseUrl);
   try {
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS employee_id VARCHAR(50)');
     await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT false');
@@ -432,4 +459,4 @@ const applySyntheticTestSchema = async (pool, databaseUrl) => {
   }
 };
 
-module.exports = { applySyntheticTestSchema, assertSyntheticDatabase };
+module.exports = { applySyntheticTestSchema, assertSyntheticDatabase, createSyntheticAccountsSchema };

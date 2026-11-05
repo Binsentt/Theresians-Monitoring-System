@@ -137,7 +137,7 @@ jobs:
           const fs = require('node:fs');
           const jwt = require('jsonwebtoken');
           const { Pool } = require('pg');
-          const { applySyntheticTestSchema, assertSyntheticDatabase } = require('/workspace/capstone/backend/testSupport/applySyntheticTestSchema');
+          const { applySyntheticTestSchema } = require('/workspace/capstone/backend/testSupport/applySyntheticTestSchema');
 
           const databaseUrl = process.env.DATABASE_URL;
           const parsedDatabaseUrl = new URL(databaseUrl || '');
@@ -155,13 +155,6 @@ jobs:
           async function main() {
             const bootstrap = new Pool({ connectionString: databaseUrl });
             try {
-              await assertSyntheticDatabase(bootstrap, databaseUrl);
-              await bootstrap.query([
-                'CREATE TABLE IF NOT EXISTS public.accounts (',
-                'id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT, password TEXT,',
-                'role VARCHAR(50) NOT NULL, status VARCHAR(50) DEFAULT \'active\'',
-                ')',
-              ].join('\n'));
               await applySyntheticTestSchema(bootstrap, databaseUrl);
             } finally {
               await bootstrap.end();
@@ -461,15 +454,10 @@ jobs:
             --env HOME=/tmp \
             node:20-bookworm node -e '
           const { Pool } = require("pg");
-          const { applySyntheticTestSchema, assertSyntheticDatabase } = require("./testSupport/applySyntheticTestSchema");
+          const { applySyntheticTestSchema } = require("./testSupport/applySyntheticTestSchema");
           (async () => {
             const pool = new Pool({ connectionString: process.env.DATABASE_URL });
             try {
-              await assertSyntheticDatabase(pool, process.env.DATABASE_URL);
-              await pool.query(`CREATE TABLE public.accounts (
-                id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT, password TEXT,
-                role VARCHAR(50) NOT NULL, status VARCHAR(50) DEFAULT $$active$$
-              )`);
               await applySyntheticTestSchema(pool, process.env.DATABASE_URL);
               console.log("Run-marked synthetic backend schema prepared; application startup remains read-only.");
             } finally {
