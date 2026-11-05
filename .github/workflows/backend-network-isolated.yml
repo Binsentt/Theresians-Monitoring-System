@@ -391,7 +391,13 @@ jobs:
             tq_student_id_migration_test_ci \
             tq_website_session_migration_test_ci \
             tq_parent_route_test_ci \
-            tq_startup_safety_test_ci; do
+            tq_startup_safety_test_ci \
+            tq_preflight_valid_test_ci \
+            tq_preflight_missing_table_test_ci \
+            tq_preflight_missing_column_test_ci \
+            tq_preflight_incompatible_type_test_ci \
+            tq_preflight_malformed_ledger_test_ci \
+            tq_preflight_pending_024_test_ci; do
             docker exec tq-backend-test-postgres createdb --host=127.0.0.1 --username=postgres "$database"
           done
           disposable_sentinel="$(openssl rand -hex 24)"
@@ -408,7 +414,13 @@ jobs:
             tq_student_id_migration_test_ci \
             tq_website_session_migration_test_ci \
             tq_parent_route_test_ci \
-            tq_startup_safety_test_ci; do
+            tq_startup_safety_test_ci \
+            tq_preflight_valid_test_ci \
+            tq_preflight_missing_table_test_ci \
+            tq_preflight_missing_column_test_ci \
+            tq_preflight_incompatible_type_test_ci \
+            tq_preflight_malformed_ledger_test_ci \
+            tq_preflight_pending_024_test_ci; do
             if [[ ! "$database" =~ ^tq_[a-z0-9_]+_test_ci$ ]]; then
               echo "Refusing to mark an unrecognized PostgreSQL test database: $database" >&2
               exit 1
@@ -422,6 +434,13 @@ jobs:
           done
           echo "sentinel=${disposable_sentinel}" >> "$GITHUB_OUTPUT"
           docker inspect --format='postgres network={{.HostConfig.NetworkMode}} published-ports={{json .HostConfig.PortBindings}}' tq-backend-test-postgres
+
+      - name: Validate operator preflight against disposable PostgreSQL
+        shell: bash
+        env:
+          CI: 'true'
+          TQ_DISPOSABLE_DB_SENTINEL: ${{ steps.start-postgres.outputs.sentinel }}
+        run: node capstone/backend/scripts/run-preflight-postgres-harness.cjs
 
       - name: Prepare synthetic schema for backend tests without startup migrations
         shell: bash

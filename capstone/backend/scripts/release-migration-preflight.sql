@@ -1,15 +1,105 @@
 \set ON_ERROR_STOP on
+\set migration_024_review_required false
 
--- Run with a dedicated read-only role. No row-level identifiers are selected.
+-- Supply expected_database, expected_role, expected_server_address, and
+-- expected_server_port with psql -v values taken from the approved change record.
+-- Use a dedicated role with direct SELECT grants only; this script refuses
+-- superuser/admin roles and roles with persistent write privileges.
+\if :{?expected_database}
+\else
+  \echo 'STOP: -v expected_database is required.'
+  \quit 3
+\endif
+\if :{?expected_role}
+\else
+  \echo 'STOP: -v expected_role is required.'
+  \quit 3
+\endif
+\if :{?expected_server_address}
+\else
+  \echo 'STOP: -v expected_server_address is required.'
+  \quit 3
+\endif
+\if :{?expected_server_port}
+\else
+  \echo 'STOP: -v expected_server_port is required.'
+  \quit 3
+\endif
+
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '30s';
 
 SELECT current_database() AS database_name,
-       current_user AS database_user,
+       current_user AS database_role,
        inet_server_addr()::text AS server_address,
        inet_server_port() AS server_port,
        current_setting('server_version') AS server_version,
        current_setting('transaction_read_only') AS transaction_read_only;
+
+SELECT current_database() = :'expected_database'
+         AND current_user = :'expected_role'
+         AND session_user = current_user
+         AND inet_server_addr()::text = :'expected_server_address'
+         AND inet_server_port() = :'expected_server_port'::integer
+         AND current_setting('transaction_read_only') = 'on' AS target_identity_ok
+\gset
+\if :target_identity_ok
+  \echo 'Target database identity and read-only transaction match the approved values.'
+\else
+  \echo 'STOP: target database identity or read-only transaction does not match the approved values.'
+  \quit 3
+\endif
+
+SELECT EXISTS (
+         SELECT 1
+         FROM pg_catalog.pg_roles AS role_record
+         WHERE role_record.rolname = current_user
+           AND NOT role_record.rolsuper
+           AND NOT role_record.rolcreatedb
+           AND NOT role_record.rolcreaterole
+           AND NOT role_record.rolreplication
+           AND NOT role_record.rolbypassrls
+           AND NOT EXISTS (
+             SELECT 1
+             FROM pg_catalog.pg_auth_members AS membership
+             WHERE membership.member = role_record.oid
+           )
+       )
+       AND NOT has_database_privilege(current_user, current_database(), 'CREATE')
+       AND NOT EXISTS (
+         SELECT 1
+         FROM pg_catalog.pg_namespace AS namespace_record
+         WHERE has_schema_privilege(current_user, namespace_record.oid, 'CREATE')
+       )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM pg_catalog.pg_class AS relation
+         WHERE relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+           AND (
+             has_table_privilege(current_user, relation.oid, 'INSERT')
+             OR has_table_privilege(current_user, relation.oid, 'UPDATE')
+             OR has_table_privilege(current_user, relation.oid, 'DELETE')
+             OR has_table_privilege(current_user, relation.oid, 'TRUNCATE')
+             OR has_table_privilege(current_user, relation.oid, 'REFERENCES')
+             OR has_table_privilege(current_user, relation.oid, 'TRIGGER')
+           )
+       )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM pg_catalog.pg_class AS sequence_relation
+         WHERE sequence_relation.relkind = 'S'
+           AND (
+             has_sequence_privilege(current_user, sequence_relation.oid, 'USAGE')
+             OR has_sequence_privilege(current_user, sequence_relation.oid, 'UPDATE')
+           )
+       ) AS role_read_only_ok
+\gset
+\if :role_read_only_ok
+  \echo 'Database role is non-admin and has no persistent write privileges on public objects.'
+\else
+  \echo 'STOP: expected a dedicated non-admin read-only database role.'
+  \quit 3
+\endif
 
 SELECT object_name,
        to_regclass(format('public.%I', object_name))::text AS relation_name
@@ -21,8 +111,7 @@ FROM (VALUES
   ('activity_logs'),
   ('website_sessions'),
   ('student_quest_milestones'),
-  ('playtime_deletion_tombstones'),
-  ('game_progress_save_commits')
+  ('playtime_deletion_tombstones')
 ) AS objects(object_name)
 ORDER BY object_name;
 
@@ -34,74 +123,109 @@ SELECT to_regclass('public.schema_migrations') IS NOT NULL AS ledger_present \gs
   \quit 3
 \endif
 
+WITH ledger_columns AS (
+  SELECT attname,
+         pg_catalog.format_type(atttypid, atttypmod) AS formatted_type,
+         attnotnull,
+         attnum,
+         EXISTS (
+           SELECT 1 FROM pg_catalog.pg_attrdef AS default_record
+           WHERE default_record.adrelid = attribute_record.attrelid
+             AND default_record.adnum = attribute_record.attnum
+         ) AS has_default
+  FROM pg_catalog.pg_attribute AS attribute_record
+  WHERE attrelid = 'public.schema_migrations'::regclass
+    AND attnum > 0
+    AND NOT attisdropped
+), ledger_primary_key AS (
+  SELECT constraint_record.conkey = ARRAY[version_column.attnum]::smallint[] AS version_is_only_primary_key
+  FROM pg_catalog.pg_constraint AS constraint_record
+  CROSS JOIN ledger_columns AS version_column
+  WHERE constraint_record.conrelid = 'public.schema_migrations'::regclass
+    AND constraint_record.contype = 'p'
+    AND version_column.attname = 'version'
+)
+SELECT COUNT(*) = 4
+       AND BOOL_AND(
+         (attname = 'version' AND formatted_type = 'integer' AND attnotnull)
+         OR (attname = 'filename' AND formatted_type = 'character varying(255)' AND attnotnull)
+         OR (attname = 'checksum' AND formatted_type = 'character(64)' AND attnotnull)
+         OR (attname = 'applied_at' AND formatted_type = 'timestamp with time zone' AND attnotnull AND has_default)
+       )
+       AND (SELECT COUNT(*) = 1 AND BOOL_AND(version_is_only_primary_key) FROM ledger_primary_key)
+       AS migration_ledger_shape_ok
+FROM ledger_columns
+\gset
+\if :migration_ledger_shape_ok
+  \echo 'Migration ledger columns and version primary key are valid.'
+\else
+  \echo 'STOP: schema_migrations has an incompatible or incomplete shape.'
+  \quit 3
+\endif
+
 -- A missing ledger row is reported as PENDING, never inferred as already applied.
-WITH expected(version, filename) AS (
+WITH expected(version, filename, source_sha256) AS (
   VALUES
-    (18, '018_website_sessions_and_audit_metadata.sql'),
-    (19, '019_playtime_history_removal.sql'),
-    (20, '020_add_auth_otp_challenge_security.sql'),
-    (21, '021_canonical_milestones_and_activity_contract.sql'),
-    (22, '022_game_telemetry_contract.sql'),
-    (23, '023_quest_evidence_and_playtime_tombstones.sql'),
-    (24, '024_remove_legacy_six_digit_students.sql'),
-    (25, '025_add_game_result_question_traceability.sql'),
-    (26, '026_game_progress_save_commit_idempotency.sql')
+    (18, '018_website_sessions_and_audit_metadata.sql', 'f64e6e0de7abdf873fdb1bc93739d2704e4b16ed5bc428c991c7507407ea5668'),
+    (19, '019_playtime_history_removal.sql', 'b76fa5f58daae29dbcf2120b4c9ff533eda3c41dc3f21efdab93b207fb8b2f4f'),
+    (20, '020_add_auth_otp_challenge_security.sql', '6e2cf94b9a8acdcee728e8a0283a95580fc7e63f6622dcb5890415f4b9e715af'),
+    (21, '021_canonical_milestones_and_activity_contract.sql', '3b5ff42ba45a158df434b92b95e935c608fc0a236516d8135d6d0329963beac6'),
+    (22, '022_game_telemetry_contract.sql', '5a45ef2133bc0d69fe117f7164eeb9af65eb16bcf6f4a1215804bd14919e3c76'),
+    (23, '023_quest_evidence_and_playtime_tombstones.sql', '2df0959d48efd554a8e7403ebbf331bfdfb6971b2d66e43a6ae267c02642f12d'),
+    (24, '024_remove_legacy_six_digit_students.sql', '2595a35fe97699376b611f21cc19aa4b7e26d495463fe7585bf7e1c96370e111'),
+    (25, '025_add_game_result_question_traceability.sql', '2a1b904056274c73903cfb713703c6db8e6c2ea37f9c8fd1863f9a3004e42e68')
 )
 SELECT e.version,
        e.filename AS expected_filename,
+       e.source_sha256 AS expected_source_sha256,
        m.filename AS ledger_filename,
        m.checksum AS ledger_sha256,
        m.applied_at,
        CASE
          WHEN m.version IS NULL THEN 'PENDING'
-         WHEN m.filename <> e.filename THEN 'STOP_FILENAME_MISMATCH'
-         ELSE 'APPLIED_COMPARE_CHECKSUM_TO_SOURCE'
+         WHEN m.filename IS DISTINCT FROM e.filename THEN 'STOP_FILENAME_MISMATCH'
+         WHEN LOWER(BTRIM(COALESCE(m.checksum, ''))) <> e.source_sha256 THEN 'STOP_CHECKSUM_MISMATCH'
+         ELSE 'APPLIED_CHECKSUM_MATCH'
        END AS preflight_state
 FROM expected AS e
 LEFT JOIN public.schema_migrations AS m ON m.version = e.version
 ORDER BY e.version;
 
-WITH expected(version, filename) AS (
+WITH expected(version, filename, source_sha256) AS (
   VALUES
-    (18, '018_website_sessions_and_audit_metadata.sql'),
-    (19, '019_playtime_history_removal.sql'),
-    (20, '020_add_auth_otp_challenge_security.sql'),
-    (21, '021_canonical_milestones_and_activity_contract.sql'),
-    (22, '022_game_telemetry_contract.sql'),
-    (23, '023_quest_evidence_and_playtime_tombstones.sql'),
-    (24, '024_remove_legacy_six_digit_students.sql'),
-    (25, '025_add_game_result_question_traceability.sql'),
-    (26, '026_game_progress_save_commit_idempotency.sql')
+    (18, '018_website_sessions_and_audit_metadata.sql', 'f64e6e0de7abdf873fdb1bc93739d2704e4b16ed5bc428c991c7507407ea5668'),
+    (19, '019_playtime_history_removal.sql', 'b76fa5f58daae29dbcf2120b4c9ff533eda3c41dc3f21efdab93b207fb8b2f4f'),
+    (20, '020_add_auth_otp_challenge_security.sql', '6e2cf94b9a8acdcee728e8a0283a95580fc7e63f6622dcb5890415f4b9e715af'),
+    (21, '021_canonical_milestones_and_activity_contract.sql', '3b5ff42ba45a158df434b92b95e935c608fc0a236516d8135d6d0329963beac6'),
+    (22, '022_game_telemetry_contract.sql', '5a45ef2133bc0d69fe117f7164eeb9af65eb16bcf6f4a1215804bd14919e3c76'),
+    (23, '023_quest_evidence_and_playtime_tombstones.sql', '2df0959d48efd554a8e7403ebbf331bfdfb6971b2d66e43a6ae267c02642f12d'),
+    (24, '024_remove_legacy_six_digit_students.sql', '2595a35fe97699376b611f21cc19aa4b7e26d495463fe7585bf7e1c96370e111'),
+    (25, '025_add_game_result_question_traceability.sql', '2a1b904056274c73903cfb713703c6db8e6c2ea37f9c8fd1863f9a3004e42e68')
 )
 SELECT EXISTS (
   SELECT 1
   FROM expected AS e
   JOIN public.schema_migrations AS m ON m.version = e.version
-  WHERE m.filename <> e.filename
-) AS filename_mismatch \gset
-\if :filename_mismatch
-  \echo 'STOP: migration filename mismatch; do not approve a migration.'
+  WHERE m.filename IS DISTINCT FROM e.filename
+     OR LOWER(BTRIM(COALESCE(m.checksum, ''))) IS DISTINCT FROM e.source_sha256
+) AS migration_metadata_mismatch \gset
+\if :migration_metadata_mismatch
+  \echo 'STOP: applied migration filename or checksum differs from reviewed source.'
   \quit 3
 \endif
 
 SELECT EXISTS (
-  SELECT 1 FROM public.schema_migrations WHERE version > 26
+  SELECT 1 FROM public.schema_migrations WHERE version > 25
 ) AS newer_migration_present \gset
 \if :newer_migration_present
   \echo 'STOP: database ledger contains a version newer than this source.'
   \quit 3
 \endif
 
--- Compare each applied checksum with SHA-256 of the exact SQL source file at
--- the reviewed commit. The script reports ledger values only.
-SELECT table_name, column_name, data_type, udt_name, is_nullable,
-       character_maximum_length, column_default
-FROM information_schema.columns
-WHERE table_schema = 'public'
-  AND table_name IN ('accounts', 'activity_logs', 'game_progress_save_commits')
-ORDER BY table_name, ordinal_position;
+-- The checksums above are tied to migrations 018-025 in this PR's source tree.
+-- Migration 026 is intentionally excluded until PR #31 is integrated.
 
-+-- Compare the runtime startup contract against every required table/column.
+-- Compare the runtime startup contract against every required table/column.
 -- This reports schema metadata and counts only; no application rows are read.
 WITH required_columns(table_name, column_name) AS (
   VALUES
@@ -396,9 +520,76 @@ SELECT jsonb_build_object(
   'present_required_columns', (SELECT COUNT(*) FROM schema_contract WHERE column_attnum IS NOT NULL),
   'total_required_columns', (SELECT COUNT(*) FROM schema_contract),
   'missing_objects', COALESCE((SELECT jsonb_agg(missing_object ORDER BY missing_object) FROM missing), '[]'::jsonb)
-) AS startup_schema_preflight;
+) AS startup_schema_preflight,
+NOT EXISTS (SELECT 1 FROM missing) AS startup_schema_ready
+\gset
+\echo 'Startup schema result: :startup_schema_preflight'
+\if :startup_schema_ready
+  \echo 'Startup schema contract is complete: 17 tables and 265 required columns are present.'
+\else
+  \echo 'STOP: one or more required tables or columns are missing; do not deploy this source.'
+  \quit 3
+\endif
 
--- Any nonzero missing count or any returned missing_object is a stop condition.
+-- Catalog details below contain schema metadata only, not application row values.
+SELECT table_name, column_name, data_type, udt_name, is_nullable,
+       character_maximum_length, numeric_precision, numeric_scale, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name IN (
+    'accounts', 'activity_logs', 'admin_audit_logs', 'announcements', 'folders',
+    'game_results', 'learning_files', 'login_otp_device_skips',
+    'playtime_deletion_tombstones', 'playtime_sessions', 'questions',
+    'student_ai_insights', 'student_game_progress', 'student_quest_milestones',
+    'teacher_class_assignments', 'teacher_student_relationships', 'website_sessions'
+  )
+ORDER BY table_name, ordinal_position;
+
+WITH expected_types(table_name, column_name, expected_data_type) AS (
+  VALUES
+    ('accounts', 'id', 'integer'),
+    ('accounts', 'current_learning_cycle_version', 'integer'),
+    ('accounts', 'session_version', 'integer'),
+    ('activity_logs', 'id', 'integer'),
+    ('activity_logs', 'student_id', 'integer'),
+    ('activity_logs', 'activity_timestamp', 'timestamp with time zone'),
+    ('game_results', 'id', 'integer'),
+    ('game_results', 'resolved_student_id', 'integer'),
+    ('game_results', 'response_time_seconds', 'integer'),
+    ('student_game_progress', 'id', 'integer'),
+    ('student_game_progress', 'student_id', 'integer'),
+    ('student_ai_insights', 'id', 'integer'),
+    ('student_ai_insights', 'student_id', 'integer'),
+    ('student_ai_insights', 'insight', 'jsonb'),
+    ('learning_files', 'id', 'integer'),
+    ('learning_files', 'source_file_bytes', 'bytea'),
+    ('playtime_sessions', 'id', 'integer'),
+    ('playtime_sessions', 'learning_cycle_version', 'integer')
+), type_mismatches AS (
+  SELECT e.table_name, e.column_name, e.expected_data_type, c.data_type AS actual_data_type
+  FROM expected_types AS e
+  LEFT JOIN information_schema.columns AS c
+    ON c.table_schema = 'public'
+   AND c.table_name = e.table_name
+   AND c.column_name = e.column_name
+  WHERE c.column_name IS NULL OR c.data_type <> e.expected_data_type
+)
+SELECT COALESCE(jsonb_agg(jsonb_build_object(
+         'table', table_name,
+         'column', column_name,
+         'expected_type', expected_data_type,
+         'actual_type', actual_data_type
+       ) ORDER BY table_name, column_name), '[]'::jsonb) AS core_type_mismatches,
+       NOT EXISTS (SELECT 1 FROM type_mismatches) AS core_types_compatible
+FROM type_mismatches
+\gset
+\echo 'Core type compatibility: :core_type_mismatches'
+\if :core_types_compatible
+  \echo 'Core type checks passed.'
+\else
+  \echo 'STOP: one or more core column types do not match the source contract.'
+  \quit 3
+\endif
 
 SELECT c.conrelid::regclass::text AS table_name,
        c.conname,
@@ -412,50 +603,71 @@ SELECT c.conrelid::regclass::text AS table_name,
        c.convalidated,
        pg_get_constraintdef(c.oid) AS definition
 FROM pg_constraint AS c
-WHERE c.conrelid = ANY (ARRAY[
-  to_regclass('public.accounts')::oid,
-  to_regclass('public.activity_logs')::oid,
-  to_regclass('public.game_progress_save_commits')::oid
-])
+JOIN pg_catalog.pg_class AS relation ON relation.oid = c.conrelid
+JOIN pg_catalog.pg_namespace AS schema_namespace ON schema_namespace.oid = relation.relnamespace
+WHERE schema_namespace.nspname = 'public'
+  AND relation.relname IN (
+    'accounts', 'activity_logs', 'admin_audit_logs', 'announcements', 'folders',
+    'game_results', 'learning_files', 'login_otp_device_skips',
+    'playtime_deletion_tombstones', 'playtime_sessions', 'questions',
+    'student_ai_insights', 'student_game_progress', 'student_quest_milestones',
+    'teacher_class_assignments', 'teacher_student_relationships', 'website_sessions'
+  )
 ORDER BY table_name, c.conname;
-
-SELECT EXISTS (
-         SELECT 1 FROM public.schema_migrations WHERE version = 26
-       ) AS migration_026_applied,
-       to_regclass('public.accounts') IS NOT NULL AS accounts_present,
-       to_regclass('public.activity_logs') IS NOT NULL AS activity_logs_present,
-       to_regclass('public.game_progress_save_commits') IS NOT NULL AS receipts_present \gset
-\if :migration_026_applied
-  \if :receipts_present
-    \echo 'Migration 026 is recorded and the receipt table exists; review its complete shape above.'
-  \else
-    \echo 'STOP: migration 026 is recorded but its receipt table is absent.'
-    \quit 3
-  \endif
-\else
-  \if :accounts_present
-    \if :activity_logs_present
-      \echo 'Migration 026 prerequisite tables are present; compare their columns to migration 026.'
-    \else
-      \echo 'STOP: activity_logs is absent while migration 026 is not recorded.'
-      \quit 3
-    \endif
-  \else
-    \echo 'STOP: accounts is absent while migration 026 is not recorded.'
-    \quit 3
-  \endif
-\endif
 
 SELECT schemaname, tablename, indexname, indexdef
 FROM pg_indexes
 WHERE schemaname = 'public'
-  AND tablename IN ('activity_logs', 'game_progress_save_commits')
+  AND tablename IN (
+    'accounts', 'activity_logs', 'admin_audit_logs', 'announcements', 'folders',
+    'game_results', 'learning_files', 'login_otp_device_skips',
+    'playtime_deletion_tombstones', 'playtime_sessions', 'questions',
+    'student_ai_insights', 'student_game_progress', 'student_quest_milestones',
+    'teacher_class_assignments', 'teacher_student_relationships', 'website_sessions'
+  )
 ORDER BY tablename, indexname;
+
+SELECT relation.relname AS table_name,
+       trigger_record.tgname AS trigger_name,
+       trigger_record.tgenabled,
+       pg_get_triggerdef(trigger_record.oid) AS definition
+FROM pg_catalog.pg_trigger AS trigger_record
+JOIN pg_catalog.pg_class AS relation ON relation.oid = trigger_record.tgrelid
+JOIN pg_catalog.pg_namespace AS schema_namespace ON schema_namespace.oid = relation.relnamespace
+WHERE schema_namespace.nspname = 'public'
+  AND NOT trigger_record.tgisinternal
+  AND relation.relname IN (
+    'accounts', 'activity_logs', 'admin_audit_logs', 'announcements', 'folders',
+    'game_results', 'learning_files', 'login_otp_device_skips',
+    'playtime_deletion_tombstones', 'playtime_sessions', 'questions',
+    'student_ai_insights', 'student_game_progress', 'student_quest_milestones',
+    'teacher_class_assignments', 'teacher_student_relationships', 'website_sessions'
+  )
+ORDER BY relation.relname, trigger_record.tgname;
+
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_catalog.pg_trigger AS trigger_record
+  JOIN pg_catalog.pg_class AS relation ON relation.oid = trigger_record.tgrelid
+  JOIN pg_catalog.pg_namespace AS schema_namespace ON schema_namespace.oid = relation.relnamespace
+  WHERE schema_namespace.nspname = 'public'
+    AND relation.relname = 'teacher_class_assignments'
+    AND trigger_record.tgname = 'teacher_class_assignments_validate_teacher'
+    AND NOT trigger_record.tgisinternal
+    AND trigger_record.tgenabled <> 'D'
+) AS teacher_assignment_trigger_ready \gset
+\if :teacher_assignment_trigger_ready
+  \echo 'Teacher-class assignment validation trigger is enabled.'
+\else
+  \echo 'STOP: required teacher-class assignment validation trigger is missing or disabled.'
+  \quit 3
+\endif
 
 SELECT NOT EXISTS (
   SELECT 1 FROM public.schema_migrations WHERE version = 24
 ) AS migration_024_pending \gset
 \if :migration_024_pending
+  \set migration_024_review_required true
   SELECT to_regclass('public.accounts') IS NOT NULL AS accounts_present,
          to_regclass('public.game_results') IS NOT NULL AS game_results_present,
          to_regclass('public.playtime_sessions') IS NOT NULL AS playtime_sessions_present \gset
@@ -493,69 +705,66 @@ SELECT NOT EXISTS (
   FROM public.playtime_sessions AS ps
   JOIN candidates AS c ON c.id = ps.student_id;
 
-  SELECT to_regclass('public.website_sessions') IS NOT NULL AS website_sessions_present,
-         to_regclass('public.student_quest_milestones') IS NOT NULL AS milestones_present,
-         to_regclass('public.game_progress_save_commits') IS NOT NULL AS receipts_present,
-         to_regclass('public.playtime_deletion_tombstones') IS NOT NULL AS tombstones_present \gset
-  \if :website_sessions_present
-    WITH candidates AS (
-      SELECT id FROM public.accounts
-      WHERE LOWER(role) = 'student'
-        AND BTRIM(COALESCE(game_student_id, '')) ~ '^[0-9]{6}$'
+  -- Emit a COUNT(*) query for every direct FK into the three relations whose
+  -- rows migration 024 deletes. This captures database-specific CASCADE,
+  -- SET NULL, SET DEFAULT, and restrictive edges without exposing row values.
+  -- For a referencing row that is itself explicitly deleted, do not count it
+  -- as a surviving SET NULL/SET DEFAULT update.
+  SELECT format(
+    'SELECT %L AS foreign_key_edge, %L AS on_delete, COUNT(*) AS affected_rows FROM %s AS child JOIN %s AS parent ON %s WHERE %s%s;',
+    child_namespace.nspname || '.' || child_relation.relname || '.' || constraint_record.conname,
+    CASE constraint_record.confdeltype
+      WHEN 'a' THEN 'NO ACTION'
+      WHEN 'r' THEN 'RESTRICT'
+      WHEN 'c' THEN 'CASCADE'
+      WHEN 'n' THEN 'SET NULL'
+      WHEN 'd' THEN 'SET DEFAULT'
+    END,
+    child_relation.oid::regclass,
+    parent_relation.oid::regclass,
+    join_columns.join_predicate,
+    CASE parent_relation.relname
+      WHEN 'accounts' THEN 'LOWER(parent.role) = ''student'' AND BTRIM(COALESCE(parent.game_student_id, '''')) ~ ''^[0-9]{6}$'''
+      WHEN 'game_results' THEN 'parent.resolved_student_id IN (SELECT id FROM public.accounts WHERE LOWER(role) = ''student'' AND BTRIM(COALESCE(game_student_id, '''')) ~ ''^[0-9]{6}$'')'
+      WHEN 'playtime_sessions' THEN 'parent.student_id IN (SELECT id FROM public.accounts WHERE LOWER(role) = ''student'' AND BTRIM(COALESCE(game_student_id, '''')) ~ ''^[0-9]{6}$'')'
+    END,
+    CASE child_relation.relname
+      WHEN 'accounts' THEN ' AND NOT (LOWER(child.role) = ''student'' AND BTRIM(COALESCE(child.game_student_id, '''')) ~ ''^[0-9]{6}$'')'
+      WHEN 'game_results' THEN ' AND NOT (child.resolved_student_id IN (SELECT id FROM public.accounts WHERE LOWER(role) = ''student'' AND BTRIM(COALESCE(game_student_id, '''')) ~ ''^[0-9]{6}$''))'
+      WHEN 'playtime_sessions' THEN ' AND NOT (child.student_id IN (SELECT id FROM public.accounts WHERE LOWER(role) = ''student'' AND BTRIM(COALESCE(game_student_id, '''')) ~ ''^[0-9]{6}$''))'
+      ELSE ''
+    END
+  )
+  FROM pg_catalog.pg_constraint AS constraint_record
+  JOIN pg_catalog.pg_class AS child_relation ON child_relation.oid = constraint_record.conrelid
+  JOIN pg_catalog.pg_namespace AS child_namespace ON child_namespace.oid = child_relation.relnamespace
+  JOIN pg_catalog.pg_class AS parent_relation ON parent_relation.oid = constraint_record.confrelid
+  JOIN LATERAL (
+    SELECT string_agg(
+      format('child.%I = parent.%I', child_column.attname, parent_column.attname),
+      ' AND ' ORDER BY key_column.position
+    ) AS join_predicate
+    FROM unnest(constraint_record.conkey, constraint_record.confkey)
+         WITH ORDINALITY AS key_column(child_attnum, parent_attnum, position)
+    JOIN pg_catalog.pg_attribute AS child_column
+      ON child_column.attrelid = constraint_record.conrelid
+     AND child_column.attnum = key_column.child_attnum
+    JOIN pg_catalog.pg_attribute AS parent_column
+      ON parent_column.attrelid = constraint_record.confrelid
+     AND parent_column.attnum = key_column.parent_attnum
+  ) AS join_columns ON true
+  WHERE constraint_record.contype = 'f'
+    AND constraint_record.confrelid IN (
+      'public.accounts'::regclass,
+      'public.game_results'::regclass,
+      'public.playtime_sessions'::regclass
     )
-    SELECT 'website_sessions.account_id (CASCADE)' AS impact, COUNT(*) AS row_count
-    FROM public.website_sessions AS ws
-    JOIN candidates AS c ON c.id = ws.account_id;
-  \endif
-  \if :milestones_present
-    WITH candidates AS (
-      SELECT id FROM public.accounts
-      WHERE LOWER(role) = 'student'
-        AND BTRIM(COALESCE(game_student_id, '')) ~ '^[0-9]{6}$'
-    )
-    SELECT 'student_quest_milestones.student_id (CASCADE)' AS impact, COUNT(*) AS row_count
-    FROM public.student_quest_milestones AS sqm
-    JOIN candidates AS c ON c.id = sqm.student_id;
-  \endif
-  \if :receipts_present
-    WITH candidates AS (
-      SELECT id FROM public.accounts
-      WHERE LOWER(role) = 'student'
-        AND BTRIM(COALESCE(game_student_id, '')) ~ '^[0-9]{6}$'
-    )
-    SELECT 'game_progress_save_commits.student_id (CASCADE)' AS impact, COUNT(*) AS row_count
-    FROM public.game_progress_save_commits AS sc
-    JOIN candidates AS c ON c.id = sc.student_id;
-  \endif
-  \if :tombstones_present
-    WITH candidates AS (
-      SELECT id FROM public.accounts
-      WHERE LOWER(role) = 'student'
-        AND BTRIM(COALESCE(game_student_id, '')) ~ '^[0-9]{6}$'
-    )
-    SELECT 'playtime_deletion_tombstones.deleted_by (SET NULL)' AS impact, COUNT(*) AS row_count
-    FROM public.playtime_deletion_tombstones AS t
-    JOIN candidates AS c ON c.id = t.deleted_by;
-  \endif
-  \if :playtime_sessions_present
-    WITH candidates AS (
-      SELECT id FROM public.accounts
-      WHERE LOWER(role) = 'student'
-        AND BTRIM(COALESCE(game_student_id, '')) ~ '^[0-9]{6}$'
-    )
-    SELECT 'playtime_sessions.deleted_by (SET NULL; not directly deleted)' AS impact,
-           COUNT(*) AS row_count
-    FROM public.playtime_sessions AS ps
-    JOIN candidates AS deleter ON deleter.id = ps.deleted_by
-    WHERE NOT EXISTS (
-      SELECT 1 FROM candidates AS direct_delete
-      WHERE direct_delete.id = ps.student_id
-    );
-  \endif
+  ORDER BY child_namespace.nspname, child_relation.relname, constraint_record.conname
+  \gexec
 
-  -- Inventory every direct FK into tables explicitly deleted by migration 024
-  -- and every recursive CASCADE. Count-only joins are still needed for any
-  -- additional database-specific edges listed below.
+  -- Inventory all direct FK edges and recursively reachable CASCADE edges. A
+  -- graph deeper than one level, or any edge without reviewed count coverage,
+  -- requires a separate count-only operator query before approval.
   SELECT confrelid::regclass::text AS referenced_parent,
          conrelid::regclass::text AS referencing_child,
          conname,
@@ -610,3 +819,7 @@ SELECT NOT EXISTS (
 \endif
 
 ROLLBACK;
+\if :migration_024_review_required
+  \echo 'STOP: migration 024 is pending. These counts are a preflight input only; complete and approve every recursive cascade/SET NULL impact before any migration run.'
+  \quit 4
+\endif
