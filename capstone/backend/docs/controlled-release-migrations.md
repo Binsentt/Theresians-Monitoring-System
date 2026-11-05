@@ -2,6 +2,90 @@
 
 This procedure separates ordinary Railway application deployments from database migrations. It does not itself authorize a production migration or deployment.
 
+## Startup schema safety and the Railway deployment incident
+
+The production-linked Railway services both started a deployment for commit
+`9f4075ff` at `2026-11-04T07:37:35.152Z`, about two seconds after PR #32 merged to
+`main`. The primary deployment succeeded and serves the production domains; the
+secondary service crashed. Both deployment records report `reason=deploy` and
+source branch `main`. The only tracked GitHub workflow is isolated backend CI,
+not a deploy workflow. Railway's read API does not expose the Auto Deploy toggle.
+The owner has confirmed Auto Deploy is disabled on both services, but that could
+not be independently verified through the API.
+
+The secondary logs repeatedly report schema initialization failure and legacy
+cleanup skipped, with the error detail blank. The primary logs show the server
+listening. Available metadata does not identify whether the deployment was
+started by Railway's Git integration, a manual dashboard action, CLI/API action,
+or a queued/redeploy operation. Treat the trigger as unresolved. Before another
+`main` merge, an operator must inspect Railway's deployment/audit timeline at
+the timestamps above, confirm the source/repository/branch and Auto Deploy state
+for both services in the dashboard, and verify no deployments are queued or
+running. If that evidence does not explain the event, keep `main` unchanged and
+have the Railway owner choose an approved deployment-control change. No Railway
+configuration was changed during this work.
+
+On `main` before this remediation, importing `server.js` called `ensureSchema()`
+and then ran `permanentlyDeleteLegacySixDigitStudents()` after schema readiness.
+PR #34 removes that deletion path. This startup-safety change is based on PR #34
+and removes the remaining schema writes. The replacement startup check performs
+one parameterized `SELECT` against `pg_catalog` to confirm the required tables
+and columns exist. It does not create or repair schema. Missing requirements
+cause readiness to fail, the listener is not started, and the database pool is
+closed.
+
+The compatibility check proves table/column presence only. It does not prove
+every SQL type, default, index, trigger, or foreign-key definition; compare those
+to the migration ledger and catalog in the existing read-only preflight before
+deployment. This PR must not be deployed until that preflight confirms the live
+schema is compatible or separately reviewed migrations cover every missing
+prerequisite.
+
+### Removed startup database writes
+
+The previous `ensureSchema()` had 177 direct `pool.query` call sites. One is a
+loop over announcement-repair statements, so the actual query count could be
+higher depending on that statement list. Its SQL contains 15 `CREATE TABLE IF
+NOT EXISTS` statements, 39 index statements (31 ordinary and 8 unique), 115
+`ALTER TABLE` statements (including statements inside 2 guarded `DO` blocks),
+and 8 fixed `UPDATE` statements. It also awaited a Parent-code backfill that ran
+one `SELECT` and one `UPDATE` per missing Parent ID. The fixed updates normalized
+nullable account flags and cycle versions, cleared malformed Parent IDs,
+copied legacy trash timestamps, and populated learning-file
+generation/publish/deletion state. None of these repairs/backfills now run at
+startup, and they have not been silently converted into a production migration:
+the live schema/data state is unknown, so any replacement migration set must
+follow the authorized preflight and isolated restore rehearsal.
+
+`ensureSchema()` itself did not contain `DELETE` or `TRUNCATE`. The separate
+six-digit Student cleanup was startup-triggered on `main` and is removed by PR
+#34. Migration 024 remains destructive: it deletes qualifying legacy Student
+accounts and directly related `game_results` and `playtime_sessions`; foreign-key
+cascades can extend the impact. Keep its existing approval, count, cascade-review,
+and write-quiescence gates.
+
+Ordinary authenticated route writes remain route-scoped, not startup work.
+Lesson-generation jobs are scheduled in response to requests; `server.js` has no
+process-start timer. Startup still creates/checks the uploads directory on the
+filesystem, which does not alter the database.
+
+### Startup-safety test isolation
+
+The synthetic schema helper requires `NODE_ENV=test`, `CI=true`, a loopback
+allow-listed `tq_*_test_ci` database, and a run-specific database comment marker.
+CI creates and stamps the database inside its disposable PostgreSQL 16 container,
+which has no external network. The new startup integration test seeds only
+synthetic records, starts the app as a `SELECT`-only role with read-only
+transactions, checks readiness for a complete schema and rejection for an empty
+schema, and verifies the sentinel records did not change. It does not contact
+Railway or school data.
+
+The compatibility refactor intentionally blocks service startup on an
+incomplete schema. Do not merge/deploy this change until the operator has
+verified that the currently deployed database already has the required shape
+and historical backfills, or separately approved migration work has been
+prepared and rehearsed against an isolated restore.
+
 ## Release controls
 
 - Keep Railway Auto Deploy disabled for both production-linked services: overflowing-insight and natural-imagination. Do not re-enable it.
@@ -14,17 +98,30 @@ The Railway dashboard’s Auto Deploy toggle is not exposed by the read-only ser
 
 ## Exact read-only operator preflight
 
-Use a dedicated read-only PostgreSQL role. The SQL package performs SELECTs in a read-only transaction and returns aggregate counts/schema metadata only. It never returns Student IDs, names, or other row values.
+Use a dedicated non-admin PostgreSQL login role with SELECT-only access, no role memberships, no schema/database CREATE privilege, no table write privileges, and no sequence USAGE/UPDATE privilege. The SQL package performs read-only inspection and returns aggregate counts/schema metadata only. It never returns Student IDs, names, or other row values.
 
 From capstone/backend in a trusted clean checkout of the exact release source:
 
     PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=30000' \
-      psql 'service=APPROVED_READ_ONLY_SERVICE' -X -v ON_ERROR_STOP=1 \
+      psql 'service=APPROVED_READ_ONLY_SERVICE' -X -q -P pager=off \
+      -v ON_ERROR_STOP=1 \
+      -v expected_database='APPROVED_DATABASE_NAME' \
+      -v expected_role='APPROVED_READ_ONLY_ROLE' \
+      -v expected_server_address='APPROVED_SERVER_ADDRESS' \
+      -v expected_server_port='5432' \
       -f scripts/release-migration-preflight.sql
 
-The service alias must be configured through the approved secure operator mechanism. Do not substitute a password-bearing URI on the command line. Confirm the returned database name, role, server address/port, PostgreSQL version, and transaction_read_only=on against the approved change record. Stop if the target is wrong or any required table/ledger is missing.
+The service alias must be configured through the approved secure operator mechanism. Do not substitute a password-bearing URI on the command line. The SQL begins `BEGIN READ ONLY`, verifies the expected database, role, TCP server address and port, and fails with nonzero status on a missing/malformed ledger, required startup object, core type mismatch, migration filename/checksum mismatch, or newer ledger version. Confirm the returned target fingerprint and PostgreSQL version against the approved change record. The script emits metadata and aggregate counts only; store output only in the restricted operations record.
 
-The script lists versions 018–026, filenames, ledger checksums, and pending state. In the same clean checkout, compare each applied checksum to the exact source file bytes:
+The script lists versions 018–025 in this PR #35 source tree, filenames, ledger checksums, and pending state. Migration 026 from PR #31 is intentionally excluded. Compare applied checksums to the exact source file bytes in the same clean checkout:
+
+It also compares the startup compatibility contract (17 tables and 269 required
+columns) to `pg_catalog`, returning counts and missing schema-object names only.
+Any missing table or column is a stop condition. Core runtime types are checked
+explicitly; the script emits all visible column types, nullability, defaults,
+constraints, indexes, and triggers for review. It does not claim that every
+table's complete canonical shape has been validated. See
+`startup-schema-inventory.md` for source gaps and required follow-up.
 
     sha256sum \
       migrations/018_website_sessions_and_audit_metadata.sql \
@@ -34,8 +131,7 @@ The script lists versions 018–026, filenames, ledger checksums, and pending st
       migrations/022_game_telemetry_contract.sql \
       migrations/023_quest_evidence_and_playtime_tombstones.sql \
       migrations/024_remove_legacy_six_digit_students.sql \
-      migrations/025_add_game_result_question_traceability.sql \
-      migrations/026_game_progress_save_commit_idempotency.sql
+      migrations/025_add_game_result_question_traceability.sql
 
 A missing schema_migrations ledger is a stop condition; do not infer all versions are pending and do not let the release runner create the ledger. A ledger filename/checksum mismatch, unknown version newer than this checkout, or incomplete migration output is a stop condition.
 
@@ -45,18 +141,16 @@ If version 024 is pending, the preflight emits count-only results for:
 - candidate Student accounts with a trimmed six-digit game_student_id;
 - game_results rows matched by resolved_student_id;
 - playtime_sessions rows matched by student_id;
-- known migration-defined CASCADE and SET NULL relations;
-- the database’s direct inbound foreign keys and recursive CASCADE descendants.
+- each actual direct foreign-key edge into accounts, game_results, and playtime_sessions, including its ON DELETE action;
+- the full recursive CASCADE edge graph.
 
-Migration 024 physically deletes candidate accounts and the direct game_results/playtime_sessions rows. Foreign keys can delete or alter additional rows. Review all catalog-listed constraints and produce count-only joins for each additional affected relation before approval. If the full cascade/SET NULL impact cannot be counted or approved, stop.
+Migration 024 physically deletes candidate accounts and the direct game_results/playtime_sessions rows. The SQL deliberately returns a nonzero psql status whenever 024 is pending, after printing the counts and graph. This is not a successful deployment preflight: the operator must count every recursively affected row and each SET NULL/SET DEFAULT effect, inspect RESTRICT/NO ACTION edges, and document the complete impact before a separate deletion approval. The guarded migration runner only rechecks the three direct deletion counts, so it is not a substitute for full impact review. Stop if any edge or descendant cannot be fully counted or if concurrent writes are possible.
 
 The exact-count guard in the migration command compares the three direct counts again immediately before applying the migrations. The required write-quiescence value is an operator attestation; it does not itself block application writes. Because an application write can race a count check, do not run 024 while matching save writes remain possible. Use an owner-approved maintenance/write-quiescence procedure, or keep 024 blocked until the migration is redesigned with an atomic impact guard.
 
-### Migration 026 schema check
+### Later migration 026 integration
 
-The preflight prints catalog metadata for accounts, activity_logs, and game_progress_save_commits. Compare columns, types, constraints, indexes, event-key uniqueness, and foreign keys to migration 026 and the backend source at the same commit. If the receipt table is absent while 026 is pending, that is the expected pre-migration state. If it exists already, verify the whole shape; CREATE TABLE IF NOT EXISTS will not repair a mismatched table.
-
-Migration 026 adds the student/cycle/save-ID receipt table and cascades receipt deletion with account deletion. The owner must separately approve a retention and account-deletion policy.
+PR #35 does not contain migration 026 and its current startup gate is 17 tables / 269 required columns. When PR #31 is rebased and reviewed against this source, the combined startup contract must be updated to 18 tables / 278 columns only as part of that approved integration. It must not be activated before migration 026 is separately approved and applied. Migration 026 adds the student/cycle/save-ID receipt table and cascades receipt deletion with account deletion; the owner must separately approve receipt retention and account-deletion behavior.
 
 ## Explicit migration command gate
 
@@ -70,7 +164,7 @@ Set the following transient environment values from the approved change record a
     RELEASE_EXPECTED_DB_USER=APPROVED_MIGRATION_ROLE
     RELEASE_EXPECTED_SERVER_ADDRESS=APPROVED_SERVER_ADDRESS
     RELEASE_EXPECTED_SERVER_PORT=5432
-    RELEASE_EXPECTED_PENDING_MIGRATIONS=18,24,26
+    RELEASE_EXPECTED_PENDING_MIGRATIONS=18,24,25
 
 The example values above are placeholders, not production values. Use the actual full pending version list from the preflight, in ascending order, or use none when there is nothing pending. Never copy the example list as approval.
 

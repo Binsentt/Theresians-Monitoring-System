@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const Module = require('node:module');
 const bcrypt = require('bcrypt');
 const { Client } = require('pg');
+const { applySyntheticTestSchema, assertSyntheticDatabase } = require('./testSupport/applySyntheticTestSchema');
 
 const databaseUrl = process.env.AUTH_RECOVERY_TEST_DATABASE_URL;
 
@@ -26,11 +27,13 @@ const extractCode = (message) => {
 };
 
 test('recovery and login OTP contracts pass against isolated PostgreSQL with captured mail', { skip: !databaseUrl }, async (t) => {
+  process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = databaseUrl;
   process.env.JWT_SECRET = 'isolated-auth-recovery-test-secret';
   process.env.NODE_ENV = 'test';
   const bootstrap = new Client({ connectionString: databaseUrl });
   await bootstrap.connect();
+  await assertSyntheticDatabase(bootstrap, databaseUrl);
   await bootstrap.query(`
     CREATE TABLE IF NOT EXISTS public.accounts (
       id SERIAL PRIMARY KEY,
@@ -50,6 +53,7 @@ test('recovery and login OTP contracts pass against isolated PostgreSQL with cap
       session_version INTEGER DEFAULT 0
     );
   `);
+  await applySyntheticTestSchema(bootstrap, databaseUrl);
   await bootstrap.end();
 
   const capturedMessages = [];
