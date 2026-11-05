@@ -98,4 +98,11 @@ describe('dark mode semantic surface contrast', () => {
     expect(darkRuleFor(' table {')).toMatch(/background:\s*var\(--panel-bg\)/);
     expect(progressStylesheet).toMatch(/@media\s*\(max-width:\s*900px\)\s*\{[^}]*student-insight-guidance-grid/s);
   });
+
+  test('map performance details remain scrollable and readable in dark and narrow layouts', () => {
+    expect(progressStylesheet).toMatch(/\.child-performance-table-scroll\s*\{[^}]*overflow-x:\s*auto/s);
+    expect(progressStylesheet).toMatch(/\.child-performance-table\s*\{[^}]*color:\s*var\(--text-primary/s);
+    expect(progressStylesheet).toMatch(/\[data-theme='dark'\]\s*\.child-performance-table\s*,\s*\[data-theme='dark'\]\s*\.child-performance-table-scroll\s*\{[^}]*color:\s*var\(--text-primary/s);
+    expect(progressStylesheet).toMatch(/@media\s*\(max-width:\s*560px\)\s*\{[^}]*child-performance-view-control/s);
+  });
 });

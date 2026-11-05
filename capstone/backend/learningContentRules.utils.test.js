@@ -18,6 +18,7 @@ const {
   parseExpectedQuestionCount,
   parseLessonQuestionCount,
   resolveQuestionPoolScope,
+  resolveCanonicalLessonTopicScope,
   validateLearningMetadata,
   validateExpectedQuestionCount,
 } = require('./learningContentRules.utils');
@@ -49,6 +50,28 @@ test('resolves the active question pool from Grade and Difficulty without Topic 
     difficulty: 'Easy',
     topic_id: 'unsupported-source-tag',
   }), '');
+});
+
+test('resolves lesson generation only from a canonical topic in the selected Grade and Difficulty', () => {
+  assert.deepEqual(resolveCanonicalLessonTopicScope({
+    grade_level: 'Grade 1', difficulty: 'Easy', topic_id: 'basic_addition',
+  }), {
+    grade_level: 'Grade 1', difficulty: 'Easy', topic_id: 'basic_addition', math_topic: 'Basic Addition',
+  });
+  assert.deepEqual(resolveCanonicalLessonTopicScope({
+    grade_level: 'Grade 1', difficulty: 'Easy', math_topic: 'Shapes',
+  }), {
+    grade_level: 'Grade 1', difficulty: 'Easy', topic_id: 'shapes', math_topic: 'Shapes',
+  });
+  assert.equal(resolveCanonicalLessonTopicScope({
+    grade_level: 'Grade 1', difficulty: 'Easy', topic_id: 'not_a_topic', math_topic: 'Shapes',
+  }), null);
+  assert.equal(resolveCanonicalLessonTopicScope({
+    grade_level: 'Grade 1', difficulty: 'Easy', topic_id: 'fractions',
+  }), null);
+  assert.equal(resolveCanonicalLessonTopicScope({
+    grade_level: 'Grade 1', difficulty: 'Easy', math_topic: 'Fractions from this PDF',
+  }), null);
 });
 
 test('maps math topics by grade and difficulty', () => {

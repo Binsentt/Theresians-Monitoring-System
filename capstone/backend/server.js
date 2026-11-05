@@ -83,6 +83,7 @@ const {
   normalizeDifficultyValue,
   parseLessonQuestionCount,
   resolveQuestionPoolScope,
+  resolveCanonicalLessonTopicScope,
 } = require('./learningContentRules.utils');
 const {
   CANONICAL_DIFFICULTIES,
@@ -161,6 +162,7 @@ const {
   aggregateStudentAccuracy,
   buildStudentAnalyticsMetrics,
   buildStudentAnalyticsScoreHistory,
+  buildStudentAnalyticsMapPerformance,
   sanitizeParentQuizHistoryRow,
 } = require('./studentAnalyticsMetrics.utils');
 const {
@@ -2581,6 +2583,7 @@ const buildLessonGenerationRequestFingerprint = ({
   sourceContentFingerprint,
   gradeLevel,
   difficulty,
+  topicId,
   questionCount,
 }) => crypto.createHash('sha256').update(JSON.stringify({
   actor_id: Number(actorId),
@@ -2590,6 +2593,7 @@ const buildLessonGenerationRequestFingerprint = ({
   source_content_fingerprint: sourceContentFingerprint,
   grade_level: gradeLevel,
   difficulty,
+  topic_id: topicId,
   requested_question_count: questionCount,
 })).digest('hex');
 
@@ -2686,13 +2690,14 @@ const extractLessonTextForGeneration = async ({ filePath, fileName, mimeType }) 
   }
 };
 
-const generateQuestionTextFromLesson = async ({ filePath, fileName, mimeType, lessonText = null }, title, grade_level, difficulty, questionCount, onBatchComplete = null, { existingQuestions = [], onBatch = null } = {}) => {
+const generateQuestionTextFromLesson = async ({ filePath, fileName, mimeType, lessonText = null, mathTopic = null }, title, grade_level, difficulty, questionCount, onBatchComplete = null, { existingQuestions = [], onBatch = null } = {}) => {
   const cleanLessonText = lessonText || await extractLessonTextForGeneration({ filePath, fileName, mimeType });
   return generateLessonQuestionsInBatches({
     lessonText: cleanLessonText,
     title,
     gradeLevel: grade_level,
     difficulty,
+    mathTopic,
     questionCount,
     // Honor the teacher's requested total while keeping each provider call bounded.
     // generateLessonQuestionsInBatches caps individual provider batches at 25,
@@ -2715,6 +2720,18 @@ const processLessonGenerationJob = async ({ learningFile, sourceFilePath, source
   let existingQuestions = [];
   let failedBatchIndex = null;
   try {
+    const topicScope = resolveCanonicalLessonTopicScope({
+      grade_level: learningFile?.grade_level || gradeLevel,
+      difficulty: learningFile?.difficulty || difficulty,
+      topic_id: learningFile?.topic_id,
+      math_topic: learningFile?.math_topic,
+    });
+    if (!topicScope) {
+      throw new QuestionGenerationError(
+        'CANONICAL_TOPIC_REQUIRED',
+        'Select a canonical Mathematics topic for this Grade and Difficulty before generating questions.'
+      );
+    }
     if (!String(process.env.OPENAI_API_KEY || '').trim()) {
       throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
     }
@@ -2755,16 +2772,17 @@ const processLessonGenerationJob = async ({ learningFile, sourceFilePath, source
       fileName: sourceFileName,
       mimeType: sourceMimeType,
       lessonText,
+      mathTopic: topicScope.math_topic,
     }, title, gradeLevel, difficulty, remainingQuestionCount, null, {
       existingQuestions,
       onBatch: async ({ batch, batch_index }) => {
         failedBatchIndex = batch_index;
         await saveQuestionsForFile(learningFile.id, batch.map((question) => ({
           ...question,
-          grade_level: gradeLevel,
-          difficulty,
-          math_topic: learningFile.math_topic || null,
-          topic_id: learningFile.topic_id || null,
+          grade_level: topicScope.grade_level,
+          difficulty: topicScope.difficulty,
+          math_topic: topicScope.math_topic,
+          topic_id: topicScope.topic_id,
           source: 'ai',
         })));
         generatedCount += batch.length;
@@ -5643,9 +5661,13 @@ const getLessonSourceFilePath = (lessonSource = {}) => {
   return path.join(uploadsDir, fileName);
 };
 
-const validateLessonGenerationScope = ({ grade_level, difficulty, expected_question_count }) => {
-  const scope = resolveQuestionPoolScope({ grade_level, difficulty });
-  if (!scope) return { error: 'Grade level and Difficulty must use supported canonical values.' };
+const validateLessonGenerationScope = ({ grade_level, difficulty, topic_id, math_topic, expected_question_count }) => {
+  const poolScope = resolveQuestionPoolScope({ grade_level, difficulty });
+  if (!poolScope) return { error: 'Grade level and Difficulty must use supported canonical values.' };
+  const scope = resolveCanonicalLessonTopicScope({ ...poolScope, topic_id, math_topic });
+  if (!scope) {
+    return { error: 'Select a canonical Mathematics topic for the selected Grade and Difficulty.' };
+  }
 
   const parsedCount = parseLessonQuestionCount(expected_question_count);
   if (parsedCount.error) return { error: parsedCount.error };
@@ -5653,6 +5675,8 @@ const validateLessonGenerationScope = ({ grade_level, difficulty, expected_quest
   return {
     gradeLevel: scope.grade_level,
     difficulty: scope.difficulty,
+    topicId: scope.topic_id,
+    mathTopic: scope.math_topic,
     questionCount: parsedCount.value,
   };
 };
@@ -5785,6 +5809,7 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
       sourceContentFingerprint,
       gradeLevel: scope.gradeLevel,
       difficulty: scope.difficulty,
+      topicId: scope.topicId,
       questionCount: scope.questionCount,
     });
     const existingGeneration = await getLessonGenerationByIdempotencyKey(req.authenticatedUser.id, idempotencyKey);
@@ -5845,8 +5870,8 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
         lessonSource.file_url,
         scope.gradeLevel,
         scope.difficulty,
-        null,
-        null,
+        scope.mathTopic,
+        scope.topicId,
         lessonSource.folder_id || null,
         req.authenticatedUser.id,
         lessonSource.file_size || null,
@@ -5967,13 +5992,24 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     }
     const normalizedGrade = canonicalScope.grade_level;
     const normalizedDifficulty = canonicalScope.difficulty;
-    const normalizedTopicId = canonicalScope.topic_id;
-    const normalizedTopic = canonicalScope.math_topic;
     const normalizedType = String(file_type).trim().toLowerCase();
     if (!isValidFileType(normalizedType)) {
       cleanTemporaryUpload(req.file.path);
       return res.status(400).json({ error: 'Invalid file type.' });
     }
+    const aiRuntimeState = getAiRuntimeState();
+    const lessonTopicScope = normalizedType === 'lesson' && aiRuntimeState.enabled
+      ? resolveCanonicalLessonTopicScope({ grade_level: normalizedGrade, difficulty: normalizedDifficulty, topic_id, math_topic })
+      : null;
+    if (normalizedType === 'lesson' && aiRuntimeState.enabled && !lessonTopicScope) {
+      cleanTemporaryUpload(req.file.path);
+      return res.status(400).json({
+        error: 'Select a canonical Mathematics topic for the selected Grade and Difficulty.',
+        code: 'CANONICAL_TOPIC_REQUIRED',
+      });
+    }
+    const normalizedTopicId = lessonTopicScope?.topic_id ?? canonicalScope.topic_id;
+    const normalizedTopic = lessonTopicScope?.math_topic ?? canonicalScope.math_topic;
 
     const fileValidationError = await validateUploadedLearningFile(req.file, normalizedType);
     if (fileValidationError) {
@@ -5987,7 +6023,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
       return res.status(400).json({ error: folderResolution.error });
     }
 
-    if (normalizedType === 'lesson' && !getAiRuntimeState().enabled) {
+    if (normalizedType === 'lesson' && !aiRuntimeState.enabled) {
       const sourceBytes = fs.readFileSync(req.file.path);
       const sourceContentFingerprint = crypto.createHash('sha256').update(sourceBytes).digest('hex');
       const storedFileName = generateUploadFileName(req.file.originalname);
@@ -6095,6 +6131,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         sourceContentFingerprint: lessonSourceContentFingerprint,
         gradeLevel: normalizedGrade,
         difficulty: normalizedDifficulty,
+        topicId: normalizedTopicId,
         questionCount: requestedQuestionCount,
       });
 
@@ -11445,7 +11482,12 @@ app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, 
     });
     return res.status(aiInsight.status === 'no_data' ? 422 : 200).json({
       ...aiInsight,
-      evidence_snapshot: { progress: progressSnapshot, metrics, scoreHistory: buildStudentAnalyticsScoreHistory(quizSessions) },
+      evidence_snapshot: {
+        progress: progressSnapshot,
+        metrics,
+        scoreHistory: buildStudentAnalyticsScoreHistory(quizSessions),
+        mapPerformance: buildStudentAnalyticsMapPerformance(quizSessions),
+      },
     });
   } catch (err) {
     console.error('Generate grounded student insight failed:', err.message);
@@ -11504,7 +11546,11 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
       quizSessions,
       activityLogs: activityResult.rows,
     });
-    res.json({ progress, metrics, analysis, analyticsReadiness, aiInsight, scoreHistory: buildStudentAnalyticsScoreHistory(quizSessions) });
+    res.json({
+      progress, metrics, analysis, analyticsReadiness, aiInsight,
+      scoreHistory: buildStudentAnalyticsScoreHistory(quizSessions),
+      mapPerformance: buildStudentAnalyticsMapPerformance(quizSessions),
+    });
   } catch (err) {
     console.error('Fetch student progress failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch student progress' });

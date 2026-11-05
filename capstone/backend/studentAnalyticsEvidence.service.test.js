@@ -344,3 +344,66 @@ test('only current-learning-cycle completion milestones feed Per-Quest Evidence'
   assert.equal(byTask.get('oakleaf-bandits').completion_status, 'not_recorded');
   assert.equal(byTask.get('talk-to-old-man').completion_status, 'not_recorded');
 });
+
+test('grounds accepted results and quest completions only from the current learning-cycle snapshot', async () => {
+  const queries = [];
+  const client = {
+    async query(sql) {
+      const normalized = String(sql).replace(/\s+/g, ' ').trim();
+      queries.push(normalized);
+      if (normalized.startsWith('SELECT progress')) return { rows: [{
+        student_id: 18,
+        grade_level: 'Grade 1',
+        current_learning_cycle_version: 3,
+        current_learning_cycle_started_at: '2026-10-01T00:00:00.000Z',
+      }] };
+      if (normalized.startsWith('SELECT gr.')) return { rows: [{
+        resolved_student_id: 18, id: 91, question_id: 701, resolved_question_id: 701, question_set_id: 901,
+        score: 1, total_items: 1, difficulty: 'Easy', math_topic: 'Untrusted label',
+        canonical_topic_id: 'subtraction', canonical_grade_level: 'Grade 1', canonical_difficulty: 'Easy',
+        exact_question_topic_id: 'subtraction',
+        canonical_task_id: 'pinehill-bandits', canonical_battle_id: 'pinehill_bandits2',
+        result_event_id: 'accepted-current-cycle-result', session_id: 901,
+        played_at: '2026-10-02T12:00:00.000Z',
+      }] };
+      if (normalized.startsWith('SELECT student_id, milestone_id')) return { rows: [
+        { student_id: 18, canonical_task_id: 'go-to-school', milestone_id: 'go-to-school', learning_cycle_version: 3, player_facing: true, completed_at: '2026-10-02T11:00:00.000Z' },
+        { student_id: 18, canonical_task_id: 'oakleaf-bandits', milestone_id: 'oakleaf-bandits', learning_cycle_version: 2, player_facing: true, completed_at: '2026-09-02T11:00:00.000Z' },
+      ] };
+      if (normalized.startsWith('SELECT al.student_id')) return { rows: [{
+        student_id: 18, canonical_activity_id: 'task_completed', canonical_task_id: 'go-to-school',
+        quest_graph_version: 'oakleaf-city-pinehill-v1', is_player_facing: true,
+        completed_at: '2026-10-02T11:00:00.000Z', activity_timestamp: '2026-10-02T11:00:00.000Z',
+        session_id: '901',
+      }] };
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const [evidence] = await loadStudentAnalyticsEvidence({
+    progressQuery: 'SELECT progress FROM public.student_progress',
+  }, { connect: async () => client });
+  const resultQuery = queries.find((sql) => sql.startsWith('SELECT gr.'));
+  const activityQuery = queries.find((sql) => sql.startsWith('SELECT al.student_id'));
+
+  assert.match(resultQuery, /student\.current_learning_cycle_started_at IS NULL OR gr\.played_at >= student\.current_learning_cycle_started_at/i);
+  assert.match(resultQuery, /result_session\.learning_cycle_version[\s\S]*student\.current_learning_cycle_version/i);
+  assert.match(activityQuery, /session\.learning_cycle_version[\s\S]*student\.current_learning_cycle_version/i);
+  assert.deepEqual(evidence.completedMilestones.map((row) => row.canonical_task_id), ['go-to-school']);
+  assert.equal(evidence.metrics.validResultCount, 1);
+  assert.equal(evidence.metrics.topicLinkedEvidenceCount, 1);
+  const insightInput = buildGroundedInsightInput({
+    gradeLevel: evidence.progress.grade_level,
+    learningCycleVersion: evidence.progress.current_learning_cycle_version,
+    learningCycleStartedAt: evidence.progress.current_learning_cycle_started_at,
+    metrics: evidence.metrics,
+    activityLogs: evidence.activityLogs,
+    quizSessions: evidence.quizSessions,
+    completedMilestones: evidence.completedMilestones,
+  });
+  const byTask = new Map(insightInput.quest_evidence.map((quest) => [quest.canonical_task_id, quest]));
+  assert.equal(byTask.get('go-to-school').completion_status, 'completed');
+  assert.equal(byTask.get('oakleaf-bandits').completion_status, 'not_recorded');
+  assert.deepEqual(byTask.get('pinehill-bandits').encounters, [{ id: 'pinehill_bandits2', label: 'Guard 2' }]);
+  assert.equal(byTask.get('pinehill-bandits').total_questions, 1);
+});

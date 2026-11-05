@@ -70,6 +70,14 @@ const buildCurrentTopicEvidence = (input) => {
   };
 };
 
+const toDeterministicEvidence = (topicEvidence) => ({
+  topic_evidence_status: topicEvidence.topicEvidenceStatus,
+  strengths: [...topicEvidence.strengths],
+  weaknesses: [...topicEvidence.weaknesses],
+  recommendations: [...topicEvidence.recommendations],
+  quest_insights: [...topicEvidence.questInsights],
+});
+
 const applyCurrentTopicEvidence = (insight, topicEvidence) => {
   if (!insight || typeof insight !== 'object' || Array.isArray(insight)) return insight;
   return {
@@ -85,6 +93,7 @@ const applyCurrentTopicEvidence = (insight, topicEvidence) => {
 const buildCachedState = ({ baseState, cachedInsight, topicEvidence }) => ({
   ...baseState,
   topic_evidence_status: topicEvidence.topicEvidenceStatus,
+  deterministic_evidence: toDeterministicEvidence(topicEvidence),
   status: 'cached',
   is_stale: false,
   generated_at: cachedInsight.generated_at || null,
@@ -94,10 +103,11 @@ const buildCachedState = ({ baseState, cachedInsight, topicEvidence }) => ({
 const buildUnavailableState = ({ baseState, cachedInsight, topicEvidence }) => ({
   ...baseState,
   topic_evidence_status: topicEvidence.topicEvidenceStatus,
+  deterministic_evidence: toDeterministicEvidence(topicEvidence),
   status: 'unavailable',
   is_stale: Boolean(cachedInsight?.insight),
   generated_at: cachedInsight?.generated_at || null,
-  insight: applyCurrentTopicEvidence(cachedInsight?.insight, topicEvidence),
+  insight: applyCurrentTopicEvidence(cachedInsight?.insight, topicEvidence) || null,
   message: cachedInsight?.insight
     ? 'New evidence is available, but the insight service is unavailable. The prior insight is shown as stale.'
     : 'Grounded AI Insights are unavailable right now. Recorded analytics remain available.',
@@ -106,6 +116,7 @@ const buildUnavailableState = ({ baseState, cachedInsight, topicEvidence }) => (
 const buildPausedState = ({ baseState, cachedInsight, topicEvidence, isStale = Boolean(cachedInsight?.insight) }) => ({
   ...baseState,
   topic_evidence_status: topicEvidence.topicEvidenceStatus,
+  deterministic_evidence: toDeterministicEvidence(topicEvidence),
   status: 'paused',
   code: AI_PAUSED_CODE,
   is_stale: isStale,
@@ -150,6 +161,7 @@ async function resolveStudentAiInsight({
     return {
       ...baseState,
       topic_evidence_status: topicEvidence.topicEvidenceStatus || metrics.topicEvidenceStatus || 'no_topic_evidence',
+      deterministic_evidence: toDeterministicEvidence(topicEvidence),
       status: 'no_data',
       is_stale: false,
       message: 'No valid gameplay results are available for grounded AI analysis yet.',
@@ -250,6 +262,7 @@ async function resolveStudentAiInsight({
     return {
       ...baseState,
       topic_evidence_status: topicEvidence.topicEvidenceStatus,
+      deterministic_evidence: toDeterministicEvidence(topicEvidence),
       status: lockedCache || initialCache ? 'regenerated' : 'generated',
       is_stale: false,
       generated_at: savedResult.rows[0]?.generated_at || null,

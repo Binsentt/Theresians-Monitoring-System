@@ -2826,7 +2826,7 @@ test('undersized Godot question pools are explicitly reported without discarding
   });
 });
 
-test('a reusable mixed-topic Lesson source creates Grade and Difficulty children without Topic routing or a live provider call', async (t) => {
+test('a reusable Lesson source preserves canonical topic metadata on each generated question set', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const sourceFileName = `lesson-source-${Date.now()}.pdf`;
@@ -2847,6 +2847,7 @@ test('a reusable mixed-topic Lesson source creates Grade and Difficulty children
   const originalFetch = global.fetch;
   const generationRequests = [];
   const insertedChildren = [];
+  const insertedQuestions = [];
   fs.writeFileSync(sourceFilePath, '%PDF-1.4\nReusable arithmetic lesson');
   process.env.OPENAI_API_KEY = 'server-test-key';
   parsedPdfText = 'Use addition and subtraction examples from this lesson.';
@@ -2855,16 +2856,13 @@ test('a reusable mixed-topic Lesson source creates Grade and Difficulty children
     assert.equal(url, 'https://api.openai.com/v1/responses');
     const request = JSON.parse(options.body);
     generationRequests.push(request);
+    const generatedQuestion = generationRequests.length === 1
+      ? { question: 'What is 2 + 3?', options: ['4', '5', '6', '7'], correct_answer: '5' }
+      : { question: 'What is 5 - 2?', options: ['2', '3', '4', '5'], correct_answer: '3' };
     return {
       ok: true,
       headers: { get: () => null },
-      json: async () => ({ output_text: JSON.stringify({
-        questions: [{
-          question: 'What is 2 + 3?',
-          options: ['4', '5', '6', '7'],
-          correct_answer: '5',
-        }],
-      }) }),
+      json: async () => ({ output_text: JSON.stringify({ questions: [generatedQuestion] }) }),
     };
   };
   setQueryHandler(async (sql, params) => {
@@ -2893,7 +2891,10 @@ test('a reusable mixed-topic Lesson source creates Grade and Difficulty children
       insertedChildren.push(child);
       return resultRows([child]);
     }
-    if (sql.startsWith('insert into public.questions')) return emptyResult;
+    if (sql.startsWith('insert into public.questions')) {
+      insertedQuestions.push(params);
+      return emptyResult;
+    }
     if (sql.startsWith('update public.learning_files') && sql.includes("generation_status = 'ready_for_review'")) {
       return resultRows([{ ...insertedChildren.at(-1), generation_status: 'ready_for_review' }]);
     }
@@ -2915,6 +2916,8 @@ test('a reusable mixed-topic Lesson source creates Grade and Difficulty children
     body: JSON.stringify({
       grade_level: 'Grade 1',
       difficulty: 'Easy',
+      topic_id: 'basic_addition',
+      math_topic: 'Basic Addition',
       expected_question_count: 1,
     }),
   });
@@ -2924,6 +2927,8 @@ test('a reusable mixed-topic Lesson source creates Grade and Difficulty children
     body: JSON.stringify({
       grade_level: 'Grade 1',
       difficulty: 'Easy',
+      topic_id: 'subtraction',
+      math_topic: 'Subtraction',
       expected_question_count: 1,
     }),
   });
@@ -2932,10 +2937,11 @@ test('a reusable mixed-topic Lesson source creates Grade and Difficulty children
   assert.equal(subtraction.status, 201);
   assert.equal(insertedChildren.length, 2);
   assert.deepEqual(insertedChildren.map((child) => child.source_learning_file_id), [801, 801]);
-  assert.deepEqual(insertedChildren.map((child) => child.math_topic), [null, null]);
-  assert.deepEqual(insertedChildren.map((child) => child.topic_id), [null, null]);
+  assert.deepEqual(insertedChildren.map((child) => child.math_topic), ['Basic Addition', 'Subtraction']);
+  assert.deepEqual(insertedChildren.map((child) => child.topic_id), ['basic_addition', 'subtraction']);
   assert.equal(generationRequests.length, 2);
-  assert.match(generationRequests[0].input[1].content[0].text, /Grade: Grade 1\.\nDifficulty: Easy\./);
-  assert.doesNotMatch(generationRequests[0].input[1].content[0].text, /Topic ID:|Topic:/);
-  assert.doesNotMatch(generationRequests[1].input[1].content[0].text, /Topic ID:|Topic:/);
+  assert.match(generationRequests[0].input[1].content[0].text, /Grade: Grade 1\.\nDifficulty: Easy\.\nSelected canonical Mathematics topic: Basic Addition\./);
+  assert.match(generationRequests[1].input[1].content[0].text, /Grade: Grade 1\.\nDifficulty: Easy\.\nSelected canonical Mathematics topic: Subtraction\./);
+  assert.deepEqual(insertedQuestions.map((params) => params[7]), ['basic_addition', 'subtraction']);
+  assert.deepEqual(insertedQuestions.map((params) => params[6]), ['Basic Addition', 'Subtraction']);
 });

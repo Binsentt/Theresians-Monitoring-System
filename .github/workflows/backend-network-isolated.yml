@@ -388,9 +388,22 @@ jobs:
             tq_screen_time_test_ci \
             tq_student_id_migration_test_ci \
             tq_website_session_migration_test_ci \
-            tq_parent_route_test_ci; do
+            tq_parent_route_test_ci \
+            tq_student_progress_diagnostics_test_ci; do
             docker exec tq-backend-test-postgres createdb --host=127.0.0.1 --username=postgres "$database"
           done
+          diagnostics_sentinel="$(openssl rand -hex 24)"
+          if [[ ! "$diagnostics_sentinel" =~ ^[a-f0-9]{48}$ ]]; then
+            echo "Unable to generate the run-specific diagnostics database sentinel." >&2
+            exit 1
+          fi
+          docker exec tq-backend-test-postgres psql \
+            --username=postgres \
+            --dbname=tq_student_progress_diagnostics_test_ci \
+            --no-psqlrc \
+            --set=ON_ERROR_STOP=1 \
+            --command "COMMENT ON DATABASE tq_student_progress_diagnostics_test_ci IS 'tq-disposable-ci:${diagnostics_sentinel}';" >/dev/null
+          echo "TQ_DISPOSABLE_DB_SENTINEL=${diagnostics_sentinel}" >> "$GITHUB_ENV"
           docker inspect --format='postgres network={{.HostConfig.NetworkMode}} published-ports={{json .HostConfig.PortBindings}}' tq-backend-test-postgres
 
       - name: Verify isolated test container networking and local PostgreSQL
@@ -553,6 +566,7 @@ jobs:
         shell: bash
         env:
           NODE_ENV: test
+          CI: 'true'
           AI_RUNTIME_ENABLED: 'false'
           AI_GENERATION_ENABLED: 'false'
           JWT_SECRET: isolated-backend-ci-only-secret
@@ -563,6 +577,7 @@ jobs:
           SCREEN_TIME_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_screen_time_test_ci
           STUDENT_ID_MIGRATION_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_student_id_migration_test_ci
           WEBSITE_SESSION_MIGRATION_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_website_session_migration_test_ci
+          STUDENT_DIAGNOSTICS_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_student_progress_diagnostics_test_ci
         run: |
           set -euo pipefail
           set +e
@@ -587,6 +602,8 @@ jobs:
             --env TMP=/workspace/capstone/backend/uploads/.test-tmp \
             --env TEMP=/workspace/capstone/backend/uploads/.test-tmp \
             --env NODE_ENV \
+            --env CI \
+            --env TQ_DISPOSABLE_DB_SENTINEL \
             --env AI_RUNTIME_ENABLED \
             --env AI_GENERATION_ENABLED \
             --env JWT_SECRET \
@@ -597,6 +614,7 @@ jobs:
             --env SCREEN_TIME_TEST_DATABASE_URL \
             --env STUDENT_ID_MIGRATION_TEST_DATABASE_URL \
             --env WEBSITE_SESSION_MIGRATION_TEST_DATABASE_URL \
+            --env STUDENT_DIAGNOSTICS_TEST_DATABASE_URL \
             --env NO_COLOR=1 \
             node:20-bookworm bash /test-logs/backend-file-runner.sh
           test_status=$?

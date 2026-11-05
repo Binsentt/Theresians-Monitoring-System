@@ -121,7 +121,7 @@ test('lesson generation sends only lesson context to the server-side Responses A
   assert.equal(new Set(questions.map((question) => question.options.indexOf(question.correct_answer))).size, 2);
 });
 
-test('lesson generation does not route or prompt on optional Topic metadata', async () => {
+test('lesson generation prompt uses an explicitly selected canonical Mathematics topic', async () => {
   let request;
 
   await generateLessonQuestions({
@@ -129,7 +129,6 @@ test('lesson generation does not route or prompt on optional Topic metadata', as
     title: 'Addition lesson',
     gradeLevel: 'Grade 1',
     difficulty: 'Easy',
-    topicId: 'basic_addition',
     mathTopic: 'Basic Addition',
     questionCount: 2,
     apiKey: 'test-key',
@@ -145,7 +144,8 @@ test('lesson generation does not route or prompt on optional Topic metadata', as
   const input = JSON.stringify(request.input);
   assert.match(input, /Grade: Grade 1/);
   assert.match(input, /Difficulty: Easy/);
-  assert.doesNotMatch(input, /Topic ID:|Topic:/);
+  assert.match(input, /Selected canonical Mathematics topic: Basic Addition/);
+  assert.doesNotMatch(input, /Topic ID:/);
 });
 
 test('lesson generation rejects a provider response that does not produce exactly the requested number of usable questions', async () => {

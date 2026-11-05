@@ -7,7 +7,7 @@ jest.mock('recharts', () => ({
   Bar: () => <div>Bar</div>,
   BarChart: ({ children, data = [] }) => (
     <div data-testid="score-timeline-data">
-      {data.map((point) => <span key={point.sessionId || point.label}>{point.label}:{point.percentage}%</span>)}
+      {data.map((point) => <span key={point.key || point.sessionId || point.label || point.mapName}>{point.label || point.mapName}:{point.accuracy ?? point.percentage}%</span>)}
       {children}
     </div>
   ),
@@ -430,7 +430,8 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('Grade 1 Addition');
     expect(container.textContent).toContain('Grade 1 Subtraction');
     expect(container.textContent).toContain('Topic-linked evidence: 7 of 8 recorded answers');
-    expect(container.textContent).toContain('Q1:0%');
+    expect(container.textContent).not.toContain('Q1:0%');
+    expect(container.textContent).toContain('Map-level performance is unavailable for this Student');
     expect(container.textContent).toContain('Quest/topic-linked evidence: 6 of 8 recorded answers');
     expect(container.textContent).not.toContain('Unvalidated guessed topic');
     expect(container.textContent).not.toContain(new Date('2026-10-12T06:30:00.000Z').toLocaleString());
@@ -574,7 +575,7 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('Subtraction needs more practice.');
   });
 
-  test('loads the selected Student activity and displays the shared score history section', async () => {
+  test('loads full-cycle map performance and displays the shared map and battle/session views', async () => {
     global.fetch = jest.fn((url) => {
       if (String(url).startsWith('/api/activity-logs?')) {
         return jsonResponse({ data: [{
@@ -590,6 +591,10 @@ describe('StudentAnalytics defensive rendering', () => {
           id: 8, math_topic: 'Addition', difficulty: 'Easy', score: 0,
           total_items: 1, percentage: 0, played_at: '2026-10-21T10:00:00.000Z',
         }],
+        mapPerformance: {
+          byMap: [{ mapId: 'oakleaf_village', mapName: 'Oakleaf Village', correctAnswers: 0, incorrectAnswers: 1, totalQuestions: 1, accuracy: 0, encounterCount: 1 }],
+          byBattleSession: [{ key: 'battle:first-bandit-math-challenge:bandits:session:501', label: 'Bandit Encounter · Session 501', mapId: 'oakleaf_village', mapName: 'Oakleaf Village', correctAnswers: 0, incorrectAnswers: 1, totalQuestions: 1, accuracy: 0, sessionId: '501' }],
+        },
         aiInsight: { status: 'insufficient_data' },
       });
     });
@@ -604,8 +609,19 @@ describe('StudentAnalytics defensive rendering', () => {
     expect(container.textContent).toContain('Completed addition quiz');
     expect(container.textContent).toContain('Oakleaf Bandit Battle');
     expect(container.textContent).toContain('0 / 1');
-    expect(container.textContent).toContain('Score Over Time');
+    expect(container.textContent).toContain('Performance by Map');
+    expect(container.textContent).toContain('Oakleaf Village');
+    expect(container.querySelector('.child-performance-table tbody tr').cells[5].textContent).toBe('1');
+    expect(container.textContent).toContain('Oakleaf Village:0%');
     expect(container.querySelector('.child-score-panel')).toBeTruthy();
+
+    const view = container.querySelector('#student-performance-view');
+    await act(async () => {
+      view.value = 'battle';
+      view.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('Bandit Encounter · Session 501');
+    expect(container.textContent).toContain('Battle / Session');
   });
 
   test('ignores a late detail response after the selected Student changes', async () => {

@@ -275,6 +275,10 @@ test('Student detail and refresh return sanitized latest 20 validated current-cy
     canonical_math_topic: 'Addition',
     result_event_id: 'event-' + (index + 1),
     session_id: index === 5 ? null : String(8000 + index),
+    map_id: 'oakleaf_village',
+    canonical_task_id: 'oakleaf-bandits',
+    canonical_battle_id: 'oakleaf_bandits',
+    quest_graph_version: 'oakleaf-city-pinehill-v1',
     played_at: new Date(Date.UTC(2026, 8, index + 1)).toISOString(),
   }));
   fixture.results.push({
@@ -308,6 +312,21 @@ test('Student detail and refresh return sanitized latest 20 validated current-cy
   assert.notEqual(detail.scoreHistory.find((row) => row.id === 7).id, detail.scoreHistory.find((row) => row.id === 7).session_id);
   assert.equal(detail.scoreHistory[0].math_topic, 'Basic Addition');
   assert.equal(detail.scoreHistory[0].difficulty, 'Easy');
+  assert.equal(detail.mapPerformance.byMap.length, 1);
+  assert.deepEqual(detail.mapPerformance.byMap[0], {
+    correctAnswers: 24,
+    incorrectAnswers: 1,
+    totalQuestions: 25,
+    firstPlayedAt: '2026-09-01T00:00:00.000Z',
+    lastPlayedAt: '2026-09-25T00:00:00.000Z',
+    mapId: 'oakleaf_village',
+    mapName: 'Oakleaf Village',
+    accuracy: 96,
+    encounterCount: 1,
+  });
+  assert.equal(detail.mapPerformance.byBattleSession.length, 25);
+  assert.equal(detail.mapPerformance.byBattleSession.find((row) => row.sessionId === '8006')?.label, 'Oakleaf Bandits · Session 8006');
+  assert.equal(detail.mapPerformance.byBattleSession.some((row) => row.sessionId === '7'), false, 'result row IDs are not treated as playtime session IDs');
   assert.deepEqual(Object.keys(detail.scoreHistory[0]).sort(), [
     'difficulty', 'id', 'math_topic', 'percentage', 'played_at', 'score', 'session_id', 'total_items',
   ]);
@@ -315,10 +334,13 @@ test('Student detail and refresh return sanitized latest 20 validated current-cy
   const parentDetail = await get('/api/student-progress/44?scope=parent', 'parent');
   assert.deepEqual(teacherDetail.scoreHistory, detail.scoreHistory);
   assert.deepEqual(parentDetail.scoreHistory, detail.scoreHistory);
+  assert.deepEqual(teacherDetail.mapPerformance, detail.mapPerformance);
+  assert.deepEqual(parentDetail.mapPerformance, detail.mapPerformance);
   assert.equal(detail.scoreHistory.some((row) => row.id === 90 || row.id === 91 || row.id === 92), false);
 
   const refreshed = await get('/api/student-progress/44/ai-insight', 'admin', 'POST', { refresh: true });
   assert.deepEqual(refreshed.evidence_snapshot.scoreHistory, detail.scoreHistory);
+  assert.deepEqual(refreshed.evidence_snapshot.mapPerformance, detail.mapPerformance);
 });
 test('detail and AI reuse the same complete evidence fingerprint after 500 results', async (t) => {
   const get = await setup(t, [...Array(500).fill(1), 0]);

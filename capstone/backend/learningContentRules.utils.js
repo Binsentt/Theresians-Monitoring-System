@@ -54,6 +54,21 @@ const resolveQuestionPoolScope = ({ grade_level: gradeLevel, grade, difficulty }
     : null;
 };
 
+const resolveCanonicalLessonTopicScope = ({ grade_level: gradeLevel, grade, difficulty, topic_id: topicId, math_topic: mathTopic } = {}) => {
+  const scope = resolveQuestionPoolScope({ grade_level: gradeLevel, grade, difficulty });
+  if (!scope) return null;
+  const rawTopicId = normalizeLearningMetadataValue(topicId);
+  const canonicalTopicId = rawTopicId
+    ? normalizeTopicId(rawTopicId)
+    : resolveLegacyDisplayTopic(scope.grade_level, scope.difficulty, mathTopic);
+  if (!canonicalTopicId || !isValidScope(scope.grade_level, scope.difficulty, canonicalTopicId)) return null;
+  return {
+    ...scope,
+    topic_id: canonicalTopicId,
+    math_topic: getTopicById(canonicalTopicId).display_label,
+  };
+};
+
 const isValidTopicIdForGradeDifficulty = (gradeLevel, difficulty, topicId) => {
   return isValidScope(gradeLevel, difficulty, topicId);
 };
@@ -127,6 +142,7 @@ module.exports = {
   isValidMathTopicForGrade,
   isValidMathTopicForGradeDifficulty,
   isValidTopicIdForGradeDifficulty,
+  resolveCanonicalLessonTopicScope,
   validateLearningMetadata,
   parseExpectedQuestionCount,
   parseLessonQuestionCount,

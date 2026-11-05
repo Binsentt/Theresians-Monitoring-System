@@ -12,7 +12,7 @@ jest.mock('recharts', () => ({
   Bar: () => <div>Bar</div>,
   BarChart: ({ children, data = [] }) => (
     <div data-testid="score-timeline-data">
-      {data.map((point) => <span key={point.sessionId || point.label}>{point.label}:{point.percentage}%</span>)}
+      {data.map((point) => <span key={point.key || point.sessionId || point.label || point.mapName}>{point.label || point.mapName}:{point.accuracy ?? point.percentage}%</span>)}
       {children}
     </div>
   ),
@@ -263,11 +263,11 @@ describe('ParentChildProgress child selection and game warnings', () => {
     await act(async () => root.render(<ParentChildProgress />));
 
     expect(container.textContent).not.toContain('Q1:80%');
-    expect(container.textContent).toContain('No quiz percentages recorded for this child.');
+    expect(container.textContent).toContain('Map-level performance is unavailable for this child');
     expect(container.textContent).not.toContain('current learning cycle could not be verified');
   });
 
-  test('shows a clear partial-history notice while displaying only verified fallback results', async () => {
+  test('shows a clear partial-history notice without plotting a truncated legacy score list', async () => {
     global.fetch = jest.fn((url) => {
       if (url.includes('/quizzes?')) return jsonResponse({
         data: [{ id: 901, session_id: null, math_topic: 'Addition', difficulty: 'Difficult', score: 0,
@@ -282,7 +282,8 @@ describe('ParentChildProgress child selection and game warnings', () => {
 
     await act(async () => root.render(<ParentChildProgress />));
 
-    expect(container.textContent).toContain('Q1:0%');
+    expect(container.textContent).not.toContain('Q1:0%');
+    expect(container.textContent).toContain('Map-level performance is unavailable for this child');
     expect(container.textContent).toContain('Some quiz results are hidden because their current learning cycle could not be verified.');
   });
 
@@ -295,6 +296,10 @@ describe('ParentChildProgress child selection and game warnings', () => {
           progress: { student_id: 44, student_name: 'Ava Santos' },
           metrics: { currentQuest: 'Tutorial', correctAnswers: 0, incorrectAnswers: 1, totalQuestions: 1, accuracy: 0, totalProgress: 5 },
           scoreHistory: [{ id: 902, session_id: null, math_topic: 'Addition', difficulty: 'Easy', score: 0, total_items: 1, percentage: 0, played_at: '2026-10-21T08:30:00.000Z' }],
+          mapPerformance: {
+            byMap: [{ mapId: 'oakleaf_village', mapName: 'Oakleaf Village', correctAnswers: 0, incorrectAnswers: 1, totalQuestions: 1, accuracy: 0, encounterCount: 1 }],
+            byBattleSession: [],
+          },
         },
       });
       if (url.includes('/quizzes?')) return jsonResponse({ data: [{ id: 901, score: 4, total_items: 5, percentage: 80 }] });
@@ -311,7 +316,8 @@ describe('ParentChildProgress child selection and game warnings', () => {
     await act(async () => Array.from(container.querySelectorAll('button'))
       .find((button) => button.textContent === 'Refresh AI Insight').click());
 
-    expect(container.textContent).toContain('Q1:0%');
+    expect(container.textContent).toContain('Oakleaf Village:0%');
+    expect(container.textContent).toContain('Performance by Map');
     expect(container.textContent).not.toContain('Quiz history is unavailable because its current learning cycle could not be verified.');
   });
 
@@ -668,12 +674,12 @@ describe('ParentChildProgress child selection and game warnings', () => {
 
     await act(async () => Array.from(container.querySelectorAll('.child-selector-card'))
       .find((button) => button.textContent.includes('Ava Santos')).click());
-    expect(container.textContent).toContain('Q1:80%');
+    expect(container.textContent).toContain('Map-level performance is unavailable for this child');
 
     await act(async () => Array.from(container.querySelectorAll('.child-selector-card'))
       .find((button) => button.textContent.includes('Noah Santos')).click());
     expect(container.textContent).not.toContain('Q1:80%');
-    expect(container.textContent).toContain('No quiz percentages recorded for this child.');
+    expect(container.textContent).toContain('Map-level performance is unavailable for this child');
 
     await act(async () => resolveAActivity(jsonResponse({ data: [{
       id: 1, student_id: 44, activity_description: 'Late Ava-only activity',
@@ -749,6 +755,10 @@ describe('ParentChildProgress child selection and game warnings', () => {
               totalProgress: 35,
             },
             scoreHistory: [{ id: 901, session_id: 'parent-session-901', math_topic: 'Addition', difficulty: 'Easy', score: 4, total_items: 5, percentage: 80, played_at: '2026-10-21T08:20:00.000Z' }],
+            mapPerformance: {
+              byMap: [{ mapId: 'oakleaf_village', mapName: 'Oakleaf Village', correctAnswers: 4, incorrectAnswers: 1, totalQuestions: 5, accuracy: 80, encounterCount: 1 }],
+              byBattleSession: [{ key: 'battle:oakleaf-bandits:oakleaf_bandits:session:parent-session-901', label: 'Oakleaf Bandits · Session parent-session-901', mapId: 'oakleaf_village', mapName: 'Oakleaf Village', correctAnswers: 4, incorrectAnswers: 1, totalQuestions: 5, accuracy: 80, sessionId: 'parent-session-901' }],
+            },
           },
         });
       }
@@ -769,7 +779,9 @@ describe('ParentChildProgress child selection and game warnings', () => {
     expect(container.textContent).toContain('Deepest Forest Bandits');
     expect(container.textContent).toContain('Correct Answers3');
     expect(container.textContent).toContain('Incorrect Answers2');
-    expect(container.textContent).toContain('Q1:80%');
+    expect(container.textContent).toContain('Performance by Map');
+    expect(container.textContent).toContain('Oakleaf Village:80%');
+    expect(container.textContent).toContain('CorrectIncorrectTotal questionsAccuracy');
   });
 
   test('Refresh AI Insight recovers a no-data child view when new committed answers arrive', async () => {
