@@ -401,6 +401,10 @@ WITH required_columns(table_name, column_name) AS (
   ('playtime_deletion_tombstones', 'target_fingerprint'),
   ('playtime_sessions', 'created_at'),
   ('playtime_sessions', 'date_played'),
+  ('playtime_sessions', 'deleted_at'),
+  ('playtime_sessions', 'deleted_by'),
+  ('playtime_sessions', 'deletion_operation_id'),
+  ('playtime_sessions', 'deletion_reason'),
   ('playtime_sessions', 'end_time'),
   ('playtime_sessions', 'expires_at'),
   ('playtime_sessions', 'grade_level'),
@@ -525,7 +529,7 @@ NOT EXISTS (SELECT 1 FROM missing) AS startup_schema_ready
 \gset
 \echo 'Startup schema result: :startup_schema_preflight'
 \if :startup_schema_ready
-  \echo 'Startup schema contract is complete: 17 tables and 265 required columns are present.'
+  \echo 'Startup schema contract is complete: 17 tables and 269 required columns are present.'
 \else
   \echo 'STOP: one or more required tables or columns are missing; do not deploy this source.'
   \quit 3
@@ -564,7 +568,11 @@ WITH expected_types(table_name, column_name, expected_data_type) AS (
     ('learning_files', 'id', 'integer'),
     ('learning_files', 'source_file_bytes', 'bytea'),
     ('playtime_sessions', 'id', 'integer'),
-    ('playtime_sessions', 'learning_cycle_version', 'integer')
+    ('playtime_sessions', 'learning_cycle_version', 'integer'),
+    ('playtime_sessions', 'deleted_at', 'timestamp with time zone'),
+    ('playtime_sessions', 'deleted_by', 'integer'),
+    ('playtime_sessions', 'deletion_operation_id', 'uuid'),
+    ('playtime_sessions', 'deletion_reason', 'character varying')
 ), type_mismatches AS (
   SELECT e.table_name, e.column_name, e.expected_data_type, c.data_type AS actual_data_type
   FROM expected_types AS e

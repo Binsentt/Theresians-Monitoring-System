@@ -65,7 +65,22 @@ test('operator migration preflight mirrors the runtime table and column contract
   const recordedContractEntries = recordedContract.match(/\('[a-z_]+', '[a-z_]+'\)/g) || [];
 
   assert.equal(Object.keys(REQUIRED_SCHEMA).length, 17);
-  assert.equal(entries.length, 265);
+  assert.equal(entries.length, 269);
   assert.equal(recordedContractEntries.length, entries.length);
   for (const entry of entries) assert.ok(preflight.includes(entry), `preflight is missing ${entry}`);
+});
+
+test('playtime soft-delete fields used by live routes are required at startup', () => {
+  const expectedTypes = {
+    deleted_at: 'timestamp with time zone',
+    deleted_by: 'integer',
+    deletion_operation_id: 'uuid',
+    deletion_reason: 'character varying',
+  };
+  const preflight = fs.readFileSync(path.join(__dirname, 'scripts', 'release-migration-preflight.sql'), 'utf8');
+  for (const [column, type] of Object.entries(expectedTypes)) {
+    assert.ok(REQUIRED_SCHEMA.playtime_sessions.includes(column), `${column} must be part of startup readiness`);
+    assert.ok(preflight.includes(`('playtime_sessions', '${column}', '${type}')`),
+      `preflight must validate the migration-defined type for ${column}`);
+  }
 });

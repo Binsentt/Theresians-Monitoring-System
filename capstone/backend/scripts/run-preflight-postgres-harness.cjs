@@ -95,7 +95,10 @@ function sqlType(table, column, mode) {
     ['learning_files.source_file_bytes', 'bytea'],
     ['playtime_sessions.id', 'integer'],
     ['playtime_sessions.student_id', 'integer'],
+    ['playtime_sessions.deleted_at', 'timestamp with time zone'],
     ['playtime_sessions.deleted_by', 'integer'],
+    ['playtime_sessions.deletion_operation_id', 'uuid'],
+    ['playtime_sessions.deletion_reason', 'character varying(1000)'],
     ['website_sessions.id', 'integer'],
     ['website_sessions.account_id', 'integer'],
     ['student_quest_milestones.id', 'integer'],
@@ -218,8 +221,8 @@ for (const [mode, database] of Object.entries(CASES)) {
 
 const valid = invokePreflight(CASES.valid);
 assert.equal(valid.status, 0, `valid disposable schema must pass: ${valid.stderr}\n${valid.stdout}`);
-assert.match(valid.stdout, /Startup schema contract is complete: 17 tables and 265 required columns are present/);
-console.log('PASS: compatible 17-table/265-column schema and migration ledger');
+assert.match(valid.stdout, /Startup schema contract is complete: 17 tables and 269 required columns are present/);
+console.log('PASS: compatible 17-table/269-column schema and migration ledger');
 
 const wrongTarget = invokePreflight(CASES.valid, { expected_database: 'unexpected_target' });
 assert.equal(wrongTarget.status, 3, `wrong target fingerprint must fail closed: ${wrongTarget.stderr}\n${wrongTarget.stdout}`);

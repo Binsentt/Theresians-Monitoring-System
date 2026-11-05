@@ -6,7 +6,7 @@ This inventory compares `database/startupSchemaReadiness.js` at PR #35 with
 `Database_Table.sql`, tracked migrations 001–025, and the last checked-in
 `server.js` before the startup-DDL removal. It is a source inventory only; no
 production or staging database was inspected. The runtime gate requires the
-presence of 17 public tables and 265 columns. Presence is not proof of the
+presence of 17 public tables and 269 columns. Presence is not proof of the
 complete SQL schema or production readiness.
 
 | Table | Required columns | Tracked canonical `CREATE TABLE` source | Startup-contract gap / review note |
@@ -20,7 +20,7 @@ complete SQL schema or production readiness.
 | `learning_files` | 38 | **None** | Several ALTER migrations assume the table exists; there is no canonical base create. Required content, lifecycle, source, approval, file bytes, and lineage fields therefore lack one authoritative baseline. |
 | `login_otp_device_skips` | 6 | **None** | Table, unique constraint, expiry index, and FK are only in removed startup DDL; no tracked create migration exists. |
 | `playtime_deletion_tombstones` | 7 | migration 023 | Additive table and unique index are tracked. Its account `SET NULL` relationship must be included in migration-024 impact review. |
-| `playtime_sessions` | 19 | **None** | Migration 009 alters it but assumes a pre-existing table. The required base fields, FKs, indexes, defaults, and nullability rely on removed startup DDL. |
+| `playtime_sessions` | 23 | **None** | Migration 009 alters it but assumes a pre-existing table. The required base fields, FKs, indexes, defaults, and nullability rely on removed startup DDL. Migration 019 explicitly adds the four soft-delete fields now required by live routes: `deleted_at`, `deleted_by`, `deletion_reason`, and `deletion_operation_id`. |
 | `questions` | 13 | **None** | Base table, `learning_files` cascade, indexes, and unique composite index are only in removed startup DDL; no tracked base create migration exists. |
 | `student_ai_insights` | 8 | **None** | No tracked migration creates it. The only definition is old startup DDL: integer IDs, JSONB insight, one row per student, account cascade/set-null FKs, and a student/stale index. Do not infer production absence from this source gap. |
 | `student_game_progress` | 20 | `Database_Table.sql` | `section`, `total_quests_completed`, `total_play_time`, `current_scene`, `current_map`, and `difficulty_level` have no tracked baseline/migration definition. |
@@ -49,7 +49,7 @@ required table/column presence; selected core column types; full visible column
 metadata output; constraint/index/trigger inventory; and an enabled check for
 `teacher_class_assignments_validate_teacher`.
 
-It does **not** assert exact nullability/defaults/types for every one of the 265
+It does **not** assert exact nullability/defaults/types for every one of the 269
 columns, every primary/unique/FK/check constraint, all indexes, or all
 application-required trigger behavior. The catalog report is evidence for an
 operator review, not an automatically approved schema contract. Those
@@ -90,7 +90,7 @@ Require, before any separate migration-024 execution approval:
 
 PR #35 intentionally excludes PR #31 migration 026. That additive migration
 creates `game_progress_save_commits` with nine required columns, so the future
-combined startup contract will be 18 tables / 274 columns only after PR #31 is
+combined startup contract will be 18 tables / 278 columns only after PR #31 is
 integrated and migration 026 is separately approved and applied. Do not add
 the table to this pre-migration readiness gate. Reconcile its PK
 `(student_id, learning_cycle_version, save_commit_id_hash)`, unique

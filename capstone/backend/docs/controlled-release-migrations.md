@@ -115,7 +115,7 @@ The service alias must be configured through the approved secure operator mechan
 
 The script lists versions 018–025 in this PR #35 source tree, filenames, ledger checksums, and pending state. Migration 026 from PR #31 is intentionally excluded. Compare applied checksums to the exact source file bytes in the same clean checkout:
 
-It also compares the startup compatibility contract (17 tables and 265 required
+It also compares the startup compatibility contract (17 tables and 269 required
 columns) to `pg_catalog`, returning counts and missing schema-object names only.
 Any missing table or column is a stop condition. Core runtime types are checked
 explicitly; the script emits all visible column types, nullability, defaults,
@@ -150,7 +150,7 @@ The exact-count guard in the migration command compares the three direct counts 
 
 ### Later migration 026 integration
 
-PR #35 does not contain migration 026 and its current startup gate is 17 tables / 265 required columns. When PR #31 is rebased and reviewed against this source, the combined startup contract must be updated to 18 tables / 274 columns only as part of that approved integration. It must not be activated before migration 026 is separately approved and applied. Migration 026 adds the student/cycle/save-ID receipt table and cascades receipt deletion with account deletion; the owner must separately approve receipt retention and account-deletion behavior.
+PR #35 does not contain migration 026 and its current startup gate is 17 tables / 269 required columns. When PR #31 is rebased and reviewed against this source, the combined startup contract must be updated to 18 tables / 278 columns only as part of that approved integration. It must not be activated before migration 026 is separately approved and applied. Migration 026 adds the student/cycle/save-ID receipt table and cascades receipt deletion with account deletion; the owner must separately approve receipt retention and account-deletion behavior.
 
 ## Explicit migration command gate
 
