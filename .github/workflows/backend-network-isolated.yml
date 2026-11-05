@@ -393,6 +393,7 @@ jobs:
             tq_parent_route_test_ci \
             tq_startup_safety_test_ci \
             tq_preflight_valid_test_ci \
+            tq_preflight_missing_ledger_test_ci \
             tq_preflight_missing_table_test_ci \
             tq_preflight_missing_column_test_ci \
             tq_preflight_incompatible_type_test_ci \
@@ -416,6 +417,7 @@ jobs:
             tq_parent_route_test_ci \
             tq_startup_safety_test_ci \
             tq_preflight_valid_test_ci \
+            tq_preflight_missing_ledger_test_ci \
             tq_preflight_missing_table_test_ci \
             tq_preflight_missing_column_test_ci \
             tq_preflight_incompatible_type_test_ci \
