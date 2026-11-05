@@ -98,11 +98,11 @@ The Railway dashboard’s Auto Deploy toggle is not exposed by the read-only ser
 
 ## Exact read-only operator preflight
 
-Use a dedicated non-admin PostgreSQL login role with SELECT-only access, no role memberships, no schema/database CREATE privilege, no table write privileges, and no sequence USAGE/UPDATE privilege. The SQL package performs read-only inspection and returns aggregate counts/schema metadata only. It never returns Student IDs, names, or other row values.
+Use a dedicated non-admin PostgreSQL login role with SELECT access only to the migration ledger (plus built-in catalog visibility), no role memberships, no schema/database CREATE privilege, no application-table access, and no sequence USAGE/UPDATE privilege. The SQL package performs read-only catalog and ledger inspection. It never returns Student IDs, names, or other row values.
 
 From capstone/backend in a trusted clean checkout of the exact release source:
 
-    PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=30000' \
+    PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=10000 -c lock_timeout=2000' \
       psql 'service=APPROVED_READ_ONLY_SERVICE' -X -q -P pager=off \
       -v ON_ERROR_STOP=1 \
       -v expected_database='APPROVED_DATABASE_NAME' \
@@ -111,7 +111,9 @@ From capstone/backend in a trusted clean checkout of the exact release source:
       -v expected_server_port='5432' \
       -f scripts/release-migration-preflight.sql
 
-The service alias must be configured through the approved secure operator mechanism. Do not substitute a password-bearing URI on the command line. The SQL begins `BEGIN READ ONLY`, verifies the expected database, role, TCP server address and port, and fails with nonzero status on a missing/malformed ledger, required startup object, core type mismatch, migration filename/checksum mismatch, or newer ledger version. Confirm the returned target fingerprint and PostgreSQL version against the approved change record. The script emits metadata and aggregate counts only; store output only in the restricted operations record.
+The service alias must be configured through the approved secure operator mechanism. Do not substitute a password-bearing URI on the command line. The SQL begins `BEGIN READ ONLY`, applies transaction-local 10-second statement and 2-second lock timeouts, verifies the expected database, role, TCP server address and port, and fails with nonzero status on a missing/malformed ledger, required startup object, core type mismatch, migration filename/checksum mismatch, or newer ledger version. Confirm the returned target fingerprint and PostgreSQL version against the approved change record. The script reads catalog metadata and the migration ledger only; store output only in the restricted operations record.
+
+If migration 024 is pending, the script stops with a nonzero exit immediately after ledger validation. It does not query `accounts`, `game_results`, `playtime_sessions`, or related application rows, and it does not generate or execute impact-count SQL. Any migration-024 impact analysis is separate and requires its own approval.
 
 The script lists versions 018–025 in this PR #35 source tree, filenames, ledger checksums, and pending state. Migration 026 from PR #31 is intentionally excluded. Compare applied checksums to the exact source file bytes in the same clean checkout:
 

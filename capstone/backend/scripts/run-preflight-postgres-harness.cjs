@@ -199,7 +199,10 @@ function fixtureSql(mode) {
       return `INSERT INTO public.schema_migrations (version, filename, checksum) VALUES (${version}, '${file}', '${checksum}');`;
     }));
   }
-  statements.push(`GRANT USAGE ON SCHEMA public TO ${ROLE}; GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${ROLE};`);
+  statements.push(`GRANT USAGE ON SCHEMA public TO ${ROLE};`);
+  if (mode !== 'missingLedger') {
+    statements.push(`GRANT SELECT ON public.schema_migrations TO ${ROLE};`);
+  }
   return statements.join('\n');
 }
 
@@ -214,7 +217,7 @@ function invokePreflight(database, overrides = {}) {
 }
 
 assertCiContainer();
-const createRole = psql('postgres', 'postgres', `CREATE ROLE ${ROLE} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;`);
+const createRole = psql('postgres', 'postgres', `CREATE ROLE ${ROLE} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;`);
 assert.equal(createRole.status, 0, createRole.stderr);
 for (const [mode, database] of Object.entries(CASES)) {
   const grantConnect = psql('postgres', 'postgres', `GRANT CONNECT ON DATABASE ${database} TO ${ROLE};`);
@@ -223,10 +226,25 @@ for (const [mode, database] of Object.entries(CASES)) {
   assert.equal(fixture.status, 0, `${mode} fixture setup failed: ${fixture.stderr}`);
 }
 
+const noApplicationSelect = psql(CASES.valid, 'postgres', `
+  SELECT NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_class AS relation
+    JOIN pg_catalog.pg_namespace AS namespace
+      ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = 'public'
+      AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+      AND relation.relname <> 'schema_migrations'
+      AND has_table_privilege('${ROLE}', relation.oid, 'SELECT')
+  );
+`);
+assert.equal(noApplicationSelect.status, 0, noApplicationSelect.stderr);
+assert.equal(noApplicationSelect.stdout.trim(), 't', 'preflight role must not have SELECT on any public application-row table');
+
 const valid = invokePreflight(CASES.valid);
 assert.equal(valid.status, 0, `valid disposable schema must pass: ${valid.stderr}\n${valid.stdout}`);
 assert.match(valid.stdout, /Startup schema contract is complete: 17 tables and 269 required columns are present/);
-console.log('PASS: compatible 17-table/269-column schema and migration ledger');
+console.log('PASS: compatible 17-table/269-column schema and migration ledger using catalog plus ledger SELECT only');
 
 const wrongTarget = invokePreflight(CASES.valid, { expected_database: 'unexpected_target' });
 assert.equal(wrongTarget.status, 3, `wrong target fingerprint must fail closed: ${wrongTarget.stderr}\n${wrongTarget.stdout}`);
@@ -274,16 +292,28 @@ assert.equal(missingLedger.status, 3, `missing migration ledger must fail closed
 assert.match(missingLedger.stdout, /STOP: schema_migrations is absent/);
 console.log('PASS: missing migration ledger fails closed');
 
+const pendingStateQuery = `
+  SELECT (SELECT count(*) FROM public.accounts)::text || '|' ||
+         (SELECT count(*) FROM public.game_results)::text || '|' ||
+         (SELECT count(*) FROM public.playtime_sessions)::text || '|' ||
+         (SELECT count(*) FROM public.schema_migrations)::text || '|' ||
+         (SELECT COALESCE(max(version), 0) FROM public.schema_migrations)::text;
+`;
+const pendingStateBefore = psql(CASES.pending024, 'postgres', pendingStateQuery);
+assert.equal(pendingStateBefore.status, 0, pendingStateBefore.stderr);
+
 const pending024 = invokePreflight(CASES.pending024);
-assert.equal(pending024.status, 3, `pending migration 024 must report impact then stop: ${pending024.stderr}\n${pending024.stdout}`);
-assert.match(pending024.stdout, /Migration 024 direct count-only impact follows/);
-assert.match(pending024.stdout, /fixture_progress_student_fk/);
-assert.match(
-  pending024.stdout,
-  /STOP: migration 024 is pending/,
-  `pending 024 must print its stop reason; stderr=${pending024.stderr}\nstdout tail=${pending024.stdout.slice(-2000)}`,
-);
-assert.doesNotMatch(pending024.stdout, /synthetic-only-name|123456/);
-console.log('PASS: migration 024 emits aggregate impact, discloses no fixture values, then stops');
+const pending024Output = `${pending024.stdout}\n${pending024.stderr}`;
+assert.equal(pending024.status, 3, `pending migration 024 must fail closed: ${pending024Output}`);
+assert.match(pending024Output, /STOP: destructive migration 024 is pending/i);
+assert.match(pending024Output, /separate impact review and approval are required/i);
+assert.match(pending024Output, /does not query application rows or apply migrations/i);
+assert.doesNotMatch(pending024Output, /synthetic-only-name|123456/);
+assert.doesNotMatch(pending024Output, /permission denied/i, 'the restricted role must reach the explicit ledger stop without attempting application-table SELECT');
+
+const pendingStateAfter = psql(CASES.pending024, 'postgres', pendingStateQuery);
+assert.equal(pendingStateAfter.status, 0, pendingStateAfter.stderr);
+assert.equal(pendingStateAfter.stdout.trim(), pendingStateBefore.stdout.trim(), 'pending-024 preflight must not change synthetic application rows or the migration ledger');
+console.log('PASS: pending migration 024 stops from ledger metadata before application-row reads, reveals no row values, and applies no migration');
 
 console.log('Preflight integration result: 10/10 disposable PostgreSQL scenarios passed.');

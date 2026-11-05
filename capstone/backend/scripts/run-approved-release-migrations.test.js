@@ -317,6 +317,8 @@ test('Railway ordinary deploy config no longer invokes the migration command', (
 test('preflight SQL opens a read-only transaction and contains only SELECT inspection commands', () => {
   const sql = fs.readFileSync(path.join(__dirname, 'release-migration-preflight.sql'), 'utf8');
   assert.match(sql, /BEGIN READ ONLY/i);
+  assert.match(sql, /SET LOCAL statement_timeout\s*=\s*'10s'/i);
+  assert.match(sql, /SET LOCAL lock_timeout\s*=\s*'2s'/i);
   assert.match(sql, /ROLLBACK;/i);
   assert.match(sql, /to_regclass/i);
   assert.match(sql, /COUNT\(\*\)/i);
@@ -329,10 +331,20 @@ test('preflight SQL opens a read-only transaction and contains only SELECT inspe
   assert.match(sql, /^\\set ON_ERROR_STOP on/m);
   assert.doesNotMatch(sql, /\\quit\s+\d/);
   assert.match(sql, /SELECT 'preflight stopped:/);
-  assert.match(sql, /\\gexec/);
-  assert.match(sql, /direct FK edge/i);
   assert.doesNotMatch(sql, /game_progress_save_commits/);
   assert.doesNotMatch(sql, /^\s*(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b/im);
+
+  const pending024Check = sql.indexOf('AS migration_024_pending \\gset');
+  assert.notEqual(pending024Check, -1, 'preflight must inspect migration 024 status from the validated ledger');
+  const pending024Branch = sql.slice(pending024Check);
+  assert.match(pending024Branch, /STOP: destructive migration 024 is pending/i);
+  assert.match(pending024Branch, /separate impact review and approval/i);
+  assert.doesNotMatch(
+    pending024Branch,
+    /\b(?:FROM|JOIN)\s+public\.(?:accounts|game_results|playtime_sessions|activity_logs|student_game_progress|student_ai_insights|student_quest_milestones)\b/i,
+    'pending 024 must stop before any application-row query',
+  );
+  assert.doesNotMatch(pending024Branch, /\\gexec/i, 'pending 024 must not run dynamic SQL');
 });
 
 test('the supported release CLI stops before connecting when approval is absent', () => {

@@ -1,5 +1,4 @@
 \set ON_ERROR_STOP on
-\set migration_024_review_required false
 
 -- Supply expected_database, expected_role, expected_server_address, and
 -- expected_server_port with psql -v values taken from the approved change record.
@@ -27,7 +26,8 @@
 \endif
 
 BEGIN READ ONLY;
-SET LOCAL statement_timeout = '30s';
+SET LOCAL statement_timeout = '10s';
+SET LOCAL lock_timeout = '2s';
 
 SELECT current_database() AS database_name,
        current_user AS database_role,
@@ -245,6 +245,17 @@ SELECT EXISTS (
 \if :newer_migration_present
   \echo 'STOP: database ledger contains a version newer than this source.'
   SELECT 'preflight stopped: database migration ledger is newer than this source'::integer;
+\endif
+
+-- Destructive migration 024 is outside this metadata-only preflight. Stop
+-- immediately after validating the ledger; any impact analysis is separate.
+SELECT NOT EXISTS (
+  SELECT 1 FROM public.schema_migrations WHERE version = 24
+) AS migration_024_pending \gset
+\if :migration_024_pending
+  \echo 'STOP: destructive migration 024 is pending. Separate impact review and approval are required; this preflight does not query application rows or apply migrations.'
+  ROLLBACK;
+  SELECT 'preflight stopped: destructive migration 024 is pending and requires separate impact review and approval'::integer;
 \endif
 
 -- The checksums above are tied to migrations 018-025 in this PR's source tree.
@@ -712,163 +723,4 @@ SELECT EXISTS (
   SELECT 'preflight stopped: teacher-class-assignment trigger is missing or disabled'::integer;
 \endif
 
-SELECT NOT EXISTS (
-  SELECT 1 FROM public.schema_migrations WHERE version = 24
-) AS migration_024_pending \gset
-\if :migration_024_pending
-  \set migration_024_review_required true
-  SELECT to_regclass('public.accounts') IS NOT NULL AS accounts_present,
-         to_regclass('public.game_results') IS NOT NULL AS game_results_present,
-         to_regclass('public.playtime_sessions') IS NOT NULL AS playtime_sessions_present \gset
-  \if :accounts_present
-    \if :game_results_present
-      \if :playtime_sessions_present
-        \echo 'Migration 024 direct count-only impact follows; no identifiers are selected.'
-      \else
-        \echo 'STOP: playtime_sessions is absent while migration 024 is pending.'
-        SELECT 'preflight stopped: playtime_sessions is absent while migration 024 is pending'::integer;
-      \endif
-    \else
-      \echo 'STOP: game_results is absent while migration 024 is pending.'
-      SELECT 'preflight stopped: game_results is absent while migration 024 is pending'::integer;
-    \endif
-  \else
-    \echo 'STOP: accounts is absent while migration 024 is pending.'
-    SELECT 'preflight stopped: accounts is absent while migration 024 is pending'::integer;
-  \endif
-
-  WITH candidates AS (
-    SELECT id
-    FROM public.accounts
-    WHERE LOWER(role) = 'student'
-      AND BTRIM(COALESCE(game_student_id, '')) ~ '^[0-9]{6}$'
-  )
-  SELECT 'accounts (direct delete)' AS impact, COUNT(*) AS row_count
-  FROM candidates
-  UNION ALL
-  SELECT 'game_results.resolved_student_id (direct delete)', COUNT(*)
-  FROM public.game_results AS gr
-  JOIN candidates AS c ON c.id = gr.resolved_student_id
-  UNION ALL
-  SELECT 'playtime_sessions.student_id (direct delete)', COUNT(*)
-  FROM public.playtime_sessions AS ps
-  JOIN candidates AS c ON c.id = ps.student_id;
-
-  -- Emit a COUNT(*) query for every direct FK into the three relations whose
-  -- rows migration 024 deletes. This captures database-specific CASCADE,
-  -- SET NULL, SET DEFAULT, and restrictive edges without exposing row values.
-  -- For a referencing row that is itself explicitly deleted, do not count it
-  -- as a surviving SET NULL/SET DEFAULT update.
-  SELECT format(
-    'SELECT %L AS foreign_key_edge, %L AS on_delete, COUNT(*) AS affected_rows FROM %s AS child JOIN %s AS parent ON %s WHERE %s%s;',
-    child_namespace.nspname || '.' || child_relation.relname || '.' || constraint_record.conname,
-    CASE constraint_record.confdeltype
-      WHEN 'a' THEN 'NO ACTION'
-      WHEN 'r' THEN 'RESTRICT'
-      WHEN 'c' THEN 'CASCADE'
-      WHEN 'n' THEN 'SET NULL'
-      WHEN 'd' THEN 'SET DEFAULT'
-    END,
-    child_relation.oid::regclass,
-    parent_relation.oid::regclass,
-    join_columns.join_predicate,
-    CASE parent_relation.relname
-      WHEN 'accounts' THEN 'LOWER(parent.role) = ''student'' AND BTRIM(COALESCE(parent.game_student_id, '''')) ~ ''^[0-9]{6}$'''
-      WHEN 'game_results' THEN 'parent.resolved_student_id IN (SELECT id FROM public.accounts WHERE LOWER(role) = ''student'' AND BTRIM(COALESCE(game_student_id, '''')) ~ ''^[0-9]{6}$'')'
-      WHEN 'playtime_sessions' THEN 'parent.student_id IN (SELECT id FROM public.accounts WHERE LOWER(role) = ''student'' AND BTRIM(COALESCE(game_student_id, '''')) ~ ''^[0-9]{6}$'')'
-    END,
-    CASE child_relation.relname
-      WHEN 'accounts' THEN ' AND NOT (LOWER(child.role) = ''student'' AND BTRIM(COALESCE(child.game_student_id, '''')) ~ ''^[0-9]{6}$'')'
-      WHEN 'game_results' THEN ' AND NOT (child.resolved_student_id IN (SELECT id FROM public.accounts WHERE LOWER(role) = ''student'' AND BTRIM(COALESCE(game_student_id, '''')) ~ ''^[0-9]{6}$''))'
-      WHEN 'playtime_sessions' THEN ' AND NOT (child.student_id IN (SELECT id FROM public.accounts WHERE LOWER(role) = ''student'' AND BTRIM(COALESCE(game_student_id, '''')) ~ ''^[0-9]{6}$''))'
-      ELSE ''
-    END
-  )
-  FROM pg_catalog.pg_constraint AS constraint_record
-  JOIN pg_catalog.pg_class AS child_relation ON child_relation.oid = constraint_record.conrelid
-  JOIN pg_catalog.pg_namespace AS child_namespace ON child_namespace.oid = child_relation.relnamespace
-  JOIN pg_catalog.pg_class AS parent_relation ON parent_relation.oid = constraint_record.confrelid
-  JOIN LATERAL (
-    SELECT string_agg(
-      format('child.%I = parent.%I', child_column.attname, parent_column.attname),
-      ' AND ' ORDER BY key_column.position
-    ) AS join_predicate
-    FROM unnest(constraint_record.conkey, constraint_record.confkey)
-         WITH ORDINALITY AS key_column(child_attnum, parent_attnum, position)
-    JOIN pg_catalog.pg_attribute AS child_column
-      ON child_column.attrelid = constraint_record.conrelid
-     AND child_column.attnum = key_column.child_attnum
-    JOIN pg_catalog.pg_attribute AS parent_column
-      ON parent_column.attrelid = constraint_record.confrelid
-     AND parent_column.attnum = key_column.parent_attnum
-  ) AS join_columns ON true
-  WHERE constraint_record.contype = 'f'
-    AND constraint_record.confrelid IN (
-      'public.accounts'::regclass,
-      'public.game_results'::regclass,
-      'public.playtime_sessions'::regclass
-    )
-  ORDER BY child_namespace.nspname, child_relation.relname, constraint_record.conname
-  \gexec
-
-  -- Inventory all direct FK edges and recursively reachable CASCADE edges. A
-  -- graph deeper than one level, or any edge without reviewed count coverage,
-  -- requires a separate count-only operator query before approval.
-  SELECT confrelid::regclass::text AS referenced_parent,
-         conrelid::regclass::text AS referencing_child,
-         conname,
-         CASE confdeltype
-           WHEN 'a' THEN 'NO ACTION'
-           WHEN 'r' THEN 'RESTRICT'
-           WHEN 'c' THEN 'CASCADE'
-           WHEN 'n' THEN 'SET NULL'
-           WHEN 'd' THEN 'SET DEFAULT'
-         END AS on_delete,
-         pg_get_constraintdef(oid) AS definition
-  FROM pg_constraint
-  WHERE contype = 'f'
-    AND confrelid IN (
-      'public.accounts'::regclass,
-      'public.game_results'::regclass,
-      'public.playtime_sessions'::regclass
-    )
-  ORDER BY referenced_parent, referencing_child, conname;
-
-  WITH RECURSIVE cascade_edges(parent_oid, child_oid, constraint_oid, depth, path) AS (
-    SELECT c.confrelid, c.conrelid, c.oid, 1,
-           ARRAY[c.confrelid, c.conrelid]::oid[]
-    FROM pg_constraint AS c
-    WHERE c.contype = 'f'
-      AND c.confdeltype = 'c'
-      AND c.confrelid IN (
-        'public.accounts'::regclass,
-        'public.game_results'::regclass,
-        'public.playtime_sessions'::regclass
-      )
-    UNION ALL
-    SELECT c.confrelid, c.conrelid, c.oid, e.depth + 1,
-           array_append(e.path, c.conrelid)
-    FROM cascade_edges AS e
-    JOIN pg_constraint AS c
-      ON c.contype = 'f'
-     AND c.confdeltype = 'c'
-     AND c.confrelid = e.child_oid
-    WHERE NOT c.conrelid = ANY(e.path)
-  )
-  SELECT DISTINCT e.depth,
-         e.parent_oid::regclass::text AS parent_table,
-         e.child_oid::regclass::text AS child_table,
-         c.conname,
-         pg_get_constraintdef(c.oid) AS definition
-  FROM cascade_edges AS e
-  JOIN pg_constraint AS c ON c.oid = e.constraint_oid
-  ORDER BY e.depth, parent_table, child_table, c.conname;
-\else
-  \echo 'Migration 024 is already recorded; no 024 deletion counts were run.'
-\endif
-
 ROLLBACK;
-\if :migration_024_review_required
-  \echo 'STOP: migration 024 is pending. These counts are a preflight input only; complete and approve every recursive cascade/SET NULL impact before any migration run.'
-  SELECT 'preflight stopped: migration 024 is pending and requires separate impact approval'::integer;
-\endif
