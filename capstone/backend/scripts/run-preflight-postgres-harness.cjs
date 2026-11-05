@@ -269,7 +269,11 @@ const pending024 = invokePreflight(CASES.pending024);
 assert.equal(pending024.status, 3, `pending migration 024 must report impact then stop: ${pending024.stderr}\n${pending024.stdout}`);
 assert.match(pending024.stdout, /Migration 024 direct count-only impact follows/);
 assert.match(pending024.stdout, /fixture_progress_student_fk/);
-assert.match(pending024.stdout, /STOP: migration 024 is pending/);
+assert.match(
+  pending024.stdout,
+  /STOP: migration 024 is pending/,
+  `pending 024 must print its stop reason; stderr=${pending024.stderr}\nstdout tail=${pending024.stdout.slice(-2000)}`,
+);
 assert.doesNotMatch(pending024.stdout, /synthetic-only-name|123456/);
 console.log('PASS: migration 024 emits aggregate impact, discloses no fixture values, then stops');
 
