@@ -37,6 +37,38 @@ const studentNameSentinel = 'SYNTHETIC_PRIVATE_STUDENT_NAME';
 const questionSentinel = 'SYNTHETIC_PRIVATE_QUESTION_TEXT';
 const answerSentinel = 'SYNTHETIC_PRIVATE_ANSWER_TEXT';
 
+test('PostgreSQL count normalization accepts only nonnegative safe integers', () => {
+  assert.deepEqual(
+    [
+      '0', '31', 0, 31, 31n,
+      String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER, BigInt(Number.MAX_SAFE_INTEGER),
+    ].map((value) => normalizePostgresCount(value)),
+    [0, 31, 0, 31, 31, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
+  );
+
+  for (const value of [
+    null,
+    undefined,
+    '',
+    ' 1',
+    '-1',
+    '1.0',
+    '1.5',
+    '1e3',
+    '9007199254740992',
+    BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+    -1,
+    -1n,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    true,
+  ]) {
+    assert.throws(() => normalizePostgresCount(value), TypeError);
+  }
+});
+
 test('isolated workflow lookup supports app-root, repository-root, and mounted CI layouts', () => {
   const backendDirectory = path.resolve('synthetic-worktree', 'capstone', 'backend');
   const appRootWorkflow = path.resolve(backendDirectory, '..', workflowRelativePath);
@@ -378,7 +410,31 @@ if (!isApprovedDisposableDatabase(databaseUrl)) {
       await diagnosticClient.query("SET LOCAL lock_timeout = '2s'");
 
       const preflight = await diagnosticClient.query(preflightSql, [studentId, currentCycle]);
-      assert.deepEqual(preflight.rows, [{
+      const normalizedPreflight = preflight.rows.map((row) => ({
+        ...row,
+        scope_match_count: normalizePostgresCount(
+          row.scope_match_count,
+          'scope_match_count',
+        ),
+        cycle_parameter_match_count: normalizePostgresCount(
+          row.cycle_parameter_match_count,
+          'cycle_parameter_match_count',
+        ),
+        migration_025_count: normalizePostgresCount(row.migration_025_count, 'migration_025_count'),
+        required_columns_present_count: normalizePostgresCount(
+          row.required_columns_present_count,
+          'required_columns_present_count',
+        ),
+        migration_025_valid_constraint_count: normalizePostgresCount(
+          row.migration_025_valid_constraint_count,
+          'migration_025_valid_constraint_count',
+        ),
+        migration_025_required_index_count: normalizePostgresCount(
+          row.migration_025_required_index_count,
+          'migration_025_required_index_count',
+        ),
+      }));
+      assert.deepEqual(normalizedPreflight, [{
         read_only_transaction: true,
         scope_match_count: 1,
         cycle_parameter_match_count: 1,
@@ -421,37 +477,37 @@ if (!isApprovedDisposableDatabase(databaseUrl)) {
         'unrecoverable_topic_result_count',
       ]);
 
-      assert.equal(Number(q1.rows[0].current_cycle_eligible_result_count), 14);
-      assert.equal(Number(q1.rows[0].current_cycle_valid_score_count), 14);
-      assert.equal(Number(q1.rows[0].current_cycle_parameter_match_count), 1);
-      assert.equal(Number(q1.rows[0].missing_question_id_count), 5);
-      assert.equal(Number(q1.rows[0].missing_question_set_id_count), 1);
-      assert.equal(Number(q1.rows[0].missing_source_question_count), 0);
-      assert.equal(Number(q1.rows[0].missing_source_question_set_count), 0);
-      assert.equal(Number(q1.rows[0].question_set_association_mismatch_count), 0);
-      assert.equal(Number(q1.rows[0].session_id_mismatch_count), 1);
-      assert.equal(Number(q1.rows[0].learning_cycle_timestamp_mismatch_count), 1);
-      assert.equal(Number(q1.rows[0].learning_cycle_session_mismatch_count), 1);
-      assert.equal(Number(q1.rows[0].parent_history_eligible_result_count), 12);
-      assert.equal(Number(q1.rows[0].parent_only_eligible_result_count), 0);
-      assert.equal(Number(q1.rows[0].student_analytics_only_eligible_result_count), 2);
+      assertPostgresCount(q1.rows[0], 'current_cycle_eligible_result_count', 14);
+      assertPostgresCount(q1.rows[0], 'current_cycle_valid_score_count', 14);
+      assertPostgresCount(q1.rows[0], 'current_cycle_parameter_match_count', 1);
+      assertPostgresCount(q1.rows[0], 'missing_question_id_count', 5);
+      assertPostgresCount(q1.rows[0], 'missing_question_set_id_count', 1);
+      assertPostgresCount(q1.rows[0], 'missing_source_question_count', 0);
+      assertPostgresCount(q1.rows[0], 'missing_source_question_set_count', 0);
+      assertPostgresCount(q1.rows[0], 'question_set_association_mismatch_count', 0);
+      assertPostgresCount(q1.rows[0], 'session_id_mismatch_count', 1);
+      assertPostgresCount(q1.rows[0], 'learning_cycle_timestamp_mismatch_count', 1);
+      assertPostgresCount(q1.rows[0], 'learning_cycle_session_mismatch_count', 1);
+      assertPostgresCount(q1.rows[0], 'parent_history_eligible_result_count', 12);
+      assertPostgresCount(q1.rows[0], 'parent_only_eligible_result_count', 0);
+      assertPostgresCount(q1.rows[0], 'student_analytics_only_eligible_result_count', 2);
 
-      assert.equal(Number(q2.rows[0].current_cycle_eligible_result_count), 14);
-      assert.equal(Number(q2.rows[0].current_cycle_parameter_match_count), 1);
-      assert.equal(Number(q2.rows[0].current_cycle_valid_score_result_count), 14);
-      assert.equal(Number(q2.rows[0].analytics_topic_linked_result_count), 9);
-      assert.equal(Number(q2.rows[0].safe_topic_recovered_result_count), 8);
-      assert.equal(Number(q2.rows[0].exact_question_canonical_id_recovery_count), 3);
-      assert.equal(Number(q2.rows[0].exact_question_label_recovery_count), 4);
-      assert.equal(Number(q2.rows[0].exact_question_set_topic_recovery_count), 0);
-      assert.equal(Number(q2.rows[0].set_level_consistent_recovery_count), 2);
-      assert.equal(Number(q2.rows[0].invalid_nonblank_question_topic_id_count), 1);
-      assert.equal(Number(q2.rows[0].invalid_nonblank_set_topic_id_count), 1);
-      assert.equal(Number(q2.rows[0].invalid_question_set_grade_difficulty_scope_count), 0);
-      assert.equal(Number(q2.rows[0].grade_difficulty_scope_conflict_count), 1);
-      assert.equal(Number(q2.rows[0].question_set_topic_conflict_count), 1);
-      assert.equal(Number(q2.rows[0].mixed_set_question_topic_count), 0);
-      assert.equal(Number(q2.rows[0].unrecoverable_topic_result_count), 5);
+      assertPostgresCount(q2.rows[0], 'current_cycle_eligible_result_count', 14);
+      assertPostgresCount(q2.rows[0], 'current_cycle_parameter_match_count', 1);
+      assertPostgresCount(q2.rows[0], 'current_cycle_valid_score_result_count', 14);
+      assertPostgresCount(q2.rows[0], 'analytics_topic_linked_result_count', 9);
+      assertPostgresCount(q2.rows[0], 'safe_topic_recovered_result_count', 8);
+      assertPostgresCount(q2.rows[0], 'exact_question_canonical_id_recovery_count', 3);
+      assertPostgresCount(q2.rows[0], 'exact_question_label_recovery_count', 4);
+      assertPostgresCount(q2.rows[0], 'exact_question_set_topic_recovery_count', 0);
+      assertPostgresCount(q2.rows[0], 'set_level_consistent_recovery_count', 2);
+      assertPostgresCount(q2.rows[0], 'invalid_nonblank_question_topic_id_count', 1);
+      assertPostgresCount(q2.rows[0], 'invalid_nonblank_set_topic_id_count', 1);
+      assertPostgresCount(q2.rows[0], 'invalid_question_set_grade_difficulty_scope_count', 0);
+      assertPostgresCount(q2.rows[0], 'grade_difficulty_scope_conflict_count', 1);
+      assertPostgresCount(q2.rows[0], 'question_set_topic_conflict_count', 1);
+      assertPostgresCount(q2.rows[0], 'mixed_set_question_topic_count', 0);
+      assertPostgresCount(q2.rows[0], 'unrecoverable_topic_result_count', 5);
 
       const readonlyState = await diagnosticClient.query(`
         SELECT current_setting('transaction_read_only') = 'on' AS read_only,
@@ -503,8 +559,32 @@ function assertAggregateOnly(row, expectedKeys) {
   assert.deepEqual(keys, expectedKeys, 'diagnostics must return only their fixed aggregate count columns');
   for (const key of keys) {
     assert.match(key, /_count$/);
-    assert.match(String(row[key]), /^\d+$/);
+    normalizePostgresCount(row[key], key);
   }
+}
+
+function normalizePostgresCount(value, label = 'PostgreSQL count') {
+  let count;
+  if (typeof value === 'number') {
+    count = value;
+  } else if (typeof value === 'string' && /^\d+$/.test(value)) {
+    count = Number(value);
+  } else if (typeof value === 'bigint'
+    && value >= 0n
+    && value <= BigInt(Number.MAX_SAFE_INTEGER)) {
+    count = Number(value);
+  } else {
+    throw new TypeError(`${label} must be a nonnegative safe integer count`);
+  }
+
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new TypeError(`${label} must be a nonnegative safe integer count`);
+  }
+  return count;
+}
+
+function assertPostgresCount(row, key, expected) {
+  assert.equal(normalizePostgresCount(row[key], key), expected, `${key} must match the expected count`);
 }
 
 async function createAndRunLegacyAssociationProbe(bootstrap, roleName, query1, query2, registrySnapshot) {
@@ -567,9 +647,9 @@ async function createAndRunLegacyAssociationProbe(bootstrap, roleName, query1, q
         'learning_cycle_session_mismatch_count', 'parent_history_eligible_result_count',
         'parent_only_eligible_result_count', 'student_analytics_only_eligible_result_count',
       ]);
-      assert.equal(Number(q1.rows[0].question_set_association_mismatch_count), 1);
-      assert.equal(Number(q1.rows[0].missing_source_question_count), 1);
-      assert.equal(Number(q1.rows[0].valid_question_set_association_count), 0);
+      assertPostgresCount(q1.rows[0], 'question_set_association_mismatch_count', 1);
+      assertPostgresCount(q1.rows[0], 'missing_source_question_count', 1);
+      assertPostgresCount(q1.rows[0], 'valid_question_set_association_count', 0);
 
       const q2 = await client.query(legacyQuery2, [900, 1, registrySnapshot]);
       assert.equal(q2.rowCount, 1);
@@ -586,10 +666,10 @@ async function createAndRunLegacyAssociationProbe(bootstrap, roleName, query1, q
         'question_set_topic_conflict_count', 'mixed_set_question_topic_count',
         'unrecoverable_topic_result_count',
       ]);
-      assert.equal(Number(q2.rows[0].missing_source_question_count), 1);
-      assert.equal(Number(q2.rows[0].question_set_association_mismatch_count), 1);
-      assert.equal(Number(q2.rows[0].analytics_topic_linked_result_count), 0);
-      assert.equal(Number(q2.rows[0].unrecoverable_topic_result_count), 2);
+      assertPostgresCount(q2.rows[0], 'missing_source_question_count', 1);
+      assertPostgresCount(q2.rows[0], 'question_set_association_mismatch_count', 1);
+      assertPostgresCount(q2.rows[0], 'analytics_topic_linked_result_count', 0);
+      assertPostgresCount(q2.rows[0], 'unrecoverable_topic_result_count', 2);
       await client.query('ROLLBACK');
       await client.query('RESET ROLE');
     } finally {
