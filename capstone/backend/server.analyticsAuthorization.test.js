@@ -376,7 +376,7 @@ test('grounded insight endpoint returns a current cache without another provider
   assert.equal(insight.performance_insight, cachedInsight.performance_insight);
   assert.deepEqual(insight.strengths, []);
   assert.deepEqual(insight.weaknesses, ['General evidence (not topic-specific): 2 recorded incorrect answers were without a validated topic. This is limited evidence and does not establish a persistent weakness or topic.']);
-  assert.deepEqual(insight.recommendations, ['Review the 2 missed questions and continue regular Math practice. More topic-linked results are needed for a specific recommendation.']);
+  assert.deepEqual(insight.recommendations, ['General practice: review the solutions for the 2 recorded incorrect answers and practice similar Mathematics problems. This is not a topic-specific recommendation.']);
   assert.equal(insight.topic_evidence_status, 'topic_metadata_unavailable');
   assert.ok(Array.isArray(insight.quest_insights) && insight.quest_insights.length > 0, 'the separate canonical quest evidence catalog remains available');
   for (const quest of insight.quest_insights) {
@@ -477,7 +477,7 @@ test('grounded insight treats four valid results as preliminary and generates on
   assert.equal(providerCalls, 1);
   assert.equal(response.body.insight.topic_evidence_status, 'topic_metadata_unavailable');
   assert.match(response.body.insight.weaknesses[0], /General evidence \(not topic-specific\): 2 recorded incorrect answers were without a validated topic\. This is limited evidence and does not establish a persistent weakness or topic\./);
-  assert.match(response.body.insight.recommendations[0], /Review the 2 missed questions.*More topic-linked results/);
+  assert.equal(response.body.insight.recommendations[0], 'General practice: review the solutions for the 2 recorded incorrect answers and practice similar Mathematics problems. This is not a topic-specific recommendation.');
 });
 
 test('invalid grounded provider output is not cached and deterministic progress remains available', async (t) => {
@@ -657,7 +657,7 @@ test('valid grounded output caches by fingerprint and regenerates a stale entry'
     assert.equal(response.body.insight.topic_evidence_status, 'topic_metadata_unavailable');
     assert.deepEqual(response.body.insight.strengths, []);
     assert.match(response.body.insight.weaknesses[0], /General evidence \(not topic-specific\): 2 recorded incorrect answers were without a validated topic\. This is limited evidence and does not establish a persistent weakness or topic\./);
-    assert.match(response.body.insight.recommendations[0], /Review the 2 missed questions.*More topic-linked results/);
+    assert.equal(response.body.insight.recommendations[0], 'General practice: review the solutions for the 2 recorded incorrect answers and practice similar Mathematics problems. This is not a topic-specific recommendation.');
   }
 });
 
