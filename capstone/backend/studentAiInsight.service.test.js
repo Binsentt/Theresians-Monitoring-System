@@ -127,6 +127,9 @@ test('zero valid results returns no-data without calling the provider or writing
   assert.equal(state.status, 'no_data');
   assert.equal(state.data_level, 'no_data');
   assert.equal(state.valid_result_count, 0);
+  assert.equal(state.deterministic_evidence.general_performance.summary, null);
+  assert.deepEqual(state.deterministic_evidence.general_performance.strengths, []);
+  assert.deepEqual(state.deterministic_evidence.general_performance.weaknesses, []);
   assert.equal(providerCalls, 0);
   assert.equal(harness.getSaved(), null);
 });
@@ -348,7 +351,10 @@ test('current Math strengths replace retired cached quest-completion strengths',
     generateInsight: async () => { throw new Error('Current cache should not call provider.'); },
   });
   assert.equal(state.status, 'cached');
-  assert.deepEqual(state.insight.strengths, ['Strong performance in Addition: 5 of 5 recorded answers correct (100%).']);
+  assert.deepEqual(state.insight.strengths, [
+    'General evidence (overall performance, not a specific Mathematics topic): 5 of 5 recorded answers were correct (100%).',
+    'Strong performance in Addition: 5 of 5 recorded answers correct (100%).',
+  ]);
 });
 
 test('current canonical non-graded completion replaces stale cached per-quest no-evidence wording', async () => {
@@ -440,14 +446,94 @@ test('paused insight with an empty cache still returns deterministic current-cyc
   assert.equal(state.status, 'paused');
   assert.equal(state.insight, null, 'no generated AI output is claimed');
   assert.equal(state.deterministic_evidence.topic_evidence_status, 'perfect_recorded_results');
-  assert.deepEqual(state.deterministic_evidence.strengths, [
+  assert.deepEqual(state.deterministic_evidence.general_performance.strengths, [
+    'General evidence (overall performance, not a specific Mathematics topic): 5 of 5 recorded answers were correct (100%).',
+  ]);
+  assert.deepEqual(state.deterministic_evidence.topic_specific.strengths, [
     'Strong performance in Subtraction: 5 of 5 recorded answers correct (100%).',
+  ]);
+  assert.deepEqual(state.deterministic_evidence.strengths, [
+    ...state.deterministic_evidence.general_performance.strengths,
+    ...state.deterministic_evidence.topic_specific.strengths,
   ]);
   assert.deepEqual(state.deterministic_evidence.weaknesses, []);
   assert.deepEqual(state.deterministic_evidence.recommendations, []);
   assert.equal(state.deterministic_evidence.quest_insights.find((quest) => quest.canonical_task_id === 'go-to-school').completion_status, 'completed');
   assert.equal(providerCalls, 0);
   assert.equal(harness.getSaved(), null);
+});
+
+for (const [label, aiGenerationEnabled, expectedStatus, expectedProviderCalls] of [
+  ['AI paused', false, 'paused', 0],
+  ['provider failed', true, 'unavailable', 1],
+]) {
+test(`blank cache preserves general current-cycle evidence when ${label}`, async () => {
+  const harness = createHarness();
+  const answers = [...Array(53).fill(true), ...Array(10).fill(false)];
+  let providerCalls = 0;
+  const state = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    learningCycleVersion: 3,
+    metrics: metricsFor(answers),
+    actorId: 1,
+    pool: harness.pool,
+    logger: { error() {} },
+    aiGenerationEnabled,
+    generateInsight: async () => {
+      providerCalls += 1;
+      throw new Error('synthetic provider failure');
+    },
+  });
+
+  assert.equal(state.status, expectedStatus);
+  assert.equal(state.insight, null, 'deterministic general evidence is not represented as generated AI output');
+  assert.deepEqual(state.deterministic_evidence.general_performance.strengths, [
+    'General evidence (overall performance, not a specific Mathematics topic): 53 of 63 recorded answers were correct (84.1%).',
+  ]);
+  assert.deepEqual(state.deterministic_evidence.general_performance.weaknesses, [
+    'General evidence (not topic-specific): 10 of 63 recorded answers were incorrect. The available records do not establish which Mathematics topic those answers involved.',
+  ]);
+  assert.deepEqual(state.deterministic_evidence.general_performance.recommendations, [
+    'General practice: review the solutions for the 10 recorded incorrect answers and practice similar Mathematics problems. This is not a topic-specific recommendation.',
+  ]);
+  assert.deepEqual(state.deterministic_evidence.topic_specific, {
+    strengths: [], weaknesses: [], recommendations: [],
+  });
+  assert.equal(state.deterministic_evidence.strengths[0], state.deterministic_evidence.general_performance.strengths[0]);
+  assert.equal(state.deterministic_evidence.weaknesses[0], state.deterministic_evidence.general_performance.weaknesses[0]);
+  assert.equal(providerCalls, expectedProviderCalls);
+  assert.equal(harness.getSaved(), null);
+});
+}
+
+test('successful generation keeps current general guidance when topic metadata is unavailable', async () => {
+  const harness = createHarness();
+  const answers = [...Array(53).fill(true), ...Array(10).fill(false)];
+  let providerEvidence = null;
+  const state = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    learningCycleVersion: 3,
+    metrics: metricsFor(answers),
+    pool: harness.pool,
+    generateInsight: async ({ input }) => {
+      providerEvidence = input.general_performance;
+      return generatedInsight('Recorded overall results show strong accuracy with unlinked misses.');
+    },
+  });
+
+  assert.equal(state.status, 'generated');
+  assert.equal(state.insight.performance_insight, 'Recorded overall results show strong accuracy with unlinked misses.');
+  assert.match(providerEvidence.summary, /53 of 63 answers were correct/);
+  assert.equal(state.insight.topic_evidence_status, 'topic_metadata_unavailable');
+  assert.equal(state.insight.strengths[0], state.deterministic_evidence.general_performance.strengths[0]);
+  assert.equal(state.insight.weaknesses[0], state.deterministic_evidence.general_performance.weaknesses[0]);
+  assert.equal(state.insight.recommendations[0], state.deterministic_evidence.general_performance.recommendations[0]);
+  assert.deepEqual(state.deterministic_evidence.topic_specific, {
+    strengths: [], weaknesses: [], recommendations: [],
+  });
+  assert.deepEqual(harness.getSaved().insight, state.insight);
 });
 
 test('blank-cache provider failure exposes evidence-based topic guidance and accepted-save quest evidence; retry can generate later', async () => {
@@ -518,6 +604,10 @@ test('provider failure without validated topic metadata reports the gap without 
   assert.equal(state.insight, null);
   assert.equal(state.deterministic_evidence.topic_evidence_status, 'topic_metadata_unavailable');
   assert.deepEqual(state.deterministic_evidence.strengths, []);
+  assert.deepEqual(state.deterministic_evidence.general_performance.weaknesses, [
+    'General evidence (not topic-specific): 3 recorded incorrect answers were without a validated topic. This is limited evidence and does not establish a persistent weakness or topic.',
+  ]);
+  assert.deepEqual(state.deterministic_evidence.topic_specific.weaknesses, []);
   assert.doesNotMatch(state.deterministic_evidence.weaknesses.join(' '), /Subtraction|Addition|Multiplication/);
   assert.doesNotMatch(state.deterministic_evidence.recommendations.join(' '), /Subtraction|Addition|Multiplication/);
 });
@@ -608,6 +698,81 @@ test('Admin, Teacher, and Parent reads share one generated insight for unchanged
   assert.equal(providerCalls, 1);
   assert.deepEqual(parent.insight, admin.insight);
   assert.equal(harness.calls.filter(({ sql }) => sql === 'select pg_advisory_xact_lock($1)').length, 1);
+});
+
+test('alternating Student reads use separate insight caches and current-cycle evidence', async () => {
+  const savedByStudent = new Map();
+  const cacheReadStudentIds = [];
+  const query = async (rawSql, params = []) => {
+    const sql = compact(rawSql);
+    if (sql.includes('from public.student_ai_insights')) {
+      const studentId = Number(params[0]);
+      cacheReadStudentIds.push(studentId);
+      const saved = savedByStudent.get(studentId);
+      return { rows: saved ? [structuredClone(saved)] : [] };
+    }
+    if (sql.includes('insert into public.student_ai_insights')) {
+      const studentId = Number(params[0]);
+      const saved = {
+        input_fingerprint: params[1],
+        insight: JSON.parse(params[2]),
+        generated_at: `2026-11-07T00:00:0${savedByStudent.size + 1}.000Z`,
+        stale_at: null,
+      };
+      savedByStudent.set(studentId, saved);
+      return { rows: [{ insight: structuredClone(saved.insight), generated_at: saved.generated_at }] };
+    }
+    return empty;
+  };
+  const pool = { query, connect: async () => ({ query, release() {} }) };
+  const studentAArgs = {
+    studentId: 44,
+    learningCycleVersion: 2,
+    gradeLevel: 'Grade 1',
+    metrics: metricsFor([1, 1, 1, 1, 1]),
+    pool,
+  };
+  const studentBArgs = {
+    studentId: 45,
+    learningCycleVersion: 4,
+    gradeLevel: 'Grade 2',
+    metrics: metricsFor([0, 0, 0, 0, 0]),
+    pool,
+  };
+
+  const studentAFirst = await resolveStudentAiInsight({
+    ...studentAArgs,
+    generateInsight: async () => generatedInsight('Student A current-cycle insight.'),
+  });
+  const studentBFirst = await resolveStudentAiInsight({
+    ...studentBArgs,
+    generateInsight: async () => generatedInsight('Student B current-cycle insight.'),
+  });
+  const studentAAgain = await resolveStudentAiInsight({
+    ...studentAArgs,
+    generateInsight: async () => { throw new Error('Student A should use only Student A cache.'); },
+  });
+  const studentBAgain = await resolveStudentAiInsight({
+    ...studentBArgs,
+    generateInsight: async () => { throw new Error('Student B should use only Student B cache.'); },
+  });
+
+  assert.equal(studentAFirst.status, 'generated');
+  assert.equal(studentBFirst.status, 'generated');
+  assert.equal(studentAAgain.status, 'cached');
+  assert.equal(studentBAgain.status, 'cached');
+  assert.equal(studentAAgain.insight.performance_insight, 'Student A current-cycle insight.');
+  assert.equal(studentBAgain.insight.performance_insight, 'Student B current-cycle insight.');
+  assert.deepEqual(studentAAgain.deterministic_evidence.general_performance.strengths, [
+    'General evidence (overall performance, not a specific Mathematics topic): 5 of 5 recorded answers were correct (100%).',
+  ]);
+  assert.deepEqual(studentBAgain.deterministic_evidence.general_performance.strengths, []);
+  assert.deepEqual(studentBAgain.deterministic_evidence.general_performance.weaknesses, [
+    'General evidence (not topic-specific): 5 of 5 recorded answers were incorrect. The available records do not establish which Mathematics topic those answers involved.',
+  ]);
+  assert.deepEqual([...savedByStudent.keys()], [44, 45]);
+  assert.ok(cacheReadStudentIds.includes(44));
+  assert.ok(cacheReadStudentIds.includes(45));
 });
 
 test('Admin, Teacher, and linked Parent reads receive the same deterministic evidence while AI is paused', async () => {
@@ -764,8 +929,9 @@ test('provider failure keeps and marks the prior cached insight while canonical 
   assert.equal(state.status, 'unavailable');
   assert.equal(state.is_stale, true);
   assert.equal(state.insight.performance_insight, before.insight.performance_insight);
-  assert.match(state.insight.weaknesses[0], /limited evidence.*does not identify a persistent Math weakness/);
-  assert.match(state.insight.recommendations[0], /Review the 1 missed question.*More topic-linked results/);
+  assert.match(state.insight.weaknesses[0], /General evidence.*limited evidence.*does not establish a persistent weakness or topic/);
+  assert.equal(state.deterministic_evidence.topic_specific.weaknesses.length, 0);
+  assert.match(state.insight.recommendations[0], /General practice: review the solutions for the 1 recorded incorrect answer/);
   assert.equal(state.insight.topic_evidence_status, 'topic_metadata_unavailable');
   assert.equal(state.topic_evidence_status, 'topic_metadata_unavailable');
   assert.deepEqual(harness.getSaved(), before);

@@ -7,6 +7,7 @@ const {
 const {
   buildGroundedInsightInput,
   buildInsightFingerprint,
+  buildGeneralPerformanceEvidence,
   ANALYTICS_INSIGHT_MAX_OUTPUT_TOKENS,
   generateGroundedStudentInsight: generateGroundedStudentInsightWithPolicy,
 } = require('./studentAnalyticsInsight.utils');
@@ -97,6 +98,14 @@ test('uses only minimized deterministic facts and policy version in grounded ins
     unmapped_quest_topic_incorrect_answers: 0,
     unmapped_topic_incorrect_answers: 0,
     topic_evidence_status: 'weaknesses_identified',
+    general_performance: {
+      summary: 'Current-cycle results: 5 valid results; 3 of 5 answers were correct (60% overall); 2 were incorrect.',
+      strengths: [],
+      weaknesses: [],
+      recommendations: [],
+      map_observations: [],
+      recent_trend: null,
+    },
     playtime_minutes: 24,
   });
   assert.equal(questEvidence.length, 19);
@@ -116,6 +125,29 @@ test('uses a stable cache fingerprint and invalidates pre-policy and changed met
   assert.equal(buildInsightFingerprint(input), buildInsightFingerprint(input));
   assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(changed));
   assert.notEqual(buildInsightFingerprint(input), buildInsightFingerprint(prePolicyInput));
+});
+
+test('invalidates the insight fingerprint when current-cycle map or recent-result evidence changes', () => {
+  const quizSessions = Array.from({ length: 10 }, (_, index) => ({
+    id: index + 1,
+    score: index < 6 ? 1 : 0,
+    total_items: 1,
+    map_id: 'city_of_knowledge',
+    played_at: new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+    result_event_id: `fingerprint-event-${index + 1}`,
+  }));
+  const baseline = buildGroundedInsightInput({ gradeLevel: 'Grade 3', metrics, quizSessions });
+  const changedMap = buildGroundedInsightInput({
+    gradeLevel: 'Grade 3', metrics,
+    quizSessions: quizSessions.map((row) => ({ ...row, map_id: 'oakleaf_village' })),
+  });
+  const changedTrend = buildGroundedInsightInput({
+    gradeLevel: 'Grade 3', metrics,
+    quizSessions: quizSessions.map((row, index) => ({ ...row, score: index < 3 ? 1 : 0 })),
+  });
+
+  assert.notEqual(buildInsightFingerprint(baseline), buildInsightFingerprint(changedMap));
+  assert.notEqual(buildInsightFingerprint(baseline), buildInsightFingerprint(changedTrend));
 });
 
 test('includes deterministic per-quest timing and graded evidence in the provider input and fingerprint', () => {
@@ -666,4 +698,108 @@ test('records safe Responses envelope metadata without retaining response conten
   assert.equal(diagnostics.refusalContentPresent, true);
   assert.equal(JSON.stringify(diagnostics).includes('private provider content'), false);
   assert.match(result.performance_insight, /Recorded overall accuracy/);
+});
+
+test('builds general evidence from current-cycle aggregate counts without inventing a topic', () => {
+  const evidence = buildGeneralPerformanceEvidence({
+    metrics: {
+      validResultCount: 63,
+      correctAnswers: 53,
+      incorrectAnswers: 10,
+      totalQuestions: 63,
+      accuracy: 84.13,
+      topicLinkedEvidenceCount: 0,
+      unmappedTopicIncorrectAnswers: 10,
+    },
+  });
+
+  assert.equal(evidence.summary, 'Current-cycle results: 63 valid results; 53 of 63 answers were correct (84.1% overall); 10 were incorrect.');
+  assert.deepEqual(evidence.strengths, [
+    'General evidence (overall performance, not a specific Mathematics topic): 53 of 63 recorded answers were correct (84.1%).',
+  ]);
+  assert.deepEqual(evidence.weaknesses, [
+    'General evidence (not topic-specific): 10 of 63 recorded answers were incorrect. The available records do not establish which Mathematics topic those answers involved.',
+  ]);
+  assert.deepEqual(evidence.recommendations, [
+    'General practice: review the solutions for the 10 recorded incorrect answers and practice similar Mathematics problems. This is not a topic-specific recommendation.',
+  ]);
+  assert.deepEqual(evidence.map_observations, []);
+  assert.equal(evidence.recent_trend, null);
+  assert.equal(JSON.stringify(evidence).includes('Subtraction'), false);
+});
+
+test('includes only recognized current-cycle map summaries and a recent trend with ten valid timestamped results', () => {
+  const quizSessions = Array.from({ length: 10 }, (_, index) => ({
+    id: index + 1,
+    score: index < 5 ? (index < 4 ? 1 : 0) : (index < 7 ? 1 : 0),
+    total_items: 1,
+    map_id: 'city_of_knowledge',
+    played_at: new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+    result_event_id: `event-${index + 1}`,
+  }));
+  quizSessions.push({
+    id: 11, score: 1, total_items: 1, map_id: 'not-a-canonical-map',
+    current_map: 'Mathematics Forest',
+  });
+  const evidence = buildGeneralPerformanceEvidence({
+    metrics: {
+      validResultCount: 10,
+      correctAnswers: 6,
+      incorrectAnswers: 4,
+      totalQuestions: 10,
+      topicLinkedEvidenceCount: 0,
+      unmappedTopicIncorrectAnswers: 4,
+    },
+    quizSessions,
+  });
+
+  assert.deepEqual(evidence.map_observations, [
+    { map_name: 'City of Knowledge', correct_answers: 6, incorrect_answers: 4, total_questions: 10, accuracy: 60 },
+  ]);
+  assert.deepEqual(evidence.recent_trend, {
+    recent_result_count: 5,
+    previous_result_count: 5,
+    recent_accuracy: 40,
+    previous_accuracy: 80,
+    difference_points: -40,
+  });
+  assert.equal(evidence.summary, 'Current-cycle results: 10 valid results; 6 of 10 answers were correct (60% overall); 4 were incorrect.');
+  assert.doesNotMatch(JSON.stringify(evidence), /Mathematics Forest/);
+});
+
+test('does not call a small perfect sample a general strength or a weakness', () => {
+  const evidence = buildGeneralPerformanceEvidence({
+    metrics: {
+      validResultCount: 4,
+      correctAnswers: 4,
+      incorrectAnswers: 0,
+      totalQuestions: 4,
+      topicLinkedEvidenceCount: 0,
+      unmappedTopicIncorrectAnswers: 0,
+    },
+  });
+
+  assert.deepEqual(evidence.strengths, []);
+  assert.deepEqual(evidence.weaknesses, []);
+  assert.deepEqual(evidence.recommendations, []);
+  assert.match(evidence.summary, /4 of 4 answers were correct/);
+});
+
+test('uses five attempts and 80 percent accuracy for a general Strength', () => {
+  const evidence = buildGeneralPerformanceEvidence({
+    metrics: {
+      validResultCount: 5,
+      correctAnswers: 4,
+      incorrectAnswers: 1,
+      totalQuestions: 5,
+      topicLinkedEvidenceCount: 0,
+      unmappedTopicIncorrectAnswers: 1,
+    },
+  });
+
+  assert.deepEqual(evidence.strengths, [
+    'General evidence (overall performance, not a specific Mathematics topic): 4 of 5 recorded answers were correct (80%).',
+  ]);
+  assert.equal(evidence.weaknesses.length, 1);
+  assert.match(evidence.weaknesses[0], /limited evidence/);
 });

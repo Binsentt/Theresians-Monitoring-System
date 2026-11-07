@@ -54,9 +54,16 @@ const isCurrentCache = (cachedInsight, inputFingerprint) => Boolean(
   && !cachedInsight.stale_at
 );
 
-const buildCurrentTopicEvidence = (input) => {
+const buildCurrentTopicEvidence = (input, { generalEvidenceAvailable = false } = {}) => {
   const catalog = buildGroundedClaimCatalog(input);
-  const weaknessIds = catalog.weakness.map((claim) => claim.id);
+  // The grounding catalog has a legacy fallback for one-to-three unlinked
+  // misses. Once the current-cycle deterministic general evidence is available,
+  // keep that fallback in the general list instead of duplicating it as a
+  // topic-specific finding.
+  const topicWeaknesses = generalEvidenceAvailable
+    ? catalog.weakness.filter((claim) => claim.id !== 'unlinked_limited_errors')
+    : catalog.weakness;
+  const weaknessIds = topicWeaknesses.map((claim) => claim.id);
   const recommendationIds = deriveSupportedRecommendationIds({
     performance_claim_ids: [],
     weakness_claim_ids: weaknessIds,
@@ -70,58 +77,76 @@ const buildCurrentTopicEvidence = (input) => {
   };
 };
 
-const toDeterministicEvidence = (topicEvidence) => ({
-  topic_evidence_status: topicEvidence.topicEvidenceStatus,
-  strengths: [...topicEvidence.strengths],
-  weaknesses: [...topicEvidence.weaknesses],
-  recommendations: [...topicEvidence.recommendations],
-  quest_insights: [...topicEvidence.questInsights],
-});
+const toDeterministicEvidence = (topicEvidence, generalEvidence) => {
+  const generalPerformance = {
+    ...generalEvidence,
+    strengths: [...generalEvidence.strengths],
+    weaknesses: [...generalEvidence.weaknesses],
+    recommendations: [...generalEvidence.recommendations],
+    map_observations: [...generalEvidence.map_observations],
+    recent_trend: generalEvidence.recent_trend ? { ...generalEvidence.recent_trend } : null,
+  };
+  const topicSpecific = {
+    strengths: [...topicEvidence.strengths],
+    weaknesses: [...topicEvidence.weaknesses],
+    recommendations: [...topicEvidence.recommendations],
+  };
+  return {
+    topic_evidence_status: topicEvidence.topicEvidenceStatus,
+    general_performance: generalPerformance,
+    topic_specific: topicSpecific,
+    strengths: [...generalPerformance.strengths, ...topicSpecific.strengths],
+    weaknesses: [...generalPerformance.weaknesses, ...topicSpecific.weaknesses],
+    recommendations: [...generalPerformance.recommendations, ...topicSpecific.recommendations],
+    quest_insights: [...topicEvidence.questInsights],
+  };
+};
 
-const applyCurrentTopicEvidence = (insight, topicEvidence) => {
+const applyCurrentTopicEvidence = (insight, topicEvidence, generalEvidence) => {
   if (!insight || typeof insight !== 'object' || Array.isArray(insight)) return insight;
+  const deterministicEvidence = toDeterministicEvidence(topicEvidence, generalEvidence);
   return {
     ...insight,
     topic_evidence_status: topicEvidence.topicEvidenceStatus,
-    strengths: topicEvidence.strengths,
-    weaknesses: topicEvidence.weaknesses,
-    recommendations: topicEvidence.recommendations,
+    strengths: deterministicEvidence.strengths,
+    weaknesses: deterministicEvidence.weaknesses,
+    recommendations: deterministicEvidence.recommendations,
     quest_insights: topicEvidence.questInsights,
   };
 };
 
-const buildCachedState = ({ baseState, cachedInsight, topicEvidence }) => ({
+const buildCachedState = ({ baseState, cachedInsight, topicEvidence, generalEvidence }) => ({
   ...baseState,
   topic_evidence_status: topicEvidence.topicEvidenceStatus,
-  deterministic_evidence: toDeterministicEvidence(topicEvidence),
+  deterministic_evidence: toDeterministicEvidence(topicEvidence, generalEvidence),
   status: 'cached',
   is_stale: false,
   generated_at: cachedInsight.generated_at || null,
-  insight: applyCurrentTopicEvidence(cachedInsight.insight, topicEvidence),
+  insight: applyCurrentTopicEvidence(cachedInsight.insight, topicEvidence, generalEvidence),
 });
 
-const buildUnavailableState = ({ baseState, cachedInsight, topicEvidence }) => ({
+const buildUnavailableState = ({ baseState, cachedInsight, topicEvidence, generalEvidence }) => ({
   ...baseState,
   topic_evidence_status: topicEvidence.topicEvidenceStatus,
-  deterministic_evidence: toDeterministicEvidence(topicEvidence),
+  deterministic_evidence: toDeterministicEvidence(topicEvidence, generalEvidence),
   status: 'unavailable',
   is_stale: Boolean(cachedInsight?.insight),
   generated_at: cachedInsight?.generated_at || null,
-  insight: applyCurrentTopicEvidence(cachedInsight?.insight, topicEvidence) || null,
+  insight: applyCurrentTopicEvidence(cachedInsight?.insight, topicEvidence, generalEvidence) || null,
   message: cachedInsight?.insight
     ? 'New evidence is available, but the insight service is unavailable. The prior insight is shown as stale.'
     : 'Grounded AI Insights are unavailable right now. Recorded analytics remain available.',
 });
 
-const buildPausedState = ({ baseState, cachedInsight, topicEvidence, isStale = Boolean(cachedInsight?.insight) }) => ({
+const buildPausedState = ({ baseState, cachedInsight, topicEvidence, generalEvidence, isStale = Boolean(cachedInsight?.insight) }) => ({
   ...baseState,
   topic_evidence_status: topicEvidence.topicEvidenceStatus,
-  deterministic_evidence: toDeterministicEvidence(topicEvidence),
+  deterministic_evidence: toDeterministicEvidence(topicEvidence, generalEvidence),
   status: 'paused',
   code: AI_PAUSED_CODE,
   is_stale: isStale,
   generated_at: cachedInsight?.generated_at || null,
-  insight: applyCurrentTopicEvidence(cachedInsight?.insight, topicEvidence) || null,
+  insight: applyCurrentTopicEvidence(cachedInsight?.insight, topicEvidence, generalEvidence) || null,
   message: AI_PAUSED_MESSAGE,
 });
 
@@ -156,12 +181,15 @@ async function resolveStudentAiInsight({
     learningCycleVersion,
     learningCycleStartedAt,
   });
-  const topicEvidence = buildCurrentTopicEvidence(input);
+  const generalEvidence = input.general_performance;
+  const topicEvidence = buildCurrentTopicEvidence(input, {
+    generalEvidenceAvailable: generalEvidence.weaknesses.length > 0,
+  });
   if (baseState.data_level === 'no_data') {
     return {
       ...baseState,
       topic_evidence_status: topicEvidence.topicEvidenceStatus || metrics.topicEvidenceStatus || 'no_topic_evidence',
-      deterministic_evidence: toDeterministicEvidence(topicEvidence),
+      deterministic_evidence: toDeterministicEvidence(topicEvidence, generalEvidence),
       status: 'no_data',
       is_stale: false,
       message: 'No valid gameplay results are available for grounded AI analysis yet.',
@@ -186,11 +214,12 @@ async function resolveStudentAiInsight({
       baseState,
       cachedInsight: initialCache,
       topicEvidence,
+      generalEvidence,
       isStale: Boolean(initialCache?.insight) && !isCurrentCache(initialCache, inputFingerprint),
     });
   }
   if (!forceRefresh && isCurrentCache(initialCache, inputFingerprint)) {
-    return buildCachedState({ baseState, cachedInsight: initialCache, topicEvidence });
+    return buildCachedState({ baseState, cachedInsight: initialCache, topicEvidence, generalEvidence });
   }
 
   const client = await pool.connect();
@@ -213,7 +242,7 @@ async function resolveStudentAiInsight({
     if (!forceRefresh && isCurrentCache(lockedCache, inputFingerprint)) {
       await client.query('COMMIT');
       transactionStarted = false;
-      return buildCachedState({ baseState, cachedInsight: lockedCache, topicEvidence });
+      return buildCachedState({ baseState, cachedInsight: lockedCache, topicEvidence, generalEvidence });
     }
 
     let insight;
@@ -232,10 +261,10 @@ async function resolveStudentAiInsight({
       if (logger && typeof logger.error === 'function') {
         logger.error('Automatic grounded student insight unavailable:', error?.code || error?.message || 'unknown error');
       }
-      return buildUnavailableState({ baseState, cachedInsight: lockedCache || initialCache, topicEvidence });
+      return buildUnavailableState({ baseState, cachedInsight: lockedCache || initialCache, topicEvidence, generalEvidence });
     }
 
-    insight = applyCurrentTopicEvidence(insight, topicEvidence);
+    insight = applyCurrentTopicEvidence(insight, topicEvidence, generalEvidence);
 
     persistenceAttempted = true;
     const savedResult = await client.query(
@@ -262,7 +291,7 @@ async function resolveStudentAiInsight({
     return {
       ...baseState,
       topic_evidence_status: topicEvidence.topicEvidenceStatus,
-      deterministic_evidence: toDeterministicEvidence(topicEvidence),
+      deterministic_evidence: toDeterministicEvidence(topicEvidence, generalEvidence),
       status: lockedCache || initialCache ? 'regenerated' : 'generated',
       is_stale: false,
       generated_at: savedResult.rows[0]?.generated_at || null,

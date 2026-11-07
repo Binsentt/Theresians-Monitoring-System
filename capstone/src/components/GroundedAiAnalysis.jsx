@@ -60,6 +60,34 @@ const formatQuestType = (quest) => safeDisplayText(
   'Quest',
 );
 
+const formatEvidencePercentage = (value) => `${Number(value.toFixed(1))}%`;
+
+const getGeneralMapObservations = (value) => (Array.isArray(value) ? value : [])
+  .filter((map) => typeof map?.map_name === 'string' && map.map_name.trim()
+    && Number.isInteger(map.correct_answers) && map.correct_answers >= 0
+    && Number.isInteger(map.incorrect_answers) && map.incorrect_answers >= 0
+    && Number.isInteger(map.total_questions) && map.total_questions > 0
+    && map.correct_answers + map.incorrect_answers === map.total_questions)
+  .map((map) => ({
+    map_name: map.map_name.trim(),
+    correct_answers: map.correct_answers,
+    incorrect_answers: map.incorrect_answers,
+    total_questions: map.total_questions,
+    accuracy: Number(((map.correct_answers / map.total_questions) * 100).toFixed(1)),
+  }));
+
+const getGeneralRecentTrend = (value) => {
+  if (!value || !Number.isInteger(value.recent_result_count) || value.recent_result_count < 1
+    || !Number.isInteger(value.previous_result_count) || value.previous_result_count < 1
+    || !Number.isFinite(value.recent_accuracy) || value.recent_accuracy < 0 || value.recent_accuracy > 100
+    || !Number.isFinite(value.previous_accuracy) || value.previous_accuracy < 0 || value.previous_accuracy > 100) return null;
+  const differencePoints = Number((value.recent_accuracy - value.previous_accuracy).toFixed(1));
+  const direction = differencePoints > 0 ? 'up' : differencePoints < 0 ? 'down' : 'unchanged';
+  const magnitude = Number(Math.abs(differencePoints).toFixed(1));
+  const magnitudeText = String(magnitude);
+  return `Recent saved-result accuracy: last ${value.recent_result_count} valid results: ${formatEvidencePercentage(value.recent_accuracy)} vs ${formatEvidencePercentage(value.previous_accuracy)} in the preceding ${value.previous_result_count}${direction === 'unchanged' ? ' (unchanged).' : ` (${direction} ${magnitudeText} percentage points).`}`;
+};
+
 export default function GroundedAiAnalysis({ aiInsight, error = '', loading = false, onRefresh }) {
   const state = aiInsight && typeof aiInsight === 'object' ? aiInsight : {};
   const insight = state.insight && typeof state.insight === 'object' ? state.insight : null;
@@ -76,6 +104,12 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
   const noData = state.status === 'no_data' || state.data_level === 'no_data';
   const deterministicEvidence = state.deterministic_evidence && typeof state.deterministic_evidence === 'object'
     ? state.deterministic_evidence : null;
+  const generalPerformance = deterministicEvidence?.general_performance
+    && typeof deterministicEvidence.general_performance === 'object'
+    ? deterministicEvidence.general_performance : null;
+  const generalSummary = safeDisplayText(generalPerformance?.summary, '');
+  const generalMapObservations = getGeneralMapObservations(generalPerformance?.map_observations);
+  const generalRecentTrend = getGeneralRecentTrend(generalPerformance?.recent_trend);
   const strengths = normalizeDisplayList(deterministicEvidence?.strengths ?? insight?.strengths);
   const weaknesses = normalizeDisplayList(deterministicEvidence?.weaknesses ?? insight?.weaknesses);
   const recommendations = normalizeDisplayList(deterministicEvidence?.recommendations ?? insight?.recommendations);
@@ -89,7 +123,7 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
   const hasGeneratedAiInsight = Boolean(insight?.performance_insight);
   const deterministicOnly = (paused || unavailable) && !insight?.performance_insight;
   const showDeterministicEvidenceDisclosure = deterministicOnly
-    && (strengths.length > 0 || weaknesses.length > 0 || recommendations.length > 0 || questInsights.length > 0);
+    && (strengths.length > 0 || weaknesses.length > 0 || recommendations.length > 0 || questInsights.length > 0 || generalSummary);
   const message = safeDisplayText(error || state.message, 'Grounded analysis is loading from recorded gameplay evidence.');
   const showInsightAction = Boolean(onRefresh && !paused);
   const insightActionLabel = loading
@@ -137,6 +171,23 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
             {' '}Quest/topic-linked evidence: {questTopicLinkedEvidenceCount ?? 0} of {totalQuestionCount} recorded answers
           </p>
         )}
+        {generalSummary && (
+          <div className="grounded-ai-general-summary" aria-label="Deterministic current-cycle performance summary">
+            <h3>Current-cycle performance summary (deterministic)</h3>
+            <p>{generalSummary}</p>
+            {generalMapObservations.length > 0 && (
+              <div className="grounded-ai-map-observations">
+                <strong>Performance by map</strong>
+                <ul>{generalMapObservations.map((map) => (
+                  <li key={map.map_name}>
+                    {safeDisplayText(map.map_name)}: {map.correct_answers} of {map.total_questions} answers correct ({formatEvidencePercentage(map.accuracy)})
+                  </li>
+                ))}</ul>
+              </div>
+            )}
+            {generalRecentTrend && <p>{generalRecentTrend}</p>}
+          </div>
+        )}
         {showInsightAction && (
           <button type="button" className="btn btn-primary student-insight-action" onClick={onRefresh} disabled={loading}>
             {insightActionLabel}
@@ -146,8 +197,8 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
 
       <div className="student-insight-guidance-heading">
         <div>
-          <h2>{deterministicOnly ? 'Evidence-Based Learning Guidance' : 'AI Learning Guidance'}</h2>
-          <p>Weaknesses and recommendations are selected only from recorded student performance evidence.</p>
+          <h2>Evidence-Based Learning Guidance</h2>
+          <p>General findings are labeled as not topic-specific; topic findings require validated Mathematics metadata.</p>
           {showDeterministicEvidenceDisclosure && (
             <p className="grounded-ai-status" role="status">
               Strengths, weaknesses, recommendations, and quest facts below are deterministic summaries of validated current-cycle records. No AI-generated insight is available.
@@ -158,7 +209,7 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
 
       <div className="student-insight-guidance-grid">
         <InsightList
-          title={deterministicOnly ? 'Evidence-Based Weaknesses' : 'AI-Identified Weaknesses'}
+          title="Weaknesses"
           icon={AlertTriangle}
           tone="red"
           items={weaknesses}
@@ -177,7 +228,7 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
             : 'Generate the AI insight to identify evidence-backed weaknesses.'}
         />
         <InsightList
-          title={deterministicOnly ? 'Grounded Recommendations' : 'AI-Grounded Recommendations'}
+          title="Recommendations"
           icon={MapPin}
           tone="orange"
           items={recommendations}

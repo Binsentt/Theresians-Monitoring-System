@@ -354,6 +354,7 @@ test('detail and AI reuse the same complete evidence fingerprint after 500 resul
     input_fingerprint: buildInsightFingerprint(buildGroundedInsightInput({
       gradeLevel: 'Grade 1',
       metrics,
+      quizSessions: fixture.results,
       learningCycleVersion: fixture.progress.current_learning_cycle_version,
       learningCycleStartedAt: fixture.progress.current_learning_cycle_started_at,
     })),
@@ -434,6 +435,7 @@ test('Student and Parent refresh views retain exact question topics despite a ge
   assert.equal(refreshed.evidence_snapshot.metrics.topicLinkedEvidenceCount, 63);
   assert.equal(refreshed.evidence_snapshot.metrics.questTopicLinkedEvidenceCount, 63);
   assert.deepEqual(refreshed.insight.strengths, [
+    'General evidence (overall performance, not a specific Mathematics topic): 53 of 63 recorded answers were correct (84.1%).',
     'Strong performance in Addition: 53 of 63 recorded answers correct (84.13%).',
   ]);
   assert.equal(parentDetail.metrics.topicLinkedEvidenceCount, 63);
@@ -506,6 +508,7 @@ for (const nextCycleAnswers of [[0, 0], []]) {
       input_fingerprint: buildInsightFingerprint(buildGroundedInsightInput({
         gradeLevel: 'Grade 1',
         metrics: expected,
+        quizSessions: fixture.results,
         learningCycleVersion: fixture.progress.current_learning_cycle_version,
         learningCycleStartedAt: fixture.progress.current_learning_cycle_started_at,
         completedMilestones: fixture.milestones,

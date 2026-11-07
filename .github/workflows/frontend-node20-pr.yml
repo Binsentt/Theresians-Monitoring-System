@@ -1,0 +1,51 @@
+name: Frontend Node 20 PR
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'capstone/**'
+      - '.github/workflows/frontend-node20-pr.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-node20-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+    defaults:
+      run:
+        working-directory: capstone
+    steps:
+      - name: Check out pull request without persisting credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Verify lockfile and absence of local dotenv files
+        run: |
+          test -f package-lock.json
+          test ! -e .env
+          test ! -e backend/.env
+
+      - name: Install from the committed lockfile
+        run: npm ci --no-audit --no-fund
+
+      - name: Run the full frontend Jest suite
+        run: npm test
+
+      - name: Build the production frontend
+        run: npm run build

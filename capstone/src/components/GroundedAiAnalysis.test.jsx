@@ -150,6 +150,60 @@ describe('GroundedAiAnalysis', () => {
     expect(container.textContent).not.toContain('Recorded overall accuracy');
   });
 
+  test('combines general current-cycle evidence with validated topic findings when AI is unavailable', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis aiInsight={{
+        status: 'unavailable',
+        valid_result_count: 63,
+        total_question_count: 63,
+        topic_linked_evidence_count: 5,
+        deterministic_evidence: {
+          topic_evidence_status: 'topic_metadata_partial',
+          general_performance: {
+            summary: 'Current-cycle results: 63 valid results; 53 of 63 answers were correct (84.1% overall); 10 were incorrect.',
+            strengths: ['General evidence (overall performance, not a specific Mathematics topic): 53 of 63 recorded answers were correct (84.1%).'],
+            weaknesses: ['General evidence (not topic-specific): 10 of 63 recorded answers were incorrect. The available records do not establish which Mathematics topic those answers involved.'],
+            recommendations: ['General practice: review the solutions for the 10 recorded incorrect answers and practice similar Mathematics problems. This is not a topic-specific recommendation.'],
+            map_observations: [{ map_name: 'City of Knowledge', correct_answers: 6, incorrect_answers: 4, total_questions: 10, accuracy: 60 }],
+            recent_trend: { recent_result_count: 5, previous_result_count: 5, recent_accuracy: 40, previous_accuracy: 80, difference_points: -40 },
+          },
+          topic_specific: {
+            strengths: ['Strong performance in Addition: 5 of 5 recorded answers correct (100%).'],
+            weaknesses: ['Subtraction — Oakleaf Bandits: 4 of 5 answers were incorrect (20% accuracy).'],
+            recommendations: ['Practice Grade 1 Subtraction, especially the types missed during Oakleaf Bandits.'],
+          },
+          strengths: [
+            'General evidence (overall performance, not a specific Mathematics topic): 53 of 63 recorded answers were correct (84.1%).',
+            'Strong performance in Addition: 5 of 5 recorded answers correct (100%).',
+          ],
+          weaknesses: [
+            'General evidence (not topic-specific): 10 of 63 recorded answers were incorrect. The available records do not establish which Mathematics topic those answers involved.',
+            'Subtraction — Oakleaf Bandits: 4 of 5 answers were incorrect (20% accuracy).',
+          ],
+          recommendations: [
+            'General practice: review the solutions for the 10 recorded incorrect answers and practice similar Mathematics problems. This is not a topic-specific recommendation.',
+            'Practice Grade 1 Subtraction, especially the types missed during Oakleaf Bandits.',
+          ],
+          quest_insights: [],
+        },
+      }} />
+    ));
+
+    expect(container.textContent).toContain('Current-cycle performance summary');
+    expect(container.textContent).toContain('53 of 63 answers were correct (84.1% overall)');
+    expect(container.textContent).toContain('City of Knowledge: 6 of 10 answers correct (60%)');
+    expect(container.textContent).toContain('Recent saved-result accuracy: last 5 valid results: 40% vs 80% in the preceding 5 (down 40 percentage points).');
+    expect(container.textContent).toContain('General evidence (overall performance, not a specific Mathematics topic)');
+    expect(container.textContent).toContain('Strong performance in Addition: 5 of 5 recorded answers correct');
+    expect(container.textContent).toContain('General evidence (not topic-specific): 10 of 63 recorded answers were incorrect.');
+    expect(container.textContent).toContain('Subtraction — Oakleaf Bandits');
+    expect(container.textContent).toContain('General practice: review the solutions for the 10 recorded incorrect answers');
+    expect(container.textContent).toContain('Practice Grade 1 Subtraction');
+    expect(container.textContent).not.toContain('AI-Identified Weaknesses');
+    expect(container.textContent).not.toContain('AI-Grounded Recommendations');
+    expect(container.textContent).toContain('No AI-generated insight is available.');
+  });
+
   test('shows truthful no-data state and allows a refresh after new committed answers', async () => {
     const onRefresh = jest.fn();
     await act(async () => root.render(
@@ -160,6 +214,7 @@ describe('GroundedAiAnalysis', () => {
     ));
 
     expect(container.textContent).toContain('No valid gameplay results are available.');
+    expect(container.textContent).not.toContain('Deterministic current-cycle summary');
     expect(container.textContent).toContain('Generated: Not generated');
     expect(container.textContent).toContain('Cache: No cached insight');
     expect(container.textContent).not.toContain('Current');
@@ -352,9 +407,9 @@ describe('GroundedAiAnalysis', () => {
       />
     ));
 
-    expect(container.textContent).toContain('AI Learning Guidance');
-    expect(container.textContent).toContain('AI-Identified Weaknesses');
-    expect(container.textContent).toContain('AI-Grounded Recommendations');
+    expect(container.textContent).toContain('Evidence-Based Learning Guidance');
+    expect(container.textContent).toContain('Weaknesses');
+    expect(container.textContent).toContain('Recommendations');
     expect(container.textContent).toContain('Generate the AI insight to identify evidence-backed weaknesses.');
     expect(container.textContent).toContain('Generate the AI insight to show recommended next steps.');
 
