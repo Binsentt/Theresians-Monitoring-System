@@ -6,7 +6,8 @@ WITH required_columns(table_name, column_name) AS (
   VALUES
     ('accounts', 'id'), ('accounts', 'role'), ('accounts', 'is_archived'),
     ('accounts', 'current_learning_cycle_version'), ('accounts', 'current_learning_cycle_started_at'),
-    ('game_results', 'resolved_student_id'), ('game_results', 'score'), ('game_results', 'total_items'),
+    ('game_results', 'id'), ('game_results', 'resolved_student_id'),
+    ('game_results', 'score'), ('game_results', 'total_items'),
     ('game_results', 'played_at'), ('game_results', 'grade_level'), ('game_results', 'difficulty'),
     ('game_results', 'question_id'), ('game_results', 'question_set_id'),
     ('game_results', 'session_id'), ('game_results', 'playtime_session_id'),

@@ -83,6 +83,9 @@ test('isolated workflow lookup supports app-root, repository-root, and mounted C
 test('diagnostic preflight covers all Query 2 columns and column-level write privileges', () => {
   assert.match(preflightSql, /\('game_results',\s*'grade_level'\)/);
   assert.match(preflightSql, /\('game_results',\s*'difficulty'\)/);
+  assert.match(preflightSql, /\('game_results',\s*'id'\)/);
+  assert.equal([...preflightSql.matchAll(/\('([^']+)',\s*'([^']+)'\)/g)].length, 32,
+    'preflight must keep the exact 32-column contract');
   assert.match(preflightSql, /has_any_column_privilege/i);
   assert.match(preflightSql, /has_any_column_privilege\([\s\S]*?'INSERT'/i);
   assert.match(preflightSql, /has_any_column_privilege\([\s\S]*?'UPDATE'/i);
@@ -347,7 +350,7 @@ if (!isApprovedDisposableDatabase(databaseUrl)) {
       await bootstrap.query(`GRANT USAGE ON SCHEMA public TO ${diagnosticRole}`);
       await bootstrap.query(`GRANT SELECT (id, role, is_archived, current_learning_cycle_version, current_learning_cycle_started_at)
         ON public.accounts TO ${diagnosticRole}`);
-      await bootstrap.query(`GRANT SELECT (id, resolved_student_id, grade_level, difficulty, math_topic, score, total_items,
+      await bootstrap.query(`GRANT SELECT (resolved_student_id, grade_level, difficulty, math_topic, score, total_items,
         played_at, question_set_id, question_id, session_id, playtime_session_id)
         ON public.game_results TO ${diagnosticRole}`);
       await bootstrap.query(`GRANT SELECT (id, student_id, learning_cycle_version)
@@ -357,6 +360,26 @@ if (!isApprovedDisposableDatabase(databaseUrl)) {
       await bootstrap.query(`GRANT SELECT (id, learning_file_id, grade_level, difficulty, topic_id, math_topic)
         ON public.questions TO ${diagnosticRole}`);
       await bootstrap.query(`GRANT SELECT (version, filename) ON public.schema_migrations TO ${diagnosticRole}`);
+      const missingIdPrivilege = await bootstrap.query(
+        "SELECT has_column_privilege($1, 'public.game_results', 'id', 'SELECT') AS allowed",
+        [diagnosticRole],
+      );
+      assert.equal(missingIdPrivilege.rows[0].allowed, false,
+        'the restricted-role scenario must begin without SELECT on game_results.id');
+
+      diagnosticClient = await bootstrap.connect();
+      await diagnosticClient.query(`SET ROLE ${diagnosticRole}`);
+      await diagnosticClient.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      await diagnosticClient.query("SET LOCAL statement_timeout = '10s'");
+      await diagnosticClient.query("SET LOCAL lock_timeout = '2s'");
+      const missingResultIdPreflight = await diagnosticClient.query(preflightSql, [studentId, currentCycle]);
+      assert.equal(missingResultIdPreflight.rows[0].required_select_columns, false,
+        'preflight must reject a role lacking SELECT on game_results.id');
+      await diagnosticClient.query('ROLLBACK');
+      await diagnosticClient.query('RESET ROLE');
+      diagnosticClient.release();
+      diagnosticClient = null;
+      await bootstrap.query(`GRANT SELECT (id) ON public.game_results TO ${diagnosticRole}`);
 
       await bootstrap.query(`GRANT INSERT (grade_level) ON public.game_results TO ${diagnosticRole}`);
       diagnosticClient = await bootstrap.connect();
@@ -380,7 +403,8 @@ if (!isApprovedDisposableDatabase(databaseUrl)) {
           AND (table_name, column_name) IN (
             ('accounts', 'id'), ('accounts', 'role'), ('accounts', 'is_archived'),
             ('accounts', 'current_learning_cycle_version'), ('accounts', 'current_learning_cycle_started_at'),
-            ('game_results', 'resolved_student_id'), ('game_results', 'score'), ('game_results', 'total_items'),
+            ('game_results', 'id'), ('game_results', 'resolved_student_id'),
+            ('game_results', 'score'), ('game_results', 'total_items'),
             ('game_results', 'played_at'), ('game_results', 'grade_level'), ('game_results', 'difficulty'),
             ('game_results', 'question_id'), ('game_results', 'question_set_id'),
             ('game_results', 'session_id'), ('game_results', 'playtime_session_id'),
@@ -392,7 +416,7 @@ if (!isApprovedDisposableDatabase(databaseUrl)) {
             ('schema_migrations', 'version'), ('schema_migrations', 'filename')
           )
       `);
-      assert.equal(columnInventory.rowCount, 31, 'every column used by the diagnostics and migration ledger must exist');
+      assert.equal(columnInventory.rowCount, 32, 'every column used by the diagnostics and migration ledger must exist');
 
       await createAndRunLegacyAssociationProbe(
         bootstrap,
@@ -439,7 +463,7 @@ if (!isApprovedDisposableDatabase(databaseUrl)) {
         scope_match_count: 1,
         cycle_parameter_match_count: 1,
         migration_025_count: 1,
-        required_columns_present_count: 31,
+        required_columns_present_count: 32,
         required_select_columns: true,
         migration_025_valid_constraint_count: 2,
         migration_025_required_index_count: 2,
