@@ -461,6 +461,14 @@ const applySyntheticTestSchema = async (pool, databaseUrl) => {
       'utf8',
     );
     await pool.query(teacherAssignmentsSql);
+    // Application fixtures must satisfy the read-only startup contract, which
+    // now requires the migration-026 receipt table before progress writes run.
+    // This is synthetic CI fixture setup, not application-startup DDL.
+    const saveCommitReceiptSql = fs.readFileSync(
+      path.join(__dirname, '..', 'migrations', '026_game_progress_save_commit_idempotency.sql'),
+      'utf8',
+    );
+    await pool.query(saveCommitReceiptSql);
   } catch (err) {
     console.error('Synthetic test schema bootstrap failed:', err.message);
     throw err;
