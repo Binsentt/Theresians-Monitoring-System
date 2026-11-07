@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   aggregateStudentAccuracy,
   buildStudentAnalyticsMetrics,
+  buildStudentAnalyticsMapPerformance,
   isParentQuizHistoryRowCurrentCycle,
   sanitizeParentQuizHistoryRow,
 } = require('./studentAnalyticsMetrics.utils');
@@ -381,6 +382,113 @@ test('aggregates topic evidence only from canonical Grade and topic question-set
       accuracy: 100,
     },
   ]);
+});
+
+test('aggregates full valid current-cycle result input by canonical map and recorded battle/session', () => {
+  const performance = buildStudentAnalyticsMapPerformance([
+    {
+      id: 9001, result_event_id: 'oak-encounter-a', session_id: 501,
+      map_id: 'oakleaf_village', canonical_task_id: 'first-bandit-math-challenge',
+      canonical_battle_id: 'bandits', quest_graph_version: 'oakleaf-city-pinehill-v1',
+      score: 1, total_items: 4, played_at: '2026-10-20T08:00:00.000Z',
+    },
+    {
+      id: 9002, result_event_id: 'oak-encounter-b', session_id: 502,
+      map_id: 'oakleaf_village', canonical_task_id: 'oakleaf-bandits',
+      canonical_battle_id: 'oakleaf_bandits', quest_graph_version: 'oakleaf-city-pinehill-v1',
+      score: 3, total_items: 4, played_at: '2026-10-20T09:00:00.000Z',
+    },
+    {
+      id: 9003, result_event_id: 'city-encounter', session_id: 503,
+      map_id: 'city_of_knowledge', canonical_task_id: 'final-teacher',
+      canonical_battle_id: 'final_teacher', quest_graph_version: 'oakleaf-city-pinehill-v1',
+      score: 4, total_items: 5, played_at: '2026-10-21T08:00:00.000Z',
+    },
+    {
+      id: 9004, result_event_id: 'pinehill-encounter', session_id: 504,
+      map_id: 'pinehill_village', canonical_task_id: 'pinehill-bandits',
+      canonical_battle_id: 'pinehill_bandits1', quest_graph_version: 'oakleaf-city-pinehill-v1',
+      score: 4, total_items: 4, played_at: '2026-10-22T08:00:00.000Z',
+    },
+    {
+      id: 9005, result_event_id: 'missing-map-zero', session_id: 7001,
+      map_id: null, score: 0, total_items: 4, played_at: '2026-10-23T08:00:00.000Z',
+    },
+    {
+      id: 9006, result_event_id: 'invalid-score', session_id: 999,
+      map_id: 'oakleaf_village', score: 6, total_items: 5, played_at: '2026-10-24T08:00:00.000Z',
+    },
+    {
+      id: 9007, result_event_id: 'oak-encounter-a', session_id: 501,
+      map_id: 'oakleaf_village', canonical_task_id: 'first-bandit-math-challenge',
+      canonical_battle_id: 'bandits', quest_graph_version: 'oakleaf-city-pinehill-v1',
+      score: 1, total_items: 4, played_at: '2026-10-20T08:00:00.000Z',
+    },
+  ]);
+
+  assert.deepEqual(performance.byMap.map(({ mapName, correctAnswers, incorrectAnswers, totalQuestions, accuracy, encounterCount }) => ({
+    mapName, correctAnswers, incorrectAnswers, totalQuestions, accuracy, encounterCount,
+  })), [
+    { mapName: 'Oakleaf Village', correctAnswers: 4, incorrectAnswers: 4, totalQuestions: 8, accuracy: 50, encounterCount: 2 },
+    { mapName: 'City of Knowledge', correctAnswers: 4, incorrectAnswers: 1, totalQuestions: 5, accuracy: 80, encounterCount: 1 },
+    { mapName: 'Pinehill Village', correctAnswers: 4, incorrectAnswers: 0, totalQuestions: 4, accuracy: 100, encounterCount: 1 },
+    { mapName: 'Map not recorded', correctAnswers: 0, incorrectAnswers: 4, totalQuestions: 4, accuracy: 0, encounterCount: null },
+  ]);
+  assert.deepEqual(performance.byBattleSession.map(({ label, accuracy }) => ({ label, accuracy })), [
+    { label: 'Bandit Encounter · Session 501', accuracy: 25 },
+    { label: 'Oakleaf Bandits · Session 502', accuracy: 75 },
+    { label: 'Final Teacher · Session 503', accuracy: 80 },
+    { label: 'Guard 1 · Session 504', accuracy: 100 },
+    { label: 'Session 7001', accuracy: 0 },
+  ]);
+  assert.equal(performance.byMap[0].firstPlayedAt, '2026-10-20T08:00:00.000Z');
+  assert.equal(performance.byMap[0].lastPlayedAt, '2026-10-20T09:00:00.000Z');
+  assert.equal(performance.byBattleSession[4].sessionId, '7001');
+  assert.notEqual(performance.byBattleSession[4].sessionId, '9005');
+});
+
+test('map performance does not infer an unknown map from current_map or quest text', () => {
+  const performance = buildStudentAnalyticsMapPerformance([{
+    id: 1, current_map: 'Pinehill Village', canonical_task_id: 'pinehill-arrival',
+    score: 1, total_items: 1,
+  }]);
+
+  assert.equal(performance.byMap.length, 1);
+  assert.equal(performance.byMap[0].mapId, null);
+  assert.equal(performance.byMap[0].mapName, 'Map not recorded');
+  assert.equal(performance.byMap[0].accuracy, 100);
+});
+
+test('groups case variants of a recognized canonical map identifier together', () => {
+  const performance = buildStudentAnalyticsMapPerformance([
+    { id: 1, map_id: 'oakleaf_village', score: 1, total_items: 1 },
+    { id: 2, map_id: 'OAKLEAF_VILLAGE', score: 0, total_items: 1 },
+  ]);
+
+  assert.equal(performance.byMap.length, 1);
+  assert.equal(performance.byMap[0].mapId, 'oakleaf_village');
+  assert.equal(performance.byMap[0].totalQuestions, 2);
+  assert.equal(performance.byMap[0].accuracy, 50);
+});
+
+test('map performance aggregates all 63 synthetic current-cycle answers instead of the recent-20 display history', () => {
+  const performance = buildStudentAnalyticsMapPerformance(Array.from({ length: 63 }, (_, index) => ({
+    id: 3000 + index,
+    result_event_id: `synthetic-map-result-${index + 1}`,
+    map_id: 'city_of_knowledge',
+    session_id: 'playtime-session-current-cycle',
+    score: index < 53 ? 1 : 0,
+    total_items: 1,
+    played_at: new Date(Date.UTC(2026, 9, 1, 0, index)).toISOString(),
+  })));
+
+  assert.equal(performance.byMap.length, 1);
+  assert.equal(performance.byMap[0].mapName, 'City of Knowledge');
+  assert.equal(performance.byMap[0].correctAnswers, 53);
+  assert.equal(performance.byMap[0].incorrectAnswers, 10);
+  assert.equal(performance.byMap[0].totalQuestions, 63);
+  assert.equal(performance.byMap[0].accuracy, 84.13);
+  assert.equal(performance.byBattleSession[0].totalQuestions, 63);
 });
 
 test('many valid incorrect results without linked topic metadata are counted but reported as topic metadata unavailable', () => {

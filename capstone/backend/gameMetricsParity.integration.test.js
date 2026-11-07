@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const { calculateJourneyProgress, calculateWeightedCompletion } = require('./questGraph.utils');
 const { applyReleaseMigrations } = require('./releaseMigrations');
+const { applySyntheticTestSchema } = require('./testSupport/applySyntheticTestSchema');
 
 const databaseUrl = process.env.GAME_METRICS_TEST_DATABASE_URL || '';
 
@@ -28,6 +29,7 @@ if (!isSafeDatabase(databaseUrl)) {
 } else {
   const previousDatabaseUrl = process.env.DATABASE_URL;
   const previousAiEnabled = process.env.AI_GENERATION_ENABLED;
+  process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = databaseUrl;
   process.env.AI_GENERATION_ENABLED = 'false';
 
@@ -63,10 +65,7 @@ if (!isSafeDatabase(databaseUrl)) {
 
   test.before(async () => {
     const bootstrap = new Pool({ connectionString: databaseUrl });
-    await bootstrap.query(`CREATE TABLE IF NOT EXISTS public.accounts (
-      id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT, password TEXT,
-      role VARCHAR(50) NOT NULL, status VARCHAR(50) DEFAULT 'active'
-    )`);
+    await applySyntheticTestSchema(bootstrap, databaseUrl);
     await bootstrap.end();
 
     const { app, schemaReady } = require('./server');
@@ -286,6 +285,27 @@ if (!isSafeDatabase(databaseUrl)) {
     assert.equal(Number(savedProgress.body.student.id), studentId, 'Save resolves to the linked registered Student');
     assert.equal(Number(savedProgress.body.progress.student_id), studentId);
     assert.equal(savedProgress.body.progress.current_quest, savedCurrentQuest);
+
+    const insightAfterAcceptedSave = await json(`${base}/api/student-progress/${studentId}/ai-insight`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ refresh: true }),
+    });
+    assert.equal(insightAfterAcceptedSave.status, 200);
+    assert.equal(insightAfterAcceptedSave.body.status, 'paused', 'the integration fixture must not call a live AI provider');
+    assert.equal(insightAfterAcceptedSave.body.is_stale, true, 'the seeded old insight remains visibly stale');
+    const savedQuestEvidence = insightAfterAcceptedSave.body.deterministic_evidence.quest_insights;
+    const savedExploration = savedQuestEvidence.find((quest) => quest.canonical_task_id === 'go-to-teachers-house');
+    assert.equal(savedExploration.completion_status, 'completed');
+    assert.equal(savedExploration.quiz_status, 'not_required');
+    assert.equal(savedExploration.total_questions, 0);
+    const savedBattleEvidence = savedQuestEvidence.find((quest) => quest.canonical_task_id === 'first-bandit-math-challenge');
+    assert.equal(savedBattleEvidence.completion_status, 'observed');
+    assert.equal(savedBattleEvidence.correct_answers, 2);
+    assert.equal(savedBattleEvidence.incorrect_answers, 3);
+    assert.equal(savedBattleEvidence.total_questions, 5);
+    assert.equal(savedBattleEvidence.encounter_reporting, 'individual_recorded_encounters');
+    assert.deepEqual(savedBattleEvidence.topic_performance, [], 'unlinked legacy answers are not assigned an invented topic');
 
     await pool.query(
       `UPDATE public.playtime_sessions

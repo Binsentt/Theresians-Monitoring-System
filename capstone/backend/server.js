@@ -13,6 +13,7 @@ dns.setDefaultResultOrder('ipv4first');
 
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const pool = require('./database/db');
+const { assertStartupSchemaReady } = require('./database/startupSchemaReadiness');
 const { classifyMilestoneWeight } = require('./questMilestones.utils');
 const {
   TELEMETRY_CONTRACT_VERSION,
@@ -32,7 +33,6 @@ const {
   resolveAccuracyRate,
 } = require('./parentIdGame.utils');
 const {
-  buildAnnouncementSchemaRepairStatements,
   normalizeAnnouncementTarget,
   normalizeAnnouncementRole,
   canManageAnnouncement,
@@ -83,6 +83,7 @@ const {
   normalizeDifficultyValue,
   parseLessonQuestionCount,
   resolveQuestionPoolScope,
+  resolveCanonicalLessonTopicScope,
 } = require('./learningContentRules.utils');
 const {
   CANONICAL_DIFFICULTIES,
@@ -161,6 +162,7 @@ const {
   aggregateStudentAccuracy,
   buildStudentAnalyticsMetrics,
   buildStudentAnalyticsScoreHistory,
+  buildStudentAnalyticsMapPerformance,
   sanitizeParentQuizHistoryRow,
 } = require('./studentAnalyticsMetrics.utils');
 const {
@@ -182,7 +184,6 @@ const { resolveStudentAiInsight } = require('./studentAiInsight.service');
 const {
   archiveParentFamily,
   restoreParentFamily,
-  permanentlyDeleteLegacySixDigitStudents,
   permanentlyDeleteManagedStudent,
   permanentlyDeleteStudentAccount,
   permanentlyDeleteParentFamily,
@@ -316,19 +317,6 @@ const generateUniqueParentCode = async (queryClient = pool) => {
   throw new Error('Unable to generate unique Parent ID');
 };
 
-const backfillParentCodes = async () => {
-  const result = await pool.query(
-    `SELECT id
-     FROM public.accounts
-     WHERE LOWER(role) IN ('parent', 'parent_teacher')
-       AND (parent_id IS NULL OR parent_id = '')`
-  );
-
-  for (const row of result.rows) {
-    const code = await generateUniqueParentCode();
-    await pool.query('UPDATE public.accounts SET parent_id = $1 WHERE id = $2', [code, row.id]);
-  }
-};
 
 if (resendEmailConfig.enabled) {
   console.log('Resend email delivery configured', buildMailDiagnostics(process.env));
@@ -336,431 +324,9 @@ if (resendEmailConfig.enabled) {
   console.error('Email delivery disabled:', resendEmailConfig.reason, buildMailDiagnostics(process.env));
 }
 
-const ensureSchema = async () => {
-  try {
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS employee_id VARCHAR(50)');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT false');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS temporary_password_issued_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS temporary_password_expires_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS parent_id VARCHAR(6)');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS game_student_id VARCHAR(8)');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS first_name VARCHAR(100)');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS last_name VARCHAR(100)');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS middle_initial VARCHAR(5)');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS grade_level VARCHAR(20)');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS section VARCHAR(50)');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS current_learning_cycle_started_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS current_learning_cycle_version INTEGER NOT NULL DEFAULT 0');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS progress_archived_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS progress_archived_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS progress_archive_reason VARCHAR(1000)');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS screen_time_reset_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS session_version INTEGER DEFAULT 0');
-    await pool.query('UPDATE public.accounts SET is_archived = false WHERE is_archived IS NULL');
-    await pool.query('UPDATE public.accounts SET session_version = 0 WHERE session_version IS NULL');
-    await pool.query('UPDATE public.accounts SET current_learning_cycle_version = 0 WHERE current_learning_cycle_version IS NULL');
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.login_otp_device_skips (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
-      device_id VARCHAR(160) NOT NULL,
-      otp_skipped_until TIMESTAMPTZ NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT login_otp_device_skips_user_device_unique UNIQUE (user_id, device_id)
-    );`);
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_login_otp_device_skips_expiry ON public.login_otp_device_skips(otp_skipped_until)');
-    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS accounts_employee_id_key ON public.accounts(employee_id)');
-    await pool.query("UPDATE public.accounts SET parent_id = NULL WHERE parent_id IS NOT NULL AND parent_id !~ '^\\d{6}$'");
-    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS accounts_parent_id_key ON public.accounts(parent_id) WHERE parent_id IS NOT NULL');
-    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS accounts_game_student_id_key ON public.accounts(game_student_id) WHERE game_student_id IS NOT NULL');
-    await backfillParentCodes();
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.student_game_progress (
-      id SERIAL PRIMARY KEY,
-      student_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
-      student_name VARCHAR(100) NOT NULL,
-      grade_level VARCHAR(20),
-      current_quest VARCHAR(100),
-      score INTEGER DEFAULT 0,
-      correct_answers INTEGER DEFAULT 0,
-      total_questions INTEGER DEFAULT 0,
-      accuracy_rate DECIMAL(5, 2) DEFAULT 0.00,
-      progress_percentage DECIMAL(5, 2) DEFAULT 0.00,
-      last_played TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    );`);
-    await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS section CHARACTER VARYING(50)');
-    await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS lesson_progress DECIMAL(5, 2) DEFAULT 0.00');
-    await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS total_quests_completed INTEGER DEFAULT 0');
-    await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS total_play_time INTEGER DEFAULT 0');
-    await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS current_scene TEXT');
-    await pool.query('ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS current_map TEXT');
-    await pool.query("ALTER TABLE public.student_game_progress ADD COLUMN IF NOT EXISTS difficulty_level CHARACTER VARYING(20) DEFAULT 'Unknown'");
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_student_game_progress_student_id ON public.student_game_progress(student_id)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_student_game_progress_score ON public.student_game_progress(score DESC)');
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.game_results (
-      id SERIAL PRIMARY KEY,
-      parent_id CHARACTER VARYING(6) NOT NULL,
-      student_name CHARACTER VARYING(100) NOT NULL,
-      resolved_student_id INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL,
-      grade_level CHARACTER VARYING(20),
-      difficulty CHARACTER VARYING(20),
-      math_topic CHARACTER VARYING(255),
-      current_map TEXT,
-       score INTEGER NOT NULL,
-      total_items INTEGER NOT NULL,
-      percentage DECIMAL(5, 2) NOT NULL,
-      played_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      question_set_id INTEGER,
-      question_id INTEGER,
-      is_unlinked BOOLEAN NOT NULL DEFAULT true
-    );`);
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS question_set_id INTEGER');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS question_id INTEGER');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS playtime_session_id INTEGER');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS current_map TEXT');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS result_event_id VARCHAR(200)');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS telemetry_contract_version VARCHAR(32)');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS quest_graph_version VARCHAR(64)');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS session_id BIGINT');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS map_id VARCHAR(100)');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS canonical_quest_id VARCHAR(160)');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS canonical_task_id VARCHAR(160)');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS canonical_battle_id VARCHAR(160)');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS canonical_milestone_id VARCHAR(200)');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS question_presented_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS answer_submitted_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.game_results ADD COLUMN IF NOT EXISTS response_time_seconds INTEGER');
-    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS game_results_student_result_event_unique ON public.game_results(resolved_student_id, result_event_id) WHERE resolved_student_id IS NOT NULL AND result_event_id IS NOT NULL');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_parent_id ON public.game_results(parent_id)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_resolved_student_id ON public.game_results(resolved_student_id)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_question_set_id ON public.game_results(question_set_id)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_question_id ON public.game_results(question_id) WHERE question_id IS NOT NULL');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_game_results_playtime_session_id ON public.game_results(playtime_session_id)');
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.playtime_deletion_tombstones (
-      id BIGSERIAL PRIMARY KEY,
-      deleted_record_id INTEGER NOT NULL,
-      deleted_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL,
-      deletion_reason VARCHAR(1000) NOT NULL,
-      deletion_operation_id UUID NOT NULL,
-      target_fingerprint CHAR(64) NOT NULL,
-      deleted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );`);
-    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS playtime_deletion_tombstone_record_unique ON public.playtime_deletion_tombstones(deleted_record_id)');
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.student_ai_insights (
-      id SERIAL PRIMARY KEY,
-      student_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
-      input_fingerprint VARCHAR(64) NOT NULL,
-      insight JSONB NOT NULL,
-      generated_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL,
-      generated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      stale_at TIMESTAMPTZ,
-      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT student_ai_insights_student_unique UNIQUE (student_id)
-    );`);
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_student_ai_insights_student_stale ON public.student_ai_insights(student_id, stale_at)');
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.teacher_student_relationships (
-      id SERIAL PRIMARY KEY,
-      teacher_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
-      student_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
-      relationship_type VARCHAR(50) NOT NULL DEFAULT 'Parent',
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT teacher_student_relationships_unique UNIQUE (teacher_id, student_id, relationship_type)
-    );`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.activity_logs (
-      id SERIAL PRIMARY KEY,
-      student_id INTEGER REFERENCES public.accounts(id) ON DELETE CASCADE,
-      student_name VARCHAR(255) NOT NULL,
-      grade_level VARCHAR(50),
-      section VARCHAR(50),
-      current_quest VARCHAR(255),
-      save_status VARCHAR(50) DEFAULT 'pending',
-      total_play_time INTEGER DEFAULT 0,
-      last_played TIMESTAMPTZ,
-      quest_progress INTEGER DEFAULT 0,
-      difficulty_level VARCHAR(50) DEFAULT 'Unknown',
-      login_time TIMESTAMPTZ,
-      logout_time TIMESTAMPTZ,
-      session_date DATE,
-      activity_timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      activity_description TEXT,
-      role VARCHAR(50),
-      status VARCHAR(50),
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    );`);
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS lesson_progress DECIMAL(5, 2) DEFAULT 0.00');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS current_scene TEXT');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS current_map TEXT');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS actor_account_id INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS activity_event_id TEXT');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS canonical_activity_id TEXT');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS map_id TEXT');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS session_id TEXT');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS duration_seconds INTEGER');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS telemetry_contract_version VARCHAR(32)');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS quest_graph_version VARCHAR(64)');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS canonical_quest_id VARCHAR(160)');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS canonical_task_id VARCHAR(160)');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS canonical_milestone_id VARCHAR(200)');
-    await pool.query('ALTER TABLE public.activity_logs ADD COLUMN IF NOT EXISTS is_player_facing BOOLEAN');
-    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS activity_logs_student_activity_event_id_unique ON public.activity_logs(student_id, activity_event_id) WHERE activity_event_id IS NOT NULL');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_timestamp ON public.activity_logs(activity_timestamp DESC)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_student_name ON public.activity_logs(student_name)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_grade_section ON public.activity_logs(grade_level, section)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_activity_logs_actor_account_id ON public.activity_logs(actor_account_id)');
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.student_quest_milestones (
-      id BIGSERIAL PRIMARY KEY,
-      student_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
-      milestone_id TEXT NOT NULL,
-      map_id TEXT,
-      weight INTEGER NOT NULL DEFAULT 1 CHECK (weight > 0),
-      learning_cycle_version INTEGER NOT NULL DEFAULT 0,
-      completed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (student_id, milestone_id, learning_cycle_version)
-    );`);
-    await pool.query('CREATE INDEX IF NOT EXISTS student_quest_milestones_student_cycle_idx ON public.student_quest_milestones(student_id, learning_cycle_version)');
-    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS telemetry_contract_version VARCHAR(32)');
-    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS quest_graph_version VARCHAR(64)');
-    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS canonical_quest_id VARCHAR(160)');
-    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS canonical_task_id VARCHAR(160)');
-    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS canonical_milestone_id VARCHAR(200)');
-    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS player_facing BOOLEAN NOT NULL DEFAULT true');
-    await pool.query('ALTER TABLE public.student_quest_milestones ADD COLUMN IF NOT EXISTS source_activity_event_id VARCHAR(200)');
+const schemaReady = assertStartupSchemaReady(pool);
 
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.playtime_sessions (
-      id SERIAL PRIMARY KEY,
-      student_id INTEGER NOT NULL,
-      parent_id CHARACTER VARYING(20),
-      student_name CHARACTER VARYING(100) NOT NULL,
-      grade_level CHARACTER VARYING(50),
-      section CHARACTER VARYING(50),
-      date_played DATE DEFAULT CURRENT_DATE,
-      start_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      end_time TIMESTAMPTZ,
-      total_playtime_minutes INTEGER DEFAULT 0,
-      status CHARACTER VARYING(50) DEFAULT 'Playing',
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    );`);
-    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS parent_id CHARACTER VARYING(20)');
-    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS section CHARACTER VARYING(50)');
-    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS total_playtime_minutes INTEGER DEFAULT 0');
-    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS total_playtime_seconds INTEGER DEFAULT 0');
-    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS server_started_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS session_credential_hash VARCHAR(64)');
-    await pool.query('ALTER TABLE public.playtime_sessions ADD COLUMN IF NOT EXISTS learning_cycle_version INTEGER NOT NULL DEFAULT 0');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_student_date ON public.playtime_sessions(student_id, date_played)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_parent_id ON public.playtime_sessions(parent_id)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_status ON public.playtime_sessions(status)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_expiry ON public.playtime_sessions(status, expires_at)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_playtime_sessions_student_cycle ON public.playtime_sessions(student_id, learning_cycle_version, status)');
-
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.announcements (
-      id SERIAL PRIMARY KEY,
-      title VARCHAR(150) NOT NULL,
-      message TEXT NOT NULL,
-      created_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL,
-      created_by_role VARCHAR(50) NOT NULL,
-      target_role VARCHAR(50) NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    );`);
-    for (const statement of buildAnnouncementSchemaRepairStatements()) {
-      await pool.query(statement);
-    }
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_announcements_target_created ON public.announcements(target_role, created_at DESC)');
-
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.admin_audit_logs (
-      id SERIAL PRIMARY KEY,
-      admin_name VARCHAR(255) NOT NULL,
-      action VARCHAR(100) NOT NULL,
-      target_user VARCHAR(255) NOT NULL,
-      reason TEXT,
-      target_account_id INTEGER,
-      operation_type VARCHAR(32),
-      admin_account_id INTEGER,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    );`);
-    await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS reason TEXT');
-    await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS target_account_id INTEGER');
-    await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS operation_type VARCHAR(32)');
-    await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS admin_account_id INTEGER');
-    await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS before_metadata JSONB');
-    await pool.query('ALTER TABLE public.admin_audit_logs ADD COLUMN IF NOT EXISTS after_metadata JSONB');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created_at ON public.admin_audit_logs(created_at DESC)');
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.website_sessions (
-      id BIGSERIAL PRIMARY KEY,
-      account_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
-      credential_hash CHAR(64) NOT NULL UNIQUE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      expires_at TIMESTAMPTZ NOT NULL,
-      revoked_at TIMESTAMPTZ,
-      revocation_reason VARCHAR(100),
-      CONSTRAINT website_sessions_expiry_after_creation_check CHECK (expires_at > created_at)
-    );`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS website_sessions_account_presence_index
-      ON public.website_sessions (account_id, last_seen_at DESC)
-      WHERE revoked_at IS NULL`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS website_sessions_expiry_index
-      ON public.website_sessions (expires_at)
-      WHERE revoked_at IS NULL`);
-
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.folders (
-      id SERIAL PRIMARY KEY,
-      name VARCHAR(255) UNIQUE NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    );`);
-    await pool.query('ALTER TABLE public.folders ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.folders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ');
-    await pool.query('UPDATE public.folders SET deleted_at = trashed_at WHERE deleted_at IS NULL AND trashed_at IS NOT NULL');
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.learning_files (
-      id SERIAL PRIMARY KEY,
-      title VARCHAR(255) NOT NULL,
-      file_name VARCHAR(255) NOT NULL,
-      file_url TEXT NOT NULL,
-      grade_level VARCHAR(50) NOT NULL,
-      difficulty VARCHAR(20),
-      math_topic VARCHAR(100),
-      topic_id VARCHAR(100),
-      document_topic TEXT,
-      file_type VARCHAR(50) NOT NULL,
-      subject VARCHAR(50) NOT NULL DEFAULT 'Mathematics',
-      folder_id INTEGER REFERENCES public.folders(id) ON DELETE SET NULL,
-      published BOOLEAN DEFAULT false,
-      source VARCHAR(50) NOT NULL,
-      uploaded_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL,
-      uploaded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    );`);
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS file_size BIGINT');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS difficulty VARCHAR(20)');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS topic_id VARCHAR(100)');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS requested_question_count INTEGER');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_status VARCHAR(32)');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS publish_status VARCHAR(32)');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_failed_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_error_code VARCHAR(100)');
-    await pool.query("ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_stage VARCHAR(32) NOT NULL DEFAULT 'queued'");
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_completed_count INTEGER NOT NULL DEFAULT 0');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_remaining_count INTEGER NOT NULL DEFAULT 0');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_failed_batch_index INTEGER');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS generation_retry_count INTEGER NOT NULL DEFAULT 0');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS published_by INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS last_fetched_at TIMESTAMPTZ');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS source_content_fingerprint VARCHAR(64)');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS source_file_bytes BYTEA');
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS source_file_mime_type VARCHAR(100)');
-    await pool.query("ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS content_role VARCHAR(32) NOT NULL DEFAULT 'question_set'");
-    await pool.query('ALTER TABLE public.learning_files ADD COLUMN IF NOT EXISTS source_learning_file_id INTEGER REFERENCES public.learning_files(id) ON DELETE RESTRICT');
-    await pool.query(`UPDATE public.learning_files
-      SET generation_status = CASE WHEN LOWER(file_type) = 'lesson' THEN 'ready_for_review' ELSE 'not_applicable' END
-      WHERE generation_status IS NULL OR BTRIM(generation_status) = ''`);
-    await pool.query(`UPDATE public.learning_files
-      SET publish_status = CASE WHEN published THEN 'active' ELSE 'staged' END
-      WHERE publish_status IS NULL OR BTRIM(publish_status) = ''`);
-    await pool.query("ALTER TABLE public.learning_files ALTER COLUMN generation_status SET DEFAULT 'not_applicable'");
-    await pool.query("ALTER TABLE public.learning_files ALTER COLUMN publish_status SET DEFAULT 'staged'");
-    await pool.query('UPDATE public.learning_files SET deleted_at = trashed_at WHERE deleted_at IS NULL AND trashed_at IS NOT NULL');
-    await pool.query(`DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'game_results_question_set_id_fkey'
-          AND conrelid = 'public.game_results'::regclass
-      ) THEN
-        ALTER TABLE public.game_results
-          ADD CONSTRAINT game_results_question_set_id_fkey
-          FOREIGN KEY (question_set_id)
-          REFERENCES public.learning_files(id)
-          ON DELETE RESTRICT;
-      END IF;
-    END $$;`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS public.questions (
-      id SERIAL PRIMARY KEY,
-      learning_file_id INTEGER REFERENCES public.learning_files(id) ON DELETE CASCADE,
-      question TEXT NOT NULL,
-      options JSONB,
-      correct_answer TEXT NOT NULL,
-      grade_level VARCHAR(50),
-      difficulty VARCHAR(20),
-      math_topic VARCHAR(100),
-      topic_id VARCHAR(100),
-      source VARCHAR(50) NOT NULL,
-      published BOOLEAN DEFAULT false,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    );`);
-    await pool.query('ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS difficulty VARCHAR(20)');
-    await pool.query('ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS topic_id VARCHAR(100)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_published ON public.learning_files(published)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_questions_published ON public.questions(published)');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_grade_difficulty_topic ON public.learning_files(grade_level, difficulty, math_topic)');
-    await pool.query('CREATE INDEX IF NOT EXISTS learning_files_scope_topic_id_index ON public.learning_files(grade_level, difficulty, topic_id) WHERE topic_id IS NOT NULL');
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_learning_files_lifecycle ON public.learning_files(generation_status, publish_status)');
-    await pool.query('CREATE INDEX IF NOT EXISTS learning_files_source_learning_file_id_index ON public.learning_files(source_learning_file_id) WHERE source_learning_file_id IS NOT NULL');
-    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_learning_files_client_provided_fingerprint
-      ON public.learning_files (source_content_fingerprint)
-      WHERE source_content_fingerprint IS NOT NULL
-        AND source IN ('restored_import', 'client_provided')`);
-    await pool.query('CREATE INDEX IF NOT EXISTS idx_questions_grade_difficulty_topic ON public.questions(grade_level, difficulty, math_topic)');
-    await pool.query('CREATE INDEX IF NOT EXISTS questions_learning_file_topic_id_index ON public.questions(learning_file_id, topic_id) WHERE topic_id IS NOT NULL');
-    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS questions_id_learning_file_id_unique ON public.questions(id, learning_file_id)');
-    await pool.query(`DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'game_results_question_set_question_fkey'
-          AND conrelid = 'public.game_results'::regclass
-      ) THEN
-        ALTER TABLE public.game_results
-          ADD CONSTRAINT game_results_question_set_question_fkey
-          FOREIGN KEY (question_id, question_set_id)
-          REFERENCES public.questions(id, learning_file_id)
-          ON DELETE RESTRICT;
-      END IF;
-      IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'game_results_question_requires_set_check'
-          AND conrelid = 'public.game_results'::regclass
-      ) THEN
-        ALTER TABLE public.game_results
-          ADD CONSTRAINT game_results_question_requires_set_check
-          CHECK (question_id IS NULL OR question_set_id IS NOT NULL);
-      END IF;
-    END $$;`);
-  } catch (err) {
-    console.error('Schema initialization failed:', err.message);
-    throw err;
-  }
-};
-
-const schemaReady = ensureSchema();
-
-// Legacy Student cleanup is deliberately decoupled from request startup.
-// A cleanup failure must never take the API process down or make every request
-// wait on an optional data-maintenance operation.
-const legacySixDigitStudentCleanupReady = schemaReady
-  .then(() => permanentlyDeleteLegacySixDigitStudents(pool))
-  .then((result) => {
-    if (result.deletedStudents.length > 0) {
-      console.log('Legacy 6-digit Student cleanup completed:', result.deletedStudents.length);
-    }
-    return result;
-  })
-  .catch((error) => {
-    console.error('Legacy 6-digit Student cleanup skipped:', error.message);
-    return { deletedStudents: [], skipped: true };
-  });
+// Destructive legacy account cleanup is available only through the separately approved migration 024.
 
 const generateRandomPassword = () => createTemporaryPassword();
 
@@ -2581,6 +2147,7 @@ const buildLessonGenerationRequestFingerprint = ({
   sourceContentFingerprint,
   gradeLevel,
   difficulty,
+  topicId,
   questionCount,
 }) => crypto.createHash('sha256').update(JSON.stringify({
   actor_id: Number(actorId),
@@ -2590,6 +2157,7 @@ const buildLessonGenerationRequestFingerprint = ({
   source_content_fingerprint: sourceContentFingerprint,
   grade_level: gradeLevel,
   difficulty,
+  topic_id: topicId,
   requested_question_count: questionCount,
 })).digest('hex');
 
@@ -2686,13 +2254,14 @@ const extractLessonTextForGeneration = async ({ filePath, fileName, mimeType }) 
   }
 };
 
-const generateQuestionTextFromLesson = async ({ filePath, fileName, mimeType, lessonText = null }, title, grade_level, difficulty, questionCount, onBatchComplete = null, { existingQuestions = [], onBatch = null } = {}) => {
+const generateQuestionTextFromLesson = async ({ filePath, fileName, mimeType, lessonText = null, mathTopic = null }, title, grade_level, difficulty, questionCount, onBatchComplete = null, { existingQuestions = [], onBatch = null } = {}) => {
   const cleanLessonText = lessonText || await extractLessonTextForGeneration({ filePath, fileName, mimeType });
   return generateLessonQuestionsInBatches({
     lessonText: cleanLessonText,
     title,
     gradeLevel: grade_level,
     difficulty,
+    mathTopic,
     questionCount,
     // Honor the teacher's requested total while keeping each provider call bounded.
     // generateLessonQuestionsInBatches caps individual provider batches at 25,
@@ -2715,6 +2284,18 @@ const processLessonGenerationJob = async ({ learningFile, sourceFilePath, source
   let existingQuestions = [];
   let failedBatchIndex = null;
   try {
+    const topicScope = resolveCanonicalLessonTopicScope({
+      grade_level: learningFile?.grade_level || gradeLevel,
+      difficulty: learningFile?.difficulty || difficulty,
+      topic_id: learningFile?.topic_id,
+      math_topic: learningFile?.math_topic,
+    });
+    if (!topicScope) {
+      throw new QuestionGenerationError(
+        'CANONICAL_TOPIC_REQUIRED',
+        'Select a canonical Mathematics topic for this Grade and Difficulty before generating questions.'
+      );
+    }
     if (!String(process.env.OPENAI_API_KEY || '').trim()) {
       throw new QuestionGenerationError('QUESTION_AI_NOT_CONFIGURED', 'Question AI is not configured.');
     }
@@ -2755,16 +2336,17 @@ const processLessonGenerationJob = async ({ learningFile, sourceFilePath, source
       fileName: sourceFileName,
       mimeType: sourceMimeType,
       lessonText,
+      mathTopic: topicScope.math_topic,
     }, title, gradeLevel, difficulty, remainingQuestionCount, null, {
       existingQuestions,
       onBatch: async ({ batch, batch_index }) => {
         failedBatchIndex = batch_index;
         await saveQuestionsForFile(learningFile.id, batch.map((question) => ({
           ...question,
-          grade_level: gradeLevel,
-          difficulty,
-          math_topic: learningFile.math_topic || null,
-          topic_id: learningFile.topic_id || null,
+          grade_level: topicScope.grade_level,
+          difficulty: topicScope.difficulty,
+          math_topic: topicScope.math_topic,
+          topic_id: topicScope.topic_id,
           source: 'ai',
         })));
         generatedCount += batch.length;
@@ -4202,8 +3784,6 @@ const markStudentInsightStale = async (queryClient, studentId) => {
 app.use('/api', async (req, res, next) => {
   try {
     await schemaReady;
-    // Do not block API requests on the maintenance cleanup.
-    void legacySixDigitStudentCleanupReady;
     next();
   } catch (error) {
     res.status(503).json({ error: 'Database schema is not ready.' });
@@ -5643,9 +5223,13 @@ const getLessonSourceFilePath = (lessonSource = {}) => {
   return path.join(uploadsDir, fileName);
 };
 
-const validateLessonGenerationScope = ({ grade_level, difficulty, expected_question_count }) => {
-  const scope = resolveQuestionPoolScope({ grade_level, difficulty });
-  if (!scope) return { error: 'Grade level and Difficulty must use supported canonical values.' };
+const validateLessonGenerationScope = ({ grade_level, difficulty, topic_id, math_topic, expected_question_count }) => {
+  const poolScope = resolveQuestionPoolScope({ grade_level, difficulty });
+  if (!poolScope) return { error: 'Grade level and Difficulty must use supported canonical values.' };
+  const scope = resolveCanonicalLessonTopicScope({ ...poolScope, topic_id, math_topic });
+  if (!scope) {
+    return { error: 'Select a canonical Mathematics topic for the selected Grade and Difficulty.' };
+  }
 
   const parsedCount = parseLessonQuestionCount(expected_question_count);
   if (parsedCount.error) return { error: parsedCount.error };
@@ -5653,6 +5237,8 @@ const validateLessonGenerationScope = ({ grade_level, difficulty, expected_quest
   return {
     gradeLevel: scope.grade_level,
     difficulty: scope.difficulty,
+    topicId: scope.topic_id,
+    mathTopic: scope.math_topic,
     questionCount: parsedCount.value,
   };
 };
@@ -5785,6 +5371,7 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
       sourceContentFingerprint,
       gradeLevel: scope.gradeLevel,
       difficulty: scope.difficulty,
+      topicId: scope.topicId,
       questionCount: scope.questionCount,
     });
     const existingGeneration = await getLessonGenerationByIdempotencyKey(req.authenticatedUser.id, idempotencyKey);
@@ -5845,8 +5432,8 @@ app.post('/api/learning-files/lesson-sources/:id/generate', requireLessonQuestio
         lessonSource.file_url,
         scope.gradeLevel,
         scope.difficulty,
-        null,
-        null,
+        scope.mathTopic,
+        scope.topicId,
         lessonSource.folder_id || null,
         req.authenticatedUser.id,
         lessonSource.file_size || null,
@@ -5967,13 +5554,24 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
     }
     const normalizedGrade = canonicalScope.grade_level;
     const normalizedDifficulty = canonicalScope.difficulty;
-    const normalizedTopicId = canonicalScope.topic_id;
-    const normalizedTopic = canonicalScope.math_topic;
     const normalizedType = String(file_type).trim().toLowerCase();
     if (!isValidFileType(normalizedType)) {
       cleanTemporaryUpload(req.file.path);
       return res.status(400).json({ error: 'Invalid file type.' });
     }
+    const aiRuntimeState = getAiRuntimeState();
+    const lessonTopicScope = normalizedType === 'lesson' && aiRuntimeState.enabled
+      ? resolveCanonicalLessonTopicScope({ grade_level: normalizedGrade, difficulty: normalizedDifficulty, topic_id, math_topic })
+      : null;
+    if (normalizedType === 'lesson' && aiRuntimeState.enabled && !lessonTopicScope) {
+      cleanTemporaryUpload(req.file.path);
+      return res.status(400).json({
+        error: 'Select a canonical Mathematics topic for the selected Grade and Difficulty.',
+        code: 'CANONICAL_TOPIC_REQUIRED',
+      });
+    }
+    const normalizedTopicId = lessonTopicScope?.topic_id ?? canonicalScope.topic_id;
+    const normalizedTopic = lessonTopicScope?.math_topic ?? canonicalScope.math_topic;
 
     const fileValidationError = await validateUploadedLearningFile(req.file, normalizedType);
     if (fileValidationError) {
@@ -5987,7 +5585,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
       return res.status(400).json({ error: folderResolution.error });
     }
 
-    if (normalizedType === 'lesson' && !getAiRuntimeState().enabled) {
+    if (normalizedType === 'lesson' && !aiRuntimeState.enabled) {
       const sourceBytes = fs.readFileSync(req.file.path);
       const sourceContentFingerprint = crypto.createHash('sha256').update(sourceBytes).digest('hex');
       const storedFileName = generateUploadFileName(req.file.originalname);
@@ -6095,6 +5693,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
         sourceContentFingerprint: lessonSourceContentFingerprint,
         gradeLevel: normalizedGrade,
         difficulty: normalizedDifficulty,
+        topicId: normalizedTopicId,
         questionCount: requestedQuestionCount,
       });
 
@@ -11445,7 +11044,12 @@ app.post('/api/student-progress/:studentId/ai-insight', requireAnalyticsAccess, 
     });
     return res.status(aiInsight.status === 'no_data' ? 422 : 200).json({
       ...aiInsight,
-      evidence_snapshot: { progress: progressSnapshot, metrics, scoreHistory: buildStudentAnalyticsScoreHistory(quizSessions) },
+      evidence_snapshot: {
+        progress: progressSnapshot,
+        metrics,
+        scoreHistory: buildStudentAnalyticsScoreHistory(quizSessions),
+        mapPerformance: buildStudentAnalyticsMapPerformance(quizSessions),
+      },
     });
   } catch (err) {
     console.error('Generate grounded student insight failed:', err.message);
@@ -11504,7 +11108,11 @@ app.get('/api/student-progress/:studentId', requireAnalyticsAccess, verifyScoped
       quizSessions,
       activityLogs: activityResult.rows,
     });
-    res.json({ progress, metrics, analysis, analyticsReadiness, aiInsight, scoreHistory: buildStudentAnalyticsScoreHistory(quizSessions) });
+    res.json({
+      progress, metrics, analysis, analyticsReadiness, aiInsight,
+      scoreHistory: buildStudentAnalyticsScoreHistory(quizSessions),
+      mapPerformance: buildStudentAnalyticsMapPerformance(quizSessions),
+    });
   } catch (err) {
     console.error('Fetch student progress failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch student progress' });
@@ -11526,8 +11134,9 @@ if (require.main === module) {
         console.log(`✅ Server running at http://localhost:${port}`);
       });
     })
-    .catch((error) => {
-      console.error('Server startup aborted because schema initialization failed:', error.message);
+    .catch(async (error) => {
+      console.error('Server startup aborted because read-only schema validation failed:', error.message);
+      await pool.end().catch(() => {});
       process.exitCode = 1;
     });
 }

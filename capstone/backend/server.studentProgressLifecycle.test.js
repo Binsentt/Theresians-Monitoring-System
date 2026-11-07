@@ -102,12 +102,16 @@ test('legacy progress archive markers are metadata only and do not filter active
 test('permanent Student account removal remains the owned-data deletion path', () => {
   const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   const familyLifecycle = fs.readFileSync(path.join(__dirname, 'familyLifecycle.service.js'), 'utf8');
+  const baselineSchema = fs.readFileSync(path.join(__dirname, 'Database_Table.sql'), 'utf8');
+  const startupReadiness = fs.readFileSync(path.join(__dirname, 'database', 'startupSchemaReadiness.js'), 'utf8');
   const routeStart = source.indexOf("app.delete('/api/accounts/:parentId/children/:studentId'");
   const routeEnd = source.indexOf("app.get('/api/accounts'", routeStart);
   const route = source.slice(routeStart, routeEnd);
   assert.ok(routeStart >= 0, 'managed Student account deletion route exists');
   assert.match(route, /permanentlyDeleteManagedStudent\(pool, req\.params\.parentId, req\.params\.studentId/);
   assert.match(familyLifecycle, /DELETE FROM public\.game_results[\s\S]*DELETE FROM public\.playtime_sessions[\s\S]*DELETE FROM public\.accounts/i);
-  assert.match(source, /student_game_progress \([\s\S]*student_id INTEGER NOT NULL REFERENCES public\.accounts\(id\) ON DELETE CASCADE/i);
-  assert.match(source, /student_ai_insights \([\s\S]*student_id INTEGER NOT NULL REFERENCES public\.accounts\(id\) ON DELETE CASCADE/i);
+  assert.match(baselineSchema, /student_game_progress \([\s\S]*FOREIGN KEY \(student_id\) REFERENCES public\.accounts\(id\) ON DELETE CASCADE/i);
+  assert.match(startupReadiness, /student_game_progress:/);
+  assert.match(startupReadiness, /student_ai_insights:/);
+  assert.doesNotMatch(source, /CREATE TABLE IF NOT EXISTS public\.(?:student_game_progress|student_ai_insights)/i);
 });

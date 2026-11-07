@@ -1225,6 +1225,102 @@
   color: var(--accent-color, #2563eb);
 }
 
+.child-performance-view-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 14px;
+  color: var(--text-primary, #0f172a);
+  font-weight: 600;
+}
+
+.child-performance-view-control select {
+  min-height: 40px;
+  max-width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border-color, #cbd5e1);
+  border-radius: 8px;
+  color: var(--text-primary, #0f172a);
+  background: var(--panel-bg, #fff);
+}
+
+.child-performance-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 10px;
+  background: var(--panel-bg, #fff);
+}
+
+.child-performance-table {
+  width: 100%;
+  min-width: 650px;
+  border-collapse: collapse;
+  color: var(--text-primary, #0f172a);
+  background: var(--panel-bg, #fff);
+}
+
+.child-performance-table th,
+.child-performance-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  text-align: left;
+  vertical-align: top;
+}
+
+.child-performance-table thead th {
+  color: var(--text-primary, #0f172a);
+  background: var(--accent-bg, #f1f5f9);
+  font-size: 0.9rem;
+}
+
+.child-performance-table tbody th {
+  color: var(--text-primary, #0f172a);
+  font-weight: 600;
+}
+
+.child-performance-table tbody td {
+  color: var(--text-primary, #0f172a);
+}
+
+.child-performance-table small {
+  display: block;
+  min-width: 180px;
+  color: var(--text-muted, #64748b);
+}
+
+[data-theme='dark'] .child-performance-table,
+[data-theme='dark'] .child-performance-table-scroll {
+  color: var(--text-primary, #f8fafc);
+  background: var(--panel-bg, #172b45);
+}
+
+[data-theme='dark'] .child-performance-table thead th {
+  color: var(--text-primary, #f8fafc);
+  background: #203750;
+}
+
+[data-theme='dark'] .child-performance-table tbody th,
+[data-theme='dark'] .child-performance-table tbody td,
+[data-theme='dark'] .child-performance-view-control {
+  color: var(--text-primary, #e5edf8);
+}
+
+[data-theme='dark'] .child-performance-table small {
+  color: var(--text-muted, #bdcbe0);
+}
+
+@media (max-width: 560px) {
+  .child-performance-view-control {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .child-performance-view-control select {
+    width: 100%;
+  }
+}
+
 .child-achievements-panel {
   align-content: start;
   min-height: 150px;

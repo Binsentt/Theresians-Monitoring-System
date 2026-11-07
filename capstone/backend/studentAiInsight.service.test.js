@@ -79,6 +79,32 @@ const metricsFor = (answers) => {
   };
 };
 
+const topicMetricsFor = (answers, {
+  taskId = 'oakleaf-bandits',
+  topicId = 'subtraction',
+  topic = 'Subtraction',
+  gradeLevel = 'Grade 1',
+} = {}) => {
+  const base = metricsFor(answers);
+  const correctAnswers = answers.filter(Boolean).length;
+  const totalQuestions = answers.length;
+  const accuracy = totalQuestions ? Number(((correctAnswers / totalQuestions) * 100).toFixed(2)) : null;
+  return {
+    ...base,
+    topicPerformance: [{
+      topicId, topic, gradeLevel, correctAnswers,
+      incorrectAnswers: totalQuestions - correctAnswers, totalQuestions, accuracy,
+    }],
+    topicLinkedEvidenceCount: totalQuestions,
+    questTopicLinkedEvidenceCount: totalQuestions,
+    unmappedQuestTopicIncorrectAnswers: 0,
+    questTopicPerformance: [{
+      canonicalTaskId: taskId, topicId, topic, gradeLevel, correctAnswers,
+      incorrectAnswers: totalQuestions - correctAnswers, totalQuestions, accuracy,
+    }],
+  };
+};
+
 const generatedInsight = (label) => ({
   performance_insight: label,
   strengths: [],
@@ -394,6 +420,108 @@ test('paused insight with no cache returns a stable state without provider, tran
   assert.equal(harness.calls.some(({ sql }) => sql.includes('insert into public.student_ai_insights')), false);
 });
 
+test('paused insight with an empty cache still returns deterministic current-cycle topic evidence', async () => {
+  const harness = createHarness();
+  let providerCalls = 0;
+  const state = await resolveStudentAiInsight({
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    learningCycleVersion: 3,
+    metrics: topicMetricsFor([1, 1, 1, 1, 1]),
+    completedMilestones: [{
+      canonical_task_id: 'go-to-school', player_facing: true,
+      learning_cycle_version: 3, completed_at: '2026-10-30T12:00:00.000Z',
+    }],
+    aiGenerationEnabled: false,
+    pool: harness.pool,
+    generateInsight: async () => { providerCalls += 1; return generatedInsight('must not run'); },
+  });
+
+  assert.equal(state.status, 'paused');
+  assert.equal(state.insight, null, 'no generated AI output is claimed');
+  assert.equal(state.deterministic_evidence.topic_evidence_status, 'perfect_recorded_results');
+  assert.deepEqual(state.deterministic_evidence.strengths, [
+    'Strong performance in Subtraction: 5 of 5 recorded answers correct (100%).',
+  ]);
+  assert.deepEqual(state.deterministic_evidence.weaknesses, []);
+  assert.deepEqual(state.deterministic_evidence.recommendations, []);
+  assert.equal(state.deterministic_evidence.quest_insights.find((quest) => quest.canonical_task_id === 'go-to-school').completion_status, 'completed');
+  assert.equal(providerCalls, 0);
+  assert.equal(harness.getSaved(), null);
+});
+
+test('blank-cache provider failure exposes evidence-based topic guidance and accepted-save quest evidence; retry can generate later', async () => {
+  const harness = createHarness();
+  const metrics = topicMetricsFor([0, 0, 0, 1, 1]);
+  const activityLogs = [{
+    canonical_activity_id: 'task_completed', canonical_task_id: 'go-to-school',
+    canonical_quest_id: 'city-of-knowledge', map_id: 'city_of_knowledge',
+    is_player_facing: true, quest_graph_version: 'oakleaf-city-pinehill-v1',
+    completed_at: '2026-10-30T12:00:00.000Z',
+  }];
+  const completedMilestones = [{
+    canonical_task_id: 'go-to-school', player_facing: true,
+    learning_cycle_version: 3, completed_at: '2026-10-30T12:00:00.000Z',
+  }];
+  const quizSessions = [
+    { canonical_task_id: 'pinehill-bandits', canonical_battle_id: 'pinehill_bandits2', score: 0, total_items: 1, result_event_id: 'synthetic-guard-2', played_at: '2026-10-30T12:01:00.000Z' },
+    { canonical_task_id: 'pinehill-bandits', canonical_battle_id: 'pinehill_bandits4', score: 0, total_items: 1, result_event_id: 'synthetic-guard-4', played_at: '2026-10-30T12:02:00.000Z' },
+    { canonical_task_id: 'oakleaf-boss-bandit', score: 1, total_items: 1, result_event_id: 'synthetic-boss', played_at: '2026-10-30T12:03:00.000Z' },
+  ];
+  const args = {
+    studentId: 44, gradeLevel: 'Grade 1', learningCycleVersion: 3,
+    metrics, activityLogs, completedMilestones, quizSessions, pool: harness.pool,
+  };
+  const unavailable = await resolveStudentAiInsight({
+    ...args,
+    generateInsight: async () => { throw new Error('synthetic provider outage'); },
+  });
+
+  assert.equal(unavailable.status, 'unavailable');
+  assert.equal(unavailable.insight, null, 'provider failure does not create or imply generated AI prose');
+  assert.equal(unavailable.deterministic_evidence.topic_evidence_status, 'weaknesses_identified');
+  assert.match(unavailable.deterministic_evidence.weaknesses[0], /Subtraction — Oakleaf Bandits/);
+  assert.match(unavailable.deterministic_evidence.recommendations[0], /Keep practicing Grade 1 Subtraction/);
+  const completedExploration = unavailable.deterministic_evidence.quest_insights.find((quest) => quest.canonical_task_id === 'go-to-school');
+  assert.equal(completedExploration.completion_status, 'completed');
+  assert.equal(completedExploration.quiz_status, 'not_required');
+  assert.equal(completedExploration.total_questions, 0);
+  assert.equal(completedExploration.summary, 'Quest completed — no graded questions required.');
+  const guards = unavailable.deterministic_evidence.quest_insights.find((quest) => quest.canonical_task_id === 'pinehill-bandits');
+  assert.deepEqual(guards.encounters, [{ id: 'pinehill_bandits2', label: 'Guard 2' }, { id: 'pinehill_bandits4', label: 'Guard 4' }]);
+  assert.equal(guards.encounter_reporting, 'individual_recorded_encounters');
+  assert.equal(guards.total_questions, 2);
+  const boss = unavailable.deterministic_evidence.quest_insights.find((quest) => quest.canonical_task_id === 'oakleaf-boss-bandit');
+  assert.equal(boss.encounters.length, 0);
+  assert.equal(boss.encounter_reporting, 'task_aggregate');
+  assert.equal(boss.total_questions, 1);
+  assert.deepEqual(harness.getSaved(), null);
+
+  const retry = await resolveStudentAiInsight({
+    ...args, forceRefresh: true,
+    generateInsight: async () => generatedInsight('A later authorized refresh succeeded.'),
+  });
+  assert.equal(retry.status, 'generated');
+  assert.equal(retry.insight.performance_insight, 'A later authorized refresh succeeded.');
+  assert.deepEqual(retry.insight.weaknesses, unavailable.deterministic_evidence.weaknesses);
+  assert.deepEqual(retry.insight.quest_insights, unavailable.deterministic_evidence.quest_insights);
+});
+
+test('provider failure without validated topic metadata reports the gap without inventing a topic', async () => {
+  const harness = createHarness();
+  const state = await resolveStudentAiInsight({
+    studentId: 44, gradeLevel: 'Grade 1', metrics: metricsFor([0, 0, 0, 1, 1]), pool: harness.pool,
+    generateInsight: async () => { throw new Error('synthetic provider outage'); },
+  });
+
+  assert.equal(state.status, 'unavailable');
+  assert.equal(state.insight, null);
+  assert.equal(state.deterministic_evidence.topic_evidence_status, 'topic_metadata_unavailable');
+  assert.deepEqual(state.deterministic_evidence.strengths, []);
+  assert.doesNotMatch(state.deterministic_evidence.weaknesses.join(' '), /Subtraction|Addition|Multiplication/);
+  assert.doesNotMatch(state.deterministic_evidence.recommendations.join(' '), /Subtraction|Addition|Multiplication/);
+});
+
 test('paused insight preserves a stale genuine cache with its timestamp and makes no provider call', async () => {
   const harness = createHarness();
   harness.setSaved({
@@ -480,6 +608,28 @@ test('Admin, Teacher, and Parent reads share one generated insight for unchanged
   assert.equal(providerCalls, 1);
   assert.deepEqual(parent.insight, admin.insight);
   assert.equal(harness.calls.filter(({ sql }) => sql === 'select pg_advisory_xact_lock($1)').length, 1);
+});
+
+test('Admin, Teacher, and linked Parent reads receive the same deterministic evidence while AI is paused', async () => {
+  const harness = createHarness();
+  const args = {
+    studentId: 44,
+    gradeLevel: 'Grade 1',
+    learningCycleVersion: 3,
+    metrics: topicMetricsFor([0, 0, 0, 1, 1]),
+    aiGenerationEnabled: false,
+    pool: harness.pool,
+    generateInsight: async () => { throw new Error('Paused must not call the provider.'); },
+  };
+  const states = await Promise.all([1, 2, 3].map((actorId) => resolveStudentAiInsight({ ...args, actorId })));
+
+  assert.deepEqual(states.map((state) => state.status), ['paused', 'paused', 'paused']);
+  assert.ok(states.every((state) => state.insight === null));
+  assert.deepEqual(states[0].deterministic_evidence, states[1].deterministic_evidence);
+  assert.deepEqual(states[1].deterministic_evidence, states[2].deterministic_evidence);
+  assert.match(states[0].deterministic_evidence.weaknesses[0], /Subtraction — Oakleaf Bandits/);
+  assert.equal(harness.calls.some(({ sql }) => sql === 'begin'), false);
+  assert.equal(harness.calls.some(({ sql }) => sql.includes('insert into public.student_ai_insights')), false);
 });
 
 test('changed evidence regenerates once and subsequent role reads use the refreshed fingerprint', async () => {

@@ -115,6 +115,41 @@ describe('GroundedAiAnalysis', () => {
     expect(container.querySelector('button')).toBeNull();
   });
 
+  test.each(['paused', 'unavailable'])('%s provider state displays deterministic current-cycle evidence without claiming AI generation', async (status) => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis
+        aiInsight={{
+          status,
+          data_level: 'sufficient_data',
+          valid_result_count: 5,
+          generated_at: null,
+          message: status === 'paused' ? 'AI generation is temporarily paused.' : 'Grounded AI Insights are unavailable right now.',
+          deterministic_evidence: {
+            topic_evidence_status: 'weaknesses_identified',
+            strengths: ['Strong performance in Addition: 5 of 5 recorded answers correct (100%).'],
+            weaknesses: ['Subtraction — Oakleaf Bandits: 4 of 5 answers were incorrect (20% accuracy).'],
+            recommendations: ['Practice Grade 1 Subtraction, especially the types missed during Oakleaf Bandits.'],
+            quest_insights: [{
+              canonical_task_id: 'go-to-school', label: 'Go to the School',
+              completion_status: 'completed', quiz_status: 'not_required',
+              summary: 'Quest completed — no graded questions required.',
+            }],
+          },
+        }}
+      />
+    ));
+
+    expect(container.textContent).toContain('Strengths, weaknesses, recommendations, and quest facts below are deterministic summaries of validated current-cycle records. No AI-generated insight is available.');
+    expect(container.textContent).toContain('Strong performance in Addition: 5 of 5 recorded answers correct (100%).');
+    expect(container.textContent).toContain('Subtraction — Oakleaf Bandits');
+    expect(container.textContent).toContain('Practice Grade 1 Subtraction');
+    expect(container.textContent).toContain('Per-Quest Evidence');
+    expect(container.textContent).toContain('Quest completed — no graded questions required.');
+    expect(container.textContent).toContain('Generated: Not generated');
+    expect(container.textContent).toContain('Cache: No cached insight');
+    expect(container.textContent).not.toContain('Recorded overall accuracy');
+  });
+
   test('shows truthful no-data state and allows a refresh after new committed answers', async () => {
     const onRefresh = jest.fn();
     await act(async () => root.render(
@@ -125,6 +160,9 @@ describe('GroundedAiAnalysis', () => {
     ));
 
     expect(container.textContent).toContain('No valid gameplay results are available.');
+    expect(container.textContent).toContain('Generated: Not generated');
+    expect(container.textContent).toContain('Cache: No cached insight');
+    expect(container.textContent).not.toContain('Current');
     const refresh = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Refresh AI Insight');
     expect(refresh).not.toBeNull();
     await act(async () => refresh.click());
@@ -181,6 +219,94 @@ describe('GroundedAiAnalysis', () => {
     expect(container.textContent).toContain('Task completed from recorded activity');
     expect(container.textContent).toContain('canonical task trigger and completion were recorded');
     expect(container.textContent).not.toContain('No canonical completion or graded evidence is recorded for this task yet.');
+  });
+
+  test.each([
+    ['tutorial', 'Tutorial', 'Oakleaf Village'],
+    ['go-to-teachers-house', "Go to the Teacher's House", 'Oakleaf Village'],
+    ['talk-to-the-teacher', 'Talk to the Teacher', 'Oakleaf Village'],
+  ])('completed exploration %s stays complete without a missing-evidence fallback', async (taskId, label, location) => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis aiInsight={{
+        status: 'generated',
+        insight: { strengths: [], weaknesses: [], recommendations: [], quest_insights: [{
+          canonical_task_id: taskId,
+          label,
+          quest_type: taskId === 'tutorial' || taskId === 'go-to-teachers-house' ? 'exploration' : 'npc_interaction',
+          completion_status: 'completed',
+          completion_date: '2026-10-30T12:00:00.000Z',
+          requires_graded_questions: false,
+          quiz_status: 'not_required',
+          location_labels: [location],
+          summary: 'Recorded duration 90 seconds.',
+        }] },
+      }} />
+    ));
+
+    expect(container.textContent).toContain(label);
+    expect(container.textContent).toContain('Status: Completed');
+    expect(container.textContent).toContain('Quiz: Not required');
+    expect(container.textContent).toContain('Completion date:');
+    expect(container.textContent).toContain(`Location: ${location}`);
+    expect(container.textContent).not.toContain('No canonical completion or graded evidence is recorded for this task yet.');
+    expect(container.textContent).not.toContain('No recorded evidence.');
+  });
+
+  test('started exploration keeps a truthful Started status and suppresses an empty duration-only summary', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis aiInsight={{
+        status: 'generated',
+        insight: { strengths: [], weaknesses: [], recommendations: [], quest_insights: [{
+          canonical_task_id: 'go-to-teachers-house', label: "Go to the Teacher's House",
+          quest_type: 'exploration', completion_status: 'started', quiz_status: 'not_required',
+          summary: 'Recorded duration 15 seconds.',
+        }] },
+      }} />
+    ));
+
+    expect(container.textContent).toContain('Status: Started');
+    expect(container.textContent).not.toContain('Status: Completed');
+    expect(container.textContent).not.toContain('No canonical completion or graded evidence is recorded for this task yet.');
+    expect(container.textContent).not.toContain('No recorded evidence.');
+  });
+
+  test('battle results remain visible without implying canonical task completion', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis aiInsight={{
+        status: 'generated',
+        insight: { strengths: [], weaknesses: [], recommendations: [], quest_insights: [{
+          canonical_task_id: 'oakleaf-bandits', label: 'Oakleaf Bandits',
+          quest_type: 'mathematics_battle', completion_status: 'not_recorded',
+          quiz_status: 'results_recorded', correct_answers: 2, incorrect_answers: 1,
+          total_questions: 3, accuracy: 66.67, summary: 'Recorded duration 90 seconds.',
+        }] },
+      }} />
+    ));
+
+    expect(container.textContent).toContain('Status: Not yet recorded');
+    expect(container.textContent).toContain('Quiz: Results recorded');
+    expect(container.textContent).toContain('2 correct, 1 incorrect of 3 questions (67%)');
+    expect(container.textContent).not.toContain('Status: Completed');
+    expect(container.textContent).not.toContain('No canonical completion or graded evidence is recorded for this task yet.');
+  });
+
+  test('battle without graded results reports the missing results and does not invent scores', async () => {
+    await act(async () => root.render(
+      <GroundedAiAnalysis aiInsight={{
+        status: 'generated',
+        insight: { strengths: [], weaknesses: [], recommendations: [], quest_insights: [{
+          canonical_task_id: 'oakleaf-bandits', label: 'Oakleaf Bandits',
+          quest_type: 'mathematics_battle', completion_status: 'started',
+          quiz_status: 'results_not_recorded', summary: '',
+        }] },
+      }} />
+    ));
+
+    expect(container.textContent).toContain('Status: Started');
+    expect(container.textContent).toContain('Quiz: Graded results not recorded');
+    expect(container.textContent).not.toMatch(/\b\d+ correct, \d+ incorrect of \d+ questions/);
+    expect(container.textContent).not.toContain('No canonical completion or graded evidence is recorded for this task yet.');
+    expect(container.textContent).not.toContain('No recorded evidence.');
   });
 
   test('explains when recorded misses cannot be assigned to a validated topic', async () => {

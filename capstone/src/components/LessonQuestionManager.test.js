@@ -355,7 +355,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(completed.generation_completed_count).toBe(50);
   });
 
-  test('Fixed Question and Lesson uploads require Grade and Difficulty without a Topic selector', async () => {
+  test('lesson generation offers only canonical topics for its selected Grade and Difficulty', async () => {
     await act(async () => {
       root.render(<LessonQuestionManager />);
     });
@@ -374,7 +374,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).toContain('Grade 6');
     expect(document.body.textContent).not.toContain('Grade 1-2');
     expect(document.body.textContent).toContain('Difficulty');
-    expect(getUploadModal().textContent).not.toContain('Topic');
+    expect(getUploadModal().textContent).not.toContain('Select Mathematics topic');
     expect(selects).toHaveLength(3);
 
     await act(async () => {
@@ -389,11 +389,47 @@ describe('LessonQuestionManager upload and trash controls', () => {
     expect(document.body.textContent).toContain('Lesson PDF, PPTX, or DOCX File');
     expect(document.body.textContent).toContain('Fixed Question File');
     await act(async () => {
+      setSelectValue(getUploadModalSelects()[0], 'Grade 1');
+      setSelectValue(getUploadModalSelects()[1], 'Easy');
       setSelectValue(getUploadModalSelects()[2], 'lesson');
     });
 
-    expect(getUploadModal().textContent).not.toContain('Topic');
-    expect(getUploadModalSelects()).toHaveLength(3);
+    expect(getUploadModal().textContent).toContain('Select Mathematics topic');
+    expect(getUploadModalSelects()).toHaveLength(4);
+    expect(Array.from(getUploadModalSelects()[3].options).map((option) => option.value)).toEqual([
+      '', 'basic_addition', 'subtraction', 'shapes', 'place_value',
+    ]);
+
+    await act(async () => {
+      setSelectValue(getUploadModalSelects()[3], 'basic_addition');
+      setSelectValue(getUploadModalSelects()[1], 'Normal');
+    });
+    expect(getUploadModalSelects()[3].value).toBe('');
+    expect(Array.from(getUploadModalSelects()[3].options).map((option) => option.value)).toEqual([
+      '', 'addition', 'multiplication', 'word_problems',
+    ]);
+  });
+
+  test('blocks lesson generation until a canonical Mathematics topic is selected', async () => {
+    await act(async () => root.render(<LessonQuestionManager />));
+    await act(async () => clickByText(container, 'New'));
+    await act(async () => clickByText(container, 'Upload File'));
+    await act(async () => {
+      setSelectValue(getUploadModalSelects()[0], 'Grade 1');
+      setSelectValue(getUploadModalSelects()[1], 'Easy');
+      setSelectValue(getUploadModalSelects()[2], 'lesson');
+      setFieldValue(getUploadModal().querySelector('input[name="expected_question_count"]'), '3');
+      const fileInput = getUploadModal().querySelector('input[type="file"]');
+      const file = new File(['%PDF-1.4 lesson'], 'untagged-lesson.pdf', { type: 'application/pdf' });
+      Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      getUploadModal().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(getUploadModal().textContent).toContain('Select a canonical Mathematics topic for the selected Grade and Difficulty.');
+    expect(global.fetch.mock.calls.some(([url, options]) => (
+      String(url).endsWith('/api/learning-files/upload') && options?.method === 'POST'
+    ))).toBe(false);
   });
 
   test('renders the upload dialog in a viewport portal and removes it when cancelled', async () => {
@@ -739,6 +775,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       setSelectValue(selects[0], 'Grade 1');
       setSelectValue(selects[1], 'Easy');
       setSelectValue(selects[2], 'lesson');
+      setSelectValue(getUploadModalSelects()[3], 'basic_addition');
       const countField = getUploadModal().querySelector('input[name="expected_question_count"]');
       expect(countField.type).toBe('number');
       expect(countField.placeholder).toBe('Enter question count');
@@ -828,6 +865,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       const selects = getUploadModalSelects();
       setSelectValue(selects[0], 'Grade 1');
       setSelectValue(selects[1], 'Easy');
+      setSelectValue(getUploadModalSelects()[3], 'basic_addition');
       const countField = getUploadModal().querySelector('input[name="expected_question_count"]');
       setFieldValue(countField, '50');
       const fileInput = document.body.querySelector('input[type="file"]');
@@ -846,6 +884,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
     ));
     expect(lessonRequests).toHaveLength(1);
     expect(lessonRequests[0][1].body.get('expected_question_count')).toBe('50');
+    expect(lessonRequests[0][1].body.get('topic_id')).toBe('basic_addition');
+    expect(lessonRequests[0][1].body.get('math_topic')).toBe('Basic Addition');
     expect(lessonRequests[0][1].headers).toEqual(expect.objectContaining({
       Authorization: 'Bearer lesson-manager-token',
       'Idempotency-Key': expect.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/),
@@ -879,6 +919,7 @@ describe('LessonQuestionManager upload and trash controls', () => {
       const selects = getUploadModalSelects();
       setSelectValue(selects[0], 'Grade 3');
       setSelectValue(selects[1], 'Normal');
+      setSelectValue(getUploadModalSelects()[3], 'fractions');
       const countField = getUploadModal().querySelector('input[name="expected_question_count"]');
       setFieldValue(countField, '50');
       const fileInput = getUploadModal().querySelector('input[type="file"]');
@@ -930,7 +971,8 @@ describe('LessonQuestionManager upload and trash controls', () => {
 
     expect(getUploadModal().textContent).not.toContain('Reusable Lesson PDF or PPTX Source');
     expect(getUploadModal().textContent).not.toContain('Reusable arithmetic lesson');
-    expect(getUploadModalSelects()).toHaveLength(3);
+    expect(getUploadModalSelects()).toHaveLength(4);
+    expect(getUploadModal().textContent).toContain('Select Mathematics topic');
   });
 
   test('prioritizes DOCX and PDF documents for Teacher Fixed Questions uploads', async () => {

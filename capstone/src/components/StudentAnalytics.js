@@ -68,6 +68,7 @@ export default function StudentAnalytics() {
   const [metrics, setMetrics] = useState(null);
   const [aiInsight, setAiInsight] = useState(null);
   const [scoreHistory, setScoreHistory] = useState([]);
+  const [mapPerformance, setMapPerformance] = useState(null);
   const [activityLogs, setActivityLogs] = useState([]);
   const [activityError, setActivityError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -114,6 +115,7 @@ export default function StudentAnalytics() {
     setMetrics(null);
     setAiInsight(null);
     setScoreHistory([]);
+    setMapPerformance(null);
     setActivityLogs([]);
     setActivityError('');
 
@@ -140,6 +142,7 @@ export default function StudentAnalytics() {
         setMetrics(data.metrics || null);
         setAiInsight(data.aiInsight || null);
         setScoreHistory(Array.isArray(data.scoreHistory) ? data.scoreHistory : []);
+        setMapPerformance(data.mapPerformance && typeof data.mapPerformance === 'object' ? data.mapPerformance : null);
       } catch (err) {
         if (!isCurrentRequest()) return;
         console.error('Detail load failed:', err);
@@ -210,6 +213,9 @@ export default function StudentAnalytics() {
       setProgress(evidenceSnapshot.progress);
       setMetrics(evidenceSnapshot.metrics);
       if (Array.isArray(evidenceSnapshot.scoreHistory)) setScoreHistory(evidenceSnapshot.scoreHistory);
+      if (evidenceSnapshot.mapPerformance && typeof evidenceSnapshot.mapPerformance === 'object') {
+        setMapPerformance(evidenceSnapshot.mapPerformance);
+      }
       const nextInsightState = Object.keys(insightState).length > 0 ? insightState : data;
       setAiInsight(nextInsightState);
       setInsightError('');
@@ -496,7 +502,7 @@ export default function StudentAnalytics() {
               error={activityError}
               description="Recent gameplay updates for the selected Student."
             />
-            <ScoreOverTimeSection sessions={scoreHistory} studentLabel="this Student" />
+            <ScoreOverTimeSection mapPerformance={mapPerformance} studentLabel="this Student" />
           </section>
           <GroundedAiAnalysis
             aiInsight={aiInsight}

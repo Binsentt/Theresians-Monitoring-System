@@ -184,6 +184,32 @@ test('recognizes 10/10 and 9/10 Grade-topic strengths while recommending only th
   ]);
 });
 
+test('topic strength threshold includes exactly five attempts at 80 percent and excludes lower evidence', () => {
+  const buildTopicCatalog = (correct, total) => buildGroundedClaimCatalog({
+    ...baseInput,
+    grade: 'Grade 1',
+    correct_answers: correct,
+    incorrect_answers: total - correct,
+    total_questions: total,
+    accuracy: Number(((correct / total) * 100).toFixed(2)),
+    topic_performance: [{
+      canonical_task_id: 'oakleaf-bandits',
+      topic_id: 'addition',
+      grade_level: 'Grade 1',
+      correct_answers: correct,
+      total_questions: total,
+    }],
+  });
+
+  const atThreshold = buildTopicCatalog(4, 5);
+  assert.deepEqual(atThreshold.strength.map(({ text }) => text), [
+    'Strong performance in Addition: 4 of 5 recorded answers correct (80%).',
+  ]);
+
+  assert.deepEqual(buildTopicCatalog(4, 4).strength, [], 'fewer than five attempts cannot establish a strength');
+  assert.deepEqual(buildTopicCatalog(3, 5).strength, [], 'accuracy below 80 percent cannot establish a strength');
+});
+
 test('one through three topic-linked incorrect answers retain limited-evidence wording', () => {
   [1, 2, 3].forEach((incorrect) => {
     const total = incorrect + 1;

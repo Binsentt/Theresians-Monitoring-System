@@ -317,10 +317,46 @@ test('Railway ordinary deploy config no longer invokes the migration command', (
 test('preflight SQL opens a read-only transaction and contains only SELECT inspection commands', () => {
   const sql = fs.readFileSync(path.join(__dirname, 'release-migration-preflight.sql'), 'utf8');
   assert.match(sql, /BEGIN READ ONLY/i);
+  assert.match(sql, /SET LOCAL statement_timeout\s*=\s*'10s'/i);
+  assert.match(sql, /SET LOCAL lock_timeout\s*=\s*'2s'/i);
   assert.match(sql, /ROLLBACK;/i);
   assert.match(sql, /to_regclass/i);
   assert.match(sql, /COUNT\(\*\)/i);
+  assert.match(sql, /expected_database/);
+  assert.match(sql, /expected_role/);
+  assert.match(sql, /expected_server_address/);
+  assert.match(sql, /expected_server_port/);
+  assert.match(sql, /pg_auth_members/);
+  assert.match(sql, /has_sequence_privilege/);
+  assert.match(sql, /^\\set ON_ERROR_STOP on/m);
+  assert.doesNotMatch(sql, /\\quit\s+\d/);
+  assert.match(sql, /SELECT 'preflight stopped:/);
+  assert.doesNotMatch(sql, /game_progress_save_commits/);
   assert.doesNotMatch(sql, /^\s*(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b/im);
+
+  const pending024Check = sql.indexOf('AS migration_024_pending \\gset');
+  assert.notEqual(pending024Check, -1, 'preflight must inspect migration 024 status from the validated ledger');
+  const pending024Branch = sql.slice(pending024Check);
+  assert.match(pending024Branch, /STOP: destructive migration 024 is pending/i);
+  assert.match(pending024Branch, /separate impact review and approval/i);
+  assert.doesNotMatch(
+    pending024Branch,
+    /\b(?:FROM|JOIN)\s+public\.(?:accounts|game_results|playtime_sessions|activity_logs|student_game_progress|student_ai_insights|student_quest_milestones)\b/i,
+    'pending 024 must stop before any application-row query',
+  );
+  assert.doesNotMatch(pending024Branch, /\\gexec/i, 'pending 024 must not run dynamic SQL');
+});
+
+test('preflight column metadata checks use catalogs visible without application-table SELECT', () => {
+  const sql = fs.readFileSync(path.join(__dirname, 'release-migration-preflight.sql'), 'utf8');
+  assert.doesNotMatch(sql, /information_schema\.columns/i);
+  assert.match(sql, /pg_catalog\.pg_namespace/i);
+  assert.match(sql, /pg_catalog\.pg_class/i);
+  assert.match(sql, /pg_catalog\.pg_attribute/i);
+  assert.match(sql, /pg_catalog\.pg_type/i);
+  assert.match(sql, /pg_catalog\.format_type\s*\(/i);
+  assert.match(sql, /attnum\s*>\s*0[\s\S]*?attisdropped/i);
+  assert.match(sql, /game_student_id[\s\S]*?character varying\(8\)/i);
 });
 
 test('the supported release CLI stops before connecting when approval is absent', () => {

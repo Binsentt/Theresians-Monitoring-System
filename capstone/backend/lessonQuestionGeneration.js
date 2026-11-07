@@ -234,7 +234,7 @@ const parseGeneratedQuestions = (outputText, expectedCount) => {
   return questions;
 };
 
-const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, questionCount, avoidQuestions = [] }) => {
+const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, mathTopic, questionCount, avoidQuestions = [] }) => {
   const lesson = asTrimmedString(lessonText);
   const fallbackTitle = asTrimmedString(title);
   if (!lesson) {
@@ -247,6 +247,7 @@ const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, quest
   const normalizedAvoidQuestions = (Array.isArray(avoidQuestions) ? avoidQuestions : [])
     .map((question) => asTrimmedString(question))
     .filter(Boolean);
+  const selectedMathTopic = asTrimmedString(mathTopic);
 
   return [
     {
@@ -264,7 +265,12 @@ const buildGenerationInput = ({ lessonText, title, gradeLevel, difficulty, quest
           `Create exactly ${questionCount} questions.`,
           `Grade: ${asTrimmedString(gradeLevel)}.`,
           `Difficulty: ${asTrimmedString(difficulty)}.`,
-          'The lesson can cover multiple topics. Generate only from its readable material and do not introduce unrelated material.',
+          ...(selectedMathTopic
+            ? [
+              `Selected canonical Mathematics topic: ${selectedMathTopic}.`,
+              'Generate every question only about this selected topic, using only the supplied lesson material.',
+            ]
+            : ['The lesson can cover multiple topics. Generate only from its readable material and do not introduce unrelated material.']),
           ...(normalizedAvoidQuestions.length > 0
             ? [`Do not repeat or closely restate any of these previously generated questions:\n- ${normalizedAvoidQuestions.join('\n- ')}`]
             : []),
@@ -282,6 +288,7 @@ const generateLessonQuestions = async ({
   title,
   gradeLevel,
   difficulty,
+  mathTopic,
   questionCount,
   avoidQuestions = [],
   aiGenerationEnabled = isAiGenerationEnabled(),
@@ -308,7 +315,7 @@ const generateLessonQuestions = async ({
   const boundedTimeoutMs = Number.isInteger(timeoutMs) && timeoutMs > 0
     ? timeoutMs
     : QUESTION_GENERATION_TIMEOUT_MS;
-  const input = buildGenerationInput({ lessonText, title, gradeLevel, difficulty, questionCount, avoidQuestions });
+  const input = buildGenerationInput({ lessonText, title, gradeLevel, difficulty, mathTopic, questionCount, avoidQuestions });
   const controller = new AbortController();
   const requestStartedAt = Date.now();
   const timeoutHandle = setTimeout(() => controller.abort(), boundedTimeoutMs);

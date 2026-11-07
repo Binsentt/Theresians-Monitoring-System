@@ -21,7 +21,7 @@ const InsightList = ({ title, icon: Icon, tone, items, description, emptyMessage
 
 const withoutVisibleQuestDuration = (value) => {
   const summary = safeDisplayText(value, '');
-  if (!summary) return 'No recorded evidence.';
+  if (!summary) return '';
   const visibleClauses = summary.split(/\s*;\s*/).filter((clause) => {
     const normalizedClause = clause.replace(/^Recorded evidence:\s*/i, '').trim();
     const hasMeasuredDuration = /\b\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?|seconds?|secs?|h|m|s)\b/i.test(normalizedClause);
@@ -29,7 +29,7 @@ const withoutVisibleQuestDuration = (value) => {
       || (hasMeasuredDuration && /\b(?:recorded\s+activity|activity)\b/i.test(normalizedClause));
     return !isDurationClause;
   });
-  return visibleClauses.join('; ').trim() || 'No canonical completion or graded evidence is recorded for this task yet.';
+  return visibleClauses.join('; ').trim();
 };
 
 const formatQuestTimestamp = (value, includeTime = false) => {
@@ -74,11 +74,22 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
   const unavailable = state.status === 'unavailable';
   const paused = state.status === 'paused' || state.code === 'AI_PAUSED';
   const noData = state.status === 'no_data' || state.data_level === 'no_data';
-  const strengths = normalizeDisplayList(insight?.strengths);
-  const weaknesses = normalizeDisplayList(insight?.weaknesses);
-  const recommendations = normalizeDisplayList(insight?.recommendations);
-  const topicEvidenceStatus = state.topic_evidence_status || insight?.topic_evidence_status || 'no_topic_evidence';
-  const questInsights = Array.isArray(insight?.quest_insights) ? insight.quest_insights : [];
+  const deterministicEvidence = state.deterministic_evidence && typeof state.deterministic_evidence === 'object'
+    ? state.deterministic_evidence : null;
+  const strengths = normalizeDisplayList(deterministicEvidence?.strengths ?? insight?.strengths);
+  const weaknesses = normalizeDisplayList(deterministicEvidence?.weaknesses ?? insight?.weaknesses);
+  const recommendations = normalizeDisplayList(deterministicEvidence?.recommendations ?? insight?.recommendations);
+  const topicEvidenceStatus = deterministicEvidence?.topic_evidence_status
+    || state.topic_evidence_status || insight?.topic_evidence_status || 'no_topic_evidence';
+  const questInsights = Array.isArray(deterministicEvidence?.quest_insights)
+    ? deterministicEvidence.quest_insights
+    : Array.isArray(insight?.quest_insights) ? insight.quest_insights : [];
+  const hasGroundedEvidence = Boolean(deterministicEvidence)
+    || Boolean(strengths.length || weaknesses.length || recommendations.length || questInsights.length);
+  const hasGeneratedAiInsight = Boolean(insight?.performance_insight);
+  const deterministicOnly = (paused || unavailable) && !insight?.performance_insight;
+  const showDeterministicEvidenceDisclosure = deterministicOnly
+    && (strengths.length > 0 || weaknesses.length > 0 || recommendations.length > 0 || questInsights.length > 0);
   const message = safeDisplayText(error || state.message, 'Grounded analysis is loading from recorded gameplay evidence.');
   const showInsightAction = Boolean(onRefresh && !paused);
   const insightActionLabel = loading
@@ -92,18 +103,16 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
     : 'Not generated';
   const cacheLabel = stale
     ? 'Stale'
-    : state.status === 'cached'
-      ? 'Cached'
-      : state.cache_status === 'current' || insight
-        ? 'Current'
-        : 'Not generated';
+    : hasGeneratedAiInsight
+      ? state.status === 'cached' ? 'Cached' : 'Current'
+      : 'No cached insight';
 
   return (
     <section className="student-insights-grid grounded-ai-analysis" aria-label="Grounded AI analysis">
       <div className="student-dashboard-card student-insight-card">
         <div className="student-card-heading">
           <span className="student-card-icon green"><Lightbulb size={20} aria-hidden="true" /></span>
-          <div><h2>Grounded AI Insight</h2><p>Automatically generated from the canonical student analytics evidence.</p></div>
+          <div><h2>Grounded AI Insight</h2><p>AI interpretation is shown only when generated; deterministic evidence remains available separately.</p></div>
         </div>
         <h3 className="grounded-ai-performance-label">Performance Insight</h3>
         {preliminary && (
@@ -120,7 +129,7 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
           ? <strong className="student-insight-highlight">{safeDisplayText(insight.performance_insight, '')}</strong>
           : !(paused || unavailable || stale || error) && <p className="student-insight-copy">{message}</p>}
         <p className="grounded-ai-evidence-meta">
-          Evidence: {validResultCount ?? 0} valid results · Generated: {generatedLabel} · {cacheLabel}
+          Evidence: {validResultCount ?? 0} valid results · Generated: {generatedLabel} · Cache: {cacheLabel}
         </p>
         {totalQuestionCount !== null && (
           <p className="grounded-ai-evidence-meta">
@@ -137,14 +146,19 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
 
       <div className="student-insight-guidance-heading">
         <div>
-          <h2>AI Learning Guidance</h2>
-          <p>Weaknesses and recommendations below are generated only from recorded student performance evidence.</p>
+          <h2>{deterministicOnly ? 'Evidence-Based Learning Guidance' : 'AI Learning Guidance'}</h2>
+          <p>Weaknesses and recommendations are selected only from recorded student performance evidence.</p>
+          {showDeterministicEvidenceDisclosure && (
+            <p className="grounded-ai-status" role="status">
+              Strengths, weaknesses, recommendations, and quest facts below are deterministic summaries of validated current-cycle records. No AI-generated insight is available.
+            </p>
+          )}
         </div>
       </div>
 
       <div className="student-insight-guidance-grid">
         <InsightList
-          title="AI-Identified Weaknesses"
+          title={deterministicOnly ? 'Evidence-Based Weaknesses' : 'AI-Identified Weaknesses'}
           icon={AlertTriangle}
           tone="red"
           items={weaknesses}
@@ -152,7 +166,7 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
           description="Areas where the recorded results show that the student may need more mathematics practice."
           emptyMessage={noData
             ? 'No recorded graded results are available for a Mathematics weakness assessment yet.'
-            : insight
+            : insight || hasGroundedEvidence
             ? topicEvidenceStatus === 'perfect_recorded_results'
               ? 'No weaknesses identified — no incorrect answers were recorded.'
               : topicEvidenceStatus === 'topic_metadata_unavailable'
@@ -163,7 +177,7 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
             : 'Generate the AI insight to identify evidence-backed weaknesses.'}
         />
         <InsightList
-          title="AI-Grounded Recommendations"
+          title={deterministicOnly ? 'Grounded Recommendations' : 'AI-Grounded Recommendations'}
           icon={MapPin}
           tone="orange"
           items={recommendations}
@@ -171,7 +185,7 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
           description="Recommended next steps linked to the recorded weaknesses and evidence gaps."
           emptyMessage={noData
             ? 'No recommendation is supported until recorded graded results are available.'
-            : insight
+            : insight || hasGroundedEvidence
             ? topicEvidenceStatus === 'perfect_recorded_results'
               ? 'No additional practice recommendation is needed based on the current perfect recorded results.'
               : topicEvidenceStatus === 'topic_metadata_unavailable'
@@ -191,7 +205,7 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
         description="Positive patterns selected from recorded gameplay evidence."
         emptyMessage={noData
           ? 'No recorded graded results are available for a Mathematics strength assessment yet.'
-          : insight
+          : insight || hasGroundedEvidence
           ? 'No supported strength is identified from the recorded evidence yet.'
           : 'Generate the AI insight to identify supported strengths from recorded gameplay.'}
       />
@@ -214,6 +228,7 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
             const averageResponse = Number.isFinite(quest.average_response_seconds)
               && quest.average_response_seconds >= 0
               ? `${Number(quest.average_response_seconds)}s average response time` : null;
+            const visibleSummary = withoutVisibleQuestDuration(quest.summary);
             return (
               <li key={quest.canonical_task_id} className="grounded-ai-quest-evidence-item">
                 <strong>{safeDisplayText(quest.label, quest.canonical_task_id)}</strong>
@@ -241,7 +256,7 @@ export default function GroundedAiAnalysis({ aiInsight, error = '', loading = fa
                     </span>
                   ))}
                   {resultDate && <span>Latest saved result: {resultDate}</span>}
-                  {!scoreRecorded && <span>{withoutVisibleQuestDuration(quest.summary)}</span>}
+                  {!scoreRecorded && visibleSummary && <span>{visibleSummary}</span>}
                 </div>
               </li>
             );

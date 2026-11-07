@@ -29,6 +29,7 @@ export default function ParentChildProgress() {
   const [portalRole, setPortalRole] = useState('parent');
   const [parentAccountId, setParentAccountId] = useState(null);
   const [quizSessions, setQuizSessions] = useState([]);
+  const [mapPerformance, setMapPerformance] = useState(null);
   const [quizHistoryNotice, setQuizHistoryNotice] = useState('');
   const [selectedChildMetrics, setSelectedChildMetrics] = useState(null);
   const [selectedChildProgress, setSelectedChildProgress] = useState(null);
@@ -124,6 +125,7 @@ export default function ParentChildProgress() {
     setInsightError('');
     if (!focusStudentId || !parentAccountId) {
       setQuizSessions([]);
+      setMapPerformance(null);
       setQuizHistoryNotice('');
       setActivityLogs([]);
       setSelectedChildMetrics(null);
@@ -136,6 +138,7 @@ export default function ParentChildProgress() {
     let active = true;
     const loadChildGameDetails = async () => {
       setQuizSessions([]);
+      setMapPerformance(null);
       setQuizHistoryNotice('');
       setActivityLogs([]);
       setSelectedChildMetrics(null);
@@ -190,12 +193,15 @@ export default function ParentChildProgress() {
           }
         }
         setSelectedChildMetrics(analyticsPayload?.metrics && typeof analyticsPayload.metrics === 'object' ? analyticsPayload.metrics : null);
+        setMapPerformance(analyticsPayload?.mapPerformance && typeof analyticsPayload.mapPerformance === 'object'
+          ? analyticsPayload.mapPerformance : null);
         setSelectedChildProgress(analyticsPayload?.progress && typeof analyticsPayload.progress === 'object' ? analyticsPayload.progress : null);
         setSelectedChildAiInsight(analyticsPayload?.aiInsight && typeof analyticsPayload.aiInsight === 'object' ? analyticsPayload.aiInsight : null);
       } catch (err) {
         console.error('Child game result load error:', err);
         if (!active) return;
         setQuizSessions([]);
+        setMapPerformance(null);
         setQuizHistoryNotice('');
         setActivityLogs([]);
         setSelectedChildMetrics(null);
@@ -269,6 +275,9 @@ export default function ParentChildProgress() {
       if (Array.isArray(evidenceSnapshot.scoreHistory)) {
         setQuizSessions(evidenceSnapshot.scoreHistory);
         setQuizHistoryNotice('');
+      }
+      if (evidenceSnapshot.mapPerformance && typeof evidenceSnapshot.mapPerformance === 'object') {
+        setMapPerformance(evidenceSnapshot.mapPerformance);
       }
     } catch (err) {
       if (childRequestVersion.current !== requestVersion) return;
@@ -476,7 +485,7 @@ export default function ParentChildProgress() {
 
                     <div className="child-score-results">
                       <ScoreOverTimeSection
-                        sessions={quizSessions}
+                        mapPerformance={mapPerformance}
                         studentLabel="this child"
                         historyNotice={quizHistoryNotice}
                       />

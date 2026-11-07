@@ -5,6 +5,8 @@ const {
   calculateJourneyProgress,
   calculateWeightedCompletion,
   canonicalTaskDisplayLabel,
+  canonicalMapDisplayLabel,
+  canonicalEncounterDisplayLabel,
   QUEST_GRAPH_VERSION,
   PLAYER_FACING_TASKS,
 } = require('./questGraph.utils');
@@ -256,6 +258,102 @@ const buildStudentAnalyticsScoreHistory = (quizSessions = [], limit = 20) => {
     percentage: Number(((result.correctAnswers / result.totalQuestions) * 100).toFixed(2)),
     played_at: row.played_at || null,
   }));
+};
+
+// Produce an untruncated, current-cycle summary from the same authorized
+// result rows used by Student Analytics. Map assignment is based only on a
+// recognized map_id; current_map, quest text, and result-row IDs are not used
+// to infer a location or an encounter.
+const buildStudentAnalyticsMapPerformance = (quizSessions = []) => {
+  if (!Array.isArray(quizSessions)) return { byMap: [], byBattleSession: [] };
+  const mapGroups = new Map();
+  const battleSessionGroups = new Map();
+  const seenResultEventIds = new Set();
+
+  const toTimestamp = (value) => {
+    const timestamp = value ? new Date(value).getTime() : Number.NaN;
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+  };
+  const createGroup = (values = {}) => ({
+    correctAnswers: 0,
+    incorrectAnswers: 0,
+    totalQuestions: 0,
+    firstPlayedAt: null,
+    lastPlayedAt: null,
+    encounterIds: new Set(),
+    ...values,
+  });
+  const recordResult = (group, row, result) => {
+    group.correctAnswers += result.correctAnswers;
+    group.incorrectAnswers += result.totalQuestions - result.correctAnswers;
+    group.totalQuestions += result.totalQuestions;
+    const playedAt = toTimestamp(row.played_at);
+    if (playedAt) {
+      if (!group.firstPlayedAt || playedAt < group.firstPlayedAt) group.firstPlayedAt = playedAt;
+      if (!group.lastPlayedAt || playedAt > group.lastPlayedAt) group.lastPlayedAt = playedAt;
+    }
+  };
+  const summarize = (group, includeEncounterCount = false) => {
+    const { encounterIds, ...summary } = group;
+    return {
+      ...summary,
+      accuracy: toPercentage(group.correctAnswers, group.totalQuestions),
+      ...(includeEncounterCount ? { encounterCount: encounterIds.size || null } : {}),
+    };
+  };
+
+  quizSessions.forEach((row = {}) => {
+    const result = normalizeResult(row);
+    if (!result) return;
+    const eventId = normalizeTopic(row.result_event_id);
+    if (eventId && seenResultEventIds.has(eventId)) return;
+    if (eventId) seenResultEventIds.add(eventId);
+
+    const normalizedMapId = normalizeTopic(result.mapId).toLowerCase();
+    const mapLabel = canonicalMapDisplayLabel(result.canonicalTaskId || '', normalizedMapId);
+    const mapId = mapLabel ? normalizedMapId : null;
+    const mapName = mapLabel || 'Map not recorded';
+    const mapKey = mapId ? `map:${mapId}` : 'map:not-recorded';
+    if (!mapGroups.has(mapKey)) mapGroups.set(mapKey, createGroup({ mapId, mapName }));
+    const mapGroup = mapGroups.get(mapKey);
+    recordResult(mapGroup, row, result);
+
+    const taskId = result.canonicalTaskId;
+    const battleId = normalizeTopic(row.canonical_battle_id).toLowerCase();
+    const battleLabel = taskId && battleId
+      ? canonicalEncounterDisplayLabel(taskId, battleId) : null;
+    const sessionId = hasIdentifier(row.session_id) ? String(row.session_id).trim() : '';
+    const encounterKey = battleLabel ? `${taskId}:${battleId}` : null;
+    if (encounterKey) mapGroup.encounterIds.add(encounterKey);
+
+    const viewKey = battleLabel
+      ? `battle:${encounterKey}:session:${sessionId || 'not-recorded'}:${mapKey}`
+      : sessionId ? `session:${sessionId}:${mapKey}` : `unrecorded:${mapKey}`;
+    if (!battleSessionGroups.has(viewKey)) {
+      battleSessionGroups.set(viewKey, createGroup({
+        key: viewKey,
+        label: battleLabel
+          ? `${battleLabel}${sessionId ? ` · Session ${sessionId}` : ''}`
+          : sessionId ? `Session ${sessionId}` : 'Encounter/session not recorded',
+        encounterType: battleLabel ? 'battle' : sessionId ? 'session' : 'unrecorded',
+        canonicalTaskId: battleLabel ? taskId : null,
+        canonicalBattleId: battleLabel ? battleId : null,
+        sessionId: sessionId || null,
+        mapId,
+        mapName,
+      }));
+    }
+    recordResult(battleSessionGroups.get(viewKey), row, result);
+  });
+
+  const chronological = (left, right) => (
+    String(left.firstPlayedAt || left.lastPlayedAt || '').localeCompare(String(right.firstPlayedAt || right.lastPlayedAt || ''))
+      || String(left.mapName || left.label || '').localeCompare(String(right.mapName || right.label || ''))
+  );
+  return {
+    byMap: [...mapGroups.values()].map((group) => summarize(group, true)).sort(chronological),
+    byBattleSession: [...battleSessionGroups.values()].map((group) => summarize(group)).sort(chronological),
+  };
 };
 const emptyDifficultyBreakdown = () => ({
   easy: { correctAnswers: 0, totalQuestions: 0, accuracy: null },
@@ -547,6 +645,7 @@ module.exports = {
   buildStudentAnalyticsScoreHistory,
   aggregateStudentAccuracy,
   buildStudentAnalyticsMetrics,
+  buildStudentAnalyticsMapPerformance,
   normalizeDifficulty,
   normalizeResult,
   isParentQuizHistoryRowCurrentCycle,
