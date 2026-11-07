@@ -331,7 +331,9 @@ test('preflight SQL opens a read-only transaction and contains only SELECT inspe
   assert.match(sql, /^\\set ON_ERROR_STOP on/m);
   assert.doesNotMatch(sql, /\\quit\s+\d/);
   assert.match(sql, /SELECT 'preflight stopped:/);
-  assert.doesNotMatch(sql, /game_progress_save_commits/);
+  assert.match(sql, /game_progress_save_commits/);
+  assert.match(sql, /game_progress_save_commits_activity_event_unique/);
+  assert.match(sql, /game_progress_save_commits_student_id_fkey/);
   assert.doesNotMatch(sql, /^\s*(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b/im);
 
   const pending024Check = sql.indexOf('AS migration_024_pending \\gset');
