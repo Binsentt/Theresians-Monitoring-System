@@ -12,6 +12,8 @@ describe('Student Progress insight dark mode styles', () => {
     expect(darkRules).toMatch(/\.student-insight-list/);
     expect(darkRules).toMatch(/\.student-insight-empty/);
     expect(darkRules).toMatch(/\.grounded-ai-evidence-meta/);
+    expect(darkRules).toMatch(/\.grounded-ai-general-summary/);
+    expect(darkRules).toMatch(/\.grounded-ai-map-observations/);
     expect(darkRules).toMatch(/\.student-insight-copy/);
     expect(darkRules).toMatch(/\.student-insight-highlight/);
     expect(darkRules).toMatch(/\.student-insight-action/);

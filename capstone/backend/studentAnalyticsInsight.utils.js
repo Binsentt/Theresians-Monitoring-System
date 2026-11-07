@@ -17,7 +17,10 @@ const {
   renderValidatedClaimSelection,
 } = require('./studentAnalyticsGrounding.utils');
 const { SCOPES, getTopicById, normalizeGradeLevel, normalizeTopicId } = require('./curriculumScopeRegistry');
-const { normalizeResult } = require('./studentAnalyticsMetrics.utils');
+const {
+  buildStudentAnalyticsMapPerformance,
+  normalizeResult,
+} = require('./studentAnalyticsMetrics.utils');
 const {
   canonicalTaskDisplayLabel,
   canonicalTaskRequiresGradedEvidence,
@@ -48,6 +51,121 @@ const safeTimestamp = (value) => {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 };
+
+const isNonNegativeInteger = (value) => Number.isInteger(value) && value >= 0;
+const formatGeneralPercentage = (value) => `${Number(value.toFixed(1))}%`;
+
+const buildRecentResultTrend = (quizSessions = []) => {
+  if (!Array.isArray(quizSessions)) return null;
+  const seenResultEventIds = new Set();
+  const results = quizSessions.reduce((records, row = {}) => {
+    const result = normalizeResult(row);
+    const playedAt = row.played_at ? new Date(row.played_at).getTime() : Number.NaN;
+    if (!result || !Number.isFinite(playedAt)) return records;
+    const eventId = String(row.result_event_id || '').trim();
+    if (eventId && seenResultEventIds.has(eventId)) return records;
+    if (eventId) seenResultEventIds.add(eventId);
+    records.push({
+      playedAt,
+      id: String(row.id ?? ''),
+      correctAnswers: result.correctAnswers,
+      totalQuestions: result.totalQuestions,
+    });
+    return records;
+  }, []).sort((left, right) => left.playedAt - right.playedAt || left.id.localeCompare(right.id));
+  if (results.length < 10) return null;
+
+  const previousResults = results.slice(-10, -5);
+  const recentResults = results.slice(-5);
+  const accuracyFor = (group) => {
+    const correct = group.reduce((total, row) => total + row.correctAnswers, 0);
+    const questions = group.reduce((total, row) => total + row.totalQuestions, 0);
+    return Number(((correct / questions) * 100).toFixed(1));
+  };
+  const previousAccuracy = accuracyFor(previousResults);
+  const recentAccuracy = accuracyFor(recentResults);
+  return {
+    recent_result_count: recentResults.length,
+    previous_result_count: previousResults.length,
+    recent_accuracy: recentAccuracy,
+    previous_accuracy: previousAccuracy,
+    difference_points: Number((recentAccuracy - previousAccuracy).toFixed(1)),
+  };
+};
+
+function buildGeneralPerformanceEvidence({ metrics = {}, quizSessions = [] } = {}) {
+  const correctAnswers = metrics.correctAnswers;
+  const incorrectAnswers = metrics.incorrectAnswers;
+  const totalQuestions = metrics.totalQuestions;
+  const totalsAreValid = isNonNegativeInteger(correctAnswers)
+    && isNonNegativeInteger(incorrectAnswers)
+    && isNonNegativeInteger(totalQuestions)
+    && totalQuestions > 0
+    && correctAnswers + incorrectAnswers === totalQuestions;
+  const topicLinkedEvidenceCount = metrics.topicLinkedEvidenceCount;
+  const rawUnmappedIncorrect = metrics.unmappedTopicIncorrectAnswers;
+  const unmappedIncorrectAnswers = isNonNegativeInteger(rawUnmappedIncorrect)
+    && rawUnmappedIncorrect <= incorrectAnswers
+    ? rawUnmappedIncorrect
+    : topicLinkedEvidenceCount === 0 && isNonNegativeInteger(incorrectAnswers)
+      ? incorrectAnswers : null;
+  const strengths = [];
+  const weaknesses = [];
+  const recommendations = [];
+  let summary = null;
+
+  if (totalsAreValid) {
+    const accuracy = Number(((correctAnswers / totalQuestions) * 100).toFixed(1));
+    const validResultCount = isNonNegativeInteger(metrics.validResultCount)
+      && metrics.validResultCount === totalQuestions ? metrics.validResultCount : null;
+    const resultCountText = validResultCount === null
+      ? '' : `${validResultCount} valid result${validResultCount === 1 ? '' : 's'}; `;
+    summary = `Current-cycle results: ${resultCountText}${correctAnswers} of ${totalQuestions} answers were correct (${formatGeneralPercentage(accuracy)} overall); ${incorrectAnswers} were incorrect.`;
+
+    if (totalQuestions >= 5 && accuracy >= 80) {
+      strengths.push(
+        `General evidence (overall performance, not a specific Mathematics topic): ${correctAnswers} of ${totalQuestions} recorded answers were correct (${formatGeneralPercentage(accuracy)}).`
+      );
+    }
+
+    if (unmappedIncorrectAnswers > 0) {
+      const limited = unmappedIncorrectAnswers <= 3;
+      weaknesses.push(limited
+        ? `General evidence (not topic-specific): ${unmappedIncorrectAnswers} recorded incorrect ${unmappedIncorrectAnswers === 1 ? 'answer was' : 'answers were'} without a validated topic. This is limited evidence and does not establish a persistent weakness or topic.`
+        : `General evidence (not topic-specific): ${unmappedIncorrectAnswers} of ${totalQuestions} recorded answers were incorrect. The available records do not establish which Mathematics topic those answers involved.`);
+      recommendations.push(
+        `General practice: review the solutions for the ${unmappedIncorrectAnswers} recorded incorrect ${unmappedIncorrectAnswers === 1 ? 'answer' : 'answers'} and practice similar Mathematics problems. This is not a topic-specific recommendation.`
+      );
+    }
+  }
+
+  const mapPerformance = buildStudentAnalyticsMapPerformance(quizSessions);
+  const mapObservations = (Array.isArray(mapPerformance?.byMap) ? mapPerformance.byMap : [])
+    .filter((map) => typeof map?.mapId === 'string' && map.mapId.length > 0
+      && typeof map?.mapName === 'string'
+      && isNonNegativeInteger(map.correctAnswers)
+      && isNonNegativeInteger(map.incorrectAnswers)
+      && isNonNegativeInteger(map.totalQuestions)
+      && map.totalQuestions > 0
+      && map.correctAnswers + map.incorrectAnswers === map.totalQuestions)
+    .map((map) => ({
+      map_name: map.mapName,
+      correct_answers: map.correctAnswers,
+      incorrect_answers: map.incorrectAnswers,
+      total_questions: map.totalQuestions,
+      accuracy: Number(((map.correctAnswers / map.totalQuestions) * 100).toFixed(1)),
+    }));
+  const recentTrend = buildRecentResultTrend(quizSessions);
+
+  return {
+    summary,
+    strengths,
+    weaknesses,
+    recommendations,
+    map_observations: mapObservations,
+    recent_trend: recentTrend,
+  };
+}
 
 const buildQuestEvidence = ({ activityLogs = [], quizSessions = [], completedMilestones = [], gradeLevel = null } = {}) => {
   const groups = new Map();
@@ -348,6 +466,7 @@ function buildGroundedInsightInput({
     unmapped_topic_incorrect_answers: Number.isInteger(metrics.unmappedTopicIncorrectAnswers)
       ? metrics.unmappedTopicIncorrectAnswers : 0,
     topic_evidence_status: topicEvidenceStatus,
+    general_performance: buildGeneralPerformanceEvidence({ metrics, quizSessions }),
     playtime_minutes: metrics.playtimeMinutes ?? null,
     quest_evidence: buildQuestEvidence({ activityLogs, quizSessions, completedMilestones, gradeLevel }),
   };
@@ -621,6 +740,7 @@ module.exports = {
   ANALYTICS_INSIGHT_MAX_OUTPUT_TOKENS,
   INSIGHT_RESPONSE_EXTRACTION_STAGES,
   buildGroundedInsightInput,
+  buildGeneralPerformanceEvidence,
   buildQuestEvidence,
   buildInsightFingerprint,
   createInsightDiagnostics,

@@ -1732,6 +1732,39 @@
   color: var(--text-secondary, #475467);
 }
 
+.grounded-ai-general-summary {
+  margin: 0.85rem 0;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--border-color, #d0d5dd);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--card-bg, #fff) 94%, #dbeafe 6%);
+}
+
+.grounded-ai-general-summary h3 {
+  margin: 0 0 0.4rem;
+  color: var(--text-primary, #0b2447);
+  font-size: 0.92rem;
+}
+
+.grounded-ai-general-summary p,
+.grounded-ai-map-observations li {
+  margin: 0.35rem 0 0;
+  color: var(--text-secondary, #475467);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.grounded-ai-map-observations {
+  margin-top: 0.6rem;
+  color: var(--text-primary, #0b2447);
+  font-size: 0.88rem;
+}
+
+.grounded-ai-map-observations ul {
+  margin: 0.3rem 0 0;
+  padding-left: 1.2rem;
+}
+
 .grounded-ai-status {
   margin: 0 0 0.85rem;
   padding: 0.7rem 0.85rem;
@@ -1852,9 +1885,18 @@
   background: linear-gradient(180deg, #1a304b 0%, #14263d 100%);
 }
 
+[data-theme='dark'] .grounded-ai-general-summary {
+  background: #203750;
+  border-color: #49627e;
+}
+
 [data-theme='dark'] .grounded-ai-analysis .student-card-heading h2,
 [data-theme='dark'] .grounded-ai-analysis .student-card-heading p,
 [data-theme='dark'] .grounded-ai-analysis .grounded-ai-performance-label,
+[data-theme='dark'] .grounded-ai-general-summary h3,
+[data-theme='dark'] .grounded-ai-general-summary p,
+[data-theme='dark'] .grounded-ai-map-observations,
+[data-theme='dark'] .grounded-ai-map-observations li,
 [data-theme='dark'] .student-insight-guidance-heading h2,
 [data-theme='dark'] .student-insight-guidance-heading p,
 [data-theme='dark'] .grounded-ai-analysis .student-insight-list li,
