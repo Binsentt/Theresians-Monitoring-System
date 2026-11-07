@@ -520,6 +520,7 @@ jobs:
         shell: bash
         env:
           NODE_ENV: test
+          TQ_DISPOSABLE_DB_SENTINEL: ${{ steps.start-postgres.outputs.sentinel }}
           DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_backend_test_ci
           NODE_PATH: /backend-deps/node_modules
         run: |
