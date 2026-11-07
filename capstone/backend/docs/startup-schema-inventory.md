@@ -2,11 +2,11 @@
 
 ## Scope and evidence
 
-This inventory compares `database/startupSchemaReadiness.js` at PR #35 with
-`Database_Table.sql`, tracked migrations 001–025, and the last checked-in
+This inventory compares `database/startupSchemaReadiness.js` at the PR #31 + PR #35 integration candidate with
+`Database_Table.sql`, tracked migrations 001–026, and the last checked-in
 `server.js` before the startup-DDL removal. It is a source inventory only; no
 production or staging database was inspected. The runtime gate requires the
-presence of 17 public tables and 269 columns. Presence is not proof of the
+presence of 18 public tables and 278 columns. Presence is not proof of the
 complete SQL schema or production readiness.
 
 | Table | Required columns | Tracked canonical `CREATE TABLE` source | Startup-contract gap / review note |
@@ -17,6 +17,7 @@ complete SQL schema or production readiness.
 | `announcements` | 7 | `Database_Table.sql` | Baseline definition exists; old startup code also applied additional repairs. Review the baseline and repair history before asserting exact constraints. |
 | `folders` | 5 | **None** | All required columns and the unique name behavior rely on old startup DDL; no canonical create migration is checked in. |
 | `game_results` | 28 | migration 003 | Later fields are split across migrations 004, 007, 022, 023, and 025. `current_map` is required at runtime but has no tracked baseline/migration definition. |
+| `game_progress_save_commits` | 9 | migration 026 | Additive receipt table. Migration enforces student/cycle/hash primary-key uniqueness, event-key uniqueness, hash/status/completion checks, and account cascade. The startup gate checks required fields; the migration ledger/checksum and disposable integration test verify the exact constraints. |
 | `learning_files` | 38 | **None** | Several ALTER migrations assume the table exists; there is no canonical base create. Required content, lifecycle, source, approval, file bytes, and lineage fields therefore lack one authoritative baseline. |
 | `login_otp_device_skips` | 6 | **None** | Table, unique constraint, expiry index, and FK are only in removed startup DDL; no tracked create migration exists. |
 | `playtime_deletion_tombstones` | 7 | migration 023 | Additive table and unique index are tracked. Its account `SET NULL` relationship must be included in migration-024 impact review. |
@@ -44,12 +45,12 @@ repair script. Extract and review additive DDL separately.
 The application startup gate is read-only and checks only required table and
 column existence. It does not issue DDL, DML, cleanup, or backfill SQL. The
 operator preflight adds: expected database/role/address/port matching; a
-non-admin SELECT-only role check; migration-ledger shape and checksums 018–025;
+non-admin SELECT-only role check; migration-ledger shape and checksums 018–026;
 required table/column presence; selected core column types; full visible column
 metadata output; constraint/index/trigger inventory; and an enabled check for
 `teacher_class_assignments_validate_teacher`.
 
-It does **not** assert exact nullability/defaults/types for every one of the 269
+It does **not** assert exact nullability/defaults/types for every one of the 278
 columns, every primary/unique/FK/check constraint, all indexes, or all
 application-required trigger behavior. The catalog report is evidence for an
 operator review, not an automatically approved schema contract. Those
@@ -86,18 +87,17 @@ Require, before any separate migration-024 execution approval:
    change affected rows; a boolean attestation alone does not stop writes.
 4. A reviewed recovery plan and explicit approval for the exact pending list.
 
-## Later migration 026 contract
+## Migration 026 receipt dependency
 
-PR #35 intentionally excludes PR #31 migration 026. That additive migration
-creates `game_progress_save_commits` with nine required columns, so the future
-combined startup contract will be 18 tables / 278 columns only after PR #31 is
-integrated and migration 026 is separately approved and applied. Do not add
-the table to this pre-migration readiness gate. Reconcile its PK
+The combined startup readiness contract includes all nine
+`game_progress_save_commits` columns. The exact PK
 `(student_id, learning_cycle_version, save_commit_id_hash)`, unique
 `(student_id, activity_event_key)`, checks, FK cascade to accounts, and
-response-receipt fields against the merged source before activating the
-combined contract. The receipt data is student-linked and account deletion
-cascades to it; retention/deletion policy remains an owner decision.
+response-receipt fields are defined by migration 026 and tested against
+disposable PostgreSQL. The migration must be separately applied and checksum
+verified before deploying this application candidate. Receipt data is
+student-linked and account deletion cascades to it; retention/deletion policy
+remains an owner decision.
 
 ## Safe schema migration strategy
 

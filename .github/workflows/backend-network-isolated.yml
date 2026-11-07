@@ -25,7 +25,7 @@ permissions:
 
 concurrency:
   group: backend-network-isolated-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   backend:
@@ -138,8 +138,16 @@ jobs:
           const jwt = require('jsonwebtoken');
           const { Pool } = require('pg');
           const { applySyntheticTestSchema } = require('/workspace/capstone/backend/testSupport/applySyntheticTestSchema');
+          const {
+            assertDisposablePostgresUrl,
+            assertDisposablePostgresDatabase,
+          } = require('/workspace/capstone/backend/testSafety/disposablePostgres');
 
           const databaseUrl = process.env.DATABASE_URL;
+          assertDisposablePostgresUrl({
+            connectionString: databaseUrl,
+            expectedDatabaseName: 'tq_parent_route_test_ci',
+          });
           const parsedDatabaseUrl = new URL(databaseUrl || '');
           assert.equal(parsedDatabaseUrl.hostname, '127.0.0.1', 'Parent route probe must use loopback PostgreSQL');
           assert.equal(parsedDatabaseUrl.pathname, '/tq_parent_route_test_ci', 'Parent route probe must use its disposable database');
@@ -156,6 +164,11 @@ jobs:
             const bootstrap = new Pool({ connectionString: databaseUrl });
             try {
               await applySyntheticTestSchema(bootstrap, databaseUrl);
+              await assertDisposablePostgresDatabase({
+                client: bootstrap,
+                connectionString: databaseUrl,
+                expectedDatabaseName: 'tq_parent_route_test_ci',
+              });
             } finally {
               await bootstrap.end();
             }
@@ -166,12 +179,22 @@ jobs:
             let httpServer = null;
             try {
               await schemaReady;
+              await assertDisposablePostgresDatabase({
+                client: pool,
+                connectionString: databaseUrl,
+                expectedDatabaseName: 'tq_parent_route_test_ci',
+              });
               await pool.query(fs.readFileSync(
                 backendRoot + '/migrations/012_add_activity_log_event_idempotency.sql',
                 'utf8',
               ));
               const { applyReleaseMigrations } = require(backendRoot + '/releaseMigrations');
               await applyReleaseMigrations({ client: pool });
+              await assertDisposablePostgresDatabase({
+                client: pool,
+                connectionString: databaseUrl,
+                expectedDatabaseName: 'tq_parent_route_test_ci',
+              });
               await pool.query('TRUNCATE public.accounts RESTART IDENTITY CASCADE');
 
               const parentResult = await pool.query([
@@ -400,7 +423,8 @@ jobs:
             tq_preflight_incompatible_type_test_ci \
             tq_preflight_game_student_id_width_test_ci \
             tq_preflight_malformed_ledger_test_ci \
-            tq_preflight_pending_024_test_ci; do
+            tq_preflight_pending_024_test_ci \
+            tq_preflight_missing_receipt_constraint_test_ci; do
             docker exec tq-backend-test-postgres createdb --host=127.0.0.1 --username=postgres "$database"
           done
           disposable_sentinel="$(openssl rand -hex 24)"
@@ -426,7 +450,8 @@ jobs:
             tq_preflight_incompatible_type_test_ci \
             tq_preflight_game_student_id_width_test_ci \
             tq_preflight_malformed_ledger_test_ci \
-            tq_preflight_pending_024_test_ci; do
+            tq_preflight_pending_024_test_ci \
+            tq_preflight_missing_receipt_constraint_test_ci; do
             if [[ ! "$database" =~ ^tq_[a-z0-9_]+_test_ci$ ]]; then
               echo "Refusing to mark an unrecognized PostgreSQL test database: $database" >&2
               exit 1
@@ -492,9 +517,11 @@ jobs:
           '
 
       - name: Verify isolated test container networking and local PostgreSQL
+        timeout-minutes: 3
         shell: bash
         env:
           NODE_ENV: test
+          TQ_DISPOSABLE_DB_SENTINEL: ${{ steps.start-postgres.outputs.sentinel }}
           DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_backend_test_ci
           NODE_PATH: /backend-deps/node_modules
         run: |
@@ -513,12 +540,15 @@ jobs:
             --workdir /workspace/capstone/backend \
             --user "$(id -u):$(id -g)" \
             --env NODE_ENV \
+            --env CI \
             --env DATABASE_URL \
+            --env TQ_DISPOSABLE_DB_SENTINEL \
             --env NODE_PATH \
             --env HOME=/tmp \
             node:20-bookworm node -e '
           const assert = require("node:assert/strict");
           const os = require("node:os");
+          const { assertDisposablePostgresDatabase } = require("./testSafety/disposablePostgres");
           const interfaces = Object.entries(os.networkInterfaces()).flatMap(
             ([name, entries]) => (entries || []).map((entry) => ({ name, ...entry }))
           );
@@ -528,10 +558,19 @@ jobs:
           const { Client } = require("pg");
           (async () => {
             const client = new Client({ connectionString: process.env.DATABASE_URL });
-            await client.connect();
-            await client.query("SELECT 1");
-            await client.end();
-            console.log("Node " + process.version + "; uid " + process.getuid() + "; only loopback interfaces; isolated PostgreSQL reachable");
+            let connected = false;
+            try {
+              await client.connect();
+              connected = true;
+              await assertDisposablePostgresDatabase({
+                client,
+                connectionString: process.env.DATABASE_URL,
+                expectedDatabaseName: "tq_backend_test_ci",
+              });
+              console.log("Node " + process.version + "; uid " + process.getuid() + "; only loopback interfaces; isolated PostgreSQL reachable");
+            } finally {
+              if (connected) await client.end();
+            }
           })().catch((error) => {
             console.error(error.message);
             process.exitCode = 1;
@@ -575,6 +614,7 @@ jobs:
             --env TMP=/tmp \
             --env TEMP=/tmp \
             --env NODE_ENV \
+            --env CI \
             --env AI_RUNTIME_ENABLED \
             --env AI_GENERATION_ENABLED \
             --env JWT_SECRET \
@@ -701,6 +741,7 @@ jobs:
             --env AI_GENERATION_ENABLED \
             --env JWT_SECRET \
             --env DATABASE_URL \
+            --env TQ_DISPOSABLE_DB_SENTINEL \
             --env GAME_METRICS_TEST_DATABASE_URL \
             --env AUTH_RECOVERY_TEST_DATABASE_URL \
             --env ARCHIVED_PROGRESS_TEST_DATABASE_URL \

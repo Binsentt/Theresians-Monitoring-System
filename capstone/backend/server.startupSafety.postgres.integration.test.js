@@ -132,5 +132,11 @@ if (!isSafeDatabaseUrl(databaseUrl)) {
       publish_status: null,
       file_deleted_at: null,
     });
+
+    await admin.query(`ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_pkey`);
+    await assert.rejects(
+      assertStartupSchemaReady(admin),
+      /game_progress_save_commits\.game_progress_save_commits_pkey/,
+    );
   });
 }

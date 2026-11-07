@@ -3,20 +3,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const { Client } = require('pg');
+const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('../testSafety/disposablePostgres');
 
 const migrationPath = path.join(__dirname, '017_widen_game_student_id_to_eight.sql');
 const migrationTestUrl = process.env.STUDENT_ID_MIGRATION_TEST_DATABASE_URL || '';
-
-const requireDisposableDatabase = () => {
-  const parsed = new URL(migrationTestUrl);
-  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
-  assert.match(
-    databaseName,
-    /^tq_student_id_migration_test_[a-z0-9_]+$/,
-    'migration test must use a dedicated tq_student_id_migration_test_* database'
-  );
-  return databaseName;
-};
 
 const expectPostgresError = async (callback, code) => {
   await assert.rejects(callback, (error) => error && error.code === code);
@@ -25,7 +15,7 @@ const expectPostgresError = async (callback, code) => {
 test('017 widens only accounts.game_student_id while preserving legacy values and constraints', {
   skip: migrationTestUrl ? false : 'STUDENT_ID_MIGRATION_TEST_DATABASE_URL is required for the disposable PostgreSQL test',
 }, async () => {
-  requireDisposableDatabase();
+  assertDisposablePostgresUrl({ connectionString: migrationTestUrl, expectedDatabaseName: 'tq_student_id_migration_test_ci' });
   const migration = fs.readFileSync(migrationPath, 'utf8');
   assert.match(migration, /^\s*ALTER TABLE public\.accounts\s+ALTER COLUMN game_student_id TYPE VARCHAR\(8\);\s*$/is);
   assert.doesNotMatch(migration, /\b(?:UPDATE|INSERT|DELETE|DROP|CREATE)\b/i);
@@ -33,6 +23,7 @@ test('017 widens only accounts.game_student_id while preserving legacy values an
   const client = new Client({ connectionString: migrationTestUrl });
   await client.connect();
   try {
+    await assertDisposablePostgresDatabase({ client, connectionString: migrationTestUrl, expectedDatabaseName: 'tq_student_id_migration_test_ci' });
     await client.query('DROP TABLE IF EXISTS public.accounts, public.unrelated_student_id_migration_guard CASCADE');
     await client.query('CREATE TABLE public.accounts (id SERIAL PRIMARY KEY, game_student_id VARCHAR(6) NULL)');
     await client.query('CREATE UNIQUE INDEX accounts_game_student_id_key ON public.accounts(game_student_id) WHERE game_student_id IS NOT NULL');
@@ -74,7 +65,11 @@ test('017 widens only accounts.game_student_id while preserving legacy values an
     const unrelated = await client.query('SELECT id FROM public.unrelated_student_id_migration_guard');
     assert.deepEqual(unrelated.rows, [{ id: 1 }]);
   } finally {
-    await client.query('DROP TABLE IF EXISTS public.accounts, public.unrelated_student_id_migration_guard CASCADE');
-    await client.end();
+    try {
+      await assertDisposablePostgresDatabase({ client, connectionString: migrationTestUrl, expectedDatabaseName: 'tq_student_id_migration_test_ci' });
+      await client.query('DROP TABLE IF EXISTS public.accounts, public.unrelated_student_id_migration_guard CASCADE');
+    } finally {
+      await client.end();
+    }
   }
 });

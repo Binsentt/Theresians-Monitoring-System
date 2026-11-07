@@ -115,9 +115,9 @@ The service alias must be configured through the approved secure operator mechan
 
 If migration 024 is pending, the script stops with a nonzero exit immediately after ledger validation. It does not query `accounts`, `game_results`, `playtime_sessions`, or related application rows, and it does not generate or execute impact-count SQL. Any migration-024 impact analysis is separate and requires its own approval.
 
-The script lists versions 018–025 in this release source tree, filenames, ledger checksums, and pending state. Migration 026 from PR #31 is intentionally excluded. Compare applied checksums to the exact source file bytes in the same clean checkout:
+The script lists versions 018–026 in this release source tree, filenames, ledger checksums, and pending state. Compare applied checksums to the exact source file bytes in the same clean checkout:
 
-It also compares the startup compatibility contract (17 tables and 269 required
+It also compares the startup compatibility contract (18 tables and 278 required
 columns) to `pg_catalog`, returning counts and missing schema-object names only.
 Any missing table or column is a stop condition. Core runtime types and the
 `accounts.game_student_id` width are checked through PostgreSQL catalogs, so
@@ -157,9 +157,9 @@ race a count check, do not run 024 while matching save writes remain possible.
 Use an owner-approved maintenance/write-quiescence procedure, or keep 024
 blocked until the migration is redesigned with an atomic impact guard.
 
-### Later migration 026 integration
+### Migration 026 dependency
 
-PR #35 does not contain migration 026 and its current startup gate is 17 tables / 269 required columns. When PR #31 is rebased and reviewed against this source, the combined startup contract must be updated to 18 tables / 278 columns only as part of that approved integration. It must not be activated before migration 026 is separately approved and applied. Migration 026 adds the student/cycle/save-ID receipt table and cascades receipt deletion with account deletion; the owner must separately approve receipt retention and account-deletion behavior.
+This integration candidate registers migration 026 behind the existing guarded release runner and requires the `game_progress_save_commits` table and its nine columns in the read-only startup schema contract. The candidate must not be deployed until the operator separately approves and applies migration 026 through the guarded runner. The receipt table is additive and cascades receipt deletion with account deletion; the owner must separately approve receipt retention and account-deletion behavior. Rolling the application back must leave migration 026 and the receipt table in place.
 
 ## Explicit migration command gate
 

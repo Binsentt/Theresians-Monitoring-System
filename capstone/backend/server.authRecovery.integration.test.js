@@ -5,6 +5,7 @@ const Module = require('node:module');
 const bcrypt = require('bcrypt');
 const { Client } = require('pg');
 const { applySyntheticTestSchema, assertSyntheticDatabase } = require('./testSupport/applySyntheticTestSchema');
+const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('./testSafety/disposablePostgres');
 
 const databaseUrl = process.env.AUTH_RECOVERY_TEST_DATABASE_URL;
 
@@ -31,30 +32,16 @@ test('recovery and login OTP contracts pass against isolated PostgreSQL with cap
   process.env.DATABASE_URL = databaseUrl;
   process.env.JWT_SECRET = 'isolated-auth-recovery-test-secret';
   process.env.NODE_ENV = 'test';
+  assertDisposablePostgresUrl({ connectionString: databaseUrl, expectedDatabaseName: 'tq_auth_recovery_test_ci' });
   const bootstrap = new Client({ connectionString: databaseUrl });
   await bootstrap.connect();
-  await assertSyntheticDatabase(bootstrap, databaseUrl);
-  await bootstrap.query(`
-    CREATE TABLE IF NOT EXISTS public.accounts (
-      id SERIAL PRIMARY KEY,
-      name VARCHAR(100) NOT NULL,
-      email VARCHAR(100) NOT NULL UNIQUE,
-      password VARCHAR(255) NOT NULL,
-      mobile_number VARCHAR(20),
-      role VARCHAR(50) NOT NULL DEFAULT 'Parent',
-      parent_id VARCHAR(6),
-      employee_id VARCHAR(50),
-      otp_code VARCHAR(10),
-      otp_expires_at TIMESTAMPTZ,
-      is_archived BOOLEAN DEFAULT false,
-      must_change_password BOOLEAN DEFAULT false,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      address VARCHAR(255), birthday DATE, gender VARCHAR(20), status VARCHAR(20) DEFAULT 'Offline',
-      session_version INTEGER DEFAULT 0
-    );
-  `);
-  await applySyntheticTestSchema(bootstrap, databaseUrl);
-  await bootstrap.end();
+  try {
+    await assertDisposablePostgresDatabase({ client: bootstrap, connectionString: databaseUrl, expectedDatabaseName: 'tq_auth_recovery_test_ci' });
+    await assertSyntheticDatabase(bootstrap, databaseUrl);
+    await applySyntheticTestSchema(bootstrap, databaseUrl);
+  } finally {
+    await bootstrap.end();
+  }
 
   const capturedMessages = [];
   const emailDeliveryStub = {
@@ -91,7 +78,9 @@ test('recovery and login OTP contracts pass against isolated PostgreSQL with cap
 
   const db = require('./database/db');
   const migration = await fs.readFile(`${__dirname}/migrations/020_add_auth_otp_challenge_security.sql`, 'utf8');
+  await assertDisposablePostgresDatabase({ client: db, connectionString: databaseUrl, expectedDatabaseName: 'tq_auth_recovery_test_ci' });
   await db.query(migration);
+  await assertDisposablePostgresDatabase({ client: db, connectionString: databaseUrl, expectedDatabaseName: 'tq_auth_recovery_test_ci' });
   await db.query('TRUNCATE public.accounts RESTART IDENTITY CASCADE');
   const passwordHash = await bcrypt.hash('OldPass1!', 4);
   await db.query(

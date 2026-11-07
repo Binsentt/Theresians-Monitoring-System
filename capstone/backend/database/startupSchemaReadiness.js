@@ -7,6 +7,7 @@ const REQUIRED_SCHEMA = Object.freeze({
   announcements: Object.freeze(['created_at', 'created_by', 'created_by_role', 'id', 'message', 'target_role', 'title']),
   folders: Object.freeze(['created_at', 'deleted_at', 'id', 'name', 'trashed_at']),
   game_results: Object.freeze(['answer_submitted_at', 'canonical_battle_id', 'canonical_milestone_id', 'canonical_quest_id', 'canonical_task_id', 'current_map', 'difficulty', 'grade_level', 'id', 'is_unlinked', 'map_id', 'math_topic', 'parent_id', 'percentage', 'played_at', 'playtime_session_id', 'quest_graph_version', 'question_id', 'question_presented_at', 'question_set_id', 'resolved_student_id', 'response_time_seconds', 'result_event_id', 'score', 'session_id', 'student_name', 'telemetry_contract_version', 'total_items']),
+  game_progress_save_commits: Object.freeze(['activity_event_key', 'completed_at', 'created_at', 'learning_cycle_version', 'payload_sha256', 'response_body', 'response_status', 'save_commit_id_hash', 'student_id']),
   learning_files: Object.freeze(['content_role', 'deleted_at', 'difficulty', 'document_topic', 'file_name', 'file_size', 'file_type', 'file_url', 'folder_id', 'generated_at', 'generation_completed_count', 'generation_error_code', 'generation_failed_at', 'generation_failed_batch_index', 'generation_remaining_count', 'generation_retry_count', 'generation_stage', 'generation_status', 'grade_level', 'id', 'last_fetched_at', 'math_topic', 'publish_status', 'published', 'published_at', 'published_by', 'requested_question_count', 'source', 'source_content_fingerprint', 'source_file_bytes', 'source_file_mime_type', 'source_learning_file_id', 'subject', 'title', 'topic_id', 'trashed_at', 'uploaded_at', 'uploaded_by']),
   login_otp_device_skips: Object.freeze(['created_at', 'device_id', 'id', 'otp_skipped_until', 'updated_at', 'user_id']),
   playtime_deletion_tombstones: Object.freeze(['deleted_at', 'deleted_by', 'deleted_record_id', 'deletion_operation_id', 'deletion_reason', 'id', 'target_fingerprint']),
@@ -26,7 +27,8 @@ const SCHEMA_READINESS_SQL = `
     FROM jsonb_to_recordset($1::jsonb) AS table_spec(table_name text, columns jsonb)
     CROSS JOIN LATERAL jsonb_array_elements_text(table_spec.columns) AS column_spec(column_name)
   )
-  SELECT DISTINCT
+  , missing_columns AS (
+    SELECT DISTINCT
     CASE
       WHEN relation.oid IS NULL THEN required_columns.table_name
       ELSE required_columns.table_name || '.' || required_columns.column_name
@@ -44,6 +46,34 @@ const SCHEMA_READINESS_SQL = `
    AND column_definition.attnum > 0
    AND column_definition.attisdropped = false
   WHERE relation.oid IS NULL OR column_definition.attnum IS NULL
+  ), required_receipt_constraints(constraint_name, constraint_type) AS (
+    VALUES
+      ('game_progress_save_commits_pkey', 'p'),
+      ('game_progress_save_commits_activity_event_unique', 'u'),
+      ('game_progress_save_commits_student_id_fkey', 'f'),
+      ('game_progress_save_commits_learning_cycle_version_check', 'c'),
+      ('game_progress_save_commits_save_commit_id_hash_check', 'c'),
+      ('game_progress_save_commits_payload_sha256_check', 'c'),
+      ('game_progress_save_commits_response_status_check', 'c'),
+      ('game_progress_save_commits_completion_consistency', 'c')
+  ), missing_receipt_constraints AS (
+    SELECT 'game_progress_save_commits.' || required_receipt_constraints.constraint_name AS missing_object
+    FROM required_receipt_constraints
+    LEFT JOIN pg_catalog.pg_class AS relation
+      ON relation.relnamespace = 'public'::regnamespace
+     AND relation.relname = 'game_progress_save_commits'
+     AND relation.relkind IN ('r', 'p')
+    LEFT JOIN pg_catalog.pg_constraint AS constraint_definition
+      ON constraint_definition.conrelid = relation.oid
+     AND constraint_definition.conname = required_receipt_constraints.constraint_name
+    WHERE relation.oid IS NULL
+       OR constraint_definition.oid IS NULL
+       OR constraint_definition.contype::text <> required_receipt_constraints.constraint_type
+       OR NOT constraint_definition.convalidated
+  )
+  SELECT missing_object FROM missing_columns
+  UNION ALL
+  SELECT missing_object FROM missing_receipt_constraints
   ORDER BY missing_object
 `;
 

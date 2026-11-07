@@ -153,6 +153,10 @@ test('synthetic playtime fixture includes the migration 019 history-removal cont
       'deletion_operation_id UUID',
     ]) assert.ok(playtime019.includes(field), `synthetic fixture includes ${field}`);
     assert.ok(calls.some((sql) => sql.includes('idx_playtime_sessions_visible_history')));
+    const receiptMigration = calls.find((sql) => sql.includes('CREATE TABLE IF NOT EXISTS public.game_progress_save_commits'));
+    assert.ok(receiptMigration, 'synthetic app schema includes the exact migration-026 receipt table needed by startup readiness');
+    assert.match(receiptMigration, /PRIMARY KEY \(student_id, learning_cycle_version, save_commit_id_hash\)/);
+    assert.match(receiptMigration, /UNIQUE \(student_id, activity_event_key\)/);
   } finally {
     restore();
   }
