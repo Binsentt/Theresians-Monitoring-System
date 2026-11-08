@@ -4,14 +4,21 @@
 // container created by backend-network-isolated.yml. It never accepts a URL
 // or an arbitrary database name, and it refuses to run outside GitHub CI.
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const { REQUIRED_SCHEMA } = require('../database/startupSchemaReadiness');
 const { RELEASE_MIGRATIONS, migrationChecksum } = require('../releaseMigrations');
 const fs = require('node:fs');
 
 const CONTAINER = 'tq-backend-test-postgres';
-const ROLE = 'tq_preflight_reader';
+const ROLE = 'tq_release_preflight_reader';
 const SENTINEL_PREFIX = 'tq-disposable-ci:';
+let passedScenarioCount = 0;
+
+function recordScenario(label) {
+  passedScenarioCount += 1;
+  console.log(`PASS: ${label}`);
+}
 const CASES = Object.freeze({
   valid: 'tq_preflight_valid_test_ci',
   missingLedger: 'tq_preflight_missing_ledger_test_ci',
@@ -22,11 +29,25 @@ const CASES = Object.freeze({
   malformedLedger: 'tq_preflight_malformed_ledger_test_ci',
   pending024: 'tq_preflight_pending_024_test_ci',
   missingReceiptConstraint: 'tq_preflight_missing_receipt_constraint_test_ci',
+  preMigration026: 'tq_preflight_pre_026_test_ci',
+  partialReceipt026: 'tq_preflight_partial_receipt_026_test_ci',
+  migration026Applied: 'tq_preflight_026_applied_test_ci',
+  preMigration024Pending: 'tq_preflight_pre_024_test_ci',
 });
 
 function docker(args, input = undefined) {
   const result = spawnSync('docker', args, {
     encoding: 'utf8',
+    input,
+    maxBuffer: 32 * 1024 * 1024,
+    timeout: 60_000,
+  });
+  if (result.error) throw result.error;
+  return result;
+}
+
+function dockerBinary(args, input = undefined) {
+  const result = spawnSync('docker', args, {
     input,
     maxBuffer: 32 * 1024 * 1024,
     timeout: 60_000,
@@ -142,6 +163,9 @@ function fixtureSql(mode) {
   }
   for (const [table, columns] of Object.entries(REQUIRED_SCHEMA)) {
     if (table === 'game_progress_save_commits') {
+      if (['preMigration026', 'partialReceipt026', 'preMigration024Pending'].includes(mode)) {
+        continue;
+      }
       statements.push(fs.readFileSync(
         require('node:path').join(__dirname, '../migrations/026_game_progress_save_commit_idempotency.sql'),
         'utf8',
@@ -203,11 +227,23 @@ function fixtureSql(mode) {
       INSERT INTO public.playtime_sessions (id, student_id, deleted_by) VALUES (1, 1, 1);
     `);
   }
+  if (mode === 'preMigration024Pending') {
+    statements.push(`
+      INSERT INTO public.accounts (id, name, role, game_student_id) VALUES (1, 'synthetic-only-name', 'student', '123456');
+      INSERT INTO public.game_results (id, resolved_student_id) VALUES (1, 1);
+      INSERT INTO public.playtime_sessions (id, student_id, deleted_by) VALUES (1, 1, 1);
+    `);
+  }
   if (mode === 'missingReceiptConstraint') {
     statements.push('ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_pkey;');
   }
   if (!['pending024', 'missingLedger'].includes(mode)) {
-    statements.push(...RELEASE_MIGRATIONS.map(({ version, file }) => {
+    const migrationsToSeed = mode === 'preMigration024Pending'
+      ? RELEASE_MIGRATIONS.filter(({ version }) => version < 24)
+      : ['preMigration026', 'partialReceipt026'].includes(mode)
+        ? RELEASE_MIGRATIONS.filter(({ version }) => version < 26)
+        : RELEASE_MIGRATIONS;
+    statements.push(...migrationsToSeed.map(({ version, file }) => {
       const checksum = mode === 'malformedLedger' && version === 18
         ? '0'.repeat(64)
         : migrationChecksum(fs.readFileSync(require('node:path').join(__dirname, '../migrations', file), 'utf8'));
@@ -221,7 +257,7 @@ function fixtureSql(mode) {
   }
   statements.push(`GRANT USAGE ON SCHEMA public TO ${ROLE};`);
   if (mode !== 'missingLedger') {
-    statements.push(`GRANT SELECT ON public.schema_migrations TO ${ROLE};`);
+  statements.push(`GRANT SELECT (version, filename, checksum) ON public.schema_migrations TO ${ROLE};`);
   }
   return statements.join('\n');
 }
@@ -233,6 +269,42 @@ function invokePreflight(database, overrides = {}) {
     expected_server_address: '127.0.0.1',
     expected_server_port: '5432',
     ...overrides,
+  });
+}
+
+function invokeRoleAudit(database) {
+  return psql(database, ROLE, fs.readFileSync(
+    require('node:path').join(__dirname, 'release-preflight-role-audit.sql'),
+    'utf8',
+  ), {
+    expected_database: database,
+    expected_role: ROLE,
+    expected_server_address: '127.0.0.1',
+    expected_server_port: '5432',
+  });
+}
+
+function invokePreMigration026(database) {
+  return psql(database, ROLE, fs.readFileSync(
+    require('node:path').join(__dirname, 'release-migration-026-prerequisite-preflight.sql'),
+    'utf8',
+  ), {
+    expected_database: database,
+    expected_role: ROLE,
+    expected_server_address: '127.0.0.1',
+    expected_server_port: '5432',
+  });
+}
+
+function invokeBackupRoleAudit(database) {
+  return psql(database, 'tq_prod_backup_reader', fs.readFileSync(
+    require('node:path').join(__dirname, 'backup-role-preflight.sql'),
+    'utf8',
+  ), {
+    expected_database: database,
+    expected_role: 'tq_prod_backup_reader',
+    expected_server_address: '127.0.0.1',
+    expected_server_port: '5432',
   });
 }
 
@@ -264,12 +336,61 @@ assert.equal(noApplicationSelect.stdout.trim(), 't', 'preflight role must not ha
 const valid = invokePreflight(CASES.valid);
 assert.equal(valid.status, 0, `valid disposable schema must pass: ${valid.stderr}\n${valid.stdout}`);
 assert.match(valid.stdout, /Startup schema contract is complete: 18 tables and 278 required columns are present/);
-console.log('PASS: compatible 18-table/278-column schema and migration ledger using catalog plus ledger SELECT only');
+recordScenario('compatible 18-table/278-column post-migration schema and ledger');
+
+const validRoleAudit = invokeRoleAudit(CASES.valid);
+assert.equal(validRoleAudit.status, 0, `preflight-only role must pass the catalog audit: ${validRoleAudit.stderr}\n${validRoleAudit.stdout}`);
+assert.match(validRoleAudit.stdout, /application_relation_select_count=0/);
+assert.match(validRoleAudit.stdout, /extra_ledger_column_select_count=0/);
+assert.match(validRoleAudit.stdout, /executable_security_definer_function_count=0/);
+assert.match(validRoleAudit.stdout, /table_write_privilege_count=0/);
+recordScenario('preflight role passes with migration-ledger SELECT and no application-data SELECT');
+
+const grantBroadLedgerRead = psql(CASES.valid, 'postgres', `GRANT SELECT ON public.schema_migrations TO ${ROLE};`);
+assert.equal(grantBroadLedgerRead.status, 0, grantBroadLedgerRead.stderr);
+const broadLedgerRole = invokeRoleAudit(CASES.valid);
+assert.equal(broadLedgerRole.status, 3, `table-wide migration-ledger SELECT must fail the least-privilege audit: ${broadLedgerRole.stderr}\n${broadLedgerRole.stdout}`);
+assert.match(broadLedgerRole.stdout, /extra_ledger_column_select_count=1/);
+const revokeBroadLedgerRead = psql(CASES.valid, 'postgres', `REVOKE SELECT ON public.schema_migrations FROM ${ROLE};`);
+assert.equal(revokeBroadLedgerRead.status, 0, revokeBroadLedgerRead.stderr);
+recordScenario('table-wide migration-ledger SELECT is rejected when only three checksum columns are required');
+
+const grantApplicationColumnRead = psql(CASES.valid, 'postgres', `GRANT SELECT (email) ON public.accounts TO ${ROLE};`);
+assert.equal(grantApplicationColumnRead.status, 0, grantApplicationColumnRead.stderr);
+const applicationColumnReadableRole = invokeRoleAudit(CASES.valid);
+assert.equal(applicationColumnReadableRole.status, 3,
+  `column-level application SELECT must fail the role audit: ${applicationColumnReadableRole.stderr}\n${applicationColumnReadableRole.stdout}`);
+assert.match(applicationColumnReadableRole.stdout, /application_relation_select_count=1/);
+const revokeApplicationColumnRead = psql(CASES.valid, 'postgres', `REVOKE SELECT (email) ON public.accounts FROM ${ROLE};`);
+assert.equal(revokeApplicationColumnRead.status, 0, revokeApplicationColumnRead.stderr);
+recordScenario('column-level application table SELECT is rejected before release preflight');
+
+const grantApplicationRead = psql(CASES.valid, 'postgres', `GRANT SELECT ON public.accounts TO ${ROLE};`);
+assert.equal(grantApplicationRead.status, 0, grantApplicationRead.stderr);
+const applicationReadableRole = invokeRoleAudit(CASES.valid);
+assert.equal(applicationReadableRole.status, 3, `application-table SELECT must fail the role audit: ${applicationReadableRole.stderr}\n${applicationReadableRole.stdout}`);
+assert.match(applicationReadableRole.stdout, /application_relation_select_count=1/);
+const revokeApplicationRead = psql(CASES.valid, 'postgres', `REVOKE SELECT ON public.accounts FROM ${ROLE};`);
+assert.equal(revokeApplicationRead.status, 0, revokeApplicationRead.stderr);
+recordScenario('role with application-table SELECT is rejected before release preflight');
+
+const createSecurityDefiner = psql(CASES.valid, 'postgres', `
+  CREATE FUNCTION public.fixture_security_definer_probe() RETURNS text
+  LANGUAGE sql SECURITY DEFINER AS $$ SELECT current_user::text $$;
+`);
+assert.equal(createSecurityDefiner.status, 0, createSecurityDefiner.stderr);
+const securityDefinerRole = invokeRoleAudit(CASES.valid);
+assert.equal(securityDefinerRole.status, 3,
+  `executable security-definer functions must fail the least-privilege audit: ${securityDefinerRole.stderr}\n${securityDefinerRole.stdout}`);
+assert.match(securityDefinerRole.stdout, /executable_security_definer_function_count=1/);
+const dropSecurityDefiner = psql(CASES.valid, 'postgres', 'DROP FUNCTION public.fixture_security_definer_probe();');
+assert.equal(dropSecurityDefiner.status, 0, dropSecurityDefiner.stderr);
+recordScenario('publicly executable security-definer function is rejected by the read-only role audit');
 
 const wrongTarget = invokePreflight(CASES.valid, { expected_database: 'unexpected_target' });
 assert.equal(wrongTarget.status, 3, `wrong target fingerprint must fail closed: ${wrongTarget.stderr}\n${wrongTarget.stdout}`);
 assert.match(wrongTarget.stdout, /STOP: target database identity or read-only transaction/);
-console.log('PASS: incorrect expected database identity fails closed');
+recordScenario('incorrect expected database identity fails closed');
 
 const grantWrite = psql(CASES.valid, 'postgres', `GRANT INSERT ON public.accounts TO ${ROLE};`);
 assert.equal(grantWrite.status, 0, grantWrite.stderr);
@@ -278,7 +399,7 @@ const revokeWrite = psql(CASES.valid, 'postgres', `REVOKE INSERT ON public.accou
 assert.equal(revokeWrite.status, 0, revokeWrite.stderr);
 assert.equal(writableRole.status, 3, `role with write privilege must fail closed: ${writableRole.stderr}\n${writableRole.stdout}`);
 assert.match(writableRole.stdout, /STOP: expected a dedicated non-admin read-only database role/);
-console.log('PASS: role with an INSERT privilege fails closed');
+recordScenario('role with an INSERT privilege fails closed');
 
 for (const [mode, phrase] of [
   ['missingTable', 'student_ai_insights'],
@@ -288,35 +409,35 @@ for (const [mode, phrase] of [
   assert.equal(result.status, 3, `${mode} must fail closed with psql exit 3: ${result.stderr}\n${result.stdout}`);
   assert.match(result.stdout, new RegExp(phrase.replace('.', '\\.')));
   assert.match(result.stdout, /STOP: one or more required tables or columns are missing/);
-  console.log(`PASS: ${mode} fails closed with a schema-only diagnostic`);
+  recordScenario(`${mode} fails closed with a schema-only diagnostic`);
 }
 
 const incompatible = invokePreflight(CASES.incompatibleType);
 assert.equal(incompatible.status, 3, `incompatible type must fail closed: ${incompatible.stderr}\n${incompatible.stdout}`);
 assert.match(incompatible.stdout, /accounts.*current_learning_cycle_version.*integer.*text/s);
 assert.match(incompatible.stdout, /STOP: one or more core column types do not match/);
-console.log('PASS: incompatible core type fails closed');
+recordScenario('incompatible core type fails closed');
 
 const missingReceiptConstraint = invokePreflight(CASES.missingReceiptConstraint);
 assert.equal(missingReceiptConstraint.status, 3,
   `receipt primary-key removal must fail closed: ${missingReceiptConstraint.stderr}\n${missingReceiptConstraint.stdout}`);
 assert.match(missingReceiptConstraint.stdout, /STOP: migration 026 receipt constraints are missing or incompatible/);
-console.log('PASS: missing receipt primary key fails closed');
+recordScenario('missing receipt primary key fails closed');
 
 const gameStudentIdWidth = invokePreflight(CASES.incompatibleGameStudentIdWidth);
 assert.equal(gameStudentIdWidth.status, 3, `incompatible game_student_id width must fail closed: ${gameStudentIdWidth.stderr}\n${gameStudentIdWidth.stdout}`);
 assert.match(gameStudentIdWidth.stdout, /STOP: accounts\.game_student_id must be VARCHAR\(8\)/);
-console.log('PASS: incompatible accounts.game_student_id width fails closed');
+recordScenario('incompatible accounts.game_student_id width fails closed');
 
 const malformed = invokePreflight(CASES.malformedLedger);
 assert.equal(malformed.status, 3, `malformed migration metadata must fail closed: ${malformed.stderr}\n${malformed.stdout}`);
 assert.match(malformed.stdout, /STOP: applied migration filename or checksum differs/);
-console.log('PASS: malformed migration checksum fails closed');
+recordScenario('malformed migration checksum fails closed');
 
 const missingLedger = invokePreflight(CASES.missingLedger);
 assert.equal(missingLedger.status, 3, `missing migration ledger must fail closed: ${missingLedger.stderr}\n${missingLedger.stdout}`);
 assert.match(missingLedger.stdout, /STOP: schema_migrations is absent/);
-console.log('PASS: missing migration ledger fails closed');
+recordScenario('missing migration ledger fails closed');
 
 const pendingStateQuery = `
   SELECT (SELECT count(*) FROM public.accounts)::text || '|' ||
@@ -340,6 +461,123 @@ assert.doesNotMatch(pending024Output, /permission denied/i, 'the restricted role
 const pendingStateAfter = psql(CASES.pending024, 'postgres', pendingStateQuery);
 assert.equal(pendingStateAfter.status, 0, pendingStateAfter.stderr);
 assert.equal(pendingStateAfter.stdout.trim(), pendingStateBefore.stdout.trim(), 'pending-024 preflight must not change synthetic application rows or the migration ledger');
-console.log('PASS: pending migration 024 stops from ledger metadata before application-row reads, reveals no row values, and applies no migration');
+recordScenario('pending migration 024 stops from ledger metadata before application-row reads and applies no migration');
 
-console.log('Preflight integration result: 10/10 disposable PostgreSQL scenarios passed.');
+const preMigration026 = invokePreMigration026(CASES.preMigration026);
+assert.equal(preMigration026.status, 0, `valid pre-026 schema must pass using the restricted role: ${preMigration026.stderr}\n${preMigration026.stdout}`);
+assert.match(preMigration026.stdout, /Pre-migration startup contract is 17 tables and 269 columns/);
+assert.match(preMigration026.stdout, /Migration 026 is the expected pending migration/);
+assert.match(preMigration026.stdout, /PASS: pre-026 metadata prerequisites verified/);
+assert.doesNotMatch(preMigration026.stderr, /permission denied for table/i);
+recordScenario('pre-migration 026 baseline passes with exactly 17 tables, 269 columns, and metadata-only access');
+
+const addPartialReceipt = psql(CASES.partialReceipt026, 'postgres',
+  'CREATE TABLE public.game_progress_save_commits_partial (id integer);');
+assert.equal(addPartialReceipt.status, 0, addPartialReceipt.stderr);
+const partialReceipt = invokePreMigration026(CASES.partialReceipt026);
+const partialReceiptOutput = `${partialReceipt.stdout}\n${partialReceipt.stderr}`;
+assert.equal(partialReceipt.status, 3, `partial receipt object must stop preflight: ${partialReceiptOutput}`);
+assert.match(partialReceiptOutput, /receipt objects are present or partial/i);
+assert.doesNotMatch(partialReceiptOutput, /permission denied for table/i);
+recordScenario('partial migration-026 receipt objects are rejected using catalog-only access');
+
+const migration026Applied = invokePreMigration026(CASES.migration026Applied);
+const migration026AppliedOutput = `${migration026Applied.stdout}\n${migration026Applied.stderr}`;
+assert.equal(migration026Applied.status, 3, `already-applied 026 must use the post-migration check: ${migration026AppliedOutput}`);
+assert.match(migration026AppliedOutput, /migration 026 is already recorded/i);
+recordScenario('pre-migration check refuses a database where migration 026 is already recorded');
+
+const pre024StateBefore = psql(CASES.preMigration024Pending, 'postgres', pendingStateQuery);
+assert.equal(pre024StateBefore.status, 0, pre024StateBefore.stderr);
+const preMigration024Pending = invokePreMigration026(CASES.preMigration024Pending);
+const preMigration024Output = `${preMigration024Pending.stdout}\n${preMigration024Pending.stderr}`;
+assert.equal(preMigration024Pending.status, 3, `pending migration 024 must stop the pre-026 check: ${preMigration024Output}`);
+assert.match(preMigration024Output, /STOP: destructive migration 024 is pending/i);
+assert.match(preMigration024Output, /separate impact review and approval are required/i);
+assert.doesNotMatch(preMigration024Output, /permission denied for table/i);
+assert.doesNotMatch(preMigration024Output, /synthetic-only-name|123456/);
+const pre024StateAfter = psql(CASES.preMigration024Pending, 'postgres', pendingStateQuery);
+assert.equal(pre024StateAfter.status, 0, pre024StateAfter.stderr);
+assert.equal(pre024StateAfter.stdout.trim(), pre024StateBefore.stdout.trim(), 'pre-026 024 stop must not change synthetic rows or the ledger');
+recordScenario('pre-migration check stops on 024 before application-row reads or any migration');
+
+assert.equal(passedScenarioCount, 20, 'all expected disposable PostgreSQL preflight scenarios must execute');
+
+const createSyntheticBackupProbe = psql(CASES.valid, 'postgres', `
+  CREATE TABLE public.release_backup_synthetic_probe (marker text PRIMARY KEY);
+  INSERT INTO public.release_backup_synthetic_probe(marker) VALUES ('synthetic-only-backup-probe');
+`);
+assert.equal(createSyntheticBackupProbe.status, 0, createSyntheticBackupProbe.stderr);
+const createBackupRole = psql('postgres', 'postgres', `
+  CREATE ROLE tq_prod_backup_reader LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  GRANT CONNECT ON DATABASE ${CASES.valid} TO tq_prod_backup_reader;
+  GRANT USAGE ON SCHEMA public TO tq_prod_backup_reader;
+  GRANT SELECT ON ALL TABLES IN SCHEMA public TO tq_prod_backup_reader;
+  GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO tq_prod_backup_reader;
+`);
+assert.equal(createBackupRole.status, 0, createBackupRole.stderr);
+const backupRoleAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(backupRoleAudit.status, 0,
+  `dedicated disposable backup role must pass its read-only catalog audit: ${backupRoleAudit.stderr}\n${backupRoleAudit.stdout}`);
+assert.match(backupRoleAudit.stdout, /unreadable_relation_count=0/);
+assert.match(backupRoleAudit.stdout, /unreadable_sequence_count=0/);
+assert.match(backupRoleAudit.stdout, /relation_write_privilege_count=0/);
+recordScenario('synthetic backup role has read-only access to every fixture relation and sequence');
+
+const dump = dockerBinary([
+  'exec', CONTAINER, 'pg_dump', '--host=127.0.0.1', '--port=5432',
+  '--username=tq_prod_backup_reader', `--dbname=${CASES.valid}`,
+  '--no-password', '--format=custom', '--compress=6', '--no-owner', '--no-privileges',
+  '--lock-wait-timeout=5s',
+]);
+assert.equal(dump.status, 0, `synthetic pg_dump must succeed without external networking: ${String(dump.stderr || '')}`);
+assert.ok(Buffer.isBuffer(dump.stdout) && dump.stdout.length > 0, 'custom-format synthetic archive must be nonempty');
+const archiveSha256 = crypto.createHash('sha256').update(dump.stdout).digest('hex');
+assert.match(archiveSha256, /^[a-f0-9]{64}$/);
+
+const restoreDatabase = 'tq_restore_backup_test_ci';
+const createRestoreRole = psql('postgres', 'postgres',
+  'CREATE ROLE tq_restore_operator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;');
+assert.equal(createRestoreRole.status, 0, createRestoreRole.stderr);
+const createRestoreDatabase = docker([
+  'exec', CONTAINER, 'createdb', '--host=127.0.0.1', '--port=5432', '--username=postgres',
+  '--owner=tq_restore_operator', restoreDatabase,
+]);
+assert.equal(createRestoreDatabase.status, 0, createRestoreDatabase.stderr);
+const stampRestoreDatabase = psql('postgres', 'postgres',
+  `COMMENT ON DATABASE ${restoreDatabase} IS '${SENTINEL_PREFIX}${process.env.TQ_DISPOSABLE_DB_SENTINEL}';`);
+assert.equal(stampRestoreDatabase.status, 0, stampRestoreDatabase.stderr);
+const restoreTarget = psql(restoreDatabase, 'tq_restore_operator', `
+  SELECT current_database() = '${restoreDatabase}'
+     AND current_user = 'tq_restore_operator'
+     AND host(inet_server_addr()) = '127.0.0.1'
+     AND inet_server_port() = 5432
+     AND NOT COALESCE((SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolinherit
+                       FROM pg_catalog.pg_roles WHERE rolname=current_user), true)
+     AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+                     WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f','S'));
+`);
+assert.equal(restoreTarget.status, 0, restoreTarget.stderr);
+assert.equal(restoreTarget.stdout.trim(), 't', 'restore target must be an empty loopback DB owned by a non-admin NOINHERIT role');
+const restore = dockerBinary([
+  'exec', '-i', CONTAINER, 'pg_restore', '--host=127.0.0.1', '--port=5432',
+  '--username=tq_restore_operator', `--dbname=${restoreDatabase}`,
+  '--no-password', '--format=custom', '--exit-on-error', '--single-transaction',
+  '--no-owner', '--no-privileges',
+], dump.stdout);
+assert.equal(restore.status, 0, `synthetic pg_restore to empty loopback target must succeed: ${String(restore.stderr || '')}`);
+const restoredProbe = psql(restoreDatabase, 'tq_restore_operator', `
+  BEGIN READ ONLY;
+  SELECT current_database() = '${restoreDatabase}'
+     AND current_user = 'tq_restore_operator'
+     AND (SELECT COUNT(*) FROM public.release_backup_synthetic_probe WHERE marker='synthetic-only-backup-probe') = 1
+     AND (SELECT COUNT(*) FROM public.schema_migrations WHERE version BETWEEN 18 AND 26) = 9
+     AND to_regclass('public.game_progress_save_commits') IS NOT NULL;
+  ROLLBACK;
+`);
+assert.equal(restoredProbe.status, 0, restoredProbe.stderr);
+assert.equal(restoredProbe.stdout.trim(), 't', 'restored synthetic data and migration metadata must be present');
+recordScenario('custom archive restores transactionally into an empty isolated loopback database and retains synthetic data');
+
+assert.equal(passedScenarioCount, 22, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
+console.log(`Preflight integration result: ${passedScenarioCount}/${passedScenarioCount} disposable PostgreSQL scenarios passed.`);
