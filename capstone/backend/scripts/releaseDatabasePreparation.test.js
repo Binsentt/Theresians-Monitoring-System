@@ -103,6 +103,18 @@ test('post-migration preflight uses canonical migration hashes and only least-pr
   assert.doesNotMatch(sql, /\bm\.applied_at\b/i, 'the restricted reader must not require an unapproved ledger column');
 });
 
+test('preflight role audit reports inherited TEMP access and the disposable fixture removes it before passing', () => {
+  const roleAudit = read('release-preflight-role-audit.sql');
+  assert.match(roleAudit, /database_temp_privilege_absent/);
+  assert.match(roleAudit, /^\\echo Preflight role audit: .*database_temp_privilege_absent=:database_temp_privilege_absent.*role_audit_ok=:role_audit_ok/m);
+  assert.doesNotMatch(roleAudit, /^\\echo 'Preflight role audit/m);
+
+  const harness = read('run-preflight-postgres-harness.cjs');
+  assert.match(harness, /GRANT TEMPORARY ON DATABASE .* TO PUBLIC/);
+  assert.match(harness, /REVOKE TEMPORARY ON DATABASE .* FROM PUBLIC/);
+  assert.match(harness, /database_temp_privilege_absent=f/);
+});
+
 test('isolated backend workflow provisions and sentinel-marks every new synthetic preflight database', () => {
   const workflow = fs.readFileSync(path.join(scripts, '../../../.github/workflows/backend-network-isolated.yml'), 'utf8');
   assert.match(workflow, /codex\/database-release-preparation-20261108/);

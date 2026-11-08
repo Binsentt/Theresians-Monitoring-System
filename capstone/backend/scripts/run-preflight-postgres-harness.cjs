@@ -338,8 +338,20 @@ assert.equal(valid.status, 0, `valid disposable schema must pass: ${valid.stderr
 assert.match(valid.stdout, /Startup schema contract is complete: 18 tables and 278 required columns are present/);
 recordScenario('compatible 18-table/278-column post-migration schema and ledger');
 
+const grantPublicTemporary = psql(CASES.valid, 'postgres',
+  `GRANT TEMPORARY ON DATABASE ${CASES.valid} TO PUBLIC;`);
+assert.equal(grantPublicTemporary.status, 0, grantPublicTemporary.stderr);
+const publicTempRoleAudit = invokeRoleAudit(CASES.valid);
+assert.equal(publicTempRoleAudit.status, 3,
+  `inherited PUBLIC temporary access must fail the catalog audit: ${publicTempRoleAudit.stderr}\n${publicTempRoleAudit.stdout}`);
+assert.match(publicTempRoleAudit.stdout, /database_temp_privilege_absent=f/);
+const revokePublicTemporary = psql(CASES.valid, 'postgres',
+  `REVOKE TEMPORARY ON DATABASE ${CASES.valid} FROM PUBLIC;`);
+assert.equal(revokePublicTemporary.status, 0, revokePublicTemporary.stderr);
+
 const validRoleAudit = invokeRoleAudit(CASES.valid);
 assert.equal(validRoleAudit.status, 0, `preflight-only role must pass the catalog audit: ${validRoleAudit.stderr}\n${validRoleAudit.stdout}`);
+assert.match(validRoleAudit.stdout, /database_temp_privilege_absent=t/);
 assert.match(validRoleAudit.stdout, /application_relation_select_count=0/);
 assert.match(validRoleAudit.stdout, /extra_ledger_column_select_count=0/);
 assert.match(validRoleAudit.stdout, /executable_security_definer_function_count=0/);

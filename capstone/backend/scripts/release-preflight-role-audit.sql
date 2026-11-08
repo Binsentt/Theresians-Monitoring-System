@@ -136,6 +136,8 @@ SELECT
     AND COALESCE(has_column_privilege(current_user, to_regclass('public.schema_migrations'), 'filename', 'SELECT'), false)
     AND COALESCE(has_column_privilege(current_user, to_regclass('public.schema_migrations'), 'checksum', 'SELECT'), false)
     AS required_access_ok,
+  NOT COALESCE(has_database_privilege(current_user, current_database(), 'TEMP'), true)
+    AS database_temp_privilege_absent,
   (SELECT application_relation_select_count FROM relation_privileges)
     AS application_relation_select_count,
   (SELECT table_write_privilege_count FROM relation_privileges)
@@ -188,7 +190,7 @@ SELECT
   ) AS role_audit_ok
 \gset
 
-\echo 'Preflight role audit counts: application_relation_select_count=:application_relation_select_count extra_ledger_column_select_count=:extra_ledger_column_select_count executable_security_definer_function_count=:executable_security_definer_function_count table_write_privilege_count=:table_write_privilege_count sequence_privilege_count=:sequence_privilege_count schema_create_privilege_count=:schema_create_privilege_count role_membership_count=:role_membership_count'
+\echo Preflight role audit: target_identity_ok=:target_identity_ok read_only_limits_ok=:read_only_limits_ok dedicated_non_admin_role_ok=:dedicated_non_admin_role_ok required_access_ok=:required_access_ok database_temp_privilege_absent=:database_temp_privilege_absent role_audit_ok=:role_audit_ok application_relation_select_count=:application_relation_select_count extra_ledger_column_select_count=:extra_ledger_column_select_count executable_security_definer_function_count=:executable_security_definer_function_count table_write_privilege_count=:table_write_privilege_count sequence_privilege_count=:sequence_privilege_count schema_create_privilege_count=:schema_create_privilege_count role_membership_count=:role_membership_count
 \if :role_audit_ok
   \echo 'PASS: target identity, read-only limits, and preflight-only privileges verified.'
   ROLLBACK;
