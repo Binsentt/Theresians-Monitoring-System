@@ -130,7 +130,12 @@ test('preflight role audit reports inherited TEMP access and the disposable fixt
 });
 
 test('isolated backend workflow provisions and sentinel-marks every new synthetic preflight database', () => {
-  const workflow = fs.readFileSync(path.join(scripts, '../../../.github/workflows/backend-network-isolated.yml'), 'utf8');
+  const workflowPath = [
+    path.resolve(scripts, '../../../.github/workflows/backend-network-isolated.yml'),
+    path.resolve(scripts, '../../.github/workflows/backend-network-isolated.yml'),
+  ].find(fs.existsSync);
+  assert.ok(workflowPath, 'backend workflow must exist in the repository-root or capstone-root layout');
+  const workflow = fs.readFileSync(workflowPath, 'utf8');
   assert.match(workflow, /codex\/database-release-preparation-20261108/);
   assert.match(workflow, /github\.ref == 'refs\/heads\/codex\/database-release-preparation-20261108'/);
   for (const database of [
