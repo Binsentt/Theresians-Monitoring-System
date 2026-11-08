@@ -78,6 +78,20 @@ test('pre-migration 026 SQL matches current source metadata and stays metadata-o
     .sort();
   assert.equal(expectedColumns.length, 269);
   assert.deepEqual(requiredColumns, expectedColumns);
+
+  const expectedTables = [...new Set(expectedColumns.map((entry) => entry.split('.')[0]))].sort();
+  const tableManifests = [...sql.matchAll(/WITH required_tables\(table_name\) AS \(\s*VALUES([\s\S]*?)\)\s*SELECT/g)];
+  assert.equal(tableManifests.length, 2, 'constraint and index inventories must each declare a statement-scoped table manifest');
+  const tableNamesFrom = (inventory) => [...inventory[1].matchAll(/\('([^']+)'\)/g)]
+    .map(([, table]) => table)
+    .sort();
+  for (const manifest of tableManifests) {
+    assert.deepEqual(tableNamesFrom(manifest), expectedTables);
+  }
+  assert.match(sql, /SELECT relation\.relname,[\s\S]*?relation\.relname IN \(SELECT table_name FROM required_tables\)/);
+  assert.match(sql, /SELECT schemaname,tablename,indexname,indexdef[\s\S]*?tablename IN \(SELECT table_name FROM required_tables\)/);
+  assert.doesNotMatch(sql, /IN \(SELECT DISTINCT table_name FROM required_columns\)/i,
+    'the 269-column CTE must not be referenced outside its statement');
 });
 
 test('post-migration preflight uses canonical migration hashes and only least-privilege ledger columns', () => {
