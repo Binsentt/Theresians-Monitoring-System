@@ -424,7 +424,11 @@ jobs:
             tq_preflight_game_student_id_width_test_ci \
             tq_preflight_malformed_ledger_test_ci \
             tq_preflight_pending_024_test_ci \
-            tq_preflight_missing_receipt_constraint_test_ci; do
+            tq_preflight_missing_receipt_constraint_test_ci \
+            tq_preflight_pre_026_test_ci \
+            tq_preflight_partial_receipt_026_test_ci \
+            tq_preflight_026_applied_test_ci \
+            tq_preflight_pre_024_test_ci; do
             docker exec tq-backend-test-postgres createdb --host=127.0.0.1 --username=postgres "$database"
           done
           disposable_sentinel="$(openssl rand -hex 24)"
@@ -451,7 +455,11 @@ jobs:
             tq_preflight_game_student_id_width_test_ci \
             tq_preflight_malformed_ledger_test_ci \
             tq_preflight_pending_024_test_ci \
-            tq_preflight_missing_receipt_constraint_test_ci; do
+            tq_preflight_missing_receipt_constraint_test_ci \
+            tq_preflight_pre_026_test_ci \
+            tq_preflight_partial_receipt_026_test_ci \
+            tq_preflight_026_applied_test_ci \
+            tq_preflight_pre_024_test_ci; do
             if [[ ! "$database" =~ ^tq_[a-z0-9_]+_test_ci$ ]]; then
               echo "Refusing to mark an unrecognized PostgreSQL test database: $database" >&2
               exit 1
