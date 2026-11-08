@@ -191,15 +191,15 @@ FROM ledger_columns
 -- A missing ledger row is reported as PENDING, never inferred as already applied.
 WITH expected(version, filename, source_sha256) AS (
   VALUES
-    (18, '018_website_sessions_and_audit_metadata.sql', '14286fcc83e3137c3885c65c5003641c797c79d74b025cee37da740e2f72096d'),
-    (19, '019_playtime_history_removal.sql', '41945e69be335a60c78c3b1ea50bcd5e589ded0a7f5493706ae33331358ef9a8'),
-    (20, '020_add_auth_otp_challenge_security.sql', 'f732c73b072ec4cb54e3fa0d616fa32a669164d971b23f38b4b003f2b5c63fb8'),
-    (21, '021_canonical_milestones_and_activity_contract.sql', '6e34dcc1b256fdd5ba00bdd443409c9151c37b6a0d09870e0dc48986785082a9'),
-    (22, '022_game_telemetry_contract.sql', '04581b2704b1042992dda6f2d2918fd3d540190a584481300e3e33953a7153d0'),
-    (23, '023_quest_evidence_and_playtime_tombstones.sql', '99c13e6aa1535748b1a9c6dd1602073e2d7ac61103a7a0bf25cd8434ae2dfc70'),
-    (24, '024_remove_legacy_six_digit_students.sql', 'a909547e51912782f912c95dcc61701dbf796192dd8fff6dd3dd3175faaf9563'),
-    (25, '025_add_game_result_question_traceability.sql', '9b4f86791793c7bfacb02fdcef69d6723742d7bb196aab1cd9eb4d15d80ec410'),
-    (26, '026_game_progress_save_commit_idempotency.sql', 'ff1a3141d87d4783cdd3be3690c8cc0b524f06e896ec489b8f54a9dad07d73af')
+    (18, '018_website_sessions_and_audit_metadata.sql', 'f64e6e0de7abdf873fdb1bc93739d2704e4b16ed5bc428c991c7507407ea5668'),
+    (19, '019_playtime_history_removal.sql', 'b76fa5f58daae29dbcf2120b4c9ff533eda3c41dc3f21efdab93b207fb8b2f4f'),
+    (20, '020_add_auth_otp_challenge_security.sql', '6e2cf94b9a8acdcee728e8a0283a95580fc7e63f6622dcb5890415f4b9e715af'),
+    (21, '021_canonical_milestones_and_activity_contract.sql', '3b5ff42ba45a158df434b92b95e935c608fc0a236516d8135d6d0329963beac6'),
+    (22, '022_game_telemetry_contract.sql', '5a45ef2133bc0d69fe117f7164eeb9af65eb16bcf6f4a1215804bd14919e3c76'),
+    (23, '023_quest_evidence_and_playtime_tombstones.sql', '2df0959d48efd554a8e7403ebbf331bfdfb6971b2d66e43a6ae267c02642f12d'),
+    (24, '024_remove_legacy_six_digit_students.sql', '2595a35fe97699376b611f21cc19aa4b7e26d495463fe7585bf7e1c96370e111'),
+    (25, '025_add_game_result_question_traceability.sql', '2a1b904056274c73903cfb713703c6db8e6c2ea37f9c8fd1863f9a3004e42e68'),
+    (26, '026_game_progress_save_commit_idempotency.sql', '334f7b73ddc1c8d6ddcdafd547181f75fbeac85df713d4ba73995fb9c4d23b12')
 )
 SELECT e.version,
        e.filename AS expected_filename,
@@ -218,15 +218,15 @@ ORDER BY e.version;
 
 WITH expected(version, filename, source_sha256) AS (
   VALUES
-    (18, '018_website_sessions_and_audit_metadata.sql', '14286fcc83e3137c3885c65c5003641c797c79d74b025cee37da740e2f72096d'),
-    (19, '019_playtime_history_removal.sql', '41945e69be335a60c78c3b1ea50bcd5e589ded0a7f5493706ae33331358ef9a8'),
-    (20, '020_add_auth_otp_challenge_security.sql', 'f732c73b072ec4cb54e3fa0d616fa32a669164d971b23f38b4b003f2b5c63fb8'),
-    (21, '021_canonical_milestones_and_activity_contract.sql', '6e34dcc1b256fdd5ba00bdd443409c9151c37b6a0d09870e0dc48986785082a9'),
-    (22, '022_game_telemetry_contract.sql', '04581b2704b1042992dda6f2d2918fd3d540190a584481300e3e33953a7153d0'),
-    (23, '023_quest_evidence_and_playtime_tombstones.sql', '99c13e6aa1535748b1a9c6dd1602073e2d7ac61103a7a0bf25cd8434ae2dfc70'),
-    (24, '024_remove_legacy_six_digit_students.sql', 'a909547e51912782f912c95dcc61701dbf796192dd8fff6dd3dd3175faaf9563'),
-    (25, '025_add_game_result_question_traceability.sql', '9b4f86791793c7bfacb02fdcef69d6723742d7bb196aab1cd9eb4d15d80ec410'),
-    (26, '026_game_progress_save_commit_idempotency.sql', 'ff1a3141d87d4783cdd3be3690c8cc0b524f06e896ec489b8f54a9dad07d73af')
+    (18, '018_website_sessions_and_audit_metadata.sql', 'f64e6e0de7abdf873fdb1bc93739d2704e4b16ed5bc428c991c7507407ea5668'),
+    (19, '019_playtime_history_removal.sql', 'b76fa5f58daae29dbcf2120b4c9ff533eda3c41dc3f21efdab93b207fb8b2f4f'),
+    (20, '020_add_auth_otp_challenge_security.sql', '6e2cf94b9a8acdcee728e8a0283a95580fc7e63f6622dcb5890415f4b9e715af'),
+    (21, '021_canonical_milestones_and_activity_contract.sql', '3b5ff42ba45a158df434b92b95e935c608fc0a236516d8135d6d0329963beac6'),
+    (22, '022_game_telemetry_contract.sql', '5a45ef2133bc0d69fe117f7164eeb9af65eb16bcf6f4a1215804bd14919e3c76'),
+    (23, '023_quest_evidence_and_playtime_tombstones.sql', '2df0959d48efd554a8e7403ebbf331bfdfb6971b2d66e43a6ae267c02642f12d'),
+    (24, '024_remove_legacy_six_digit_students.sql', '2595a35fe97699376b611f21cc19aa4b7e26d495463fe7585bf7e1c96370e111'),
+    (25, '025_add_game_result_question_traceability.sql', '2a1b904056274c73903cfb713703c6db8e6c2ea37f9c8fd1863f9a3004e42e68'),
+    (26, '026_game_progress_save_commit_idempotency.sql', '334f7b73ddc1c8d6ddcdafd547181f75fbeac85df713d4ba73995fb9c4d23b12')
 )
 SELECT EXISTS (
   SELECT 1

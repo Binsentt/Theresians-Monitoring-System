@@ -63,7 +63,7 @@ test('pre-migration 026 SQL matches current source metadata and stays metadata-o
   const expectedMigrations = RELEASE_MIGRATIONS.map((migration) => ({
     version: migration.version,
     file: migration.file,
-    checksum: migrationChecksum(fs.readFileSync(path.join(scripts, '../migrations', migration.file), 'utf8')),
+    checksum: migrationChecksum(fs.readFileSync(path.join(scripts, '../migrations', migration.file), 'utf8').replace(/\r\n/g, '\n')),
   }));
   assert.deepEqual(migrationRows, expectedMigrations);
 
@@ -93,7 +93,7 @@ test('post-migration preflight uses canonical migration hashes and only least-pr
     .map((migration) => ({
       version: migration.version,
       file: migration.file,
-      checksum: migrationChecksum(fs.readFileSync(path.join(scripts, '../migrations', migration.file), 'utf8')),
+      checksum: migrationChecksum(fs.readFileSync(path.join(scripts, '../migrations', migration.file), 'utf8').replace(/\r\n/g, '\n')),
     }));
 
   assert.equal(migrationRows.length, expectedMigrations.length * 2, 'both post-migration ledger checks must list versions 018 through 026');
