@@ -133,7 +133,7 @@ SELECT
   ) AS backup_role_ok
 \gset
 
-\echo 'Backup-role catalog counts: unreadable_relation_count=:unreadable_relation_count unreadable_sequence_count=:unreadable_sequence_count relation_write_privilege_count=:relation_write_privilege_count sequence_write_privilege_count=:sequence_write_privilege_count schema_create_privilege_count=:schema_create_privilege_count unusable_schema_count=:unusable_schema_count row_security_relation_count=:row_security_relation_count foreign_table_count=:foreign_table_count'
+\echo Backup-role catalog counts: target_identity_ok=:target_identity_ok dedicated_non_admin_role_ok=:dedicated_non_admin_role_ok database_privileges_ok=:database_privileges_ok unreadable_relation_count=:unreadable_relation_count unreadable_sequence_count=:unreadable_sequence_count relation_write_privilege_count=:relation_write_privilege_count sequence_write_privilege_count=:sequence_write_privilege_count schema_create_privilege_count=:schema_create_privilege_count unusable_schema_count=:unusable_schema_count row_security_relation_count=:row_security_relation_count foreign_table_count=:foreign_table_count backup_role_ok=:backup_role_ok
 \if :backup_role_ok
   \echo 'PASS: approved full-backup role and catalog scope verified.'
   ROLLBACK;

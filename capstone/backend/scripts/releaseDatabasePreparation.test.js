@@ -160,6 +160,7 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
 test('backup utility has separate explicit backup and isolated-restore gates', () => {
   const script = read('backup-restore-rehearsal.ps1');
   const sql = read('backup-role-preflight.sql');
+  const harness = read('run-preflight-postgres-harness.cjs');
   assert.match(script, /ExecuteApprovedProductionBackup/);
   assert.match(script, /ExecuteIsolatedRestore/);
   assert.match(script, /ExpectedSourceCommit/);
@@ -178,6 +179,34 @@ test('backup utility has separate explicit backup and isolated-restore gates', (
   assert.match(sql, /row_security_relation_count/);
   assert.match(sql, /relation_write_privilege_count/);
   assert.match(sql, /rolinherit/);
+  const backupRoleSetupStart = harness.indexOf('const createBackupRole =');
+  const backupRoleSetupEnd = harness.indexOf('const backupRoleAudit =', backupRoleSetupStart);
+  assert.ok(backupRoleSetupStart >= 0 && backupRoleSetupEnd > backupRoleSetupStart,
+    'synthetic backup role setup must be present before its audit');
+  const backupRoleSetup = harness.slice(backupRoleSetupStart, backupRoleSetupEnd);
+  assert.match(backupRoleSetup, /const createBackupRole = psql\('postgres', 'postgres',/);
+  assert.match(backupRoleSetup, /const grantBackupRoleRead = psql\(CASES\.valid, 'postgres',/,
+    'backup table/schema grants must be applied inside the synthetic target database');
+  assert.match(backupRoleSetup, /GRANT SELECT ON ALL TABLES IN SCHEMA public TO tq_prod_backup_reader/);
+  const backupAuditSummary = sql.split(/\r?\n/).find((line) =>
+    line.startsWith('\\echo Backup-role catalog counts:'));
+  assert.ok(backupAuditSummary, 'backup-role audit must print expanded aggregate diagnostics on failure');
+  for (const field of [
+    'target_identity_ok',
+    'dedicated_non_admin_role_ok',
+    'database_privileges_ok',
+    'unreadable_relation_count',
+    'unreadable_sequence_count',
+    'relation_write_privilege_count',
+    'sequence_write_privilege_count',
+    'schema_create_privilege_count',
+    'unusable_schema_count',
+    'row_security_relation_count',
+    'foreign_table_count',
+    'backup_role_ok',
+  ]) {
+    assert.ok(backupAuditSummary.includes(`:${field}`), `backup-role audit must report ${field}`);
+  }
   assert.doesNotMatch(sql, /^\s*(?:INSERT\s+INTO|UPDATE\s+\S|DELETE\s+FROM|TRUNCATE\b|CREATE\b|ALTER\b|DROP\b)/im);
   assert.doesNotMatch(sql, /SELECT\s+.+\s+FROM\s+public\.(?:accounts|game_results|playtime_sessions)\b/is);
 });
