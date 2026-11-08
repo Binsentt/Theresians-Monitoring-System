@@ -80,8 +80,33 @@ test('pre-migration 026 SQL matches current source metadata and stays metadata-o
   assert.deepEqual(requiredColumns, expectedColumns);
 });
 
+test('post-migration preflight uses canonical migration hashes and only least-privilege ledger columns', () => {
+  const sql = read('release-migration-preflight.sql');
+  const migrationRows = [...sql.matchAll(/\((1[8-9]|2[0-6]), '([^']+)', '([a-f0-9]{64})'\)/g)]
+    .map(([, version, filename, checksum]) => ({
+      version: Number(version),
+      file: filename,
+      checksum,
+    }));
+  const expectedMigrations = RELEASE_MIGRATIONS
+    .filter(({ version }) => version >= 18 && version <= 26)
+    .map((migration) => ({
+      version: migration.version,
+      file: migration.file,
+      checksum: migrationChecksum(fs.readFileSync(path.join(scripts, '../migrations', migration.file), 'utf8')),
+    }));
+
+  assert.equal(migrationRows.length, expectedMigrations.length * 2, 'both post-migration ledger checks must list versions 018 through 026');
+  for (let offset = 0; offset < migrationRows.length; offset += expectedMigrations.length) {
+    assert.deepEqual(migrationRows.slice(offset, offset + expectedMigrations.length), expectedMigrations);
+  }
+  assert.doesNotMatch(sql, /\bm\.applied_at\b/i, 'the restricted reader must not require an unapproved ledger column');
+});
+
 test('isolated backend workflow provisions and sentinel-marks every new synthetic preflight database', () => {
   const workflow = fs.readFileSync(path.join(scripts, '../../../.github/workflows/backend-network-isolated.yml'), 'utf8');
+  assert.match(workflow, /codex\/database-release-preparation-20261108/);
+  assert.match(workflow, /github\.ref == 'refs\/heads\/codex\/database-release-preparation-20261108'/);
   for (const database of [
     'tq_preflight_pre_026_test_ci',
     'tq_preflight_partial_receipt_026_test_ci',
