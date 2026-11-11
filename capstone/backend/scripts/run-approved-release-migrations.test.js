@@ -397,6 +397,15 @@ test('disposable PostgreSQL harness scenario counters match the executed scenari
   assert.match(harness, new RegExp(`assert\\.equal\\(passedScenarioCount, ${totalScenarioCount},`));
 });
 
+test('synthetic backup-role table and sequence grants target the database being audited', () => {
+  const harness = fs.readFileSync(path.join(__dirname, 'run-preflight-postgres-harness.cjs'), 'utf8');
+  const grantBlock = harness.match(/const grantBackupRole\s*=\s*psql\(CASES\.valid,\s*'postgres',\s*`([\s\S]*?)`\);/);
+  assert.ok(grantBlock, 'database-local backup role grants must connect to CASES.valid');
+  assert.match(grantBlock[1], /GRANT USAGE ON SCHEMA public TO tq_prod_backup_reader/i);
+  assert.match(grantBlock[1], /GRANT SELECT ON ALL TABLES IN SCHEMA public TO tq_prod_backup_reader/i);
+  assert.match(grantBlock[1], /GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO tq_prod_backup_reader/i);
+});
+
 test('migration preflight manifests use canonical LF source checksums across checkout platforms', () => {
   const manifestPaths = [
     path.join(__dirname, 'release-migration-preflight.sql'),

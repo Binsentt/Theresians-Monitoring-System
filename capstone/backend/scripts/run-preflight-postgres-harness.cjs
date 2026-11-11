@@ -523,11 +523,14 @@ assert.equal(createSyntheticBackupProbe.status, 0, createSyntheticBackupProbe.st
 const createBackupRole = psql('postgres', 'postgres', `
   CREATE ROLE tq_prod_backup_reader LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   GRANT CONNECT ON DATABASE ${CASES.valid} TO tq_prod_backup_reader;
+`);
+assert.equal(createBackupRole.status, 0, createBackupRole.stderr);
+const grantBackupRole = psql(CASES.valid, 'postgres', `
   GRANT USAGE ON SCHEMA public TO tq_prod_backup_reader;
   GRANT SELECT ON ALL TABLES IN SCHEMA public TO tq_prod_backup_reader;
   GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO tq_prod_backup_reader;
 `);
-assert.equal(createBackupRole.status, 0, createBackupRole.stderr);
+assert.equal(grantBackupRole.status, 0, grantBackupRole.stderr);
 const backupRoleAudit = invokeBackupRoleAudit(CASES.valid);
 assert.equal(backupRoleAudit.status, 0,
   `dedicated disposable backup role must pass its read-only catalog audit: ${backupRoleAudit.stderr}\n${backupRoleAudit.stdout}`);
