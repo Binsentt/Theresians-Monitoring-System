@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - codex/student-progress-child-progress-ai-refresh-20261031
+      - codex/swr-release-validation-20261111
       - main
     paths:
       - '.github/workflows/backend-network-isolated.yml'
@@ -29,7 +30,7 @@ concurrency:
 
 jobs:
   backend:
-    if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/codex/student-progress-child-progress-ai-refresh-20261031' || github.ref == 'refs/heads/codex/read-only-startup-schema-safety-20261105' || github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/codex/student-progress-child-progress-ai-refresh-20261031' || github.ref == 'refs/heads/codex/swr-release-validation-20261111' || github.ref == 'refs/heads/codex/read-only-startup-schema-safety-20261105' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -66,10 +67,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/tq-backend-dependencies" "$RUNNER_TEMP/tq-backend-npm-cache" "$RUNNER_TEMP/tq-backend-test-uploads/.test-tmp" "$RUNNER_TEMP/tq-backend-logs" "$RUNNER_TEMP/tq-backend-logs/backend-file-tests"
+          mkdir -p "$RUNNER_TEMP/tq-backend-dependencies" "$RUNNER_TEMP/tq-backend-npm-cache" "$RUNNER_TEMP/tq-frontend-dependencies" "$RUNNER_TEMP/tq-frontend-npm-cache" "$RUNNER_TEMP/tq-backend-test-uploads/.test-tmp" "$RUNNER_TEMP/tq-backend-logs" "$RUNNER_TEMP/tq-backend-logs/backend-file-tests"
           cp capstone/backend/package.json capstone/backend/package-lock.json "$RUNNER_TEMP/tq-backend-dependencies/"
+          cp capstone/package.json capstone/package-lock.json "$RUNNER_TEMP/tq-frontend-dependencies/"
           chmod -R u+rwX "$RUNNER_TEMP/tq-backend-test-uploads"
-          chmod 0755 "$RUNNER_TEMP/tq-backend-dependencies" "$RUNNER_TEMP/tq-backend-npm-cache" "$RUNNER_TEMP/tq-backend-test-uploads" "$RUNNER_TEMP/tq-backend-logs" "$RUNNER_TEMP/tq-backend-logs/backend-file-tests"
+          chmod 0755 "$RUNNER_TEMP/tq-backend-dependencies" "$RUNNER_TEMP/tq-backend-npm-cache" "$RUNNER_TEMP/tq-frontend-dependencies" "$RUNNER_TEMP/tq-frontend-npm-cache" "$RUNNER_TEMP/tq-backend-test-uploads" "$RUNNER_TEMP/tq-backend-logs" "$RUNNER_TEMP/tq-backend-logs/backend-file-tests"
           git ls-files -- capstone/backend | grep -E '(^|/)([^/]+\.(test|spec)\.(js|mjs|cjs)|test-[^/]+\.(js|mjs|cjs)|tests?/.+\.(js|mjs|cjs)|__tests__/.+\.(js|mjs|cjs))$' | sed 's#^capstone/backend/##' | sort -u > "$RUNNER_TEMP/tq-backend-logs/backend-test-files.txt"
           test_file_count="$(wc -l < "$RUNNER_TEMP/tq-backend-logs/backend-test-files.txt")"
           test "$test_file_count" -gt 0
@@ -337,6 +339,33 @@ jobs:
             exit "$install_status"
           fi
           test -d "$RUNNER_TEMP/tq-backend-dependencies/node_modules"
+
+      - name: Install frontend render-test dependencies from the committed lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          docker run --rm \
+            --network bridge \
+            --user "$(id -u):$(id -g)" \
+            --read-only \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777 \
+            --volume "$RUNNER_TEMP/tq-frontend-dependencies:/workspace" \
+            --volume "$RUNNER_TEMP/tq-frontend-npm-cache:/npm-cache" \
+            --env HOME=/tmp/home \
+            --env npm_config_cache=/npm-cache \
+            --workdir /workspace \
+            node:20-bookworm npm ci --no-audit --no-fund \
+            > "$RUNNER_TEMP/tq-backend-logs/frontend-npm-ci.log" 2>&1
+          install_status=$?
+          set -e
+          cat "$RUNNER_TEMP/tq-backend-logs/frontend-npm-ci.log"
+          if [[ "$install_status" -ne 0 ]]; then
+            exit "$install_status"
+          fi
+          test -d "$RUNNER_TEMP/tq-frontend-dependencies/node_modules"
 
       - name: Start an ephemeral PostgreSQL database with no network
         id: start-postgres
@@ -684,11 +713,12 @@ jobs:
             --volume "$GITHUB_WORKSPACE/capstone:/workspace/capstone:ro" \
             --volume "$GITHUB_WORKSPACE/.github:/workflow-config:ro" \
             --volume "$RUNNER_TEMP/tq-backend-dependencies/node_modules:/backend-deps/node_modules:ro" \
+            --volume "$RUNNER_TEMP/tq-frontend-dependencies/node_modules:/frontend-deps/node_modules:ro" \
             --volume "$RUNNER_TEMP/tq-backend-test-uploads:/workspace/capstone/backend/uploads:rw" \
             --volume "$RUNNER_TEMP/tq-backend-logs:/test-logs:rw" \
             --workdir /workspace/capstone/backend \
             --user "$(id -u):$(id -g)" \
-            --env NODE_PATH=/backend-deps/node_modules \
+            --env NODE_PATH=/backend-deps/node_modules:/frontend-deps/node_modules \
             --env STUDENT_PROGRESS_CI_WORKFLOW_PATH=/workflow-config/workflows/backend-network-isolated.yml \
             --env HOME=/tmp \
             --env TMPDIR=/workspace/capstone/backend/uploads/.test-tmp \

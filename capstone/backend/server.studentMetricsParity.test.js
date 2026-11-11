@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');
+const path = require('node:path');
 const { buildStudentAnalyticsMetrics } = require('./studentAnalyticsMetrics.utils');
 const { buildGroundedInsightInput, buildInsightFingerprint } = require('./studentAnalyticsInsight.utils');
 const { GROUNDING_POLICY_VERSION } = require('./studentAnalyticsGrounding.utils');
@@ -18,9 +19,14 @@ const query = async (rawSql, params = [], readFixture = fixture) => {
   const sql = compact(rawSql);
   if (sql.startsWith('select * from public.accounts where id = $1')) return { rows: [accounts[params[0]]].filter(Boolean) };
   if (!readFixture) return empty;
-  if (sql.startsWith('select 1')) return { rows: [{ linked: true }] };
+  if (sql.startsWith('select 1')) {
+    const requestedStudentId = Number(params[1]);
+    return { rows: params.length < 2 || requestedStudentId === Number(readFixture.progress.student_id) ? [{ linked: true }] : [] };
+  }
   if (sql.includes('count(gr.id)::integer as unlinked_count')) return { rows: [{ unlinked_count: 0 }] };
   if (sql.includes('from public.accounts a') && sql.includes('left join lateral') && sql.includes('student_game_progress')) {
+    if (sql.includes('a.id = $1') && params.length === 1
+        && Number(params[0]) !== Number(readFixture.progress.student_id)) return empty;
     const result = { rows: [readFixture.progress] };
     const afterProgressRead = fixture?.afterProgressRead;
     if (afterProgressRead) {
@@ -144,7 +150,7 @@ const setup = async (t, answers = [1, 1, 1, 0], { providerSelection = null, aiGe
     fixture = null;
     await new Promise((resolve) => server.close(resolve));
   });
-  const get = async (route, token = 'admin', method = 'GET', body = undefined) => {
+  const get = async (route, token = 'admin', method = 'GET', body = undefined, expectedStatus = 200) => {
     const response = await global.fetch(`${base}${route}`, {
       method,
       headers: {
@@ -153,11 +159,49 @@ const setup = async (t, answers = [1, 1, 1, 0], { providerSelection = null, aiGe
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    assert.equal(response.status, 200, `${token} ${route}`);
+    assert.equal(response.status, expectedStatus, `${token} ${route}`);
     return response.json();
   };
   get.providerCallCount = () => providerCalls;
   return get;
+};
+
+const renderGroundedAiAnalysis = (aiInsight) => {
+  const frontendSource = path.resolve(__dirname, '../src');
+  const sourcePrefix = `${frontendSource}${path.sep}`;
+  const babel = require('@babel/core');
+  const originalJsLoader = require.extensions['.js'];
+  const originalJsxLoader = require.extensions['.jsx'];
+  const compileFrontendModule = (module, filename) => {
+    const transformed = babel.transformFileSync(filename, {
+      babelrc: false,
+      configFile: false,
+      presets: [
+        [require.resolve('@babel/preset-env'), { targets: { node: 'current' }, modules: 'commonjs' }],
+        require.resolve('@babel/preset-react'),
+      ],
+    });
+    module._compile(transformed.code, filename);
+  };
+  require.extensions['.js'] = (module, filename) => (
+    filename.startsWith(sourcePrefix)
+      ? compileFrontendModule(module, filename)
+      : originalJsLoader(module, filename)
+  );
+  require.extensions['.jsx'] = compileFrontendModule;
+  try {
+    const React = require('react');
+    const { renderToStaticMarkup } = require('react-dom/server');
+    const { default: GroundedAiAnalysis } = require('../src/components/GroundedAiAnalysis.jsx');
+    return renderToStaticMarkup(React.createElement(GroundedAiAnalysis, {
+      aiInsight,
+      onRefresh: () => {},
+    }));
+  } finally {
+    require.extensions['.js'] = originalJsLoader;
+    if (originalJsxLoader) require.extensions['.jsx'] = originalJsxLoader;
+    else delete require.extensions['.jsx'];
+  }
 };
 
 test('automatic analytics detail reads return AI_PAUSED with zero outbound provider requests', async (t) => {
@@ -485,6 +529,105 @@ test('empty canonical progress is unavailable while unattempted accuracy and dif
   const detail = await get('/api/student-progress/44');
   assert.equal(detail.analyticsReadiness.performanceSignals.progressPercentage, null);
   assert.equal(detail.analyticsReadiness.performanceSignals.accuracyRate, null);
+});
+
+test('63-answer AI Refresh API response renders grounded general SWR without inventing topics', async (t) => {
+  const get = await setup(t, [...Array(53).fill(1), ...Array(9).fill(0)], {
+    aiGenerationEnabled: 'false',
+  });
+  fixture.results.push({
+    id: 900,
+    resolved_student_id: 44,
+    score: 1,
+    total_items: 1,
+    played_at: '2026-08-31T23:59:59.000Z',
+  });
+
+  const beforeRefresh = await get('/api/student-progress/44/ai-insight', 'admin', 'POST', { refresh: true });
+  assert.equal(beforeRefresh.status, 'paused');
+  assert.equal(beforeRefresh.evidence_snapshot.metrics.totalQuestions, 62);
+  assert.equal(beforeRefresh.evidence_snapshot.metrics.incorrectAnswers, 9);
+
+  fixture.results.push({
+    id: 63,
+    resolved_student_id: 44,
+    score: 0,
+    total_items: 1,
+    difficulty: 'Easy',
+    played_at: '2026-09-08T00:00:00.000Z',
+  });
+  const refreshed = await get('/api/student-progress/44/ai-insight', 'admin', 'POST', { refresh: true });
+  const metrics = refreshed.evidence_snapshot.metrics;
+
+  assert.equal(refreshed.status, 'paused');
+  assert.equal(refreshed.valid_result_count, 63);
+  assert.equal(metrics.validResultCount, 63);
+  assert.equal(metrics.totalQuestions, 63);
+  assert.equal(metrics.correctAnswers, 53);
+  assert.equal(metrics.incorrectAnswers, 10);
+  assert.equal(metrics.accuracy, 84.13);
+  assert.equal(metrics.topicLinkedEvidenceCount, 0);
+  assert.equal(metrics.questTopicLinkedEvidenceCount, 0);
+  assert.equal(refreshed.topic_evidence_status, 'topic_metadata_unavailable');
+  assert.equal(refreshed.deterministic_evidence.topic_evidence_status, 'topic_metadata_unavailable');
+  assert.deepEqual(refreshed.deterministic_evidence.topic_specific, {
+    strengths: [], weaknesses: [], recommendations: [],
+  });
+  assert.deepEqual(refreshed.deterministic_evidence.strengths, [
+    'General evidence (overall performance, not a specific Mathematics topic): 53 of 63 recorded answers were correct (84.1%).',
+  ]);
+  assert.deepEqual(refreshed.deterministic_evidence.weaknesses, [
+    'General evidence (not topic-specific): 10 of 63 recorded answers were incorrect. The available records do not establish which Mathematics topic those answers involved.',
+  ]);
+  assert.deepEqual(refreshed.deterministic_evidence.recommendations, [
+    'General practice: review the solutions for the 10 recorded incorrect answers and practice similar Mathematics problems. This is not a topic-specific recommendation.',
+  ]);
+  assert.equal(get.providerCallCount(), 0, 'paused refresh must not invoke the live AI provider');
+
+  const adminDetail = await get('/api/student-progress/44');
+  const teacherDetail = await get('/api/student-progress/44', 'teacher');
+  const parentDetail = await get('/api/student-progress/44?scope=parent', 'parent');
+  for (const detail of [adminDetail, teacherDetail, parentDetail]) {
+    assert.equal(detail.metrics.totalQuestions, 63);
+    assert.equal(detail.metrics.correctAnswers, 53);
+    assert.equal(detail.metrics.incorrectAnswers, 10);
+    assert.equal(detail.aiInsight.topic_linked_evidence_count, 0);
+  }
+  assert.equal(await get('/api/student-progress/45', 'admin', 'GET', undefined, 404).then((value) => value.error), 'Student progress not found');
+  assert.equal(await get('/api/student-progress/45?scope=parent', 'parent', 'GET', undefined, 403).then((value) => value.error), 'This account cannot access this student.');
+
+  const markup = renderGroundedAiAnalysis(refreshed);
+  assert.match(markup, /Current-cycle performance summary \(deterministic\)/);
+  assert.match(markup, /53 of 63 answers were correct \(84\.1% overall\)/);
+  assert.match(markup, /General evidence \(overall performance, not a specific Mathematics topic\)/);
+  assert.match(markup, /10 of 63 recorded answers were incorrect/);
+  assert.match(markup, /available records do not establish which Mathematics topic/);
+  assert.match(markup, /review the solutions for the 10 recorded incorrect answers/);
+  assert.match(markup, /Topic-linked evidence: 0 of 63 recorded answers/);
+  assert.match(markup, /No AI-generated insight is available/);
+  assert.doesNotMatch(markup, /Strong performance in (Addition|Subtraction|Multiplication|Division)/);
+  assert.doesNotMatch(markup, /Practice Grade \d/);
+});
+
+test('zero-result AI Refresh API response renders no-data state without fabricated SWR', async (t) => {
+  const get = await setup(t, [], { aiGenerationEnabled: 'false' });
+  const noData = await get('/api/student-progress/44/ai-insight', 'admin', 'POST', { refresh: true }, 422);
+
+  assert.equal(noData.status, 'no_data');
+  assert.equal(noData.valid_result_count, 0);
+  assert.equal(noData.evidence_snapshot.metrics.totalQuestions, 0);
+  assert.equal(noData.evidence_snapshot.metrics.topicLinkedEvidenceCount, 0);
+  assert.deepEqual(noData.deterministic_evidence.strengths, []);
+  assert.deepEqual(noData.deterministic_evidence.weaknesses, []);
+  assert.deepEqual(noData.deterministic_evidence.recommendations, []);
+  assert.equal(get.providerCallCount(), 0);
+
+  const markup = renderGroundedAiAnalysis(noData);
+  assert.match(markup, /No valid gameplay results are available/);
+  assert.match(markup, /No recorded graded results are available for a Mathematics strength assessment yet/);
+  assert.match(markup, /No recorded graded results are available for a Mathematics weakness assessment yet/);
+  assert.match(markup, /No recommendation is supported until recorded graded results are available/);
+  assert.doesNotMatch(markup, /53 of 63|recorded incorrect answers|Strong performance in/);
 });
 
 for (const nextCycleAnswers of [[0, 0], []]) {

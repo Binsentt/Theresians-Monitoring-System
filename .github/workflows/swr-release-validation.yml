@@ -1,0 +1,385 @@
+name: SWR exact-source validation
+
+on:
+  push:
+    branches:
+      - codex/swr-release-validation-20261111
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swr-release-validation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  frontend-node20:
+    name: Frontend Node 20 tests and production build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CI: 'true'
+    steps:
+      - name: Check out validation candidate without persisting credentials
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify exact source and exclude dotenv files
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          node --version | grep -Eq '^v20\.'
+          git cat-file -e 10d30e1436cb47d10ac4df7182bf97a5a61e2573^{commit}
+          git merge-base --is-ancestor 10d30e1436cb47d10ac4df7182bf97a5a61e2573 HEAD
+          for candidate in capstone/.env capstone/backend/.env; do
+            if [[ -f "$candidate" ]]; then
+              echo "::error::Unexpected dotenv file in clean validation checkout: $candidate"
+              exit 1
+            fi
+          done
+          echo "Validation source commit: $(git rev-parse HEAD)"
+          echo "SWR source base: 10d30e1436cb47d10ac4df7182bf97a5a61e2573"
+
+      - name: Install frontend dependencies from committed lockfile
+        run: npm ci --prefix capstone --no-audit --no-fund
+
+      - name: Run the complete frontend regression suite
+        run: npm --prefix capstone test -- --runInBand
+
+      - name: Build the production frontend bundle
+        run: npm --prefix capstone run build
+
+  nixpacks-build-and-startup:
+    name: Railway-equivalent Nixpacks build and isolated startup
+    needs: frontend-node20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out validation candidate without persisting credentials
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify Docker and exact source ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker version
+          docker info --format 'Docker server {{.ServerVersion}}'
+          git cat-file -e 10d30e1436cb47d10ac4df7182bf97a5a61e2573^{commit}
+          git merge-base --is-ancestor 10d30e1436cb47d10ac4df7182bf97a5a61e2573 HEAD
+          for candidate in capstone/.env capstone/backend/.env; do
+            if [[ -f "$candidate" ]]; then
+              echo "::error::Unexpected dotenv file in clean validation checkout: $candidate"
+              exit 1
+            fi
+          done
+          echo "Validation source commit: $(git rev-parse HEAD)"
+
+      - name: Download checksum-pinned Nixpacks 1.41.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/nixpacks-v1.41.0-x86_64-unknown-linux-musl.tar.gz"
+          expected_sha256=0f55de7874507b9cf7502113120bd96f2ab6979f78d10eaf2eb2ade9207b3af6
+          curl --fail --location --retry 3 --retry-all-errors \
+            "https://github.com/railwayapp/nixpacks/releases/download/v1.41.0/nixpacks-v1.41.0-x86_64-unknown-linux-musl.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$expected_sha256" "$archive" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/nixpacks-extracted"
+          tar -xzf "$archive" --directory "$RUNNER_TEMP/nixpacks-extracted"
+          binary="$(find "$RUNNER_TEMP/nixpacks-extracted" -type f -name nixpacks -print -quit)"
+          test -n "$binary"
+          chmod 0755 "$binary"
+          echo "$(dirname "$binary")" >> "$GITHUB_PATH"
+          echo "Verified Nixpacks v1.41.0 release asset SHA-256: $expected_sha256"
+
+      - name: Verify Railway-equivalent Node 20 plans
+        shell: bash
+        env:
+          SWR_SOURCE_SHA: 10d30e1436cb47d10ac4df7182bf97a5a61e2573
+        run: |
+          set -euo pipefail
+          nixpacks --version
+          mkdir -p "$RUNNER_TEMP/swr-baseline"
+          git archive "$SWR_SOURCE_SHA" capstone | tar -x -C "$RUNNER_TEMP/swr-baseline"
+          baseline_root="$RUNNER_TEMP/swr-baseline/capstone"
+          baseline_plan="$RUNNER_TEMP/nixpacks-baseline-plan.toml"
+          candidate_plan="$RUNNER_TEMP/nixpacks-candidate-plan.toml"
+          NIXPACKS_NODE_VERSION=20 nixpacks plan "$baseline_root" --format toml > "$baseline_plan"
+          NIXPACKS_NODE_VERSION=20 nixpacks plan capstone --format toml > "$candidate_plan"
+          echo '--- Exact SWR baseline plan ---'
+          cat "$baseline_plan"
+          echo '--- Configured candidate plan ---'
+          cat "$candidate_plan"
+          grep -Eq 'nodejs_20|nodejs-20' "$candidate_plan"
+          grep -q 'python3' "$candidate_plan"
+          grep -q 'gcc' "$candidate_plan"
+          grep -q 'gnumake' "$candidate_plan"
+          echo 'Configured plan retains Node 20 and includes Python, GCC, and GNU make.'
+
+      - name: Build the exact SWR baseline and configured candidate with Nixpacks
+        id: nixpacks-builds
+        shell: bash
+        env:
+          SWR_SOURCE_SHA: 10d30e1436cb47d10ac4df7182bf97a5a61e2573
+          BUILD_COMMAND: npm run build && npm --prefix backend ci --omit=dev
+          START_COMMAND: npm --prefix backend start
+        run: |
+          set -euo pipefail
+          baseline_root="$RUNNER_TEMP/swr-baseline/capstone"
+          baseline_log="$RUNNER_TEMP/nixpacks-baseline-build.log"
+          candidate_log="$RUNNER_TEMP/nixpacks-candidate-build.log"
+          set +e
+          NIXPACKS_NODE_VERSION=20 nixpacks build "$baseline_root" \
+            --name tq-swr-baseline \
+            --build-cmd "$BUILD_COMMAND" \
+            --start-cmd "$START_COMMAND" \
+            --no-cache > "$baseline_log" 2>&1
+          baseline_status=$?
+          set -e
+          echo "Exact SWR baseline Nixpacks build exit code: $baseline_status"
+          echo "Baseline exit code: $baseline_status" >> "$GITHUB_STEP_SUMMARY"
+          tail -n 100 "$baseline_log"
+          echo "baseline_exit_code=$baseline_status" >> "$GITHUB_OUTPUT"
+
+          set +e
+          NIXPACKS_NODE_VERSION=20 nixpacks build capstone \
+            --name "tq-swr-candidate-${GITHUB_SHA,,}" \
+            --build-cmd "$BUILD_COMMAND" \
+            --start-cmd "$START_COMMAND" \
+            --no-cache > "$candidate_log" 2>&1
+          candidate_status=$?
+          set -e
+          echo "Configured candidate Nixpacks build exit code: $candidate_status"
+          tail -n 140 "$candidate_log"
+          echo "candidate_exit_code=$candidate_status" >> "$GITHUB_OUTPUT"
+          if [[ "$candidate_status" -ne 0 ]]; then
+            echo '::error::The configured Nixpacks candidate build failed.'
+            exit "$candidate_status"
+          fi
+          echo "candidate_image=tq-swr-candidate-${GITHUB_SHA,,}" >> "$GITHUB_OUTPUT"
+          echo "Configured candidate Nixpacks build: **passed** (Node 20, Railway build/start commands)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Start synthetic PostgreSQL with no external network
+        id: start-postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull postgres:16-bookworm
+          postgres_uid="$(docker run --rm --network none postgres:16-bookworm id -u postgres)"
+          postgres_gid="$(docker run --rm --network none postgres:16-bookworm id -g postgres)"
+          docker run --detach \
+            --name tq-swr-release-postgres \
+            --network none \
+            --user "${postgres_uid}:${postgres_gid}" \
+            --read-only \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --pids-limit=128 \
+            --memory=1g \
+            --cpus=1 \
+            --shm-size=128m \
+            --tmpfs "/var/lib/postgresql/data:rw,nosuid,nodev,size=512m,uid=${postgres_uid},gid=${postgres_gid},mode=0700" \
+            --tmpfs "/var/run/postgresql:rw,nosuid,nodev,size=64m,uid=${postgres_uid},gid=${postgres_gid},mode=3775" \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777 \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_DB=postgres \
+            --env POSTGRES_HOST_AUTH_METHOD=trust \
+            postgres:16-bookworm
+          ready=false
+          for attempt in $(seq 1 60); do
+            if docker exec tq-swr-release-postgres pg_isready --host=127.0.0.1 --username=postgres --dbname=postgres >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != true ]]; then
+            docker logs tq-swr-release-postgres
+            exit 1
+          fi
+          docker exec tq-swr-release-postgres createdb --host=127.0.0.1 --username=postgres tq_backend_test_ci
+          sentinel="$(openssl rand -hex 24)"
+          [[ "$sentinel" =~ ^[a-f0-9]{48}$ ]]
+          echo "::add-mask::$sentinel"
+          docker exec tq-swr-release-postgres psql --username=postgres --dbname=tq_backend_test_ci --no-psqlrc --set=ON_ERROR_STOP=1 \
+            --command "COMMENT ON DATABASE tq_backend_test_ci IS 'tq-disposable-ci:${sentinel}';" >/dev/null
+          echo "sentinel=$sentinel" >> "$GITHUB_OUTPUT"
+          docker inspect --format='Disposable PostgreSQL network={{.HostConfig.NetworkMode}} published-ports={{json .HostConfig.PortBindings}}' tq-swr-release-postgres
+
+      - name: Prepare synthetic schema and least-privilege runtime role
+        shell: bash
+        env:
+          NODE_ENV: test
+          CI: 'true'
+          TQ_DISPOSABLE_DB_SENTINEL: ${{ steps.start-postgres.outputs.sentinel }}
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/tq_backend_test_ci
+          CANDIDATE_IMAGE: ${{ steps.nixpacks-builds.outputs.candidate_image }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/swr-startup-bootstrap.cjs" <<'BOOTSTRAP'
+          const assert = require('node:assert/strict');
+          const { Pool } = require('pg');
+          const { applySyntheticTestSchema, assertSyntheticDatabase } = require('./testSupport/applySyntheticTestSchema');
+
+          async function main() {
+            assert.equal(process.env.NODE_ENV, 'test');
+            assert.equal(process.env.CI, 'true');
+            const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+            try {
+              await assertSyntheticDatabase(pool, process.env.DATABASE_URL);
+              await applySyntheticTestSchema(pool, process.env.DATABASE_URL);
+              await pool.query('CREATE ROLE tq_swr_app_readonly LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT');
+              await pool.query('GRANT CONNECT ON DATABASE tq_backend_test_ci TO tq_swr_app_readonly');
+              await pool.query('GRANT USAGE ON SCHEMA public TO tq_swr_app_readonly');
+              await pool.query('GRANT SELECT ON ALL TABLES IN SCHEMA public TO tq_swr_app_readonly');
+              await pool.query('ALTER ROLE tq_swr_app_readonly SET default_transaction_read_only = on');
+              const privileges = await pool.query(`
+                SELECT rolsuper, rolcreatedb, rolcreaterole, rolinherit,
+                       has_database_privilege('tq_swr_app_readonly', current_database(), 'CREATE') AS can_create_database_objects,
+                       has_schema_privilege('tq_swr_app_readonly', 'public', 'CREATE') AS can_create_schema_objects,
+                       has_table_privilege('tq_swr_app_readonly', 'public.accounts', 'SELECT') AS can_read_schema,
+                       (has_table_privilege('tq_swr_app_readonly', 'public.accounts', 'INSERT')
+                        OR has_table_privilege('tq_swr_app_readonly', 'public.accounts', 'UPDATE')
+                        OR has_table_privilege('tq_swr_app_readonly', 'public.accounts', 'DELETE')
+                        OR has_table_privilege('tq_swr_app_readonly', 'public.accounts', 'TRUNCATE')) AS can_write_schema,
+                       has_sequence_privilege('tq_swr_app_readonly', 'public.accounts_id_seq', 'USAGE') AS can_use_sequence,
+                       has_sequence_privilege('tq_swr_app_readonly', 'public.accounts_id_seq', 'UPDATE') AS can_update_sequence
+                FROM pg_catalog.pg_roles WHERE rolname = 'tq_swr_app_readonly'
+              `);
+              assert.deepEqual(privileges.rows[0], {
+                rolsuper: false,
+                rolcreatedb: false,
+                rolcreaterole: false,
+                rolinherit: false,
+                can_create_database_objects: false,
+                can_create_schema_objects: false,
+                can_read_schema: true,
+                can_write_schema: false,
+                can_use_sequence: false,
+                can_update_sequence: false,
+              });
+              console.log('Synthetic 17-table/269-column schema initialized; non-superuser runtime role is SELECT-only and default_transaction_read_only.');
+            } finally {
+              await pool.end();
+            }
+          }
+
+          main().catch((error) => {
+            console.error(error.stack || error.message);
+            process.exitCode = 1;
+          });
+          BOOTSTRAP
+          docker run --rm \
+            --network container:tq-swr-release-postgres \
+            --read-only \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --pids-limit=128 \
+            --memory=2g \
+            --cpus=1 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m,mode=1777 \
+            --volume "$RUNNER_TEMP/swr-startup-bootstrap.cjs:/app/backend/swr-startup-bootstrap.cjs:ro" \
+            --workdir /app/backend \
+            --user 1000:1000 \
+            --env NODE_ENV \
+            --env CI \
+            --env DATABASE_URL \
+            --env TQ_DISPOSABLE_DB_SENTINEL \
+            --env HOME=/tmp \
+            "${CANDIDATE_IMAGE}" node swr-startup-bootstrap.cjs
+
+      - name: Start the built Website with the synthetic read-only role
+        id: app-startup
+        timeout-minutes: 5
+        shell: bash
+        env:
+          CANDIDATE_IMAGE: ${{ steps.nixpacks-builds.outputs.candidate_image }}
+          DATABASE_URL: postgresql://tq_swr_app_readonly@127.0.0.1:5432/tq_backend_test_ci
+          NODE_ENV: production
+          DB_SSL: 'false'
+          AI_RUNTIME_ENABLED: 'false'
+          AI_GENERATION_ENABLED: 'false'
+          JWT_SECRET: swr-validation-synthetic-only-secret
+          PORT: '5000'
+        run: |
+          set -euo pipefail
+          docker run --detach \
+            --name tq-swr-release-app \
+            --network container:tq-swr-release-postgres \
+            --read-only \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --pids-limit=256 \
+            --memory=3g \
+            --cpus=2 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m,mode=1777 \
+            --tmpfs /app/backend/uploads:rw,nosuid,nodev,size=64m,uid=1000,gid=1000,mode=0750 \
+            --user 1000:1000 \
+            --env DATABASE_URL \
+            --env NODE_ENV \
+            --env DB_SSL \
+            --env AI_RUNTIME_ENABLED \
+            --env AI_GENERATION_ENABLED \
+            --env JWT_SECRET \
+            --env PORT \
+            "${CANDIDATE_IMAGE}"
+          ready=false
+          for attempt in $(seq 1 60); do
+            container_state="$(docker inspect --format='{{.State.Status}}' tq-swr-release-app 2>/dev/null || true)"
+            if [[ "$container_state" != running ]]; then
+              docker logs tq-swr-release-app || true
+              echo "Built app exited before listening (state=${container_state:-missing})."
+              exit 1
+            fi
+            if docker exec tq-swr-release-app node -e 'fetch("http://127.0.0.1:5000/").then((r) => process.exit(r.status === 200 ? 0 : 1)).catch(() => process.exit(1))'; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          docker logs tq-swr-release-app > "$RUNNER_TEMP/swr-built-app-startup.log" 2>&1 || true
+          cat "$RUNNER_TEMP/swr-built-app-startup.log"
+          if [[ "$ready" != true ]]; then
+            echo '::error::Built Website did not return HTTP 200 from its loopback health probe.'
+            exit 1
+          fi
+          echo "Built Website startup: **passed**; GET http://127.0.0.1:5000/ returned HTTP 200 in a network-none namespace." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve build and startup logs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker logs tq-swr-release-app > "$RUNNER_TEMP/swr-built-app-startup-final.log" 2>&1 || true
+          docker logs tq-swr-release-postgres > "$RUNNER_TEMP/swr-disposable-postgres.log" 2>&1 || true
+
+      - name: Upload Nixpacks and startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swr-nixpacks-startup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/nixpacks-baseline-plan.toml
+            ${{ runner.temp }}/nixpacks-candidate-plan.toml
+            ${{ runner.temp }}/nixpacks-baseline-build.log
+            ${{ runner.temp }}/nixpacks-candidate-build.log
+            ${{ runner.temp }}/swr-built-app-startup*.log
+            ${{ runner.temp }}/swr-disposable-postgres.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove synthetic containers
+        if: always()
+        shell: bash
+        run: docker rm -f tq-swr-release-app tq-swr-release-postgres >/dev/null 2>&1 || true
