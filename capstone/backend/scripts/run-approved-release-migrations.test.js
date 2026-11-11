@@ -382,6 +382,21 @@ test('pre-026 constraint and index listings declare their own required-table sco
   }
 });
 
+test('disposable PostgreSQL harness scenario counters match the executed scenario inventory', () => {
+  const harness = fs.readFileSync(path.join(__dirname, 'run-preflight-postgres-harness.cjs'), 'utf8');
+  const backupScenarioBoundary = harness.indexOf('const createSyntheticBackupProbe');
+  assert.notEqual(backupScenarioBoundary, -1, 'backup scenarios must follow the preflight scenarios');
+
+  const preflightSection = harness.slice(0, backupScenarioBoundary);
+  const dynamicModeScenario = preflightSection.match(/for\s*\(const \[mode, phrase\] of \[([\s\S]*?)\]\)\s*\{[\s\S]*?recordScenario\(/);
+  assert.ok(dynamicModeScenario, 'the missing-table and missing-column scenarios must remain enumerated');
+  const additionalDynamicRuns = (dynamicModeScenario[1].match(/^\s*\['[^']+'\s*,/gm) || []).length - 1;
+  const preflightScenarioCount = (preflightSection.match(/^\s*recordScenario\(/gm) || []).length + additionalDynamicRuns;
+  const totalScenarioCount = (harness.match(/^\s*recordScenario\(/gm) || []).length + additionalDynamicRuns;
+  assert.match(harness, new RegExp(`assert\\.equal\\(passedScenarioCount, ${preflightScenarioCount},`));
+  assert.match(harness, new RegExp(`assert\\.equal\\(passedScenarioCount, ${totalScenarioCount},`));
+});
+
 test('migration preflight manifests use canonical LF source checksums across checkout platforms', () => {
   const manifestPaths = [
     path.join(__dirname, 'release-migration-preflight.sql'),

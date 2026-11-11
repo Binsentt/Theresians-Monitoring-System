@@ -513,7 +513,7 @@ assert.equal(pre024StateAfter.status, 0, pre024StateAfter.stderr);
 assert.equal(pre024StateAfter.stdout.trim(), pre024StateBefore.stdout.trim(), 'pre-026 024 stop must not change synthetic rows or the ledger');
 recordScenario('pre-migration check stops on 024 before application-row reads or any migration');
 
-assert.equal(passedScenarioCount, 20, 'all expected disposable PostgreSQL preflight scenarios must execute');
+assert.equal(passedScenarioCount, 21, 'all expected disposable PostgreSQL preflight scenarios must execute');
 
 const createSyntheticBackupProbe = psql(CASES.valid, 'postgres', `
   CREATE TABLE public.release_backup_synthetic_probe (marker text PRIMARY KEY);
@@ -591,5 +591,5 @@ assert.equal(restoredProbe.status, 0, restoredProbe.stderr);
 assert.equal(restoredProbe.stdout.trim(), 't', 'restored synthetic data and migration metadata must be present');
 recordScenario('custom archive restores transactionally into an empty isolated loopback database and retains synthetic data');
 
-assert.equal(passedScenarioCount, 22, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
+assert.equal(passedScenarioCount, 23, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
 console.log(`Preflight integration result: ${passedScenarioCount}/${passedScenarioCount} disposable PostgreSQL scenarios passed.`);
