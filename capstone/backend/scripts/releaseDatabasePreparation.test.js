@@ -63,7 +63,7 @@ test('pre-migration 026 SQL matches current source metadata and stays metadata-o
   const expectedMigrations = RELEASE_MIGRATIONS.map((migration) => ({
     version: migration.version,
     file: migration.file,
-    checksum: migrationChecksum(fs.readFileSync(path.join(scripts, '../migrations', migration.file), 'utf8')),
+    checksum: migrationChecksum(fs.readFileSync(path.join(scripts, '../migrations', migration.file), 'utf8').replace(/\r\n/g, '\n')),
   }));
   assert.deepEqual(migrationRows, expectedMigrations);
 
@@ -81,7 +81,13 @@ test('pre-migration 026 SQL matches current source metadata and stays metadata-o
 });
 
 test('isolated backend workflow provisions and sentinel-marks every new synthetic preflight database', () => {
-  const workflow = fs.readFileSync(path.join(scripts, '../../../.github/workflows/backend-network-isolated.yml'), 'utf8');
+  const workflowPathCandidates = [
+    path.resolve(scripts, '../../../.github/workflows/backend-network-isolated.yml'),
+    path.resolve(scripts, '../../.github/workflows/backend-network-isolated.yml'),
+  ];
+  const workflowPath = workflowPathCandidates.find((candidate) => fs.existsSync(candidate));
+  assert.ok(workflowPath, `backend workflow must exist at one of: ${workflowPathCandidates.join(', ')}`);
+  const workflow = fs.readFileSync(workflowPath, 'utf8');
   for (const database of [
     'tq_preflight_pre_026_test_ci',
     'tq_preflight_partial_receipt_026_test_ci',
@@ -102,7 +108,7 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
   assert.match(harness, /--no-owner/);
   assert.match(harness, /synthetic-only-backup-probe/);
   assert.match(harness, /tq_restore_backup_test_ci/);
-  assert.match(harness, /passedScenarioCount, 22/);
+  assert.match(harness, /passedScenarioCount, 23/);
   assert.match(harness, /assertCiContainer\(\)/);
 });
 

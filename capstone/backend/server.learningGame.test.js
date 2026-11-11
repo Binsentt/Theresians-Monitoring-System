@@ -2955,7 +2955,6 @@ test('a reusable Lesson source preserves canonical topic metadata on each genera
     if (sql.startsWith('select * from public.learning_files') && sql.includes("content_role = 'lesson_source'")) {
       return resultRows([source]);
     }
-    if (sql.startsWith('select lf.*, count(q.id)::integer as question_count')) return emptyResult;
     if (sql.startsWith('insert into public.learning_files')) {
       const child = {
         id: 900 + insertedChildren.length,
@@ -2973,9 +2972,21 @@ test('a reusable Lesson source preserves canonical topic metadata on each genera
         generation_idempotency_key: params[14],
         generation_request_fingerprint: params[15],
         content_role: 'question_set',
+        uploaded_by: params[9],
+        source: 'lesson',
+        file_type: 'lesson',
+        generation_status: 'generating',
       };
       insertedChildren.push(child);
       return resultRows([child]);
+    }
+    if (sql.startsWith('select lf.*, count(q.id)::integer as question_count')) {
+      const child = insertedChildren.find((item) => item.id === params[0] && item.uploaded_by === params[1]);
+      if (!child) return emptyResult;
+      return resultRows([{
+        ...child,
+        question_count: insertedQuestions.filter((question) => question[0] === child.id).length,
+      }]);
     }
     if (sql.startsWith('update public.learning_files') && sql.includes('set topic_id = $2, math_topic = $3, document_topic = $4')) {
       const child = insertedChildren.find((item) => item.id === params[0]);
@@ -2987,7 +2998,8 @@ test('a reusable Lesson source preserves canonical topic metadata on each genera
       return emptyResult;
     }
     if (sql.startsWith('update public.learning_files') && sql.includes("generation_status = 'ready_for_review'")) {
-      return resultRows([{ ...insertedChildren.at(-1), generation_status: 'ready_for_review' }]);
+      Object.assign(insertedChildren.at(-1), { generation_status: 'ready_for_review' });
+      return resultRows([insertedChildren.at(-1)]);
     }
     return emptyResult;
   });
@@ -3011,8 +3023,25 @@ test('a reusable Lesson source preserves canonical topic metadata on each genera
     }),
   });
 
-  assert.equal(generated.status, 201);
+  assert.equal(generated.status, 202);
+  assert.equal(generated.body.code, 'AI_GENERATION_QUEUED');
+  assert.equal(generated.body.learningFile.generation_status, 'generating');
   assert.equal(insertedChildren.length, 1);
+  const generationId = generated.body.learningFile.id;
+  const generationDeadline = Date.now() + 5_000;
+  let generationStatus;
+  do {
+    generationStatus = await requestJson(baseUrl, `/api/learning-files/${generationId}/generation-status`);
+    if (
+      generationStatus.status === 200
+      && generationStatus.body.learningFile.generation_status === 'ready_for_review'
+    ) break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  } while (Date.now() < generationDeadline);
+  assert.equal(generationStatus.status, 200);
+  assert.equal(generationStatus.body.learningFile.id, generationId);
+  assert.equal(generationStatus.body.learningFile.generation_status, 'ready_for_review');
+  assert.equal(generationStatus.body.learningFile.question_count, 10);
   assert.deepEqual(insertedChildren.map((child) => child.source_learning_file_id), [801]);
   assert.deepEqual(insertedChildren.map((child) => child.math_topic), [null]);
   assert.deepEqual(insertedChildren.map((child) => child.topic_id), [null]);
