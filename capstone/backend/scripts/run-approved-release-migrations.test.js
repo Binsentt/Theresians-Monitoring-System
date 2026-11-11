@@ -363,6 +363,25 @@ test('preflight column metadata checks use catalogs visible without application-
   assert.match(sql, /game_student_id[\s\S]*?character varying\(8\)/i);
 });
 
+test('pre-026 constraint and index listings declare their own required-table scope', () => {
+  const sql = fs.readFileSync(path.join(__dirname, 'release-migration-026-prerequisite-preflight.sql'), 'utf8');
+  const contract = sql.match(/WITH required_columns\(table_name, column_name\) AS \(\s*VALUES([\s\S]*?)\), schema_contract AS/i);
+  assert.ok(contract, 'pre-026 preflight must define its required-column contract');
+
+  const expectedTables = [...new Set([...contract[1].matchAll(/\('([^']+)'/g)].map(([, tableName]) => tableName))]
+    .sort();
+  const scopedCatalogQueries = [...sql.matchAll(/WITH required_tables\s*\(\s*table_name\s*\)\s+AS\s*\(\s*VALUES([\s\S]*?)\)\s*(SELECT[\s\S]*?;)/gi)];
+  assert.equal(scopedCatalogQueries.length, 2, 'constraint and index listings must each declare a local table-scope CTE');
+
+  for (const [, tableValues, query] of scopedCatalogQueries) {
+    const listedTables = [...new Set([...tableValues.matchAll(/\('([^']+)'/g)].map(([, tableName]) => tableName))]
+      .sort();
+    assert.deepEqual(listedTables, expectedTables, 'catalog listing scope must match all required schema tables');
+    assert.match(query, /IN\s*\(\s*SELECT\s+table_name\s+FROM\s+required_tables\s*\)/i);
+    assert.doesNotMatch(query, /\brequired_columns\b/i, 'a CTE cannot be referenced after its defining statement ends');
+  }
+});
+
 test('migration preflight manifests use canonical LF source checksums across checkout platforms', () => {
   const manifestPaths = [
     path.join(__dirname, 'release-migration-preflight.sql'),
