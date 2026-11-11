@@ -280,6 +280,9 @@ jobs:
             process.exitCode = 1;
           });
           BOOTSTRAP
+          nixpacks_entrypoint="$(docker image inspect --format='{{json .Config.Entrypoint}}' "${CANDIDATE_IMAGE}")"
+          echo "Nixpacks image entrypoint: ${nixpacks_entrypoint}"
+          [[ "$nixpacks_entrypoint" == '["/bin/bash","-l","-c"]' ]]
           docker run --rm \
             --network container:tq-swr-release-postgres \
             --read-only \
@@ -297,7 +300,7 @@ jobs:
             --env DATABASE_URL \
             --env TQ_DISPOSABLE_DB_SENTINEL \
             --env HOME=/tmp \
-            "${CANDIDATE_IMAGE}" node swr-startup-bootstrap.cjs
+            "${CANDIDATE_IMAGE}" "node swr-startup-bootstrap.cjs"
 
       - name: Start the built Website with the synthetic read-only role
         id: app-startup
