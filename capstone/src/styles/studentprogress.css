@@ -703,10 +703,28 @@
 
 .grounded-ai-quest-insights > ul {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
   gap: 10px;
   padding: 0;
   list-style: none;
+}
+
+.grounded-ai-quest-insights {
+  grid-column: 1 / -1;
+  min-width: 0;
+  container: quest-evidence / inline-size;
+}
+
+@container quest-evidence (min-width: 760px) {
+  .grounded-ai-quest-insights > ul {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container quest-evidence (min-width: 1060px) {
+  .grounded-ai-quest-insights > ul {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 .grounded-ai-quest-evidence-item {

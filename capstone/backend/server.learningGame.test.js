@@ -1171,7 +1171,7 @@ test('lesson upload fails gracefully and persists a failed source record without
   fs.writeFileSync(tempPdf, '%PDF-1.4\nLesson about basic addition');
   const priorKey = process.env.OPENAI_API_KEY;
   delete process.env.OPENAI_API_KEY;
-  parsedPdfText = 'Addition combines quantities using counters.';
+  parsedPdfText = 'Topic: Basic Addition\nAddition combines quantities using counters.';
   nextUploadedFile = {
     path: tempPdf,
     originalname: 'lesson.pdf',
@@ -1238,6 +1238,56 @@ test('lesson upload fails gracefully and persists a failed source record without
   assert.equal(failedStatusPersisted, true);
 });
 
+test('lesson upload ignores a manual topic hint when the document has no verifiable canonical topic heading', async (t) => {
+  const server = await listen();
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lesson-topic-required-test-'));
+  const tempPdf = path.join(tempDir, 'untagged.pdf');
+  fs.writeFileSync(tempPdf, '%PDF-1.4\nLesson text without a canonical topic heading');
+  const priorKey = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  parsedPdfText = 'Addition and subtraction practice with counters.';
+  nextUploadedFile = {
+    path: tempPdf,
+    originalname: 'untagged.pdf',
+    mimetype: 'application/pdf',
+    size: fs.statSync(tempPdf).size,
+  };
+  let databaseWriteAttempted = false;
+  setQueryHandler(async (sql) => {
+    if (sql.startsWith('insert') || sql.startsWith('update') || sql.startsWith('delete')) databaseWriteAttempted = true;
+    return emptyResult;
+  });
+  t.after(async () => {
+    nextUploadedFile = null;
+    parsedPdfText = '';
+    if (priorKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = priorKey;
+    if (fs.existsSync(tempPdf)) fs.unlinkSync(tempPdf);
+    if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir);
+    setQueryHandler(async () => emptyResult);
+    await close(server);
+  });
+
+  const response = await requestJson(baseUrl, '/api/learning-files/upload', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': 'untagged-source-topic-test-0001' },
+    body: JSON.stringify({
+      title: 'Unverified lesson',
+      grade_level: 'Grade 1',
+      difficulty: 'Easy',
+      topic_id: 'subtraction',
+      math_topic: 'Subtraction',
+      file_type: 'lesson',
+      expected_question_count: '2',
+    }),
+  });
+
+  assert.equal(response.status, 422);
+  assert.equal(response.body.code, 'LESSON_TOPIC_HEADING_REQUIRED');
+  assert.equal(databaseWriteAttempted, false);
+});
+
 test('a failed AI generation key cannot replay, while a deliberate new key creates one new attempt', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -1249,7 +1299,7 @@ test('a failed AI generation key cannot replay, while a deliberate new key creat
   for (const uploadPath of uploadPaths) fs.writeFileSync(uploadPath, '%PDF-1.4\nLesson about basic addition');
   const priorKey = process.env.OPENAI_API_KEY;
   delete process.env.OPENAI_API_KEY;
-  parsedPdfText = 'Addition combines quantities using counters.';
+  parsedPdfText = 'Topic: Basic Addition\nAddition combines quantities using counters.';
   const records = [];
   setQueryHandler(async (sql, params) => {
     if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return emptyResult;
@@ -1570,7 +1620,7 @@ test('lesson upload generates exactly the requested staged questions through the
   const priorKey = process.env.OPENAI_API_KEY;
   const originalFetch = global.fetch;
   process.env.OPENAI_API_KEY = 'server-test-key';
-  parsedPdfText = 'Addition combines quantities using counters.';
+  parsedPdfText = 'Topic: Basic Addition\nAddition combines quantities using counters.';
   nextUploadedFile = {
     path: tempPdf,
     originalname: uploadName,
@@ -1642,8 +1692,8 @@ test('lesson upload generates exactly the requested staged questions through the
       title: 'Addition lesson',
       grade_level: 'Grade 1',
       difficulty: 'Easy',
-      topic_id: 'basic_addition',
-      math_topic: 'Basic Addition',
+      topic_id: 'subtraction',
+      math_topic: 'Subtraction',
       file_type: 'lesson',
       expected_question_count: '2',
       uploaded_by: '999',
@@ -1659,7 +1709,7 @@ test('lesson upload generates exactly the requested staged questions through the
   assert.equal(storedQuestionParams.every((params) => params.includes('basic_addition')), true);
   assert.equal(learningFileInsertParams.includes('basic_addition'), true);
   assert.equal(learningFileInsertParams[6], 'basic_addition');
-  assert.equal(learningFileInsertParams[7], null);
+  assert.equal(learningFileInsertParams[7], 'Basic Addition');
   assert.equal(learningFileInsertParams[10], 'lesson');
   assert.equal(learningFileInsertParams[11], 1);
 });
@@ -1676,7 +1726,7 @@ test('lesson generation replays identical uploads and rejects a conflicting idem
   const priorKey = process.env.OPENAI_API_KEY;
   const originalFetch = global.fetch;
   process.env.OPENAI_API_KEY = 'server-test-key';
-  parsedPdfText = 'Addition combines quantities using counters.';
+  parsedPdfText = 'Topic: Basic Addition\nAddition combines quantities using counters.';
   queuedUploadedFiles = uploadPaths.slice(0, 2).map((uploadPath, index) => ({
     path: uploadPath,
     originalname: uploadNames[index],
@@ -1781,8 +1831,6 @@ test('lesson generation replays identical uploads and rejects a conflicting idem
     title: 'Addition lesson',
     grade_level: 'Grade 1',
     difficulty: 'Easy',
-    math_topic: 'Basic Addition',
-    topic_id: 'basic_addition',
     file_type: 'lesson',
     expected_question_count: '2',
   };
@@ -1805,6 +1853,8 @@ test('lesson generation replays identical uploads and rejects a conflicting idem
   assert.ok([200, 202].includes(secondResponse.status));
   assert.equal(providerCalls, 1);
   assert.equal(records.length, 1);
+  assert.equal(records[0].topic_id, 'basic_addition');
+  assert.equal(records[0].math_topic, 'Basic Addition');
 
   nextUploadedFile = {
     path: uploadPaths[2],
@@ -1823,12 +1873,11 @@ test('lesson generation replays identical uploads and rejects a conflicting idem
     mimetype: 'application/pdf',
     size: fs.statSync(uploadPaths[3]).size,
   };
-  const conflictingTopicResponse = await requestJson(baseUrl, '/api/learning-files/upload', {
-    ...options,
-    body: JSON.stringify({ ...body, math_topic: 'Shapes', topic_id: 'shapes' }),
-  });
-  assert.equal(conflictingTopicResponse.status, 409);
-  assert.equal(conflictingTopicResponse.body.code, 'AI_GENERATION_IDEMPOTENCY_CONFLICT');
+  fs.writeFileSync(uploadPaths[3], '%PDF-1.4\nLesson about subtraction');
+  parsedPdfText = 'Topic: Subtraction\nTake away objects and compare what remains.';
+  const conflictingDocumentResponse = await requestJson(baseUrl, '/api/learning-files/upload', options);
+  assert.equal(conflictingDocumentResponse.status, 409);
+  assert.equal(conflictingDocumentResponse.body.code, 'AI_GENERATION_IDEMPOTENCY_CONFLICT');
   assert.equal(providerCalls, 1);
   assert.equal(records.length, 1);
 });
@@ -1917,7 +1966,7 @@ test('learning file question preview returns staged structured questions without
   assert.match(response.body.review_fingerprint || '', /^[a-f0-9]{64}$/);
 });
 
-test('Fixed Question upload accepts a Grade and Difficulty scope with no Topic metadata', async (t) => {
+test('Fixed Question upload derives canonical topic metadata from the document without a Teacher selector', async (t) => {
   const server = await listen();
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fixed-question-scope-test-'));
@@ -1981,10 +2030,15 @@ test('Fixed Question upload accepts a Grade and Difficulty scope with no Topic m
   });
 
   assert.equal(response.status, 201);
-  assert.equal(learningFileInsertParams[5], null);
-  assert.equal(learningFileInsertParams[6], null);
+  assert.equal(learningFileInsertParams[5], 'Basic Addition');
+  assert.equal(learningFileInsertParams[6], 'basic_addition');
   assert.equal(storedQuestionParams.length, 5);
-  assert.deepEqual(storedQuestionParams.map((params) => params[7]), [null, null, null, null, null]);
+  assert.deepEqual(storedQuestionParams.map((params) => params[7]), Array(5).fill('basic_addition'));
+  assert.deepEqual(storedQuestionParams.map((params) => params[3]), ['3', '6', '7', '8', '8']);
+  assert.deepEqual(storedQuestionParams.map((params) => {
+    const options = JSON.parse(params[2]);
+    return options.indexOf(params[3]);
+  }), [1, 1, 2, 2, 1]);
 });
 
 test('approval rejects a question set that is no longer review-required', async (t) => {
@@ -2112,6 +2166,8 @@ test('Godot question endpoint returns one active Grade and Difficulty set while 
   assert.equal(response.body.questions[0].question_set_id, 83);
   assert.equal(response.body.questions[0].grade_level, 'Grade 1');
   assert.equal(response.body.questions[0].difficulty, 'Easy');
+  assert.deepEqual(response.body.questions[0].options, ['4', '5', '6', '7']);
+  assert.equal(response.body.questions[0].correct_answer, '5');
   assert.deepEqual(response.body.scope, {
     grade_level: 'Grade 1',
     difficulty: 'Easy',
@@ -2869,19 +2925,29 @@ test('a reusable Lesson source preserves canonical topic metadata on each genera
   const insertedQuestions = [];
   fs.writeFileSync(sourceFilePath, '%PDF-1.4\nReusable arithmetic lesson');
   process.env.OPENAI_API_KEY = 'server-test-key';
-  parsedPdfText = 'Use addition and subtraction examples from this lesson.';
+  parsedPdfText = [
+    'Topic: Basic Addition',
+    'Add groups and find totals.',
+    'Topic: Subtraction',
+    'Take away objects and compare what remains.',
+  ].join('\n');
   global.fetch = async (url, options) => {
     if (String(url).startsWith('http://127.0.0.1:')) return originalFetch(url, options);
     assert.equal(url, 'https://api.openai.com/v1/responses');
     const request = JSON.parse(options.body);
     generationRequests.push(request);
-    const generatedQuestion = generationRequests.length === 1
-      ? { question: 'What is 2 + 3?', options: ['4', '5', '6', '7'], correct_answer: '5' }
-      : { question: 'What is 5 - 2?', options: ['2', '3', '4', '5'], correct_answer: '3' };
+    const topicIndex = generationRequests.length - 1;
+    const count = Number(request.input[1].content[0].text.match(/Create exactly (\d+) questions\./)?.[1] || 0);
+    const generatedQuestions = Array.from({ length: count }, (_, index) => {
+      const correctAnswer = String(index + 3);
+      return topicIndex === 0
+        ? { question: `What is ${index + 1} + 2?`, options: [String(index + 2), correctAnswer, String(index + 4), String(index + 5)], correct_answer: correctAnswer }
+        : { question: `What is ${index + 5} - 2?`, options: [String(index + 2), correctAnswer, String(index + 4), String(index + 5)], correct_answer: correctAnswer };
+    });
     return {
       ok: true,
       headers: { get: () => null },
-      json: async () => ({ output_text: JSON.stringify({ questions: [generatedQuestion] }) }),
+      json: async () => ({ output_text: JSON.stringify({ questions: generatedQuestions }) }),
     };
   };
   setQueryHandler(async (sql, params) => {
@@ -2900,14 +2966,20 @@ test('a reusable Lesson source preserves canonical topic metadata on each genera
         difficulty: params[4],
         math_topic: params[5],
         topic_id: params[6],
-        requested_question_count: params[9],
-        source_learning_file_id: params[11],
-        source_content_fingerprint: params[12],
-        generation_idempotency_key: params[13],
-        generation_request_fingerprint: params[14],
+        document_topic: params[7],
+        requested_question_count: params[11],
+        source_learning_file_id: params[12],
+        source_content_fingerprint: params[13],
+        generation_idempotency_key: params[14],
+        generation_request_fingerprint: params[15],
         content_role: 'question_set',
       };
       insertedChildren.push(child);
+      return resultRows([child]);
+    }
+    if (sql.startsWith('update public.learning_files') && sql.includes('set topic_id = $2, math_topic = $3, document_topic = $4')) {
+      const child = insertedChildren.find((item) => item.id === params[0]);
+      Object.assign(child, { topic_id: params[1], math_topic: params[2], document_topic: params[3] });
       return resultRows([child]);
     }
     if (sql.startsWith('insert into public.questions')) {
@@ -2929,38 +3001,44 @@ test('a reusable Lesson source preserves canonical topic metadata on each genera
     await close(server);
   });
 
-  const addition = await requestJson(baseUrl, '/api/learning-files/lesson-sources/801/generate', {
+  const generated = await requestJson(baseUrl, '/api/learning-files/lesson-sources/801/generate', {
     method: 'POST',
-    headers: { 'Idempotency-Key': 'lesson-source-addition-key-0001' },
+    headers: { 'Idempotency-Key': 'lesson-source-multi-topic-key-0001' },
     body: JSON.stringify({
       grade_level: 'Grade 1',
       difficulty: 'Easy',
-      topic_id: 'basic_addition',
-      math_topic: 'Basic Addition',
-      expected_question_count: 1,
-    }),
-  });
-  const subtraction = await requestJson(baseUrl, '/api/learning-files/lesson-sources/801/generate', {
-    method: 'POST',
-    headers: { 'Idempotency-Key': 'lesson-source-subtract-key-0001' },
-    body: JSON.stringify({
-      grade_level: 'Grade 1',
-      difficulty: 'Easy',
-      topic_id: 'subtraction',
-      math_topic: 'Subtraction',
-      expected_question_count: 1,
+      expected_question_count: 10,
     }),
   });
 
-  assert.equal(addition.status, 201);
-  assert.equal(subtraction.status, 201);
-  assert.equal(insertedChildren.length, 2);
-  assert.deepEqual(insertedChildren.map((child) => child.source_learning_file_id), [801, 801]);
-  assert.deepEqual(insertedChildren.map((child) => child.math_topic), ['Basic Addition', 'Subtraction']);
-  assert.deepEqual(insertedChildren.map((child) => child.topic_id), ['basic_addition', 'subtraction']);
+  assert.equal(generated.status, 201);
+  assert.equal(insertedChildren.length, 1);
+  assert.deepEqual(insertedChildren.map((child) => child.source_learning_file_id), [801]);
+  assert.deepEqual(insertedChildren.map((child) => child.math_topic), [null]);
+  assert.deepEqual(insertedChildren.map((child) => child.topic_id), [null]);
+  assert.deepEqual(insertedChildren.map((child) => child.document_topic), ['Basic Addition, Subtraction']);
   assert.equal(generationRequests.length, 2);
+  assert.match(generationRequests[0].input[1].content[0].text, /Create exactly 5 questions\./);
+  assert.match(generationRequests[1].input[1].content[0].text, /Create exactly 5 questions\./);
   assert.match(generationRequests[0].input[1].content[0].text, /Grade: Grade 1\.\nDifficulty: Easy\.\nSelected canonical Mathematics topic: Basic Addition\./);
   assert.match(generationRequests[1].input[1].content[0].text, /Grade: Grade 1\.\nDifficulty: Easy\.\nSelected canonical Mathematics topic: Subtraction\./);
-  assert.deepEqual(insertedQuestions.map((params) => params[7]), ['basic_addition', 'subtraction']);
-  assert.deepEqual(insertedQuestions.map((params) => params[6]), ['Basic Addition', 'Subtraction']);
+  assert.deepEqual(insertedQuestions.map((params) => params[7]), [
+    ...Array(5).fill('basic_addition'),
+    ...Array(5).fill('subtraction'),
+  ]);
+  assert.deepEqual(insertedQuestions.map((params) => params[6]), [
+    ...Array(5).fill('Basic Addition'),
+    ...Array(5).fill('Subtraction'),
+  ]);
+  const positions = insertedQuestions.map((params) => {
+    const options = JSON.parse(params[2]);
+    assert.equal(options.filter((option) => option === params[3]).length, 1);
+    return options.indexOf(params[3]);
+  });
+  const positionCounts = [0, 0, 0, 0];
+  positions.forEach((position) => { positionCounts[position] += 1; });
+  assert.ok(Math.max(...positionCounts) - Math.min(...positionCounts) <= 1, `combined topic batches are not balanced: ${positionCounts}`);
+  for (let index = 2; index < positions.length; index += 1) {
+    assert.notEqual(positions[index], positions[index - 1] === positions[index - 2] ? positions[index - 1] : -1);
+  }
 });

@@ -47,6 +47,31 @@ test('parses a teacher-formatted four-choice document into canonical question re
   ]);
 });
 
+test('preserves explicit canonical per-question topic IDs for validated fixed-question import', () => {
+  const parsed = parseFixedQuestionText(`1. What is 2 + 3?
+Topic ID: basic_addition
+A. 4
+B. 5
+C. 6
+D. 7
+Answer: B
+
+2. What shape has three sides?
+Topic_ID: shapes
+A. Square
+B. Triangle
+C. Circle
+D. Rectangle
+Answer: B`);
+
+  assert.deepEqual(parsed.map((question) => question.topic_id), ['basic_addition', 'shapes']);
+  assert.equal(validateQuestionSetForReview({
+    questions: parsed.map((question) => ({ ...question, grade_level: 'Grade 1', difficulty: 'Easy' })),
+    grade_level: 'Grade 1',
+    difficulty: 'Easy',
+  }).questions.every((question) => question.is_valid), true);
+});
+
 test('parses flattened DOCX/PDF bullet markers into one four-choice question', () => {
   const parsed = parseFixedQuestionText('1. 5 + 2 = ? ● A. 8 ● B. 7 ● C. 6 ● D. 9 Answer: B. 7');
 
@@ -197,6 +222,8 @@ test('preserves a multi-topic document heading without assigning a game publicat
   assert.deepEqual(metadata, {
     document_topic: 'Basic Addition, Subtraction, Shapes, and Place Value',
     math_topic: null,
+    topic_id: null,
+    topic_ids: [],
     metadata_error: '',
   });
 });
@@ -210,7 +237,101 @@ test('maps a matching single controlled document topic to the only game publicat
 
   assert.equal(metadata.document_topic, 'Basic Addition');
   assert.equal(metadata.math_topic, 'Basic Addition');
+  assert.equal(metadata.topic_id, 'basic_addition');
+  assert.deepEqual(metadata.topic_ids, ['basic_addition']);
   assert.equal(metadata.metadata_error, '');
+});
+
+test('extracts canonical Fixed Question metadata from a standalone document heading without a Teacher selector', () => {
+  const metadata = resolveFixedQuestionDocumentMetadata({
+    documentText: `## Basic Addition\n\n1. What is 2 + 3?\nA. 4\nB. 5\nC. 6\nD. 7\nAnswer: B`,
+    selectedGradeLevel: 'Grade 1',
+    selectedDifficulty: 'Easy',
+  });
+
+  assert.deepEqual(metadata, {
+    document_topic: 'Basic Addition',
+    math_topic: 'Basic Addition',
+    topic_id: 'basic_addition',
+    topic_ids: ['basic_addition'],
+    metadata_error: '',
+  });
+});
+
+test('extracts topic metadata from a document heading that also declares Grade, Difficulty, and set size', () => {
+  const metadata = resolveFixedQuestionDocumentMetadata({
+    documentText: `Grade 1 · Easy · Basic Addition · 5 Questions\n\n${VALID_DOCUMENT_TEXT}`,
+    selectedGradeLevel: 'Grade 1',
+    selectedDifficulty: 'Easy',
+  });
+
+  assert.equal(metadata.document_topic, 'Basic Addition');
+  assert.equal(metadata.math_topic, 'Basic Addition');
+  assert.equal(metadata.topic_id, 'basic_addition');
+  assert.deepEqual(metadata.topic_ids, ['basic_addition']);
+});
+
+test('does not link fixed questions when a scope-qualified topic conflicts with selected Difficulty', () => {
+  const metadata = resolveFixedQuestionDocumentMetadata({
+    documentText: `Grade 1 · Normal · Basic Addition · 5 Questions\n\n${VALID_DOCUMENT_TEXT}`,
+    selectedGradeLevel: 'Grade 1',
+    selectedDifficulty: 'Easy',
+  });
+  const questions = parseFixedQuestionText(`Grade 1 · Normal · Basic Addition · 5 Questions\n\n${VALID_DOCUMENT_TEXT}`, {
+    gradeLevel: 'Grade 1',
+    difficulty: 'Easy',
+  });
+
+  assert.equal(metadata.math_topic, null);
+  assert.equal(metadata.topic_id, null);
+  assert.ok(questions.every((question) => !question.topic_id));
+  assert.deepEqual(questions.map((question) => question.correct_answer), ['5', '5']);
+});
+
+test('does not link a Fixed Question heading outside the selected Grade/Difficulty scope', () => {
+  const metadata = resolveFixedQuestionDocumentMetadata({
+    documentText: `Basic Addition\n\n1. What is 2 + 3?\nA. 4\nB. 5\nC. 6\nD. 7\nAnswer: B`,
+    selectedGradeLevel: 'Grade 1',
+    selectedDifficulty: 'Normal',
+  });
+
+  assert.equal(metadata.document_topic, 'Basic Addition');
+  assert.equal(metadata.math_topic, null);
+  assert.equal(metadata.topic_id, null);
+});
+
+test('applies validated canonical section headings only to their own fixed questions', () => {
+  const parsed = parseFixedQuestionText(`## Basic Addition
+1. What is 2 + 3?
+A. 4
+B. 5
+C. 6
+D. 7
+Answer: B
+
+Unit 2 — Subtraction
+2. What is 5 - 2?
+A. 2
+B. 3
+C. 4
+D. 5
+Answer: B`, { gradeLevel: 'Grade 1', difficulty: 'Easy' });
+
+  assert.deepEqual(parsed.map((question) => question.topic_id), ['basic_addition', 'subtraction']);
+  assert.deepEqual(parsed.map((question) => question.correct_answer), ['5', '3']);
+});
+
+test('leaves fixed questions unlinked when their document topic is outside selected scope', () => {
+  const parsed = parseFixedQuestionText(`## Fractions
+1. Which is one half?
+A. 1/3
+B. 1/2
+C. 1/4
+D. 2/3
+Answer: B`, { gradeLevel: 'Grade 1', difficulty: 'Easy' });
+
+  assert.equal(parsed[0].topic_id, undefined);
+  assert.equal(parsed[0].correct_answer, '1/2');
 });
 
 test('retains Grade and Difficulty document headings as non-authoritative provenance', () => {
@@ -251,6 +372,27 @@ test('extracts DOCX and fixed-question PDF text through server-side extractors w
   assert.equal(pdf.isValid, true);
   assert.equal(docx.questions[0].correct_answer, '5');
   assert.equal(pdf.questions[1].correct_answer, '5');
+});
+
+test('DOCX extraction preserves authoritative topic headings within each fixed-question section', async () => {
+  const extracted = await extractFixedQuestionDocument({
+    path: 'set-a.docx',
+    originalname: 'set-a.docx',
+    mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    buffer: Buffer.from('PK\x03\x04word/document.xml'),
+  }, {
+    gradeLevel: 'Grade 1',
+    difficulty: 'Easy',
+    extractDocxText: async () => `Basic Addition\n${VALID_DOCUMENT_TEXT}\nUnit 2 — Subtraction\n3. What is 5 - 2?\nA. 2\nB. 3\nC. 4\nD. 5\nAnswer: B`,
+  });
+
+  assert.equal(extracted.isValid, true);
+  assert.deepEqual(extracted.questions.map((question) => question.topic_id), [
+    'basic_addition',
+    'basic_addition',
+    'subtraction',
+  ]);
+  assert.deepEqual(extracted.questions.map((question) => question.correct_answer), ['5', '5', '3']);
 });
 
 test('parses explicit per-question topic_id metadata without deriving it from question text', () => {
