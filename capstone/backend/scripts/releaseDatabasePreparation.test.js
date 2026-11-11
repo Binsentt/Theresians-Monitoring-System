@@ -82,9 +82,10 @@ test('pre-migration 026 SQL matches current source metadata and stays metadata-o
 
 test('isolated backend workflow provisions and sentinel-marks every new synthetic preflight database', () => {
   const workflowPathCandidates = [
+    process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH,
     path.resolve(scripts, '../../../.github/workflows/backend-network-isolated.yml'),
     path.resolve(scripts, '../../.github/workflows/backend-network-isolated.yml'),
-  ];
+  ].filter(Boolean);
   const workflowPath = workflowPathCandidates.find((candidate) => fs.existsSync(candidate));
   assert.ok(workflowPath, `backend workflow must exist at one of: ${workflowPathCandidates.join(', ')}`);
   const workflow = fs.readFileSync(workflowPath, 'utf8');
