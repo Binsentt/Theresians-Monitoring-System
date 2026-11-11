@@ -5,7 +5,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
-const { migrationChecksum } = require('../releaseMigrations');
+const { RELEASE_MIGRATIONS, migrationChecksum } = require('../releaseMigrations');
 const {
   buildApprovalPlan,
   parseVersionList,
@@ -361,6 +361,34 @@ test('preflight column metadata checks use catalogs visible without application-
   assert.match(sql, /pg_catalog\.format_type\s*\(/i);
   assert.match(sql, /attnum\s*>\s*0[\s\S]*?attisdropped/i);
   assert.match(sql, /game_student_id[\s\S]*?character varying\(8\)/i);
+});
+
+test('migration preflight manifests use canonical LF source checksums across checkout platforms', () => {
+  const manifestPaths = [
+    path.join(__dirname, 'release-migration-preflight.sql'),
+    path.join(__dirname, 'release-migration-026-prerequisite-preflight.sql'),
+  ];
+  const expectedVersions = RELEASE_MIGRATIONS
+    .filter(({ version }) => version >= 18 && version <= 26)
+    .map(({ version }) => version);
+
+  for (const manifestPath of manifestPaths) {
+    const manifest = fs.readFileSync(manifestPath, 'utf8');
+    const rows = [...manifest.matchAll(/^\s*\((\d+), '([^']+\.sql)', '([a-f0-9]{64})'\),?$/gm)];
+    const versions = [...new Set(rows.map(([, version]) => Number(version)))].sort((a, b) => a - b);
+    assert.deepEqual(versions, expectedVersions, `${path.basename(manifestPath)} must cover migrations 018–026`);
+
+    for (const [, versionText, filename, checksum] of rows) {
+      const version = Number(versionText);
+      const source = fs.readFileSync(path.join(__dirname, '../migrations', filename), 'utf8')
+        .replace(/\r\n?/g, '\n');
+      assert.equal(
+        checksum,
+        migrationChecksum(source),
+        `${path.basename(manifestPath)} migration ${version} checksum must match canonical LF source bytes`,
+      );
+    }
+  }
 });
 
 test('the supported release CLI stops before connecting when approval is absent', () => {
