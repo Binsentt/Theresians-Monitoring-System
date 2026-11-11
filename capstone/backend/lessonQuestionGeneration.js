@@ -1,3 +1,4 @@
+const { randomBytes: secureRandomBytes } = require('node:crypto');
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const QUESTION_GENERATION_MODEL = 'gpt-5-mini';
 const MAX_LESSON_TEXT_CHARS = 24000;
@@ -183,28 +184,141 @@ const questionContentKey = (value) => asTrimmedString(value)
   .toLocaleLowerCase()
   .replace(/\s+/gu, ' ');
 
-const fisherYatesShuffle = (values) => {
+const randomBelow = (exclusiveLimit, randomBytesImpl = secureRandomBytes) => {
+  const limit = BigInt(exclusiveLimit);
+  if (limit <= 0n) throw new RangeError('A random range must be positive.');
+  if (limit === 1n) return 0n;
+  const bitCount = (limit - 1n).toString(2).length;
+  const byteCount = Math.ceil(bitCount / 8);
+  const mask = (1n << BigInt(bitCount)) - 1n;
+  for (;;) {
+    const bytes = randomBytesImpl(byteCount);
+    if (!Buffer.isBuffer(bytes) || bytes.length !== byteCount) {
+      throw new TypeError('The random source must return the requested number of bytes.');
+    }
+    const candidate = BigInt(`0x${bytes.toString('hex')}`) & mask;
+    if (candidate < limit) return candidate;
+  }
+};
+
+const fisherYatesShuffle = (values, randomBytesImpl = secureRandomBytes) => {
   const shuffled = [...values];
   for (let index = shuffled.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1));
+    const swapIndex = Number(randomBelow(BigInt(index + 1), randomBytesImpl));
     [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
   }
   return shuffled;
 };
 
-const buildBalancedAnswerPositionPlan = (questionCount) => {
-  // Vary which labels receive the remainder, including sets smaller than four.
-  const positionLabels = fisherYatesShuffle([0, 1, 2, 3]);
-  return fisherYatesShuffle(
-    Array.from({ length: questionCount }, (_, index) => positionLabels[index % 4])
-  );
+const getStoredAnswerPositions = (existingQuestions) => {
+  const positions = [];
+  for (const question of Array.isArray(existingQuestions) ? existingQuestions : []) {
+    const hasOptions = Object.prototype.hasOwnProperty.call(question || {}, 'options');
+    const hasAnswer = Object.prototype.hasOwnProperty.call(question || {}, 'correct_answer');
+    if (!hasOptions && !hasAnswer) continue;
+    const normalized = normalizeGeneratedQuestion(question);
+    if (!normalized) {
+      throw new QuestionGenerationError('QUESTION_AI_EXISTING_ANSWER_INVALID', 'A saved question has an invalid option/answer mapping and was not changed. Review it before generating more questions.');
+    }
+    positions.push(normalized.options.indexOf(normalized.correct_answer));
+  }
+  return positions;
 };
 
-const balanceCorrectAnswerPositions = (questions, positionPlan) => questions.map((question, index) => {
+const getBalancedTargetVectors = (totalCount, existingCounts) => {
+  const baseCount = Math.floor(totalCount / 4);
+  const remainder = totalCount % 4;
+  const candidates = [];
+  for (let mask = 0; mask < 16; mask += 1) {
+    const labels = [0, 1, 2, 3].filter((position) => Boolean(mask & (1 << position)));
+    if (labels.length !== remainder) continue;
+    const target = [baseCount, baseCount, baseCount, baseCount];
+    labels.forEach((position) => { target[position] += 1; });
+    if (existingCounts.every((count, position) => count <= target[position])) candidates.push(target);
+  }
+  return candidates;
+};
+
+const factorial = (value) => {
+  let result = 1n;
+  for (let number = 2; number <= value; number += 1) result *= BigInt(number);
+  return result;
+};
+
+const countDistinctPositionOrders = (counts) => {
+  const total = counts.reduce((sum, count) => sum + count, 0);
+  return factorial(total) / counts.reduce((product, count) => product * factorial(count), 1n);
+};
+
+const violatesNewPositionSequenceRules = (existingPositions, newPositions) => {
+  const combined = [...existingPositions, ...newPositions];
+  let trailingRun = 0;
+  for (let index = 0; index < combined.length; index += 1) {
+    trailingRun = index > 0 && combined[index] === combined[index - 1] ? trailingRun + 1 : 1;
+    if (index >= existingPositions.length && trailingRun > 2) return true;
+    if (index < Math.max(4, existingPositions.length)) continue;
+    const previousCycle = combined.slice(index - 4, index);
+    if (new Set(previousCycle).size === 4 && combined[index] === combined[index - 4]) return true;
+  }
+  return false;
+};
+
+const buildBalancedAnswerPositionPlan = (questionCount, { existingQuestions = [], randomBytesImpl = secureRandomBytes } = {}) => {
+  if (!Number.isSafeInteger(questionCount) || questionCount < 0) {
+    throw new QuestionGenerationError('QUESTION_AI_INVALID_REQUEST', 'Question Count must be a nonnegative whole number.');
+  }
+  if (questionCount === 0) return [];
+  const existingPositions = getStoredAnswerPositions(existingQuestions);
+  const existingCounts = [0, 0, 0, 0];
+  existingPositions.forEach((position) => { existingCounts[position] += 1; });
+  const candidates = getBalancedTargetVectors(existingPositions.length + questionCount, existingCounts)
+    .map((target) => ({
+      target,
+      remaining: target.map((count, position) => count - existingCounts[position]),
+      ways: countDistinctPositionOrders(target.map((count, position) => count - existingCounts[position])),
+    }));
+  const totalWays = candidates.reduce((sum, candidate) => sum + candidate.ways, 0n);
+  if (totalWays === 0n) {
+    throw new QuestionGenerationError('QUESTION_AI_ANSWER_BALANCE_IMPOSSIBLE', 'The remaining questions cannot be balanced without changing saved questions. Review the saved set before retrying.');
+  }
+  // Weight each balanced remainder by its number of distinct orders, then
+  // Fisher-Yates shuffle without modulo bias. Rejection-sampling disallowed
+  // runs/cycles leaves a uniform distribution over the acceptable plans.
+  for (let attempt = 0; attempt < 2048; attempt += 1) {
+    let selection = randomBelow(totalWays, randomBytesImpl);
+    const selected = candidates.find(({ ways }) => {
+      if (selection < ways) return true;
+      selection -= ways;
+      return false;
+    });
+    if (!selected) break;
+    const positions = selected.remaining.flatMap((count, position) => Array.from({ length: count }, () => position));
+    const plan = fisherYatesShuffle(positions, randomBytesImpl);
+    if (plan.length === questionCount && !violatesNewPositionSequenceRules(existingPositions, plan)) return plan;
+  }
+  throw new QuestionGenerationError('QUESTION_AI_ANSWER_BALANCE_IMPOSSIBLE', 'The remaining questions cannot meet the balanced answer-position and nonrepeating-sequence rules without changing saved questions. Review the saved set before retrying.');
+};
+
+const partitionAnswerPositionPlan = (plan, counts) => {
+  if (!Array.isArray(plan) || !Array.isArray(counts)
+    || counts.some((count) => !Number.isSafeInteger(count) || count < 0)
+    || counts.reduce((sum, count) => sum + count, 0) !== plan.length
+    || plan.some((position) => !Number.isInteger(position) || position < 0 || position > 3)) {
+    throw new QuestionGenerationError('QUESTION_AI_ANSWER_BALANCE_IMPOSSIBLE', 'The generated answer-position plan does not match its topic batches.');
+  }
+  let offset = 0;
+  return counts.map((count) => {
+    const batchPlan = plan.slice(offset, offset + count);
+    offset += count;
+    return batchPlan;
+  });
+};
+
+const balanceCorrectAnswerPositions = (questions, positionPlan, randomBytesImpl = secureRandomBytes) => questions.map((question, index) => {
   const correctAnswer = question.correct_answer;
-  const distractors = fisherYatesShuffle(question.options.filter((option) => option !== correctAnswer));
+  const distractors = fisherYatesShuffle(question.options.filter((option) => option !== correctAnswer), randomBytesImpl);
   const options = [...distractors];
-  options.splice(positionPlan[index] ?? Math.floor(Math.random() * 4), 0, correctAnswer);
+  options.splice(positionPlan[index], 0, correctAnswer);
   return { ...question, options };
 });
 
@@ -295,6 +409,9 @@ const generateLessonQuestions = async ({
   apiKey = process.env.OPENAI_API_KEY,
   fetchImpl = global.fetch,
   timeoutMs = QUESTION_GENERATION_TIMEOUT_MS,
+  deferAnswerPositionBalancing = false,
+  answerPositionPlan = null,
+  randomBytesImpl = secureRandomBytes,
 }) => {
   if (!aiGenerationEnabled) {
     throw new QuestionGenerationError(AI_PAUSED_CODE, AI_PAUSED_MESSAGE);
@@ -390,7 +507,12 @@ const generateLessonQuestions = async ({
   }
   try {
     const questions = parseGeneratedQuestions(outputText, questionCount);
-    return balanceCorrectAnswerPositions(questions, buildBalancedAnswerPositionPlan(questions.length));
+    if (deferAnswerPositionBalancing) return questions;
+    const plan = answerPositionPlan || buildBalancedAnswerPositionPlan(questions.length, { randomBytesImpl });
+    if (!Array.isArray(plan) || plan.length !== questions.length) {
+      throw new QuestionGenerationError('QUESTION_AI_ANSWER_BALANCE_IMPOSSIBLE', 'The generated answer-position plan does not match the returned questions.');
+    }
+    return balanceCorrectAnswerPositions(questions, plan, randomBytesImpl);
   } catch (error) {
     if (error instanceof QuestionGenerationError && !error.providerDiagnostics) {
       error.providerDiagnostics = buildProviderDiagnostics(response, responseBody, 'invalid_provider_response');
@@ -406,6 +528,8 @@ const generateLessonQuestionsInBatches = async ({
   onBatchComplete = null,
   onBatch = null,
   existingQuestions = [],
+  answerPositionPlan = null,
+  randomBytesImpl = secureRandomBytes,
   maxBatchAttempts = 3,
   ...input
 }) => {
@@ -418,7 +542,13 @@ const generateLessonQuestionsInBatches = async ({
   const boundedAttempts = Number.isInteger(maxBatchAttempts) && maxBatchAttempts > 0 ? Math.min(maxBatchAttempts, 5) : 3;
   const questions = [];
   const seen = new Set();
-  const answerPositionPlan = buildBalancedAnswerPositionPlan(questionCount);
+  const plannedPositions = answerPositionPlan || buildBalancedAnswerPositionPlan(questionCount, { existingQuestions, randomBytesImpl });
+  try {
+    partitionAnswerPositionPlan(plannedPositions, [questionCount]);
+  } catch (error) {
+    if (error instanceof QuestionGenerationError) throw error;
+    throw new QuestionGenerationError('QUESTION_AI_ANSWER_BALANCE_IMPOSSIBLE', 'The generated answer-position plan does not match the requested questions.');
+  }
   (Array.isArray(existingQuestions) ? existingQuestions : []).forEach((question) => {
     const normalized = normalizeGeneratedQuestion(question);
     if (normalized) seen.add(questionContentKey(normalized.question));
@@ -431,6 +561,9 @@ const generateLessonQuestionsInBatches = async ({
         ...input,
         questionCount: count,
         avoidQuestions: [...seen],
+        deferAnswerPositionBalancing: true,
+        answerPositionPlan: plannedPositions.slice(questions.length, questions.length + count),
+        randomBytesImpl,
       });
       if (!Array.isArray(candidate) || candidate.length !== count) {
         if (attempt === boundedAttempts - 1) {
@@ -454,7 +587,8 @@ const generateLessonQuestionsInBatches = async ({
       }
       batch = balanceCorrectAnswerPositions(
         normalizedBatch,
-        answerPositionPlan.slice(questions.length, questions.length + count)
+        plannedPositions.slice(questions.length, questions.length + count),
+        randomBytesImpl
       );
       break;
     }
@@ -491,9 +625,11 @@ module.exports = {
   QUESTION_GENERATION_OUTPUT_TOKENS_PER_QUESTION,
   getQuestionGenerationMaxOutputTokens,
   QuestionGenerationError,
+  buildBalancedAnswerPositionPlan,
   buildProviderDiagnostics,
   buildGenerationInput,
   generateLessonQuestions,
   generateLessonQuestionsInBatches,
+  partitionAnswerPositionPlan,
   toQuestionGenerationHttpFailure,
 };

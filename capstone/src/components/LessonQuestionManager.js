@@ -27,7 +27,7 @@ import {
   validateManualQuestionDraft,
 } from './lessonQuestionManager.utils';
 import { apiUrl } from '../api';
-import { fetchCurriculumRegistry, getRegistryScopeTopics, getRegistryTopicIdForDisplayLabel } from '../curriculumRegistry';
+import { fetchCurriculumRegistry } from '../curriculumRegistry';
 import { TablePrintButton } from './TablePrintButton';
 import { PrintableTableReport } from './PrintableTableReport';
 import { formatReportContext, formatTableRange, matchesTableSearch, paginateTableRows } from './tableReporting.utils';
@@ -36,7 +36,6 @@ import '../styles/lessonQuestionManager.css';
 const initialFormState = {
   grade_level: '',
   difficulty: '',
-  topic_id: '',
   file_type: 'fixed_questions',
   expected_question_count: '',
   file: null,
@@ -96,24 +95,22 @@ const withLessonManagerScope = (url, role) => {
   return `${url}${url.includes('?') ? '&' : '?'}scope=teacher`;
 };
 
-const buildLessonGenerationStorageKey = ({ file, gradeLevel, difficulty, topicId, questionCount }) => (
+const buildLessonGenerationStorageKey = ({ file, gradeLevel, difficulty, questionCount }) => (
   `${LESSON_GENERATION_IDEMPOTENCY_STORAGE_PREFIX}${JSON.stringify({
     name: file?.name || '',
     size: Number(file?.size) || 0,
     last_modified: Number(file?.lastModified) || 0,
     grade_level: gradeLevel,
     difficulty,
-    topic_id: topicId,
     question_count: questionCount,
   })}`
 );
 
-const buildLessonSourceGenerationStorageKey = ({ sourceId, gradeLevel, difficulty, topicId, questionCount }) => (
+const buildLessonSourceGenerationStorageKey = ({ sourceId, gradeLevel, difficulty, questionCount }) => (
   `${LESSON_GENERATION_IDEMPOTENCY_STORAGE_PREFIX}${JSON.stringify({
     source_learning_file_id: Number(sourceId),
     grade_level: gradeLevel,
     difficulty,
-    topic_id: topicId,
     question_count: questionCount,
   })}`
 );
@@ -458,11 +455,6 @@ export default function LessonQuestionManager() {
   const gradeLevels = useMemo(() => getGradeLevels(curriculumRegistry), [curriculumRegistry]);
   const difficultyLevels = useMemo(() => getDifficultyLevels(curriculumRegistry), [curriculumRegistry]);
   const questionFolderStructure = useMemo(() => getQuestionFolderStructure(curriculumRegistry), [curriculumRegistry]);
-  const lessonTopicOptions = useMemo(
-    () => getRegistryScopeTopics(curriculumRegistry, form.grade_level, form.difficulty),
-    [curriculumRegistry, form.difficulty, form.grade_level]
-  );
-  const selectedLessonTopic = lessonTopicOptions.find((topic) => topic.topic_id === form.topic_id) || null;
   const uploadType = form.file_type;
   const aiGenerationPaused = aiRuntimeState.enabled !== true;
   const selectedFolderPath = selectedFolder.grade_level
@@ -556,27 +548,14 @@ export default function LessonQuestionManager() {
     setFormErrors((current) => ({
       ...current,
       [field]: '',
-      ...(field === 'grade_level' || field === 'difficulty' ? { topic_id: '' } : {}),
       ...(field === 'file' || field === 'file_type' ? { file: fileTypeError } : {}),
     }));
     setForm((prev) => {
-      if (field === 'grade_level' || field === 'difficulty') {
-        const gradeLevel = field === 'grade_level' ? value : prev.grade_level;
-        const difficulty = field === 'difficulty' ? value : prev.difficulty;
-        const topicStillInScope = getRegistryScopeTopics(curriculumRegistry, gradeLevel, difficulty)
-          .some((topic) => topic.topic_id === prev.topic_id);
-        return {
-          ...prev,
-          grade_level: gradeLevel,
-          difficulty,
-          topic_id: topicStillInScope ? prev.topic_id : '',
-        };
-      }
+      if (field === 'grade_level' || field === 'difficulty') return { ...prev, [field]: value };
       if (field === 'file_type') {
         return {
           ...prev,
           file_type: value,
-          topic_id: value === 'lesson' ? prev.topic_id : '',
           expected_question_count: value === 'lesson' ? prev.expected_question_count : '',
         };
       }
@@ -645,23 +624,10 @@ export default function LessonQuestionManager() {
       showNotification('Select a reusable Lesson source first.', 'error');
       return;
     }
-    const selectedTopic = getRegistryScopeTopics(
-      curriculumRegistry,
-      generationScope.grade_level,
-      generationScope.difficulty
-    ).find((topic) => topic.topic_id === generationScope.topic_id);
-    if (!selectedTopic) {
-      setFormErrors((current) => ({
-        ...current,
-        topic_id: 'Select a canonical Mathematics topic for the selected Grade and Difficulty.',
-      }));
-      return;
-    }
     const storageKey = buildLessonSourceGenerationStorageKey({
       sourceId,
       gradeLevel: generationScope.grade_level,
       difficulty: generationScope.difficulty,
-      topicId: selectedTopic.topic_id,
       questionCount: requestedCount,
     });
     const idempotencyKey = getOrCreateLessonGenerationIdempotencyKey(storageKey);
@@ -677,8 +643,6 @@ export default function LessonQuestionManager() {
           body: JSON.stringify({
             grade_level: generationScope.grade_level,
             difficulty: generationScope.difficulty,
-            topic_id: selectedTopic.topic_id,
-            math_topic: selectedTopic.display_label,
             expected_question_count: requestedCount,
           }),
         }
@@ -739,14 +703,9 @@ export default function LessonQuestionManager() {
     if (Number.isSafeInteger(sourceId) && sourceId > 0) {
       const previewGrade = previewFile.grade_level || form.grade_level;
       const previewDifficulty = previewFile.difficulty || form.difficulty;
-      const topicsInPreviewScope = getRegistryScopeTopics(curriculumRegistry, previewGrade, previewDifficulty);
-      const previewTopicId = previewFile.topic_id
-        ? (topicsInPreviewScope.some((topic) => topic.topic_id === previewFile.topic_id) ? previewFile.topic_id : '')
-        : getRegistryTopicIdForDisplayLabel(curriculumRegistry, previewGrade, previewDifficulty, previewFile.math_topic);
       const retryScope = {
         grade_level: previewGrade,
         difficulty: previewDifficulty,
-        topic_id: previewTopicId,
       };
       setForm((current) => ({
         ...current,
@@ -756,11 +715,7 @@ export default function LessonQuestionManager() {
       setSelectedLessonSourceId(String(sourceId));
       closeQuestionPreview();
       setShowUploadForm(true);
-      if (previewTopicId) {
-        await generateQuestionSetFromLessonSource(String(requestedCount), retryScope, sourceId);
-      } else {
-        setUploadError('This partial question set has no recoverable canonical Mathematics topic. Existing questions were preserved; select a topic when starting a new lesson generation.');
-      }
+      await generateQuestionSetFromLessonSource(String(requestedCount), retryScope, sourceId);
       return;
     }
     closeQuestionPreview();
@@ -820,13 +775,6 @@ export default function LessonQuestionManager() {
       });
       return;
     }
-    if (uploadType === 'lesson' && !selectedLessonTopic) {
-      setFormErrors((current) => ({
-        ...current,
-        topic_id: 'Select a canonical Mathematics topic for the selected Grade and Difficulty.',
-      }));
-      return;
-    }
     if (usingReusableLessonSource) {
       await generateQuestionSetFromLessonSource(requestedCount);
       return;
@@ -840,8 +788,6 @@ export default function LessonQuestionManager() {
     payload.append('uploaded_by', user.id);
     if (uploadType === 'lesson') {
       payload.append('expected_question_count', requestedCount);
-      payload.append('topic_id', selectedLessonTopic.topic_id);
-      payload.append('math_topic', selectedLessonTopic.display_label);
     }
     payload.append('file', form.file);
 
@@ -850,7 +796,6 @@ export default function LessonQuestionManager() {
         file: form.file,
         gradeLevel: form.grade_level,
         difficulty: form.difficulty,
-        topicId: form.topic_id,
         questionCount: requestedCount,
       })
       : null;
@@ -2000,24 +1945,6 @@ export default function LessonQuestionManager() {
                         <option value="fixed_questions">Fixed Question File</option>
                       </select>
                     </div>
-                    {form.file_type === 'lesson' && !aiGenerationPaused && (
-                      <div className="form-group">
-                        <label className="form-label required" htmlFor="lesson-math-topic">Mathematics Topic</label>
-                        <select
-                          id="lesson-math-topic"
-                          className="select-field"
-                          value={form.topic_id}
-                          onChange={(event) => handleFormChange('topic_id', event.target.value)}
-                          aria-invalid={Boolean(formErrors.topic_id)}
-                        >
-                          <option value="">Select Mathematics topic</option>
-                          {lessonTopicOptions.map((topic) => (
-                            <option key={topic.topic_id} value={topic.topic_id}>{topic.display_label}</option>
-                          ))}
-                        </select>
-                        {formErrors.topic_id && <p className="manager-inline-error" role="alert">{formErrors.topic_id}</p>}
-                      </div>
-                    )}
                     <div className="form-group">
                       <label className="form-label">Destination</label>
                       <div className="fixed-destination-display">
@@ -2065,6 +1992,11 @@ export default function LessonQuestionManager() {
                       {form.file_type === 'fixed_questions' && (
                         <p className="fixed-question-upload-help">Fixed Questions supported: DOCX, PDF. JSON/CSV remain available for developer compatibility.</p>
                       )}
+                    {form.file_type === 'lesson' && !aiGenerationPaused && (
+                      <p className="fixed-question-upload-help" role="note">
+                        Canonical topics are validated from clear lesson headings or canonical topic names in the document. Include a clear heading for each topic; unclear or unsupported topic labels need correction before question generation.
+                      </p>
+                    )}
                     </div>
                     {form.file_type === 'lesson' && aiGenerationPaused && (
                       <p className="fixed-question-upload-help" role="status">
