@@ -43,9 +43,26 @@ jobs:
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$SOURCE_SHA"
           git cat-file -e "$SOURCE_SHA^{commit}"
           git merge-base --is-ancestor "$SOURCE_SHA" HEAD
-          test "$(git rev-list --count "$SOURCE_SHA..HEAD")" -eq 1
-          changed="$(git diff --name-only "$SOURCE_SHA...HEAD")"
-          test "$changed" = ".github/workflows/nixpacks-exact-main-validation.yml"
+          commit_count="$(git rev-list --count "$SOURCE_SHA..HEAD")"
+          if [[ "$commit_count" -lt 1 ]]; then
+            echo "::error::The validation branch must contain at least one workflow-only commit after SOURCE_SHA."
+            exit 1
+          fi
+          allowed=".github/workflows/nixpacks-exact-main-validation.yml"
+          commits="$(git rev-list --reverse "$SOURCE_SHA..HEAD")"
+          while IFS= read -r commit; do
+            [[ -n "$commit" ]] || continue
+            commit_files="$(git diff-tree --no-commit-id --name-only -r "${commit}^" "$commit" | sed '/^$/d' | sort -u)"
+            if [[ "$commit_files" != "$allowed" ]]; then
+              echo "::error::Validation commit $commit touches paths outside the approved workflow: $commit_files"
+              exit 1
+            fi
+          done <<< "$commits"
+          changed="$(git diff --name-only "$SOURCE_SHA...HEAD" | sed '/^$/d' | sort -u)"
+          if [[ "$changed" != "$allowed" ]]; then
+            echo "::error::The aggregate validation diff contains paths outside the approved workflow: $changed"
+            exit 1
+          fi
           if git cat-file -e "$SOURCE_SHA:capstone/nixpacks.toml" 2>/dev/null; then
             echo "::error::Current main unexpectedly contains capstone/nixpacks.toml."
             exit 1
