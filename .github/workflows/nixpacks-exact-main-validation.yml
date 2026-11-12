@@ -1,0 +1,429 @@
+name: Exact-main Nixpacks A/B validation
+
+on:
+  push:
+    branches:
+      - codex/nixpacks-exact-main-validation-20261112
+    paths:
+      - .github/workflows/nixpacks-exact-main-validation.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  nixpacks-ab-startup:
+    name: Exact-main Node 20 Nixpacks builds and startup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      SOURCE_SHA: 1428b1c3d5934f7914303ccc952a8b947c8543e3
+      BUILD_COMMAND: npm run build && npm --prefix backend ci --omit=dev
+      START_COMMAND: npm --prefix backend start
+      CI: 'true'
+    steps:
+      - name: Check out candidate without persistent credentials
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify exact source, isolated branch scope, and tool versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$SOURCE_SHA"
+          git cat-file -e "$SOURCE_SHA^{commit}"
+          git merge-base --is-ancestor "$SOURCE_SHA" HEAD
+          test "$(git rev-list --count "$SOURCE_SHA..HEAD")" -eq 1
+          changed="$(git diff --name-only "$SOURCE_SHA...HEAD")"
+          test "$changed" = ".github/workflows/nixpacks-exact-main-validation.yml"
+          if git cat-file -e "$SOURCE_SHA:capstone/nixpacks.toml" 2>/dev/null; then
+            echo "::error::Current main unexpectedly contains capstone/nixpacks.toml."
+            exit 1
+          fi
+          node --version
+          npm --version
+          docker version
+          docker info --format 'Docker server {{.ServerVersion}}'
+          git --version
+          echo "Exact main source SHA: $SOURCE_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Only changed path: $changed" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Download checksum-pinned Nixpacks 1.41.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/nixpacks-v1.41.0-x86_64-unknown-linux-musl.tar.gz"
+          expected_sha256=0f55de7874507b9cf7502113120bd96f2ab6979f78d10eaf2eb2ade9207b3af6
+          curl --fail --location --retry 3 --retry-all-errors \
+            "https://github.com/railwayapp/nixpacks/releases/download/v1.41.0/nixpacks-v1.41.0-x86_64-unknown-linux-musl.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$expected_sha256" "$archive" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/nixpacks-extracted"
+          tar -xzf "$archive" --directory "$RUNNER_TEMP/nixpacks-extracted"
+          binary="$(find "$RUNNER_TEMP/nixpacks-extracted" -type f -name nixpacks -print -quit)"
+          test -n "$binary"
+          chmod 0755 "$binary"
+          echo "$(dirname "$binary")" >> "$GITHUB_PATH"
+          echo "Nixpacks v1.41.0 SHA-256 verified: $expected_sha256" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Run A/B builds and isolated startup checks
+        id: validation
+        shell: bash
+        timeout-minutes: 105
+        run: |
+          set -euo pipefail
+          artifacts="$GITHUB_WORKSPACE/nixpacks-validation-artifacts"
+          mkdir -p "$artifacts"
+          nixpacks --version | tee "$artifacts/tool-versions.txt"
+          printf 'Node %s; npm %s; Docker %s; Git %s\n' "$(node --version)" "$(npm --version)" "$(docker --version)" "$(git --version)" >> "$artifacts/tool-versions.txt"
+          printf 'Build: %s\nStart: %s\n' "$BUILD_COMMAND" "$START_COMMAND" > "$artifacts/commands.txt"
+
+          a_dir="$RUNNER_TEMP/nixpacks-a"
+          b_dir="$RUNNER_TEMP/nixpacks-b"
+          mkdir -p "$a_dir" "$b_dir"
+          git archive "$SOURCE_SHA" capstone | tar -x -C "$a_dir"
+          git archive "$SOURCE_SHA" capstone | tar -x -C "$b_dir"
+          a_root="$a_dir/capstone"
+          b_root="$b_dir/capstone"
+          test ! -e "$a_root/nixpacks.toml"
+          test ! -e "$b_root/nixpacks.toml"
+          for file in package.json package-lock.json backend/package.json backend/package-lock.json railway.toml; do
+            cmp "$a_root/$file" "$b_root/$file"
+            sha256sum "$a_root/$file" >> "$artifacts/lockfile-hashes.txt"
+          done
+          diff -qr --exclude=nixpacks.toml "$a_root" "$b_root"
+          printf '[phases.setup]\nnixPkgs = ["...", "python3", "gcc", "gnumake"]\n' > "$b_root/nixpacks.toml"
+          test "$(wc -l < "$b_root/nixpacks.toml")" -eq 2
+
+          NIXPACKS_NODE_VERSION=20 nixpacks plan "$a_root" --format toml > "$artifacts/a-plan.toml" 2> "$artifacts/a-plan.log"
+          NIXPACKS_NODE_VERSION=20 nixpacks plan "$b_root" --format toml > "$artifacts/b-plan.toml" 2> "$artifacts/b-plan.log"
+          grep -Eiq 'nodejs[_-]20' "$artifacts/a-plan.toml"
+          grep -Eiq 'nodejs[_-]20' "$artifacts/b-plan.toml"
+          grep -qi python3 "$artifacts/b-plan.toml"
+          grep -qi gcc "$artifacts/b-plan.toml"
+          grep -qi gnumake "$artifacts/b-plan.toml"
+          if grep -Eiq 'python3|gcc|gnumake' "$artifacts/a-plan.toml"; then
+            echo "Scenario A plan includes at least one toolchain package." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Scenario A plan does not include python3, gcc, or gnumake." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+          tag_a="tq-nixpacks-a-$GITHUB_RUN_ID"
+          tag_b="tq-nixpacks-b-$GITHUB_RUN_ID"
+          printf 'NIXPACKS_NODE_VERSION=20 nixpacks build %s --name %s --build-cmd %q --start-cmd %q --no-cache\n' "$a_root" "$tag_a" "$BUILD_COMMAND" "$START_COMMAND" >> "$artifacts/commands.txt"
+          printf 'NIXPACKS_NODE_VERSION=20 nixpacks build %s --name %s --build-cmd %q --start-cmd %q --no-cache\n' "$b_root" "$tag_b" "$BUILD_COMMAND" "$START_COMMAND" >> "$artifacts/commands.txt"
+          if NIXPACKS_NODE_VERSION=20 nixpacks build "$a_root" --name "$tag_a" --build-cmd "$BUILD_COMMAND" --start-cmd "$START_COMMAND" --no-cache > "$artifacts/a-build.log" 2>&1; then status_a=0; else status_a=$?; fi
+          if NIXPACKS_NODE_VERSION=20 nixpacks build "$b_root" --name "$tag_b" --build-cmd "$BUILD_COMMAND" --start-cmd "$START_COMMAND" --no-cache > "$artifacts/b-build.log" 2>&1; then status_b=0; else status_b=$?; fi
+          printf 'Scenario A (no config) exit: %s\nScenario B (two-line config) exit: %s\n' "$status_a" "$status_b" | tee "$artifacts/build-results.txt"
+          printf '## Nixpacks A/B build results\n\nExact source SHA: %s\n\nScenario A exit: %s\n\nScenario B exit: %s\n' "$SOURCE_SHA" "$status_a" "$status_b" >> "$GITHUB_STEP_SUMMARY"
+          [[ "$status_a" -eq 0 ]] && echo "a_image=$tag_a" >> "$GITHUB_OUTPUT"
+          [[ "$status_b" -eq 0 ]] && echo "b_image=$tag_b" >> "$GITHUB_OUTPUT"
+          echo "a_status=$status_a" >> "$GITHUB_OUTPUT"
+          echo "b_status=$status_b" >> "$GITHUB_OUTPUT"
+
+          if [[ "$status_a" -ne 0 && "$status_b" -ne 0 ]]; then
+            echo "::error::Both build scenarios failed; inspect complete logs."
+            exit 1
+          fi
+
+          docker pull postgres:16-bookworm
+          pg_uid="$(docker run --rm --network none --entrypoint id postgres:16-bookworm -u postgres)"
+          pg_gid="$(docker run --rm --network none --entrypoint id postgres:16-bookworm -g postgres)"
+          docker run --detach --name tq-nixpacks-pg --network none --user "$pg_uid:$pg_gid" --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=128 --memory=1g --cpus=1 --shm-size=128m --tmpfs "/var/lib/postgresql/data:rw,nosuid,nodev,size=512m,uid=$pg_uid,gid=$pg_gid,mode=0700" --tmpfs "/var/run/postgresql:rw,nosuid,nodev,size=64m,uid=$pg_uid,gid=$pg_gid,mode=3775" --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777 --env POSTGRES_USER=postgres --env POSTGRES_DB=postgres --env POSTGRES_HOST_AUTH_METHOD=trust postgres:16-bookworm
+          pg_ready=false
+          for attempt in $(seq 1 60); do
+            if docker exec tq-nixpacks-pg pg_isready --host=127.0.0.1 --username=postgres --dbname=postgres >/dev/null 2>&1; then pg_ready=true; break; fi
+            sleep 1
+          done
+          [[ "$pg_ready" == true ]]
+          docker inspect --format='PostgreSQL network={{.HostConfig.NetworkMode}} published-ports={{json .HostConfig.PortBindings}}' tq-nixpacks-pg > "$artifacts/network.txt"
+
+          cat > "$artifacts/bootstrap.cjs" <<'NODE'
+          'use strict';
+          const assert = require('node:assert/strict');
+          const { Pool } = require('pg');
+          const { applySyntheticTestSchema, assertSyntheticDatabase } = require('./testSupport/applySyntheticTestSchema');
+          const schemaFixtureSql = [
+            {
+              name: 'teacherClassAssignments',
+              marker: 'CREATE TABLE IF NOT EXISTS public.teacher_class_assignments',
+              sql: `
+                CREATE TABLE IF NOT EXISTS public.teacher_class_assignments (
+                  id SERIAL PRIMARY KEY,
+                  teacher_account_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+                  grade_level VARCHAR(20) NOT NULL CHECK (grade_level IN ('Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6')),
+                  section VARCHAR(50) NOT NULL CHECK (section = BTRIM(section) AND CHAR_LENGTH(section) > 0),
+                  section_key VARCHAR(50) NOT NULL CHECK (section_key = LOWER(REGEXP_REPLACE(BTRIM(section), '[[:space:]]+', ' ', 'g'))),
+                  created_by_admin INTEGER REFERENCES public.accounts(id) ON DELETE SET NULL,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  CONSTRAINT teacher_class_assignments_unique UNIQUE (teacher_account_id, grade_level, section_key)
+                );
+                CREATE INDEX IF NOT EXISTS idx_teacher_class_assignments_teacher ON public.teacher_class_assignments(teacher_account_id);
+                CREATE INDEX IF NOT EXISTS idx_teacher_class_assignments_scope ON public.teacher_class_assignments(grade_level, section_key);
+                CREATE OR REPLACE FUNCTION public.validate_teacher_class_assignment_teacher()
+                RETURNS TRIGGER AS $$
+                DECLARE target_role TEXT; target_archived BOOLEAN;
+                BEGIN
+                  SELECT LOWER(role), COALESCE(is_archived, false) INTO target_role, target_archived
+                  FROM public.accounts WHERE id = NEW.teacher_account_id;
+                  IF NOT FOUND OR target_archived OR target_role NOT IN ('teacher', 'parent_teacher') THEN
+                    RAISE EXCEPTION 'Teacher class assignments require an active Teacher or Parent/Teacher account.';
+                  END IF;
+                  NEW.updated_at = CURRENT_TIMESTAMP;
+                  RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+                CREATE TRIGGER teacher_class_assignments_validate_teacher
+                  BEFORE INSERT OR UPDATE ON public.teacher_class_assignments
+                  FOR EACH ROW EXECUTE FUNCTION public.validate_teacher_class_assignment_teacher();
+              `,
+            },
+            {
+              name: 'gameProgressSaveCommits',
+              marker: 'CREATE TABLE IF NOT EXISTS public.game_progress_save_commits',
+              sql: `
+                CREATE TABLE IF NOT EXISTS public.game_progress_save_commits (
+                  student_id INTEGER NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+                  learning_cycle_version INTEGER NOT NULL CHECK (learning_cycle_version >= 0),
+                  save_commit_id_hash TEXT NOT NULL CHECK (save_commit_id_hash ~ '^[0-9a-f]{64}$'),
+                  payload_sha256 TEXT NOT NULL CHECK (payload_sha256 ~ '^[0-9a-f]{64}$'),
+                  activity_event_key TEXT NOT NULL,
+                  response_status SMALLINT NOT NULL DEFAULT 201 CHECK (response_status BETWEEN 200 AND 299),
+                  response_body JSONB,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  completed_at TIMESTAMPTZ,
+                  CONSTRAINT game_progress_save_commits_pkey PRIMARY KEY (student_id, learning_cycle_version, save_commit_id_hash),
+                  CONSTRAINT game_progress_save_commits_activity_event_unique UNIQUE (student_id, activity_event_key),
+                  CONSTRAINT game_progress_save_commits_completion_consistency
+                    CHECK ((response_body IS NULL) = (completed_at IS NULL))
+                )
+              `,
+            },
+          ];
+          const schemaFixtureCounts = { teacherClassAssignments: 0, gameProgressSaveCommits: 0 };
+          const required = [
+            'game_progress_save_commits_pkey',
+            'game_progress_save_commits_activity_event_unique',
+            'game_progress_save_commits_student_id_fkey',
+            'game_progress_save_commits_learning_cycle_version_check',
+            'game_progress_save_commits_save_commit_id_hash_check',
+            'game_progress_save_commits_payload_sha256_check',
+            'game_progress_save_commits_response_status_check',
+            'game_progress_save_commits_completion_consistency',
+          ];
+          async function main() {
+            assert.equal(process.env.NODE_ENV, 'test');
+            assert.equal(process.env.CI, 'true');
+            const role = process.env.READONLY_ROLE;
+            assert.match(role || '', /^tq_nixpacks_[ab]$/);
+            const database = role === 'tq_nixpacks_a' ? 'tq_backend_test_ci' : 'tq_game_metrics_test_ci';
+            assert.equal(process.env.DB_NAME, database);
+            const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+            const originalQuery = pool.query.bind(pool);
+            pool.query = (query, ...args) => {
+              const fixture = schemaFixtureSql.find((entry) => typeof query === 'string' && query.includes(entry.marker));
+              if (!fixture) return originalQuery(query, ...args);
+              schemaFixtureCounts[fixture.name] += 1;
+              return originalQuery(fixture.sql, ...args);
+            };
+            try {
+              await assertSyntheticDatabase(pool, process.env.DATABASE_URL);
+              await applySyntheticTestSchema(pool, process.env.DATABASE_URL);
+              assert.deepEqual(schemaFixtureCounts, { teacherClassAssignments: 1, gameProgressSaveCommits: 1 });
+              const receipt = await pool.query(
+                "SELECT COUNT(*)::integer AS count FROM pg_catalog.pg_constraint WHERE conrelid = 'public.game_progress_save_commits'::regclass AND conname = ANY($1::text[]) AND convalidated",
+                [required],
+              );
+              assert.equal(receipt.rows[0].count, required.length);
+              await pool.query('CREATE ROLE ' + role + ' LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT');
+              await pool.query('GRANT CONNECT ON DATABASE ' + database + ' TO ' + role);
+              await pool.query('GRANT USAGE ON SCHEMA public TO ' + role);
+              await pool.query('GRANT SELECT ON ALL TABLES IN SCHEMA public TO ' + role);
+              await pool.query('ALTER ROLE ' + role + ' SET default_transaction_read_only = on');
+              const result = await pool.query(
+                "SELECT r.rolsuper, r.rolcreatedb, r.rolcreaterole, r.rolinherit, has_schema_privilege(r.rolname, 'public', 'CREATE') AS schema_create, has_table_privilege(r.rolname, 'public.accounts', 'SELECT') AS can_select, (has_table_privilege(r.rolname, 'public.accounts', 'INSERT') OR has_table_privilege(r.rolname, 'public.accounts', 'UPDATE') OR has_table_privilege(r.rolname, 'public.accounts', 'DELETE') OR has_table_privilege(r.rolname, 'public.accounts', 'TRUNCATE')) AS can_write FROM pg_catalog.pg_roles r WHERE r.rolname = $1",
+                [role],
+              );
+              assert.deepEqual(result.rows[0], {
+                rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolinherit: false,
+                schema_create: false, can_select: true, can_write: false,
+              });
+              console.log('Synthetic fixture matches the migration-026 receipt constraints; migration files were not executed. Runtime role is SELECT-only and default read-only.');
+            } finally {
+              await pool.end();
+            }
+          }
+          main().catch((error) => {
+            console.error(error.stack || error.message);
+            process.exitCode = 1;
+          });
+          NODE
+
+          run_scenario() {
+            local scenario="$1"
+            local image="$2"
+            local database=tq_backend_test_ci
+            local role=tq_nixpacks_a
+            if [[ "$scenario" == b ]]; then database=tq_game_metrics_test_ci; role=tq_nixpacks_b; fi
+            local sentinel
+            sentinel="$(openssl rand -hex 24)"
+            echo "::add-mask::$sentinel"
+            docker exec tq-nixpacks-pg createdb --host=127.0.0.1 --username=postgres "$database" || return 1
+            docker exec tq-nixpacks-pg psql --host=127.0.0.1 --username=postgres --dbname="$database" --no-psqlrc --set=ON_ERROR_STOP=1 --command "COMMENT ON DATABASE $database IS 'tq-disposable-ci:$sentinel';" || return 1
+            local bootstrap_url="postgresql://postgres@127.0.0.1:5432/$database"
+            local runtime_url="postgresql://$role@127.0.0.1:5432/$database"
+            docker run --rm --network container:tq-nixpacks-pg --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=128 --memory=2g --cpus=1 --tmpfs /tmp:rw,nosuid,nodev,size=256m,mode=1777 --volume "$artifacts/bootstrap.cjs:/app/backend/bootstrap.cjs:ro" --workdir /app/backend --user 1000:1000 --env NODE_ENV=test --env CI=true --env "DATABASE_URL=$bootstrap_url" --env "DB_NAME=$database" --env "READONLY_ROLE=$role" --env "TQ_DISPOSABLE_DB_SENTINEL=$sentinel" "$image" "node bootstrap.cjs" || return 1
+            docker run --detach --name "tq-nixpacks-app-$scenario" --network container:tq-nixpacks-pg --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=256 --memory=3g --cpus=2 --tmpfs /tmp:rw,nosuid,nodev,size=256m,mode=1777 --tmpfs /app/backend/uploads:rw,nosuid,nodev,size=64m,uid=1000,gid=1000,mode=0750 --user 1000:1000 --env "DATABASE_URL=$runtime_url" --env NODE_ENV=production --env DB_SSL=false --env AI_RUNTIME_ENABLED=false --env AI_GENERATION_ENABLED=false --env JWT_SECRET=nixpacks-validation-synthetic-only-secret --env PORT=5000 "$image" || return 1
+            local app="tq-nixpacks-app-$scenario"
+            local healthy=false
+            for attempt in $(seq 1 60); do
+              state="$(docker inspect --format='{{.State.Status}}' "$app" 2>/dev/null || true)"
+              [[ "$state" == running ]] || break
+              if docker exec "$app" node -e 'fetch("http://127.0.0.1:5000/").then((r) => process.exit(r.status === 200 ? 0 : 1)).catch(() => process.exit(1))'; then healthy=true; break; fi
+              sleep 1
+            done
+            docker logs "$app" > "$artifacts/scenario-$scenario-startup.log" 2>&1 || true
+            cat "$artifacts/scenario-$scenario-startup.log"
+            [[ "$healthy" == true ]] || return 1
+            docker inspect --format="Scenario $scenario network={{.HostConfig.NetworkMode}} published-ports={{json .HostConfig.PortBindings}}" "$app" >> "$artifacts/network.txt"
+            docker rm -f "$app" >/dev/null || return 1
+            echo "Scenario $scenario startup passed: HTTP 200 on namespace loopback." | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+
+          failures=0
+          if [[ "$status_a" == 0 ]]; then if ! run_scenario a "$tag_a"; then failures=1; fi
+          else echo "Scenario A startup skipped because its build failed." | tee -a "$GITHUB_STEP_SUMMARY"; fi
+          if [[ "$status_b" == 0 ]]; then if ! run_scenario b "$tag_b"; then failures=1; fi
+          else echo "Scenario B startup skipped because its build failed." | tee -a "$GITHUB_STEP_SUMMARY"; failures=1; fi
+
+          if [[ "$status_b" == 0 ]]; then
+            docker exec tq-nixpacks-pg psql --host=127.0.0.1 --username=postgres --dbname=tq_game_metrics_test_ci --no-psqlrc --set=ON_ERROR_STOP=1 --command 'DROP TABLE public.game_progress_save_commits'
+            docker run --detach --name tq-nixpacks-missing-026 --network container:tq-nixpacks-pg --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=256 --memory=3g --cpus=2 --tmpfs /tmp:rw,nosuid,nodev,size=256m,mode=1777 --tmpfs /app/backend/uploads:rw,nosuid,nodev,size=64m,uid=1000,gid=1000,mode=0750 --user 1000:1000 --env DATABASE_URL=postgresql://tq_nixpacks_b@127.0.0.1:5432/tq_game_metrics_test_ci --env NODE_ENV=production --env DB_SSL=false --env AI_RUNTIME_ENABLED=false --env AI_GENERATION_ENABLED=false --env JWT_SECRET=nixpacks-validation-synthetic-only-secret --env PORT=5000 "$tag_b"
+            refused=false
+            for attempt in $(seq 1 60); do
+              if docker exec tq-nixpacks-missing-026 node -e 'fetch("http://127.0.0.1:5000/").then(() => process.exit(1)).catch(() => process.exit(0))' >/dev/null 2>&1; then refused=true; break; fi
+              state="$(docker inspect --format='{{.State.Status}}' tq-nixpacks-missing-026 2>/dev/null || true)"
+              if [[ "$state" == exited ]]; then refused=true; break; fi
+              sleep 1
+            done
+            docker logs tq-nixpacks-missing-026 > "$artifacts/missing-026-startup.log" 2>&1 || true
+            if [[ "$refused" != true ]] || ! grep -qi game_progress_save_commits "$artifacts/missing-026-startup.log"; then
+              echo "::error::Startup did not fail closed for the missing migration-026 receipt table."
+              failures=1
+            else
+              echo "Missing-026 negative control passed: no listener; logs name game_progress_save_commits." | tee -a "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          if [[ "$status_a" != 0 && "$status_b" == 0 ]]; then echo "Scenario A failed while B succeeded; review complete A logs before calling the tools necessary." | tee -a "$GITHUB_STEP_SUMMARY"; fi
+          if [[ "$failures" -ne 0 || "$status_b" -ne 0 ]]; then exit 1; fi
+
+      - name: Upload complete Nixpacks and startup logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nixpacks-main-ab-validation
+          path: nixpacks-validation-artifacts/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove disposable containers
+        if: always()
+        shell: bash
+        run: docker rm -f tq-nixpacks-app-a tq-nixpacks-app-b tq-nixpacks-missing-026 tq-nixpacks-pg >/dev/null 2>&1 || true
+
+  migration-checksum-portability:
+    name: LF/CRLF migration checksum compatibility audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: 1428b1c3d5934f7914303ccc952a8b947c8543e3
+    steps:
+      - name: Check out validation branch without persistent credentials
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Compare runner and preflight checksums for LF and CRLF
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$SOURCE_SHA"
+          mkdir -p "$RUNNER_TEMP/checksum-source" "$GITHUB_WORKSPACE/nixpacks-validation-artifacts"
+          git archive "$SOURCE_SHA" capstone/backend | tar -x -C "$RUNNER_TEMP/checksum-source"
+          cd "$RUNNER_TEMP/checksum-source/capstone"
+          node --version
+          AUDIT_REPORT="$GITHUB_WORKSPACE/nixpacks-validation-artifacts/checksum-portability.json" node <<'NODE'
+          'use strict';
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const os = require('node:os');
+          const path = require('node:path');
+          const { RELEASE_MIGRATIONS, migrationChecksum, readMigration } = require('./backend/releaseMigrations');
+          const migration = RELEASE_MIGRATIONS.find((entry) => entry.version === 26);
+          assert.ok(migration, 'migration 026 must exist in the exact-main manifest');
+          const sql = fs.readFileSync(path.join('backend', 'migrations', migration.file), 'utf8');
+          const lfSql = sql.replace(/\r\n?/g, '\n');
+          const crlfSql = lfSql.replace(/\n/g, '\r\n');
+          const preflight = fs.readFileSync('backend/scripts/release-migration-preflight.sql', 'utf8');
+          const match = preflight.match(/\(26,\s*'026_game_progress_save_commit_idempotency\.sql',\s*'([a-f0-9]{64})'\)/i);
+          assert.ok(match, 'migration 026 checksum must be present in the preflight');
+          const manifestHash = match[1].toLowerCase();
+          const lfHash = migrationChecksum(lfSql);
+          const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'migration-026-crlf-audit-'));
+          try {
+            const dir = path.join(temp, 'migrations');
+            fs.mkdirSync(dir);
+            fs.writeFileSync(path.join(dir, migration.file), crlfSql, 'utf8');
+            const crlfHash = migrationChecksum(readMigration(dir, migration));
+            const report = {
+              sourceSha: process.env.SOURCE_SHA,
+              manifestLfHash: manifestHash,
+              runnerLfHash: lfHash,
+              runnerCrLfHash: crlfHash,
+              lineEndingHashesMatch: lfHash === crlfHash,
+              preflightMatchesLf: manifestHash === lfHash,
+            };
+            fs.writeFileSync(process.env.AUDIT_REPORT, JSON.stringify(report, null, 2) + '\n');
+            console.log(JSON.stringify(report, null, 2));
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, [
+              '## Migration checksum portability',
+              '',
+              'Exact source: ' + report.sourceSha,
+              'Preflight/LF SHA-256: ' + manifestHash,
+              'Runner CRLF SHA-256: ' + crlfHash,
+              'LF and CRLF hashes match: ' + report.lineEndingHashesMatch,
+              '',
+            ].join('\n'));
+            assert.equal(manifestHash, lfHash, 'preflight must match the exact-main LF source hash');
+            assert.equal(crlfHash, lfHash,
+              'FAIL: migrationChecksum hashes CRLF text differently from the LF manifest on a Windows-converted checkout');
+          } finally {
+            fs.rmSync(temp, { recursive: true, force: true });
+          }
+          NODE
+
+      - name: Upload checksum audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-checksum-portability
+          path: nixpacks-validation-artifacts/checksum-portability.json
+          if-no-files-found: warn
+          retention-days: 14
