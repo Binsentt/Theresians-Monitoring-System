@@ -7,6 +7,27 @@ const { RELEASE_MIGRATIONS, migrationChecksum } = require('../releaseMigrations'
 
 const scripts = __dirname;
 const read = (name) => fs.readFileSync(path.join(scripts, name), 'utf8');
+const readIsolatedBackendWorkflow = (
+  workflowPathOverride = process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH
+) => {
+  const hasOverride = workflowPathOverride !== undefined;
+  if (hasOverride && !workflowPathOverride.trim()) {
+    throw new Error('STUDENT_PROGRESS_CI_WORKFLOW_PATH is configured but empty.');
+  }
+
+  const workflowPath = hasOverride
+    ? path.resolve(workflowPathOverride)
+    : path.resolve(scripts, '../../../.github/workflows/backend-network-isolated.yml');
+
+  try {
+    return fs.readFileSync(workflowPath, 'utf8');
+  } catch (error) {
+    const source = hasOverride
+      ? `STUDENT_PROGRESS_CI_WORKFLOW_PATH override "${workflowPathOverride}"`
+      : `repository-relative backend workflow "${workflowPath}"`;
+    throw new Error(`Unable to read ${source} (resolved path: "${workflowPath}"): ${error.message}`, { cause: error });
+  }
+};
 
 test('read-only preflight audit is fixed to catalog and migration-ledger metadata', () => {
   const sql = read('release-preflight-role-audit.sql');
@@ -113,8 +134,32 @@ test('pre-migration 026 constraint and index diagnostics use independent exact 1
   assert.match(indexQuery, /pg_catalog\.pg_indexes/);
   assert.match(indexQuery, /tablename IN \(SELECT table_name FROM required_tables\)/);
 });
+
+test('configured backend workflow override is used', () => {
+  const previousOverride = process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH;
+  process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH = __filename;
+
+  try {
+    assert.equal(readIsolatedBackendWorkflow(), fs.readFileSync(__filename, 'utf8'));
+  } finally {
+    if (previousOverride === undefined) delete process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH;
+    else process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH = previousOverride;
+  }
+});
+
+test('configured backend workflow override fails clearly when it cannot be read', () => {
+  const missingWorkflowPath = path.join(scripts, 'missing-backend-network-isolated.yml');
+
+  assert.throws(
+    () => readIsolatedBackendWorkflow(missingWorkflowPath),
+    (error) => error instanceof Error
+      && error.message.includes('STUDENT_PROGRESS_CI_WORKFLOW_PATH')
+      && error.message.includes(missingWorkflowPath)
+  );
+});
+
 test('isolated backend workflow provisions and sentinel-marks every new synthetic preflight database', () => {
-  const workflow = fs.readFileSync(path.join(scripts, '../../../.github/workflows/backend-network-isolated.yml'), 'utf8');
+  const workflow = readIsolatedBackendWorkflow();
   for (const database of [
     'tq_preflight_pre_026_test_ci',
     'tq_preflight_partial_receipt_026_test_ci',
