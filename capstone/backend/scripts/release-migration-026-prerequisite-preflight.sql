@@ -468,9 +468,49 @@ SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class r 
   ROLLBACK;
   SELECT 'pre-026 preflight stopped: teacher trigger missing or disabled'::integer;
 \endif
+WITH required_tables(table_name) AS (
+  VALUES
+    ('accounts'),
+    ('activity_logs'),
+    ('admin_audit_logs'),
+    ('announcements'),
+    ('folders'),
+    ('game_results'),
+    ('learning_files'),
+    ('login_otp_device_skips'),
+    ('playtime_deletion_tombstones'),
+    ('playtime_sessions'),
+    ('questions'),
+    ('student_ai_insights'),
+    ('student_game_progress'),
+    ('student_quest_milestones'),
+    ('teacher_class_assignments'),
+    ('teacher_student_relationships'),
+    ('website_sessions')
+)
 SELECT relation.relname, c.conname, c.contype, c.convalidated, pg_catalog.pg_get_constraintdef(c.oid)
 FROM pg_catalog.pg_constraint c JOIN pg_catalog.pg_class relation ON relation.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=relation.relnamespace
-WHERE n.nspname='public' AND relation.relname IN (SELECT DISTINCT table_name FROM required_columns) ORDER BY relation.relname,c.conname;
-SELECT schemaname,tablename,indexname,indexdef FROM pg_catalog.pg_indexes WHERE schemaname='public' AND tablename IN (SELECT DISTINCT table_name FROM required_columns) ORDER BY tablename,indexname;
+WHERE n.nspname='public' AND relation.relname IN (SELECT table_name FROM required_tables) ORDER BY relation.relname,c.conname;
+WITH required_tables(table_name) AS (
+  VALUES
+    ('accounts'),
+    ('activity_logs'),
+    ('admin_audit_logs'),
+    ('announcements'),
+    ('folders'),
+    ('game_results'),
+    ('learning_files'),
+    ('login_otp_device_skips'),
+    ('playtime_deletion_tombstones'),
+    ('playtime_sessions'),
+    ('questions'),
+    ('student_ai_insights'),
+    ('student_game_progress'),
+    ('student_quest_milestones'),
+    ('teacher_class_assignments'),
+    ('teacher_student_relationships'),
+    ('website_sessions')
+)
+SELECT schemaname,tablename,indexname,indexdef FROM pg_catalog.pg_indexes WHERE schemaname='public' AND tablename IN (SELECT table_name FROM required_tables) ORDER BY tablename,indexname;
 ROLLBACK;
 \echo 'PASS: pre-026 metadata prerequisites verified; no migration or application data query was executed.'

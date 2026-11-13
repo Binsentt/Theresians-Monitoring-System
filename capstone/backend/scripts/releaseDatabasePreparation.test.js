@@ -81,6 +81,38 @@ test('pre-migration 026 SQL matches current source metadata and stays metadata-o
   assert.deepEqual(requiredColumns, expectedColumns);
 });
 
+test('pre-migration 026 constraint and index diagnostics use independent exact 17-table scopes', () => {
+  const sql = read('release-migration-026-prerequisite-preflight.sql');
+  const expectedTables = Object.keys(REQUIRED_SCHEMA)
+    .filter((tableName) => tableName !== 'game_progress_save_commits')
+    .sort();
+  const cteStarts = [...sql.matchAll(/WITH required_tables\(table_name\) AS \(/g)]
+    .map((match) => match.index);
+  assert.equal(cteStarts.length, 2, 'constraint and index queries must each define a statement-local table CTE');
+
+  const assertScopedTables = (query, label) => {
+    const cte = query.match(/WITH required_tables\(table_name\) AS \(\s*VALUES([\s\S]*?)\)\s*SELECT/);
+    assert.ok(cte, `${label} diagnostic must define required_tables in its own statement`);
+    const tables = [...cte[1].matchAll(/\('([^']+)'\)/g)].map(([, tableName]) => tableName).sort();
+    assert.equal(tables.length, 17, `${label} diagnostic must stay within the 17-table pre-migration scope`);
+    assert.deepEqual(tables, expectedTables, `${label} diagnostic must use the canonical pre-migration table set`);
+    assert.doesNotMatch(query, /required_columns/, `${label} diagnostic must not reference an out-of-scope column CTE`);
+  };
+
+  const constraintEnd = sql.indexOf('ORDER BY relation.relname,c.conname;', cteStarts[0]);
+  assert.ok(constraintEnd > cteStarts[0]);
+  const constraintQuery = sql.slice(cteStarts[0], constraintEnd + 'ORDER BY relation.relname,c.conname;'.length);
+  assertScopedTables(constraintQuery, 'constraint');
+  assert.match(constraintQuery, /pg_catalog\.pg_constraint/);
+  assert.match(constraintQuery, /relation\.relname IN \(SELECT table_name FROM required_tables\)/);
+
+  const indexEnd = sql.indexOf('ORDER BY tablename,indexname;', cteStarts[1]);
+  assert.ok(indexEnd > cteStarts[1]);
+  const indexQuery = sql.slice(cteStarts[1], indexEnd + 'ORDER BY tablename,indexname;'.length);
+  assertScopedTables(indexQuery, 'index');
+  assert.match(indexQuery, /pg_catalog\.pg_indexes/);
+  assert.match(indexQuery, /tablename IN \(SELECT table_name FROM required_tables\)/);
+});
 test('isolated backend workflow provisions and sentinel-marks every new synthetic preflight database', () => {
   const workflow = fs.readFileSync(path.join(scripts, '../../../.github/workflows/backend-network-isolated.yml'), 'utf8');
   for (const database of [
