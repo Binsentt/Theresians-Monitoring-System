@@ -188,7 +188,7 @@ SELECT
   ) AS role_audit_ok
 \gset
 
-\echo 'Preflight role audit counts: application_relation_select_count=:application_relation_select_count extra_ledger_column_select_count=:extra_ledger_column_select_count executable_security_definer_function_count=:executable_security_definer_function_count table_write_privilege_count=:table_write_privilege_count sequence_privilege_count=:sequence_privilege_count schema_create_privilege_count=:schema_create_privilege_count role_membership_count=:role_membership_count'
+\echo Preflight role audit counts: application_relation_select_count=:application_relation_select_count extra_ledger_column_select_count=:extra_ledger_column_select_count executable_security_definer_function_count=:executable_security_definer_function_count table_write_privilege_count=:table_write_privilege_count sequence_privilege_count=:sequence_privilege_count schema_create_privilege_count=:schema_create_privilege_count role_membership_count=:role_membership_count
 \if :role_audit_ok
   \echo 'PASS: target identity, read-only limits, and preflight-only privileges verified.'
   ROLLBACK;

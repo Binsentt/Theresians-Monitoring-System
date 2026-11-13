@@ -25,7 +25,8 @@ const MIGRATION_TABLE_SQL = `
 `;
 
 function migrationChecksum(sql) {
-  return crypto.createHash('sha256').update(sql, 'utf8').digest('hex');
+  const canonicalSql = sql.replace(/\r\n?/g, '\n');
+  return crypto.createHash('sha256').update(canonicalSql, 'utf8').digest('hex');
 }
 
 function readMigration(migrationDir, migration) {
