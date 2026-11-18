@@ -5,7 +5,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
-const { migrationChecksum } = require('../releaseMigrations');
+const { RELEASE_MIGRATIONS, migrationChecksum } = require('../releaseMigrations');
 const {
   buildApprovalPlan,
   parseVersionList,
@@ -326,6 +326,8 @@ test('preflight SQL opens a read-only transaction and contains only SELECT inspe
   assert.match(sql, /expected_role/);
   assert.match(sql, /expected_server_address/);
   assert.match(sql, /expected_server_port/);
+  assert.doesNotMatch(sql, /\bm\.applied_at\b/i,
+    'the preflight role must not need access to unapproved migration-ledger columns');
   assert.match(sql, /pg_auth_members/);
   assert.match(sql, /has_sequence_privilege/);
   assert.match(sql, /^\\set ON_ERROR_STOP on/m);
@@ -359,6 +361,77 @@ test('preflight column metadata checks use catalogs visible without application-
   assert.match(sql, /pg_catalog\.format_type\s*\(/i);
   assert.match(sql, /attnum\s*>\s*0[\s\S]*?attisdropped/i);
   assert.match(sql, /game_student_id[\s\S]*?character varying\(8\)/i);
+});
+
+test('pre-026 constraint and index listings declare their own required-table scope', () => {
+  const sql = fs.readFileSync(path.join(__dirname, 'release-migration-026-prerequisite-preflight.sql'), 'utf8');
+  const contract = sql.match(/WITH required_columns\(table_name, column_name\) AS \(\s*VALUES([\s\S]*?)\), schema_contract AS/i);
+  assert.ok(contract, 'pre-026 preflight must define its required-column contract');
+
+  const expectedTables = [...new Set([...contract[1].matchAll(/\('([^']+)'/g)].map(([, tableName]) => tableName))]
+    .sort();
+  const scopedCatalogQueries = [...sql.matchAll(/WITH required_tables\s*\(\s*table_name\s*\)\s+AS\s*\(\s*VALUES([\s\S]*?)\)\s*(SELECT[\s\S]*?;)/gi)];
+  assert.equal(scopedCatalogQueries.length, 2, 'constraint and index listings must each declare a local table-scope CTE');
+
+  for (const [, tableValues, query] of scopedCatalogQueries) {
+    const listedTables = [...new Set([...tableValues.matchAll(/\('([^']+)'/g)].map(([, tableName]) => tableName))]
+      .sort();
+    assert.deepEqual(listedTables, expectedTables, 'catalog listing scope must match all required schema tables');
+    assert.match(query, /IN\s*\(\s*SELECT\s+table_name\s+FROM\s+required_tables\s*\)/i);
+    assert.doesNotMatch(query, /\brequired_columns\b/i, 'a CTE cannot be referenced after its defining statement ends');
+  }
+});
+
+test('disposable PostgreSQL harness scenario counters match the executed scenario inventory', () => {
+  const harness = fs.readFileSync(path.join(__dirname, 'run-preflight-postgres-harness.cjs'), 'utf8');
+  const backupScenarioBoundary = harness.indexOf('const createSyntheticBackupProbe');
+  assert.notEqual(backupScenarioBoundary, -1, 'backup scenarios must follow the preflight scenarios');
+
+  const preflightSection = harness.slice(0, backupScenarioBoundary);
+  const dynamicModeScenario = preflightSection.match(/for\s*\(const \[mode, phrase\] of \[([\s\S]*?)\]\)\s*\{[\s\S]*?recordScenario\(/);
+  assert.ok(dynamicModeScenario, 'the missing-table and missing-column scenarios must remain enumerated');
+  const additionalDynamicRuns = (dynamicModeScenario[1].match(/^\s*\['[^']+'\s*,/gm) || []).length - 1;
+  const preflightScenarioCount = (preflightSection.match(/^\s*recordScenario\(/gm) || []).length + additionalDynamicRuns;
+  const totalScenarioCount = (harness.match(/^\s*recordScenario\(/gm) || []).length + additionalDynamicRuns;
+  assert.match(harness, new RegExp(`assert\\.equal\\(passedScenarioCount, ${preflightScenarioCount},`));
+  assert.match(harness, new RegExp(`assert\\.equal\\(passedScenarioCount, ${totalScenarioCount},`));
+});
+
+test('synthetic backup-role table and sequence grants target the database being audited', () => {
+  const harness = fs.readFileSync(path.join(__dirname, 'run-preflight-postgres-harness.cjs'), 'utf8');
+  const grantBlock = harness.match(/const grantBackupRole\s*=\s*psql\(CASES\.valid,\s*'postgres',\s*`([\s\S]*?)`\);/);
+  assert.ok(grantBlock, 'database-local backup role grants must connect to CASES.valid');
+  assert.match(grantBlock[1], /GRANT USAGE ON SCHEMA public TO tq_prod_backup_reader/i);
+  assert.match(grantBlock[1], /GRANT SELECT ON ALL TABLES IN SCHEMA public TO tq_prod_backup_reader/i);
+  assert.match(grantBlock[1], /GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO tq_prod_backup_reader/i);
+});
+
+test('migration preflight manifests use canonical LF source checksums across checkout platforms', () => {
+  const manifestPaths = [
+    path.join(__dirname, 'release-migration-preflight.sql'),
+    path.join(__dirname, 'release-migration-026-prerequisite-preflight.sql'),
+  ];
+  const expectedVersions = RELEASE_MIGRATIONS
+    .filter(({ version }) => version >= 18 && version <= 26)
+    .map(({ version }) => version);
+
+  for (const manifestPath of manifestPaths) {
+    const manifest = fs.readFileSync(manifestPath, 'utf8');
+    const rows = [...manifest.matchAll(/^\s*\((\d+), '([^']+\.sql)', '([a-f0-9]{64})'\),?$/gm)];
+    const versions = [...new Set(rows.map(([, version]) => Number(version)))].sort((a, b) => a - b);
+    assert.deepEqual(versions, expectedVersions, `${path.basename(manifestPath)} must cover migrations 018–026`);
+
+    for (const [, versionText, filename, checksum] of rows) {
+      const version = Number(versionText);
+      const source = fs.readFileSync(path.join(__dirname, '../migrations', filename), 'utf8')
+        .replace(/\r\n?/g, '\n');
+      assert.equal(
+        checksum,
+        migrationChecksum(source),
+        `${path.basename(manifestPath)} migration ${version} checksum must match canonical LF source bytes`,
+      );
+    }
+  }
 });
 
 test('the supported release CLI stops before connecting when approval is absent', () => {

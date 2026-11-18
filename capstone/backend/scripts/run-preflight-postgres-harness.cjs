@@ -312,6 +312,8 @@ assertCiContainer();
 const createRole = psql('postgres', 'postgres', `CREATE ROLE ${ROLE} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;`);
 assert.equal(createRole.status, 0, createRole.stderr);
 for (const [mode, database] of Object.entries(CASES)) {
+  const revokePublicTemp = psql('postgres', 'postgres', `REVOKE TEMP ON DATABASE ${database} FROM PUBLIC;`);
+  assert.equal(revokePublicTemp.status, 0, revokePublicTemp.stderr);
   const grantConnect = psql('postgres', 'postgres', `GRANT CONNECT ON DATABASE ${database} TO ${ROLE};`);
   assert.equal(grantConnect.status, 0, grantConnect.stderr);
   const fixture = psql(database, 'postgres', fixtureSql(mode));
@@ -345,6 +347,16 @@ assert.match(validRoleAudit.stdout, /extra_ledger_column_select_count=0/);
 assert.match(validRoleAudit.stdout, /executable_security_definer_function_count=0/);
 assert.match(validRoleAudit.stdout, /table_write_privilege_count=0/);
 recordScenario('preflight role passes with migration-ledger SELECT and no application-data SELECT');
+
+const grantPublicTemp = psql('postgres', 'postgres', `GRANT TEMP ON DATABASE ${CASES.valid} TO PUBLIC;`);
+assert.equal(grantPublicTemp.status, 0, grantPublicTemp.stderr);
+const publicTempRoleAudit = invokeRoleAudit(CASES.valid);
+const revokePublicTemp = psql('postgres', 'postgres', `REVOKE TEMP ON DATABASE ${CASES.valid} FROM PUBLIC;`);
+assert.equal(revokePublicTemp.status, 0, revokePublicTemp.stderr);
+assert.equal(publicTempRoleAudit.status, 3,
+  `an inherited PUBLIC TEMP privilege must fail the least-privilege audit: ${publicTempRoleAudit.stderr}\n${publicTempRoleAudit.stdout}`);
+assert.match(publicTempRoleAudit.stdout, /STOP: preflight role identity or least-privilege requirements failed/);
+recordScenario('inherited PUBLIC TEMP privilege fails the least-privilege audit');
 
 const grantBroadLedgerRead = psql(CASES.valid, 'postgres', `GRANT SELECT ON public.schema_migrations TO ${ROLE};`);
 assert.equal(grantBroadLedgerRead.status, 0, grantBroadLedgerRead.stderr);
@@ -501,7 +513,7 @@ assert.equal(pre024StateAfter.status, 0, pre024StateAfter.stderr);
 assert.equal(pre024StateAfter.stdout.trim(), pre024StateBefore.stdout.trim(), 'pre-026 024 stop must not change synthetic rows or the ledger');
 recordScenario('pre-migration check stops on 024 before application-row reads or any migration');
 
-assert.equal(passedScenarioCount, 20, 'all expected disposable PostgreSQL preflight scenarios must execute');
+assert.equal(passedScenarioCount, 21, 'all expected disposable PostgreSQL preflight scenarios must execute');
 
 const createSyntheticBackupProbe = psql(CASES.valid, 'postgres', `
   CREATE TABLE public.release_backup_synthetic_probe (marker text PRIMARY KEY);
@@ -511,11 +523,14 @@ assert.equal(createSyntheticBackupProbe.status, 0, createSyntheticBackupProbe.st
 const createBackupRole = psql('postgres', 'postgres', `
   CREATE ROLE tq_prod_backup_reader LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   GRANT CONNECT ON DATABASE ${CASES.valid} TO tq_prod_backup_reader;
+`);
+assert.equal(createBackupRole.status, 0, createBackupRole.stderr);
+const grantBackupRole = psql(CASES.valid, 'postgres', `
   GRANT USAGE ON SCHEMA public TO tq_prod_backup_reader;
   GRANT SELECT ON ALL TABLES IN SCHEMA public TO tq_prod_backup_reader;
   GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO tq_prod_backup_reader;
 `);
-assert.equal(createBackupRole.status, 0, createBackupRole.stderr);
+assert.equal(grantBackupRole.status, 0, grantBackupRole.stderr);
 const backupRoleAudit = invokeBackupRoleAudit(CASES.valid);
 assert.equal(backupRoleAudit.status, 0,
   `dedicated disposable backup role must pass its read-only catalog audit: ${backupRoleAudit.stderr}\n${backupRoleAudit.stdout}`);
@@ -579,5 +594,5 @@ assert.equal(restoredProbe.status, 0, restoredProbe.stderr);
 assert.equal(restoredProbe.stdout.trim(), 't', 'restored synthetic data and migration metadata must be present');
 recordScenario('custom archive restores transactionally into an empty isolated loopback database and retains synthetic data');
 
-assert.equal(passedScenarioCount, 22, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
+assert.equal(passedScenarioCount, 23, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
 console.log(`Preflight integration result: ${passedScenarioCount}/${passedScenarioCount} disposable PostgreSQL scenarios passed.`);

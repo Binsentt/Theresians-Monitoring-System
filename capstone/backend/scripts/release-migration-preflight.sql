@@ -206,7 +206,6 @@ SELECT e.version,
        e.source_sha256 AS expected_source_sha256,
        m.filename AS ledger_filename,
        m.checksum AS ledger_sha256,
-       m.applied_at,
        CASE
          WHEN m.version IS NULL THEN 'PENDING'
          WHEN m.filename IS DISTINCT FROM e.filename THEN 'STOP_FILENAME_MISMATCH'

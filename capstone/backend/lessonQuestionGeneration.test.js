@@ -709,19 +709,25 @@ test('one provider response rejects repeated question content even when options 
   );
 });
 
-// Controlled Fisher-Yates draws cover four cyclic orders of the position
-// labels. Remaining shuffles use a fixed draw, so these tests never rely on
-// random chance to reach a particular correct-answer position.
-const answerPositionScenarios = [
-  [0.99, 0.99, 0.99],
-  [0, 0, 0],
-  [0.25, 0, 0.75],
-  [0.5, 1 / 3, 0],
-];
+const answerPositionSeeds = Array.from({ length: 32 }, (_, index) => index + 1);
+const deterministicRandomBytes = (initialSeed) => {
+  const { createHash } = require('node:crypto');
+  let counter = 0;
+  return (size) => {
+    const chunks = [];
+    let total = 0;
+    while (total < size) {
+      const chunk = createHash('sha256').update(`${initialSeed}:${counter}`).digest();
+      counter += 1;
+      chunks.push(chunk);
+      total += chunk.length;
+    }
+    const bytes = Buffer.concat(chunks, total).subarray(0, size);
+    return bytes;
+  };
+};
 
-const verifyControlledAnswerPositions = async (t, questionCount, generate) => {
-  const random = t.mock.method(Math, 'random', () => 0.5);
-  const totals = [0, 0, 0, 0];
+const verifyControlledAnswerPositions = async (questionCount, generate) => {
   const remainderPositions = new Set();
   const sequences = new Set();
   const source = Array.from({ length: questionCount }, (_, index) => ({
@@ -730,10 +736,8 @@ const verifyControlledAnswerPositions = async (t, questionCount, generate) => {
     correct_answer: `correct-${index}`,
   }));
 
-  for (const scenario of answerPositionScenarios) {
-    let draw = 0;
-    random.mock.mockImplementation(() => scenario[draw++] ?? 0.5);
-    const questions = await generate(source);
+  for (const seed of answerPositionSeeds) {
+    const questions = await generate(source, deterministicRandomBytes(seed));
     assert.equal(questions.length, questionCount);
     const counts = [0, 0, 0, 0];
     const positions = questions.map((question, index) => {
@@ -745,33 +749,36 @@ const verifyControlledAnswerPositions = async (t, questionCount, generate) => {
       assert.equal(question.options.filter((option) => option === question.correct_answer).length, 1);
       const position = question.options.indexOf(question.correct_answer);
       counts[position] += 1;
-      totals[position] += 1;
       return position;
     });
     assert.ok(Math.max(...counts) - Math.min(...counts) <= 1);
+    for (let index = 4; index < positions.length; index += 1) {
+      const previousCycle = positions.slice(index - 4, index);
+      if (new Set(previousCycle).size === 4) assert.notEqual(positions[index], positions[index - 4]);
+    }
     counts.forEach((count, position) => {
       if (count > Math.floor(questionCount / 4)) remainderPositions.add(position);
     });
     sequences.add(positions.join(','));
   }
 
-  // Each label receives the same aggregate count across the controlled sets,
-  // including sets smaller than four and totals with a remainder.
-  assert.deepEqual(totals, [questionCount, questionCount, questionCount, questionCount]);
+  // Remainder labels vary across deterministic samples rather than following
+  // a fixed A-B-C-D pattern.
   if (questionCount % 4 !== 0) {
-    assert.deepEqual([...remainderPositions].sort(), [0, 1, 2, 3]);
+    assert.equal(remainderPositions.size, 4);
   }
   assert.ok(sequences.size > 1, 'answer positions must vary across generated sets');
 };
 
 for (const questionCount of [1, 2, 3, 5, 17, 20]) {
-  test(`controlled single-request answer positions cover A-D for ${questionCount} questions`, async (t) => {
-    await verifyControlledAnswerPositions(t, questionCount, (source) => generateLessonQuestions({
+  test(`controlled single-request answer positions cover A-D for ${questionCount} questions`, async () => {
+    await verifyControlledAnswerPositions(questionCount, (source, randomBytesImpl) => generateLessonQuestions({
       lessonText: 'A synthetic addition lesson.',
       title: 'Synthetic lesson',
       gradeLevel: 'Grade 1',
       difficulty: 'Easy',
       questionCount,
+      randomBytesImpl,
       apiKey: 'test-key',
       fetchImpl: async () => ({
         ok: true,
@@ -780,13 +787,14 @@ for (const questionCount of [1, 2, 3, 5, 17, 20]) {
     }));
   });
 
-  test(`controlled batched answer positions preserve persisted mappings for ${questionCount} questions`, async (t) => {
-    await verifyControlledAnswerPositions(t, questionCount, async (source) => {
+  test(`controlled batched answer positions preserve persisted mappings for ${questionCount} questions`, async () => {
+    await verifyControlledAnswerPositions(questionCount, async (source, randomBytesImpl) => {
       let offset = 0;
       const persisted = [];
       const questions = await require('./lessonQuestionGeneration').generateLessonQuestionsInBatches({
         questionCount,
         batchSize: 5,
+        randomBytesImpl,
         generateBatch: async ({ questionCount: batchCount }) => {
           const batch = source.slice(offset, offset + batchCount);
           offset += batchCount;
@@ -799,3 +807,135 @@ for (const questionCount of [1, 2, 3, 5, 17, 20]) {
     });
   });
 }
+
+const getAnswerPositions = (questions) => questions.map((question) => {
+  assert.equal(question.options.length, 4);
+  assert.equal(new Set(question.options).size, 4);
+  assert.equal(question.options.filter((option) => option === question.correct_answer).length, 1);
+  return question.options.indexOf(question.correct_answer);
+});
+
+const assertBalancedAnswerPositions = (positions, expectedCount) => {
+  const counts = [0, 0, 0, 0];
+  positions.forEach((position) => { counts[position] += 1; });
+  assert.equal(positions.length, expectedCount);
+  assert.ok(Math.max(...counts) - Math.min(...counts) <= 1, `expected balanced A-D counts; got ${counts}`);
+  return counts;
+};
+
+test('randomizes the extra answer position across small complete sets without a fixed A bias', () => {
+  const extraPositionCounts = [0, 0, 0, 0];
+  const observedSequences = new Set();
+  for (let seed = 1; seed <= 512; seed += 1) {
+    const positions = require('./lessonQuestionGeneration').buildBalancedAnswerPositionPlan(5, {
+      randomBytesImpl: deterministicRandomBytes(seed * 7919),
+    });
+    const counts = assertBalancedAnswerPositions(positions, 5);
+    extraPositionCounts[counts.indexOf(2)] += 1;
+    observedSequences.add(positions.join(','));
+  }
+  assert.ok(extraPositionCounts.every((count) => count >= 80 && count <= 176), `unexpected extra-position distribution: ${extraPositionCounts}`);
+  assert.ok(observedSequences.size > 100, 'answer-position sequences must vary across generated sets');
+});
+
+test('balances complete generated sets across separate topic groups and provider batches', async () => {
+  const { buildBalancedAnswerPositionPlan, partitionAnswerPositionPlan } = require('./lessonQuestionGeneration');
+
+  for (const questionCount of [4, 5, 8, 10, 20, 25, 50]) {
+    const randomBytesImpl = deterministicRandomBytes(questionCount * 97);
+    const plan = buildBalancedAnswerPositionPlan(questionCount, { randomBytesImpl });
+    const groupCounts = [Math.ceil(questionCount / 2), Math.floor(questionCount / 2)];
+    const groupPlans = partitionAnswerPositionPlan(plan, groupCounts);
+    const persisted = [];
+    const allQuestions = [];
+    let nextQuestion = 0;
+
+    for (let groupIndex = 0; groupIndex < groupCounts.length; groupIndex += 1) {
+      const existingQuestions = [...allQuestions];
+      const generated = await require('./lessonQuestionGeneration').generateLessonQuestionsInBatches({
+        questionCount: groupCounts[groupIndex],
+        batchSize: 5,
+        existingQuestions,
+        answerPositionPlan: groupPlans[groupIndex],
+        randomBytesImpl,
+        generateBatch: async ({ questionCount: batchCount }) => Array.from({ length: batchCount }, (_, index) => {
+          const id = nextQuestion++;
+          return {
+            question: `Synthetic topic ${groupIndex + 1} question ${id + 1}`,
+            options: [`correct-${id}`, `wrong-${id}-a`, `wrong-${id}-b`, `wrong-${id}-c`],
+            correct_answer: `correct-${id}`,
+          };
+        }),
+        onBatch: async ({ batch }) => persisted.push(...JSON.parse(JSON.stringify(batch))),
+      });
+      allQuestions.push(...generated);
+    }
+
+    const positions = getAnswerPositions(allQuestions);
+    const counts = assertBalancedAnswerPositions(positions, questionCount);
+    assert.deepEqual(persisted, allQuestions);
+    assert.ok(Math.max(...counts) - Math.min(...counts) <= 1);
+    for (let index = 2; index < positions.length; index += 1) {
+      assert.notEqual(positions[index], positions[index - 1] === positions[index - 2] ? positions[index - 1] : -1);
+    }
+    for (let index = 4; index < positions.length; index += 1) {
+      const previousCycle = positions.slice(index - 4, index);
+      if (new Set(previousCycle).size === 4) assert.notEqual(positions[index], positions[index - 4]);
+    }
+  }
+});
+
+test('retry planning accounts for saved correct-answer positions without rewriting saved questions', async () => {
+  const { buildBalancedAnswerPositionPlan } = require('./lessonQuestionGeneration');
+  const savedPositions = [0, 0, 1, 1, 2, 2];
+  const existingQuestions = savedPositions.map((position, index) => {
+    const options = [`correct-${index}`, `wrong-${index}-a`, `wrong-${index}-b`, `wrong-${index}-c`];
+    const [correct, ...distractors] = options;
+    const arranged = [...distractors];
+    arranged.splice(position, 0, correct);
+    return { question: `Saved question ${index + 1}`, options: arranged, correct_answer: correct };
+  });
+  const existingSnapshot = JSON.parse(JSON.stringify(existingQuestions));
+  const randomBytesImpl = deterministicRandomBytes(417);
+  const retryPlan = buildBalancedAnswerPositionPlan(14, { existingQuestions, randomBytesImpl });
+  const generated = await require('./lessonQuestionGeneration').generateLessonQuestionsInBatches({
+    questionCount: 14,
+    batchSize: 5,
+    existingQuestions,
+    answerPositionPlan: retryPlan,
+    randomBytesImpl,
+    generateBatch: async ({ questionCount, avoidQuestions }) => Array.from({ length: questionCount }, (_, index) => {
+      const id = existingQuestions.length + avoidQuestions.length + index;
+      return {
+        question: `Retry question ${id}`,
+        options: [`retry-correct-${id}`, `retry-wrong-${id}-a`, `retry-wrong-${id}-b`, `retry-wrong-${id}-c`],
+        correct_answer: `retry-correct-${id}`,
+      };
+    }),
+  });
+
+  const finalQuestions = [...existingQuestions, ...generated];
+  const positions = getAnswerPositions(finalQuestions);
+  assert.deepEqual(assertBalancedAnswerPositions(positions, 20), [5, 5, 5, 5]);
+  assert.deepEqual(existingQuestions, existingSnapshot);
+  for (let index = 2; index < positions.length; index += 1) {
+    assert.notEqual(positions[index], positions[index - 1] === positions[index - 2] ? positions[index - 1] : -1);
+  }
+  for (let index = 4; index < positions.length; index += 1) {
+    const previousCycle = positions.slice(index - 4, index);
+    if (new Set(previousCycle).size === 4) assert.notEqual(positions[index], positions[index - 4]);
+  }
+});
+
+test('does not claim a balanced extension when saved questions make one impossible', () => {
+  const { buildBalancedAnswerPositionPlan, QuestionGenerationError } = require('./lessonQuestionGeneration');
+  const existingQuestions = Array.from({ length: 10 }, (_, index) => ({
+    question: `Saved question ${index + 1}`,
+    options: [`correct-${index}`, `wrong-${index}-a`, `wrong-${index}-b`, `wrong-${index}-c`],
+    correct_answer: `correct-${index}`,
+  }));
+
+  assert.throws(() => buildBalancedAnswerPositionPlan(2, { existingQuestions }), (error) => (
+    error instanceof QuestionGenerationError && error.code === 'QUESTION_AI_ANSWER_BALANCE_IMPOSSIBLE'
+  ));
+});
