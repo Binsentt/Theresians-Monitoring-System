@@ -5640,6 +5640,7 @@ app.post('/api/learning-files/upload', requireLessonQuestionManagerAccess, uploa
       });
     }
     if (!title || !grade_level || !difficulty || !file_type) {
+      cleanTemporaryUpload(req.file.path);
       return res.status(400).json({ error: 'Missing required metadata' });
     }
 

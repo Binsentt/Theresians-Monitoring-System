@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const zlib = require('node:zlib');
 
 const {
   detectFixedQuestionDocumentFormat,
@@ -13,6 +14,7 @@ const {
   validateQuestionSetForReview,
   validateQuestionSetForPublication,
 } = require('./fixedQuestionDocument');
+const { LessonTextExtractionError, readDocxParts } = require('./lessonTextExtraction');
 
 const VALID_DOCUMENT_TEXT = `1. What is 2 + 3?
 A. 4
@@ -27,6 +29,79 @@ B. 4
 C. 5
 D. 6
 Correct Answer: C`;
+
+const DOCX_CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`;
+const DOCX_RELATIONSHIPS = `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`;
+const DOCX_DOCUMENT = `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Teacher-authored fixed questions</w:t></w:r></w:p></w:body></w:document>`;
+
+const crc32 = (buffer) => {
+  let crc = 0xFFFFFFFF;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+};
+
+const createZip = (entries) => {
+  let offset = 0;
+  const localParts = [];
+  const centralParts = [];
+  for (const [name, value, entryOptions = {}] of entries) {
+    const fileName = Buffer.from(name);
+    const content = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    const compressed = entryOptions.compressedBytes || zlib.deflateRawSync(content);
+    const compressedSize = entryOptions.compressedSize ?? compressed.length;
+    const uncompressedSize = entryOptions.uncompressedSize ?? content.length;
+    const localCompressedSize = entryOptions.localCompressedSize ?? compressedSize;
+    const localUncompressedSize = entryOptions.localUncompressedSize ?? uncompressedSize;
+    const checksum = entryOptions.checksum ?? crc32(content);
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034B50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(8, 8);
+    localHeader.writeUInt32LE(checksum, 14);
+    localHeader.writeUInt32LE(localCompressedSize, 18);
+    localHeader.writeUInt32LE(localUncompressedSize, 22);
+    localHeader.writeUInt16LE(fileName.length, 26);
+    localParts.push(localHeader, fileName, compressed);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014B50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(8, 10);
+    centralHeader.writeUInt32LE(checksum, 16);
+    centralHeader.writeUInt32LE(compressedSize, 20);
+    centralHeader.writeUInt32LE(uncompressedSize, 24);
+    centralHeader.writeUInt16LE(fileName.length, 28);
+    centralHeader.writeUInt32LE(offset, 42);
+    centralParts.push(centralHeader, fileName);
+    offset += localHeader.length + fileName.length + compressed.length;
+  }
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054B50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...localParts, centralDirectory, end]);
+};
+
+const createDocx = (additionalEntries = []) => createZip([
+  ['[Content_Types].xml', DOCX_CONTENT_TYPES],
+  ['_rels/.rels', DOCX_RELATIONSHIPS],
+  ['word/document.xml', DOCX_DOCUMENT],
+  ...additionalEntries,
+]);
+
+const syntheticDocxFile = (buffer) => ({
+  path: 'synthetic-fixed-questions.docx',
+  originalname: 'synthetic-fixed-questions.docx',
+  mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  buffer,
+});
 
 test('parses a teacher-formatted four-choice document into canonical question records', () => {
   const parsed = parseFixedQuestionText(VALID_DOCUMENT_TEXT);
@@ -355,7 +430,7 @@ test('extracts DOCX and fixed-question PDF text through server-side extractors w
     path: 'set-a.docx',
     originalname: 'set-a.docx',
     mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    buffer: Buffer.from('PK\x03\x04word/document.xml'),
+    buffer: createDocx(),
   }, {
     extractDocxText: async () => VALID_DOCUMENT_TEXT,
   });
@@ -379,7 +454,7 @@ test('DOCX extraction preserves authoritative topic headings within each fixed-q
     path: 'set-a.docx',
     originalname: 'set-a.docx',
     mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    buffer: Buffer.from('PK\x03\x04word/document.xml'),
+    buffer: createDocx(),
   }, {
     gradeLevel: 'Grade 1',
     difficulty: 'Easy',
@@ -393,6 +468,98 @@ test('DOCX extraction preserves authoritative topic headings within each fixed-q
     'subtraction',
   ]);
   assert.deepEqual(extracted.questions.map((question) => question.correct_answer), ['5', '5', '3']);
+});
+
+test('rejects a malformed Fixed Question DOCX archive before invoking text extraction', async () => {
+  const malformedDocx = Buffer.from('PK\x03\x04word/document.xml');
+  let extractionCalled = false;
+
+  await assert.rejects(
+    () => extractFixedQuestionDocument(syntheticDocxFile(malformedDocx), {
+      extractDocxText: async () => {
+        extractionCalled = true;
+        return VALID_DOCUMENT_TEXT;
+      },
+    }),
+    (error) => error instanceof LessonTextExtractionError && error.code === 'DOCX_STRUCTURE_INVALID'
+  );
+  assert.equal(extractionCalled, false);
+});
+
+test('rejects oversized, excessive, and over-limit DOCX archive metadata before text extraction', async () => {
+  const oversizedDocx = createDocx([['custom/oversized.bin', 'x', { uncompressedSize: (8 * 1024 * 1024) + 1 }]]);
+  const excessiveDocx = createDocx(Array.from({ length: 998 }, (_, index) => [`custom/entry-${index}.txt`, 'x']));
+  const expandedDocx = createDocx(Array.from({ length: 4 }, (_, index) => [
+    `custom/expanded-${index}.bin`,
+    'x',
+    { uncompressedSize: 7 * 1024 * 1024 },
+  ]));
+
+  for (const archive of [oversizedDocx, excessiveDocx, expandedDocx]) {
+    let extractionCalled = false;
+    await assert.rejects(
+      () => extractFixedQuestionDocument(syntheticDocxFile(archive), {
+        extractDocxText: async () => {
+          extractionCalled = true;
+          return VALID_DOCUMENT_TEXT;
+        },
+      }),
+      (error) => error instanceof LessonTextExtractionError && error.code === 'DOCX_STRUCTURE_INVALID'
+    );
+    assert.equal(extractionCalled, false);
+  }
+});
+
+test('streams and rejects forged size metadata and malformed non-XML DOCX entries before text extraction', async () => {
+  const compressedPayload = Buffer.from('compressed-size metadata');
+  const forgedSizeDocx = createDocx([[
+    'custom/underreported.bin',
+    'This entry expands beyond its declared size.',
+    { uncompressedSize: 1 },
+  ]]);
+  const forgedCompressedSizeDocx = createDocx([[
+    'custom/overreported-compressed-size.bin',
+    compressedPayload,
+    { compressedSize: zlib.deflateRawSync(compressedPayload).length + 1 },
+  ]]);
+  const inconsistentLocalSizeDocx = createDocx([[
+    'custom/inconsistent-local-size.bin',
+    compressedPayload,
+    { localUncompressedSize: 1 },
+  ]]);
+  const malformedStreamDocx = createDocx([[
+    'custom/malformed.bin',
+    'expected stream content',
+    { compressedBytes: Buffer.from([0xFF, 0xFF]) },
+  ]]);
+
+  for (const archive of [forgedSizeDocx, forgedCompressedSizeDocx, inconsistentLocalSizeDocx, malformedStreamDocx]) {
+    let extractionCalled = false;
+    await assert.rejects(
+      () => extractFixedQuestionDocument(syntheticDocxFile(archive), {
+        extractDocxText: async () => {
+          extractionCalled = true;
+          return VALID_DOCUMENT_TEXT;
+        },
+      }),
+      (error) => error instanceof LessonTextExtractionError && error.code === 'DOCX_STRUCTURE_INVALID'
+    );
+    assert.equal(extractionCalled, false);
+  }
+});
+
+test('applies total expanded-byte limits to actual data streamed from non-XML DOCX entries', async () => {
+  const archive = createZip([
+    ['custom/first.bin', '123456'],
+    ['custom/second.bin', 'abcdef', { uncompressedSize: 4 }],
+  ]);
+
+  await assert.rejects(
+    () => readDocxParts(archive, {
+      limits: { maxEntries: 10, maxEntryBytes: 6, maxExpandedBytes: 10 },
+    }),
+    (error) => error instanceof LessonTextExtractionError && error.code === 'DOCX_STRUCTURE_INVALID'
+  );
 });
 
 test('parses explicit per-question topic_id metadata without deriving it from question text', () => {
@@ -418,13 +585,13 @@ test('keeps fixed-question parsing and selected-scope evidence independent of fi
     path: 'different-name-one.docx',
     originalname: 'different-name-one.docx',
     mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    buffer: Buffer.from('PK\x03\x04word/document.xml'),
+    buffer: createDocx(),
   }, { extractDocxText: async () => VALID_DOCUMENT_TEXT });
   const second = await extractFixedQuestionDocument({
     path: 'another-name-two.docx',
     originalname: 'another-name-two.docx',
     mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    buffer: Buffer.from('PK\x03\x04word/document.xml'),
+    buffer: createDocx(),
   }, { extractDocxText: async () => VALID_DOCUMENT_TEXT });
 
   assert.deepEqual(second.questions, first.questions);

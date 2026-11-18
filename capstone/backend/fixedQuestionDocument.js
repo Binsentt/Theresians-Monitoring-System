@@ -10,6 +10,7 @@ const {
 const {
   resolveCanonicalTopicHeading,
 } = require('./lessonTopicExtraction');
+const { readDocxParts, validateDocxParts } = require('./lessonTextExtraction');
 const {
   normalizeGradeLevel,
   normalizeDifficulty,
@@ -332,6 +333,7 @@ const extractFixedQuestionDocument = async (file, {
   let extractedText = '';
 
   if (documentFormat === 'docx') {
+    validateDocxParts(await readDocxParts(content));
     const extract = extractDocxText || (async (inputPath) => {
       const mammoth = require('mammoth');
       const result = await mammoth.extractRawText({ path: inputPath });
