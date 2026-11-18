@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const yauzl = require('yauzl');
+const zlib = require('node:zlib');
 const { XMLParser } = require('fast-xml-parser');
 
 const PDF_MIME_TYPE = 'application/pdf';
@@ -10,6 +11,11 @@ const MAX_LESSON_TEXT_CHARS = 24_000;
 const MAX_PPTX_ENTRIES = 1_000;
 const MAX_PPTX_EXPANDED_BYTES = 24 * 1024 * 1024;
 const MAX_PPTX_ENTRY_BYTES = 8 * 1024 * 1024;
+const DEFAULT_DOCX_ARCHIVE_LIMITS = Object.freeze({
+  maxEntries: MAX_PPTX_ENTRIES,
+  maxEntryBytes: MAX_PPTX_ENTRY_BYTES,
+  maxExpandedBytes: MAX_PPTX_EXPANDED_BYTES,
+});
 
 class LessonTextExtractionError extends Error {
   constructor(code, message) {
@@ -295,7 +301,93 @@ const isReadableDocxPart = (name) => (
   || name === 'word/document.xml'
 );
 
-const readDocxParts = (source, { openZip = yauzl.open, openZipFromBuffer = yauzl.fromBuffer } = {}) => new Promise((resolve, reject) => {
+const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, value) => {
+  let crc = value;
+  for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
+  return crc >>> 0;
+});
+
+const updateCrc32 = (checksum, chunk) => {
+  let crc = checksum;
+  for (const byte of chunk) {
+    crc = CRC32_TABLE[(crc ^ byte) & 0xFF] ^ (crc >>> 8);
+  }
+  return crc >>> 0;
+};
+
+const readLocalEntrySizes = (localHeader) => {
+  const extraField = localHeader.extraField;
+  let zip64Field = null;
+  let offset = 0;
+  while (offset < extraField.length) {
+    if (offset + 4 > extraField.length) return null;
+    const fieldId = extraField.readUInt16LE(offset);
+    const fieldLength = extraField.readUInt16LE(offset + 2);
+    const fieldStart = offset + 4;
+    const fieldEnd = fieldStart + fieldLength;
+    if (fieldEnd > extraField.length) return null;
+    if (fieldId === 0x0001) {
+      if (zip64Field) return null;
+      zip64Field = extraField.subarray(fieldStart, fieldEnd);
+    }
+    offset = fieldEnd;
+  }
+
+  let compressedSize = localHeader.compressedSize;
+  let uncompressedSize = localHeader.uncompressedSize;
+  if (compressedSize === 0xFFFFFFFF || uncompressedSize === 0xFFFFFFFF) {
+    if (!zip64Field) return null;
+    let zip64Offset = 0;
+    const readZip64Size = () => {
+      if (zip64Offset + 8 > zip64Field.length) return null;
+      const value = zip64Field.readBigUInt64LE(zip64Offset);
+      zip64Offset += 8;
+      return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
+    };
+    if (uncompressedSize === 0xFFFFFFFF) {
+      uncompressedSize = readZip64Size();
+      if (uncompressedSize === null) return null;
+    }
+    if (compressedSize === 0xFFFFFFFF) {
+      compressedSize = readZip64Size();
+      if (compressedSize === null) return null;
+    }
+  }
+  return { compressedSize, uncompressedSize };
+};
+
+const isConsistentLocalEntryHeader = (entry, localHeader) => {
+  if (
+    !localHeader
+    || localHeader.generalPurposeBitFlag !== entry.generalPurposeBitFlag
+    || localHeader.compressionMethod !== entry.compressionMethod
+    || !Buffer.isBuffer(entry.fileNameRaw)
+    || !localHeader.fileName.equals(entry.fileNameRaw)
+  ) return false;
+  const localSizes = readLocalEntrySizes(localHeader);
+  if (!localSizes) return false;
+  const hasDataDescriptor = Boolean(entry.generalPurposeBitFlag & 0x0008);
+  const localSizeMatches = (localSize, centralSize) => hasDataDescriptor
+    ? localSize === 0 || localSize === centralSize
+    : localSize === centralSize;
+  const localCrcMatches = hasDataDescriptor
+    ? localHeader.crc32 === 0 || localHeader.crc32 === entry.crc32
+    : localHeader.crc32 === entry.crc32;
+  return localSizeMatches(localSizes.compressedSize, entry.compressedSize)
+    && localSizeMatches(localSizes.uncompressedSize, entry.uncompressedSize)
+    && localCrcMatches;
+};
+
+const readDocxParts = (source, {
+  openZip = yauzl.open,
+  openZipFromBuffer = yauzl.fromBuffer,
+  limits = DEFAULT_DOCX_ARCHIVE_LIMITS,
+} = {}) => new Promise((resolve, reject) => {
+  const archiveLimits = { ...DEFAULT_DOCX_ARCHIVE_LIMITS, ...(limits || {}) };
+  if (!Object.values(archiveLimits).every((limit) => Number.isSafeInteger(limit) && limit > 0)) {
+    reject(new LessonTextExtractionError('DOCX_STRUCTURE_INVALID', 'The uploaded DOCX package has invalid safety limits.'));
+    return;
+  }
   const options = { lazyEntries: true, validateEntrySizes: true, strictFileNames: true };
   const onOpen = (openError, zipFile) => {
     if (openError || !zipFile) {
@@ -306,7 +398,8 @@ const readDocxParts = (source, { openZip = yauzl.open, openZipFromBuffer = yauzl
     const parts = new Map();
     const seenParts = new Set();
     let entryCount = 0;
-    let expandedBytes = 0;
+    let declaredExpandedBytes = 0;
+    let actualExpandedBytes = 0;
     let settled = false;
     const fail = () => {
       if (settled) return;
@@ -322,41 +415,107 @@ const readDocxParts = (source, { openZip = yauzl.open, openZipFromBuffer = yauzl
     zipFile.on('entry', (entry) => {
       if (settled) return;
       entryCount += 1;
-      expandedBytes += Number(entry.uncompressedSize) || 0;
-      if (entryCount > MAX_PPTX_ENTRIES || expandedBytes > MAX_PPTX_EXPANDED_BYTES || !isSafeZipPath(entry.fileName)) {
+      const declaredEntryBytes = Number(entry.uncompressedSize);
+      const declaredCompressedBytes = Number(entry.compressedSize);
+      const declaredCrc32 = Number(entry.crc32);
+      if (
+        !Number.isSafeInteger(declaredEntryBytes)
+        || declaredEntryBytes < 0
+        || !Number.isSafeInteger(declaredCompressedBytes)
+        || declaredCompressedBytes < 0
+        || !Number.isSafeInteger(declaredCrc32)
+        || declaredCrc32 < 0
+        || declaredCrc32 > 0xFFFFFFFF
+        || ![0, 8].includes(entry.compressionMethod)
+        || entry.isEncrypted()
+      ) {
         fail();
         return;
       }
-      if (!isReadableDocxPart(entry.fileName)) {
-        next();
-        return;
-      }
-      if (seenParts.has(entry.fileName) || Number(entry.uncompressedSize) > MAX_PPTX_ENTRY_BYTES) {
+      declaredExpandedBytes += declaredEntryBytes;
+      if (
+        !Number.isSafeInteger(declaredExpandedBytes)
+        || entryCount > archiveLimits.maxEntries
+        || declaredEntryBytes > archiveLimits.maxEntryBytes
+        || declaredExpandedBytes > archiveLimits.maxExpandedBytes
+        || !isSafeZipPath(entry.fileName)
+      ) {
         fail();
         return;
       }
-      seenParts.add(entry.fileName);
-      zipFile.openReadStream(entry, (streamError, stream) => {
-        if (streamError || !stream) {
+      const isRequiredPart = isReadableDocxPart(entry.fileName);
+      if (isRequiredPart && seenParts.has(entry.fileName)) {
+        fail();
+        return;
+      }
+      if (isRequiredPart) seenParts.add(entry.fileName);
+      const chunks = isRequiredPart ? [] : null;
+      let actualEntryBytes = 0;
+      let actualCompressedBytes = 0;
+      let crc32 = 0xFFFFFFFF;
+      zipFile.readLocalFileHeader(entry, (headerError, localHeader) => {
+        if (headerError || !isConsistentLocalEntryHeader(entry, localHeader)) {
           fail();
           return;
         }
-        const chunks = [];
-        let bytes = 0;
-        stream.on('data', (chunk) => {
-          bytes += chunk.length;
-          if (bytes > MAX_PPTX_ENTRY_BYTES) {
-            stream.destroy();
+        zipFile.openReadStream(entry, { decodeFileData: false }, (streamError, compressedStream) => {
+          if (streamError || !compressedStream) {
             fail();
             return;
           }
-          chunks.push(chunk);
-        });
-        stream.on('error', fail);
-        stream.on('end', () => {
-          if (settled) return;
-          parts.set(entry.fileName, Buffer.concat(chunks).toString('utf8'));
-          next();
+          const inflater = entry.compressionMethod === 8 ? zlib.createInflateRaw() : null;
+          const expandedStream = inflater || compressedStream;
+          const abort = () => {
+            try { compressedStream.destroy(); } catch {}
+            if (inflater) {
+              try { inflater.destroy(); } catch {}
+            }
+            fail();
+          };
+          compressedStream.on('data', (chunk) => {
+            if (settled) return;
+            actualCompressedBytes += chunk.length;
+            if (!Number.isSafeInteger(actualCompressedBytes) || actualCompressedBytes > declaredCompressedBytes) {
+              abort();
+            }
+          });
+          compressedStream.on('error', abort);
+          if (inflater) {
+            inflater.on('error', abort);
+            compressedStream.pipe(inflater);
+          }
+          expandedStream.on('data', (chunk) => {
+            if (settled) return;
+            actualEntryBytes += chunk.length;
+            actualExpandedBytes += chunk.length;
+            if (
+              !Number.isSafeInteger(actualEntryBytes)
+              || !Number.isSafeInteger(actualExpandedBytes)
+              || actualEntryBytes > archiveLimits.maxEntryBytes
+              || actualExpandedBytes > archiveLimits.maxExpandedBytes
+              || actualEntryBytes > declaredEntryBytes
+            ) {
+              abort();
+              return;
+            }
+            crc32 = updateCrc32(crc32, chunk);
+            if (chunks) chunks.push(chunk);
+          });
+          expandedStream.on('error', abort);
+          expandedStream.on('end', () => {
+            if (settled) return;
+            if (
+              actualCompressedBytes !== declaredCompressedBytes
+              || (inflater && inflater.bytesWritten !== declaredCompressedBytes)
+              || actualEntryBytes !== declaredEntryBytes
+              || ((crc32 ^ 0xFFFFFFFF) >>> 0) !== declaredCrc32
+            ) {
+              fail();
+              return;
+            }
+            if (chunks) parts.set(entry.fileName, Buffer.concat(chunks).toString('utf8'));
+            next();
+          });
         });
       });
     });
@@ -514,6 +673,7 @@ module.exports = {
   extractPptxTextFromParts,
   readDocxParts,
   readPptxParts,
+  validateDocxParts,
   validateLessonDocumentStructure,
   validateLessonSourceFile: validateLessonUploadFile,
   validateLessonUploadFile,
