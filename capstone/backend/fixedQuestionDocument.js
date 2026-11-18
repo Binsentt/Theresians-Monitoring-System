@@ -5,9 +5,15 @@ const TOPIC_ID_LINE = /^\s*topic(?:\s+id|_id)\s*:\s*([a-z0-9_]+)\s*$/i;
 const {
   isValidDifficulty,
   isValidGradeLevel,
-  isValidMathTopicForGradeDifficulty,
   normalizeDifficultyValue,
 } = require('./learningContentRules.utils');
+const {
+  resolveCanonicalTopicHeading,
+} = require('./lessonTopicExtraction');
+const {
+  normalizeGradeLevel,
+  normalizeDifficulty,
+} = require('./curriculumScopeRegistry');
 
 const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const PDF_MIME_TYPE = 'application/pdf';
@@ -63,15 +69,30 @@ const resolveFixedQuestionDocumentMetadata = ({
   const extractedLessonMatch = lines.map((line) => line.match(
     /^\s*(easy|normal|medium|difficult|hard)\s*(?:[-–—]\s*)?(?:lesson|topic)\s*:\s*(.+?)\s*$/i
   )).find(Boolean);
-  const documentTopic = extractedLessonMatch ? normalizeText(extractedLessonMatch[2]) : '';
-  const mathTopic = documentTopic
-    && isValidMathTopicForGradeDifficulty(selectedGrade, selectedLevel, documentTopic)
-    ? documentTopic
-    : null;
+  const legacyTopic = extractedLessonMatch ? normalizeText(extractedLessonMatch[2]) : '';
+  const grade = normalizeGradeLevel(selectedGrade);
+  const difficulty = normalizeDifficulty(selectedLevel);
+  const headings = lines
+    .map((line) => resolveCanonicalTopicHeading(line, grade, difficulty))
+    .filter((heading) => heading?.is_heading);
+  const headingLabels = [...new Set(headings.map((heading) => normalizeText(heading.label)).filter(Boolean))];
+  const canonicalTopics = new Map();
+  headings.forEach((heading) => {
+    if (heading.kind === 'valid') canonicalTopics.set(heading.topic.topic_id, heading.topic);
+  });
+  if (legacyTopic && canonicalTopics.size === 0 && grade && difficulty) {
+    const legacyHeading = resolveCanonicalTopicHeading(`Topic: ${legacyTopic}`, grade, difficulty);
+    if (legacyHeading?.kind === 'valid') canonicalTopics.set(legacyHeading.topic.topic_id, legacyHeading.topic);
+  }
+  const topicIds = [...canonicalTopics.keys()];
+  const documentTopic = legacyTopic || headingLabels.join(', ');
+  const singleTopic = topicIds.length === 1 ? canonicalTopics.get(topicIds[0]) : null;
 
   return {
     document_topic: documentTopic || null,
-    math_topic: mathTopic,
+    math_topic: singleTopic?.display_label || null,
+    topic_id: singleTopic?.topic_id || null,
+    topic_ids: topicIds,
     // Source headings remain readable provenance only. The selected
     // Grade/Difficulty scope is authoritative for this set.
     metadata_error: '',
@@ -124,10 +145,13 @@ const finalizeQuestion = (draft) => {
   };
 };
 
-const parseFixedQuestionText = (documentText) => {
+const parseFixedQuestionText = (documentText, { gradeLevel, difficulty } = {}) => {
   const lines = tokenizeFixedQuestionText(documentText).split('\n');
   const questions = [];
   let currentQuestion = null;
+  const grade = normalizeGradeLevel(gradeLevel);
+  const level = normalizeDifficulty(difficulty);
+  let sectionTopicId = null;
 
   const pushCurrentQuestion = () => {
     const parsedQuestion = finalizeQuestion(currentQuestion);
@@ -147,8 +171,17 @@ const parseFixedQuestionText = (documentText) => {
         questionParts: [questionMatch[2]],
         options: [],
         rawAnswer: '',
-        topic_id: '',
+        topic_id: sectionTopicId || '',
       };
+      continue;
+    }
+
+    const topicHeading = grade && level
+      ? resolveCanonicalTopicHeading(line, grade, level)
+      : null;
+    if (topicHeading?.is_heading) {
+      pushCurrentQuestion();
+      sectionTopicId = topicHeading.kind === 'valid' ? topicHeading.topic.topic_id : null;
       continue;
     }
 
@@ -289,6 +322,8 @@ const validateFixedQuestionUploadFile = (file, header = Buffer.alloc(0)) => {
 const extractFixedQuestionDocument = async (file, {
   extractDocxText,
   extractPdfText,
+  gradeLevel,
+  difficulty,
 } = {}) => {
   const content = Buffer.isBuffer(file?.buffer)
     ? file.buffer
@@ -317,7 +352,7 @@ const extractFixedQuestionDocument = async (file, {
   const normalizedText = String(extractedText || '').trim();
   if (!normalizedText) throw new Error('The uploaded Fixed Question document does not contain readable text.');
   return {
-    ...validateFixedQuestions(parseFixedQuestionText(normalizedText)),
+    ...validateFixedQuestions(parseFixedQuestionText(normalizedText, { gradeLevel, difficulty })),
     document_text: normalizedText,
   };
 };

@@ -359,7 +359,9 @@ const restoredPublicTempAudit = invokeRoleAudit(CASES.valid);
 assert.equal(restoredPublicTempAudit.status, 0,
   `role audit must pass after PUBLIC TEMP is revoked: ${restoredPublicTempAudit.stderr}\n${restoredPublicTempAudit.stdout}`);
 assert.match(restoredPublicTempAudit.stdout, /PASS: target identity, read-only limits, and preflight-only privileges verified/);
-recordScenario('inherited PUBLIC TEMP privilege fails closed and passes again after revoke');
+recordScenario('inherited PUBLIC TEMP fails the least-privilege audit and passes after revoke');
+
+
 
 const grantBroadLedgerRead = psql(CASES.valid, 'postgres', `GRANT SELECT ON public.schema_migrations TO ${ROLE};`);
 assert.equal(grantBroadLedgerRead.status, 0, grantBroadLedgerRead.stderr);

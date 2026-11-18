@@ -15,18 +15,28 @@ const readIsolatedBackendWorkflow = (
     throw new Error('STUDENT_PROGRESS_CI_WORKFLOW_PATH is configured but empty.');
   }
 
-  const workflowPath = hasOverride
-    ? path.resolve(workflowPathOverride)
-    : path.resolve(scripts, '../../../.github/workflows/backend-network-isolated.yml');
+  const workflowPathCandidates = hasOverride
+    ? [path.resolve(workflowPathOverride)]
+    : [
+      path.resolve(scripts, '../../../.github/workflows/backend-network-isolated.yml'),
+      path.resolve(scripts, '../../.github/workflows/backend-network-isolated.yml'),
+    ];
+  const readErrors = [];
+  let lastError = null;
 
-  try {
-    return fs.readFileSync(workflowPath, 'utf8');
-  } catch (error) {
-    const source = hasOverride
-      ? `STUDENT_PROGRESS_CI_WORKFLOW_PATH override "${workflowPathOverride}"`
-      : `repository-relative backend workflow "${workflowPath}"`;
-    throw new Error(`Unable to read ${source} (resolved path: "${workflowPath}"): ${error.message}`, { cause: error });
+  for (const workflowPath of workflowPathCandidates) {
+    try {
+      return fs.readFileSync(workflowPath, 'utf8');
+    } catch (error) {
+      lastError = error;
+      readErrors.push('"' + workflowPath + '": ' + error.message);
+    }
   }
+
+  const source = hasOverride
+    ? 'STUDENT_PROGRESS_CI_WORKFLOW_PATH override "' + workflowPathOverride + '"'
+    : 'repository-relative backend workflow candidates';
+  throw new Error('Unable to read ' + source + ' (' + readErrors.join('; ') + ')', { cause: lastError });
 };
 
 test('read-only preflight audit is fixed to catalog and migration-ledger metadata', () => {
