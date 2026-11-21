@@ -498,9 +498,10 @@ const revokeLedgerChecksum = psql(CASES.valid, 'postgres',
   `REVOKE SELECT (checksum) ON public.schema_migrations FROM ${ROLE};`);
 assert.equal(revokeLedgerChecksum.status, 0, revokeLedgerChecksum.stderr);
 const insufficientLedgerRead = invokePreflight(CASES.valid);
-const regrantLedgerChecksum = psql(CASES.valid, 'postgres',
-  `GRANT SELECT (checksum) ON public.schema_migrations TO ${ROLE};`);
-assert.equal(regrantLedgerChecksum.status, 0, regrantLedgerChecksum.stderr);
+// The table-wide SELECT negative case may remove all column ACLs; restore only the allowed columns.
+const restoreLedgerColumnRead = psql(CASES.valid, 'postgres',
+  `GRANT SELECT (version, filename, checksum) ON public.schema_migrations TO ${ROLE};`);
+assert.equal(restoreLedgerColumnRead.status, 0, restoreLedgerColumnRead.stderr);
 assert.notEqual(insufficientLedgerRead.status, 0,
   'missing required migration-ledger column SELECT must fail before a report is produced');
 assert.match(insufficientLedgerRead.stderr, /permission denied for table schema_migrations/);
