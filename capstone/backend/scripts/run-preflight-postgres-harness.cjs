@@ -13,7 +13,14 @@ const fs = require('node:fs');
 const CONTAINER = 'tq-backend-test-postgres';
 const ROLE = 'tq_release_preflight_reader';
 const SENTINEL_PREFIX = 'tq-disposable-ci:';
+const PREFLIGHT_SQL = fs.readFileSync(require('node:path').join(__dirname, 'release-migration-preflight.sql'), 'utf8');
 let passedScenarioCount = 0;
+
+assert.match(PREFLIGHT_SQL, /^\s*BEGIN\s+READ\s+ONLY\s*;/im,
+  'the operator preflight must remain inside an explicit read-only transaction');
+assert.doesNotMatch(PREFLIGHT_SQL,
+  /^\s*(?:CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|TRUNCATE|GRANT|REVOKE|CALL|DO)\b/im,
+  'the operator preflight must not execute migration or other mutating SQL');
 
 function recordScenario(label) {
   passedScenarioCount += 1;
@@ -280,7 +287,7 @@ function fixtureSql(mode) {
 }
 
 function invokePreflight(database, overrides = {}) {
-  return psql(database, ROLE, fs.readFileSync(require('node:path').join(__dirname, 'release-migration-preflight.sql'), 'utf8'), {
+  return psql(database, ROLE, PREFLIGHT_SQL, {
     expected_database: database,
     expected_role: ROLE,
     expected_server_address: '127.0.0.1',
@@ -388,6 +395,8 @@ assert.equal(noApplicationSelect.stdout.trim(), 't', 'preflight role must not ha
 
 const valid = invokePreflight(CASES.valid);
 assert.equal(valid.status, 0, `valid disposable schema must pass: ${valid.stderr}\n${valid.stdout}`);
+assert.ok(valid.stdout.includes('Target database identity and read-only transaction match the approved values.'),
+  'the correctly bound synthetic database identity must pass');
 assert.match(valid.stdout, /Startup schema contract is complete: 18 tables and 278 required columns are present/);
 recordScenario('compatible 18-table/278-column post-migration schema and ledger');
 
@@ -464,15 +473,22 @@ const dropSecurityDefiner = psql(CASES.valid, 'postgres', 'DROP FUNCTION public.
 assert.equal(dropSecurityDefiner.status, 0, dropSecurityDefiner.stderr);
 recordScenario('publicly executable security-definer function is rejected by the read-only role audit');
 
-const wrongTarget = invokePreflight(CASES.valid, { expected_database: 'unexpected_target' });
-assert.equal(wrongTarget.status, 3, `wrong target fingerprint must fail closed: ${wrongTarget.stderr}\n${wrongTarget.stdout}`);
-assert.match(wrongTarget.stdout, /STOP: target database identity or read-only transaction/);
-recordScenario('incorrect expected database identity fails closed');
-
-const wrongRole = invokePreflight(CASES.valid, { expected_role: 'unexpected_role' });
-assert.equal(wrongRole.status, 3, `wrong expected role must fail closed: ${wrongRole.stderr}\n${wrongRole.stdout}`);
-assert.match(wrongRole.stdout, /STOP: target database identity or read-only transaction mismatch/);
-recordScenario('incorrect expected database role fails closed');
+const identityStopMessage = 'STOP: target database identity or read-only transaction does not match the approved values.';
+function assertIdentityMismatchFailsClosed(label, overrides) {
+  const result = invokePreflight(CASES.valid, overrides);
+  const output = `${result.stdout}\n${result.stderr}`;
+  assert.equal(result.status, 3, `${label}: ${output}`);
+  assert.ok(result.stdout.trim().split(/\r?\n/).includes(identityStopMessage),
+    `${label} must emit the stable target-identity STOP message: ${output}`);
+  assert.doesNotMatch(output, /Startup schema contract is complete|PASS:|migration (?:024|025|026) is/i,
+    `${label} must stop before schema or migration results are reported: ${output}`);
+}
+assertIdentityMismatchFailsClosed('incorrect expected database identity fails closed', { expected_database: 'unexpected_target' });
+assertIdentityMismatchFailsClosed('incorrect expected database role fails closed', { expected_role: 'unexpected_role' });
+recordScenario('incorrect expected database and role identities fail closed');
+assertIdentityMismatchFailsClosed('incorrect expected server address fails closed', { expected_server_address: '192.0.2.25' });
+assertIdentityMismatchFailsClosed('incorrect expected server port fails closed', { expected_server_port: '5433' });
+recordScenario('incorrect expected server address and port fail closed');
 
 const revokeLedgerChecksum = psql(CASES.valid, 'postgres',
   `REVOKE SELECT (checksum) ON public.schema_migrations FROM ${ROLE};`);

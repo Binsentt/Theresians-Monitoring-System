@@ -990,9 +990,14 @@ jobs:
           set -euo pipefail
           image_pgdata="$(docker run --rm --network none postgres:18-bookworm sh -ec 'printf "%s" "$PGDATA"')"
           test "$image_pgdata" = "/var/lib/postgresql/18/docker"
+          image_volumes="$(docker image inspect --format='{{json .Config.Volumes}}' postgres:18-bookworm)"
+          case "$image_volumes" in
+            *'"/var/lib/postgresql"'*) ;;
+            *) echo "Unexpected PostgreSQL 18 image volume contract: ${image_volumes}" >&2; exit 1 ;;
+          esac
           postgres_uid="$(docker run --rm --network none postgres:18-bookworm id -u postgres)"
           postgres_gid="$(docker run --rm --network none postgres:18-bookworm id -g postgres)"
-          docker run --detach \
+          container_id="$(docker run --detach \
             --name tq-backend-test-postgres \
             --network none \
             --user "${postgres_uid}:${postgres_gid}" \
@@ -1009,10 +1014,49 @@ jobs:
             --env POSTGRES_USER=postgres \
             --env POSTGRES_DB=postgres \
             --env POSTGRES_HOST_AUTH_METHOD=trust \
-            postgres:18-bookworm
-          mount_info="$(docker inspect --format='{{range .Mounts}}{{.Type}} {{.Destination}}{{"\n"}}{{end}}' tq-backend-test-postgres)"
-          printf '%s\n' "$mount_info" | grep -Fx 'tmpfs /var/lib/postgresql'
-          printf '%s\n' "$mount_info" | grep -Fx 'tmpfs /var/run/postgresql'
+            postgres:18-bookworm)"
+          container_state="$(docker inspect --format='{{.State.Status}}' tq-backend-test-postgres)"
+          container_exit="$(docker inspect --format='{{.State.ExitCode}}' tq-backend-test-postgres)"
+          container_oom="$(docker inspect --format='{{.State.OOMKilled}}' tq-backend-test-postgres)"
+          container_error="$(docker inspect --format='{{.State.Error}}' tq-backend-test-postgres)"
+          network_mode="$(docker inspect --format='{{.HostConfig.NetworkMode}}' tq-backend-test-postgres)"
+          readonly_root="$(docker inspect --format='{{.HostConfig.ReadonlyRootfs}}' tq-backend-test-postgres)"
+          port_bindings="$(docker inspect --format='{{json .HostConfig.PortBindings}}' tq-backend-test-postgres)"
+          cap_drop="$(docker inspect --format='{{json .HostConfig.CapDrop}}' tq-backend-test-postgres)"
+          security_options="$(docker inspect --format='{{json .HostConfig.SecurityOpt}}' tq-backend-test-postgres)"
+          configured_tmpfs="$(docker inspect --format='{{json .HostConfig.Tmpfs}}' tq-backend-test-postgres)"
+          mount_info="$(docker inspect --format='{{range .Mounts}}{{.Type}}|{{.Destination}}|rw={{.RW}}{{"\n"}}{{end}}' tq-backend-test-postgres)"
+          printf 'PostgreSQL 18 image PGDATA=%s declared-volumes=%s\n' "$image_pgdata" "$image_volumes"
+          printf 'Container id=%s state=%s exit=%s oom=%s error=%s\n' "${container_id:0:12}" "$container_state" "$container_exit" "$container_oom" "${container_error:-none}"
+          printf 'Container isolation network=%s readonly-root=%s port-bindings=%s cap-drop=%s security-options=%s\n' \
+            "$network_mode" "$readonly_root" "$port_bindings" "$cap_drop" "$security_options"
+          printf 'Configured tmpfs targets/options=%s\nEffective mounts (type|destination|rw):\n%s' "$configured_tmpfs" "$mount_info"
+          if [[ "$container_state" != running && "$container_state" != created ]]; then
+            echo "PostgreSQL 18 container stopped during startup. Sanitized startup log follows:"
+            docker logs --tail 80 tq-backend-test-postgres || true
+            exit 1
+          fi
+          test "$network_mode" = none
+          test "$readonly_root" = true
+          [[ "$port_bindings" == null || "$port_bindings" == '{}' ]]
+          [[ "$cap_drop" == '["ALL"]' ]]
+          [[ "$security_options" == *no-new-privileges* ]]
+          [[ "$configured_tmpfs" == *'"/var/lib/postgresql"'* ]]
+          unsafe_data_mount=false
+          while IFS='|' read -r mount_type mount_destination mount_readonly; do
+            if [[ "$mount_type" == volume || "$mount_type" == bind ]]; then
+              if [[ "$mount_destination" == "$image_pgdata" || "$mount_destination" == "$image_pgdata/"* ]]; then
+                echo "Unsafe persistent mount overlaps PostgreSQL PGDATA: ${mount_type} ${mount_destination}" >&2
+                unsafe_data_mount=true
+              fi
+            fi
+          done <<< "$mount_info"
+          if [[ "$unsafe_data_mount" == true ]]; then exit 1; fi
+          pgdata_filesystem="$(docker exec tq-backend-test-postgres stat -f -c '%T' -- "$image_pgdata")"
+          socket_filesystem="$(docker exec tq-backend-test-postgres stat -f -c '%T' -- /var/run/postgresql)"
+          printf 'Effective filesystem PGDATA=%s socket=%s\n' "$pgdata_filesystem" "$socket_filesystem"
+          test "$pgdata_filesystem" = tmpfs
+          test "$socket_filesystem" = tmpfs
           ready=false
           for attempt in $(seq 1 60); do
             container_state="$(docker inspect --format='{{.State.Status}}' tq-backend-test-postgres 2>/dev/null || true)"
@@ -1029,7 +1073,9 @@ jobs:
             sleep 1
           done
           if [[ "$ready" != true ]]; then
-            docker logs tq-backend-test-postgres
+            echo "PostgreSQL 18 did not become ready. Container and sanitized startup details follow:"
+            docker inspect --format='state={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}} network={{.HostConfig.NetworkMode}} readonly={{.HostConfig.ReadonlyRootfs}}' tq-backend-test-postgres || true
+            docker logs --tail 80 tq-backend-test-postgres || true
             exit 1
           fi
 
@@ -1097,4 +1143,4 @@ jobs:
       - name: Remove disposable PostgreSQL 18 container
         if: always()
         shell: bash
-        run: docker rm -f tq-backend-test-postgres >/dev/null 2>&1 || true
+        run: docker rm -f -v tq-backend-test-postgres >/dev/null 2>&1 || true
