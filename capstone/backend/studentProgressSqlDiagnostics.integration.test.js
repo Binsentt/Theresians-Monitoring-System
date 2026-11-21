@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Pool } = require('pg');
-const { RELEASE_MIGRATIONS, applyReleaseMigrations } = require('./releaseMigrations');
+const { RELEASE_MIGRATIONS } = require('./releaseMigrations');
+const { runApprovedReleaseMigrations } = require('./scripts/run-approved-release-migrations');
 const { getPublicRegistrySnapshot } = require('./curriculumScopeRegistry');
 
 const databaseUrl = process.env.STUDENT_DIAGNOSTICS_TEST_DATABASE_URL || '';
@@ -263,11 +264,38 @@ if (!isApprovedDisposableDatabase(databaseUrl)) {
       const migration025 = RELEASE_MIGRATIONS.find(({ version }) => version === 25);
       assert.ok(migration025, 'release migration registry must include migration 025');
       const migrationClient = await bootstrap.connect();
+      let migrationTarget;
       try {
-        await applyReleaseMigrations({ client: migrationClient, migrations: [migration025] });
+        await migrationClient.query(`CREATE TABLE IF NOT EXISTS public.schema_migrations (
+          version INTEGER PRIMARY KEY,
+          filename VARCHAR(255) NOT NULL,
+          checksum CHAR(64) NOT NULL,
+          applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )`);
+        const identity = await migrationClient.query(`
+          SELECT current_database() AS database_name,
+                 current_user AS database_user,
+                 host(inet_server_addr()) AS server_address,
+                 inet_server_port() AS server_port
+        `);
+        migrationTarget = identity.rows[0];
       } finally {
         migrationClient.release();
       }
+
+      await runApprovedReleaseMigrations({
+        env: {
+          RELEASE_MIGRATIONS_APPROVED: 'true',
+          RELEASE_APPROVAL_REFERENCE: 'SYNTHETIC-STUDENT-DIAGNOSTICS-TEST',
+          RELEASE_EXPECTED_DATABASE: migrationTarget.database_name,
+          RELEASE_EXPECTED_DB_USER: migrationTarget.database_user,
+          RELEASE_EXPECTED_SERVER_ADDRESS: migrationTarget.server_address,
+          RELEASE_EXPECTED_SERVER_PORT: String(migrationTarget.server_port),
+          RELEASE_EXPECTED_PENDING_MIGRATIONS: '25',
+        },
+        databaseConfig: { connectionString: databaseUrl },
+        migrations: [migration025],
+      });
 
       const migrationRow = await bootstrap.query(
         'SELECT filename FROM public.schema_migrations WHERE version = 25',

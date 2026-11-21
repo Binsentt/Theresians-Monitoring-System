@@ -15,6 +15,7 @@ function Test-Case([string]$Name, [scriptblock]$Action) {
   catch { Write-Error "FAIL $Name : $($_.Exception.Message)`n$($_.ScriptStackTrace)"; throw }
 }
 $backend = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$repositoryRoot = (& git -C $backend rev-parse --show-toplevel).Trim()
 $migrationDirectory = Join-Path $backend 'migrations'
 $preflightPath = Join-Path $PSScriptRoot 'release-migration-preflight.sql'
 $rehearsalScript = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'backup-restore-rehearsal.ps1'))
@@ -31,6 +32,11 @@ Test-Case 'interactive authentication rejects ambient password sources and crede
   Assert-Throws { Assert-InteractiveAuthenticationEnvironment @{ PGPASSWORD = 'synthetic' } } 'PGPASSWORD'
   Assert-Throws { Assert-InteractiveAuthenticationEnvironment @{ PGPASSFILE = 'synthetic-path' } } 'PGPASSFILE'
   Assert-Throws { Assert-InteractiveAuthenticationEnvironment @{ PGOPTIONS = '-c role=postgres' } } 'PGOPTIONS'
+  Assert-Throws { Assert-InteractiveAuthenticationEnvironment @{ PGHOST = 'production.example.invalid' } } 'PGHOST'
+  Assert-Throws { Assert-InteractiveAuthenticationEnvironment @{ PGUSER = 'postgres' } } 'PGUSER'
+  Assert-Throws { Assert-InteractiveAuthenticationEnvironment @{ PGDATABASE = 'postgres' } } 'PGDATABASE'
+  Assert-Throws { Assert-InteractiveAuthenticationEnvironment @{ PGSERVICEFILE = 'unreviewed-service.conf' } } 'PGSERVICEFILE'
+  Assert-Throws { Assert-InteractiveAuthenticationEnvironment @{ PGHOSTADDR = '203.0.113.1' } } 'PGHOSTADDR'
   $expectedUsers = [ordered]@{ tq_prod_backup='tq_prod_backup_reader'; tq_prod_preflight='tq_release_preflight_reader'; tq_restore_local='tq_restore_operator'; tq_restore_preflight='tq_release_preflight_reader' }
   $safeService = [string]::Join([Environment]::NewLine, @(
     '[tq_prod_backup]','host=db.example.invalid','port=5432','dbname=production','user=tq_prod_backup_reader','sslmode=require',
@@ -39,6 +45,11 @@ Test-Case 'interactive authentication rejects ambient password sources and crede
     '[tq_restore_preflight]','host=127.0.0.1','port=55432','dbname=tq_restore_example','user=tq_release_preflight_reader','sslmode=disable'
   ))
   Assert-PostgresServiceConfiguration -Text $safeService -ExpectedUsers $expectedUsers
+  Assert-Throws {
+    Assert-PostgresServiceConfiguration -Text "[tq_release_preflight]`nhost=127.0.0.1`nport=5432`ndbname=other`nuser=tq_release_preflight_reader`n" `
+      -ExpectedUsers ([ordered]@{ tq_release_preflight='tq_release_preflight_reader' }) `
+      -ExpectedDatabases ([ordered]@{ tq_release_preflight='fixture' })
+  } 'different database'
   Assert-Throws { Assert-PostgresServiceConfiguration -Text ($safeService + "`noptions=-c role=postgres") -ExpectedUsers $expectedUsers } 'unsafe'
   Assert-Throws { Assert-PostgresServiceConfiguration -Text ($safeService + "`nservice=tq_prod_backup") -ExpectedUsers $expectedUsers } 'unsafe'
   Assert-Throws { Assert-PostgresServiceConfiguration -Text ($safeService + "`ntarget_session_attrs=any") -ExpectedUsers $expectedUsers } 'unsafe'
@@ -49,6 +60,73 @@ Test-Case 'interactive authentication rejects ambient password sources and crede
   $unsafeUri = [string]::Join([Environment]::NewLine, @('[svc]','uri=postgresql://user:secret@localhost/db'))
   Assert-Throws { Assert-PostgresServiceConfiguration -Text $unsafeUri -ExpectedUsers $expectedUsers } 'credential'
   Assert-Throws { Assert-PostgresServiceConfiguration -Text ('[svc]'+[Environment]::NewLine+'dbname=postgresql://user:secret@localhost/db') -ExpectedUsers $expectedUsers } 'credential'
+}
+Test-Case 'release preflight credentials require protected regular files and the exact service target' {
+  $root = Join-Path ([System.IO.Path]::GetTempPath()) ('tq-preflight-credential-test-' + [guid]::NewGuid().ToString('N'))
+  $null = New-Item -ItemType Directory -Path $root
+  $real = Join-Path $root 'private'
+  $null = New-Item -ItemType Directory -Path $real
+  $passfile = Join-Path $real 'pgpass.conf'
+  $serviceFile = Join-Path $real 'pg_service.conf'
+  [System.IO.File]::WriteAllText($passfile, '')
+  [System.IO.File]::WriteAllText($serviceFile, "[tq_release_preflight]`nhost=127.0.0.1`nport=5432`ndbname=fixture`nuser=tq_release_preflight_reader`n")
+
+  function Set-TestRestrictedAcl([string]$Path, [bool]$IsDirectory) {
+    $security = if ($IsDirectory) { New-Object System.Security.AccessControl.DirectorySecurity } else { New-Object System.Security.AccessControl.FileSecurity }
+    $security.SetAccessRuleProtection($true, $false)
+    $security.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User)
+    $inheritance = if ($IsDirectory) { [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit } else { [Security.AccessControl.InheritanceFlags]::None }
+    foreach ($sidText in @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544')) {
+      $sid = [Security.Principal.SecurityIdentifier]::new($sidText)
+      $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+      $security.AddAccessRule($rule)
+    }
+    Set-Acl -LiteralPath $Path -AclObject $security
+  }
+
+  try {
+    Set-TestRestrictedAcl $root $true
+    Set-TestRestrictedAcl $real $true
+    Set-TestRestrictedAcl $passfile $false
+    Set-TestRestrictedAcl $serviceFile $false
+    $expectedUsers = [ordered]@{ tq_release_preflight = 'tq_release_preflight_reader' }
+    $expectedDatabases = [ordered]@{ tq_release_preflight = 'fixture' }
+
+    $validated = Assert-ReviewedPreflightCredentialFiles -PassfilePath $passfile -ServiceFilePath $serviceFile -RepositoryRoot $repositoryRoot -ServiceName 'tq_release_preflight' -ExpectedUsers $expectedUsers -ExpectedDatabases $expectedDatabases
+    Assert-True ($validated.PassfilePath -eq [System.IO.Path]::GetFullPath($passfile)) 'The validated passfile path was not returned canonically.'
+    Assert-True ($validated.ServiceFilePath -eq [System.IO.Path]::GetFullPath($serviceFile)) 'The validated service path was not returned canonically.'
+
+    Remove-Item -LiteralPath $passfile
+    Assert-Throws { Assert-ReviewedPreflightCredentialFiles -PassfilePath $passfile -ServiceFilePath $serviceFile -RepositoryRoot $repositoryRoot -ServiceName 'tq_release_preflight' -ExpectedUsers $expectedUsers -ExpectedDatabases $expectedDatabases } 'passfile.*missing|missing.*passfile'
+    [System.IO.File]::WriteAllText($passfile, '')
+    Set-TestRestrictedAcl $passfile $false
+    Remove-Item -LiteralPath $serviceFile
+    Assert-Throws { Assert-ReviewedPreflightCredentialFiles -PassfilePath $passfile -ServiceFilePath $serviceFile -RepositoryRoot $repositoryRoot -ServiceName 'tq_release_preflight' -ExpectedUsers $expectedUsers -ExpectedDatabases $expectedDatabases } 'servicefile.*missing|missing.*servicefile'
+    [System.IO.File]::WriteAllText($serviceFile, "[tq_release_preflight]`nhost=127.0.0.1`nport=5432`ndbname=fixture`nuser=tq_release_preflight_reader`n")
+    Set-TestRestrictedAcl $serviceFile $false
+
+    $acl = Get-Acl -LiteralPath $passfile
+    $broadSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-11')
+    $broadRule = [Security.AccessControl.FileSystemAccessRule]::new($broadSid, [Security.AccessControl.FileSystemRights]::Read, [Security.AccessControl.AccessControlType]::Allow)
+    $acl.AddAccessRule($broadRule)
+    Set-Acl -LiteralPath $passfile -AclObject $acl
+    Assert-Throws { Assert-ReviewedPreflightCredentialFiles -PassfilePath $passfile -ServiceFilePath $serviceFile -RepositoryRoot $repositoryRoot -ServiceName 'tq_release_preflight' -ExpectedUsers $expectedUsers -ExpectedDatabases $expectedDatabases } 'ACL|access|identity'
+    Set-TestRestrictedAcl $passfile $false
+
+    $junction = Join-Path $root 'linked'
+    $null = New-Item -ItemType Junction -Path $junction -Target $real
+    Assert-Throws { Assert-ReviewedPreflightCredentialFiles -PassfilePath (Join-Path $junction 'pgpass.conf') -ServiceFilePath $serviceFile -RepositoryRoot $repositoryRoot -ServiceName 'tq_release_preflight' -ExpectedUsers $expectedUsers -ExpectedDatabases $expectedDatabases } 'reparse|symbolic link|junction'
+
+    [System.IO.File]::WriteAllText($serviceFile, "[tq_release_preflight]`nhost=127.0.0.1`nport=5432`ndbname=fixture`nuser=tq_release_preflight_reader`noptions=-c role=postgres`n")
+    Set-TestRestrictedAcl $serviceFile $false
+    Assert-Throws { Assert-ReviewedPreflightCredentialFiles -PassfilePath $passfile -ServiceFilePath $serviceFile -RepositoryRoot $repositoryRoot -ServiceName 'tq_release_preflight' -ExpectedUsers $expectedUsers -ExpectedDatabases $expectedDatabases } 'unsafe'
+
+    [System.IO.File]::WriteAllText($serviceFile, "[tq_release_preflight]`nhost=127.0.0.1`nport=5432`ndbname=other`nuser=tq_release_preflight_reader`n")
+    Set-TestRestrictedAcl $serviceFile $false
+    Assert-Throws { Assert-ReviewedPreflightCredentialFiles -PassfilePath $passfile -ServiceFilePath $serviceFile -RepositoryRoot $repositoryRoot -ServiceName 'tq_release_preflight' -ExpectedUsers $expectedUsers -ExpectedDatabases $expectedDatabases } 'different database'
+  } finally {
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }
 Test-Case 'canonical migration manifest matches files and all 018-026 entries' {
   Assert-True ($manifest.Count -eq 9) 'Expected exactly nine release migration entries.'
@@ -235,7 +313,7 @@ Test-Case 'isolated restore grants only preflight ledger columns after restore s
 }
 
 Test-Case 'backup storage path requires a non-reparse restricted ACL and independently checked encryption evidence' {
-  if (-not $IsWindows) { throw 'Windows ACL and BitLocker evidence tests require a Windows PowerShell host.' }
+  if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) { throw 'Windows ACL and BitLocker evidence tests require a Windows PowerShell host.' }
   $tempRoot = [System.IO.Path]::GetFullPath($env:TEMP)
   $testRoot = Join-Path $tempRoot ("tq-backup-storage-test-$PID")
   $evidencePath = Join-Path $tempRoot ("tq-bitlocker-evidence-$PID.json")

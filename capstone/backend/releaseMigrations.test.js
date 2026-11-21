@@ -3,7 +3,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const { applyReleaseMigrations, migrationChecksum, RELEASE_MIGRATIONS } = require('./releaseMigrations');
+const releaseMigrationApi = require('./releaseMigrations');
+const { migrationChecksum, RELEASE_MIGRATIONS } = releaseMigrationApi;
+
+test('migration execution is not exposed through an ungated public API', () => {
+  assert.equal(Object.hasOwn(releaseMigrationApi, 'applyReleaseMigrations'), false);
+  assert.equal(Object.hasOwn(require('./scripts/run-approved-release-migrations'), 'executeApprovedMigrations'), false);
+  assert.equal(typeof releaseMigrationApi.runReleaseMigrations, 'function');
+});
 
 const EXPECTED_CANONICAL_MIGRATION_CHECKSUMS = Object.freeze({
   18: 'f64e6e0de7abdf873fdb1bc93739d2704e4b16ed5bc428c991c7507407ea5668',
@@ -90,84 +97,4 @@ test('legacy Student cleanup migration only targets exact six-digit Student IDs 
   assert.match(sql, /DELETE FROM public\.playtime_sessions/);
   assert.match(sql, /DELETE FROM public\.accounts/);
   assert.doesNotMatch(sql, /\^\[0-9\]\{8\}\$/);
-});
-
-test('release migrations apply in order under an advisory lock and record checksums', async () => {
-  const calls = [];
-  const client = {
-    async query(sql, params) {
-      calls.push({ sql: String(sql), params });
-      if (String(sql).includes('SELECT version, checksum')) return { rows: [] };
-      return { rows: [] };
-    },
-  };
-
-  await applyReleaseMigrations({
-    client,
-    migrationDir: __dirname + '/migrations',
-    migrations: [
-      { version: 18, file: '018_website_sessions_and_audit_metadata.sql' },
-      { version: 19, file: '019_playtime_history_removal.sql' },
-      { version: 20, file: '020_add_auth_otp_challenge_security.sql' },
-    ],
-  });
-
-  assert.match(calls.find(({ sql }) => sql.includes('pg_advisory_lock')).sql, /pg_advisory_lock/);
-  assert.match(calls.at(-1).sql, /pg_advisory_unlock/);
-  const migrationCalls = calls.filter(({ sql }) => /admin_audit_logs|playtime_sessions|otp_code_hash/.test(sql));
-  assert.equal(migrationCalls.length, 3);
-  assert.match(migrationCalls[0].sql, /admin_audit_logs|website_sessions/);
-  assert.match(migrationCalls[1].sql, /playtime_sessions/);
-  assert.match(migrationCalls[2].sql, /accounts/);
-  assert.equal(calls.filter(({ sql }) => sql.includes('INSERT INTO public.schema_migrations')).length, 3);
-});
-
-test('release migrations reject a checksum mismatch instead of silently reapplying a changed file', async () => {
-  const migration = { version: 18, file: '018_website_sessions_and_audit_metadata.sql' };
-  const migrationSql = fs.readFileSync(path.join(__dirname, 'migrations', migration.file), 'utf8');
-  const correctChecksum = migrationChecksum(migrationSql);
-  const incorrectChecksum = `${correctChecksum[0] === '0' ? '1' : '0'}${correctChecksum.slice(1)}`;
-  const calls = [];
-  const client = {
-    async query(sql) {
-      calls.push(String(sql));
-      if (String(sql).includes('SELECT version, checksum')) return { rows: [{ version: 18, checksum: incorrectChecksum }] };
-      return { rows: [] };
-    },
-  };
-
-  await assert.rejects(
-    applyReleaseMigrations({
-      client,
-      migrationDir: __dirname + '/migrations',
-      migrations: [migration],
-    }),
-    /checksum mismatch/i,
-  );
-  assert.equal(calls.includes(migrationSql), false, 'a checksum mismatch must not execute migration SQL');
-  assert.equal(calls.some((sql) => sql.includes('INSERT INTO public.schema_migrations')), false);
-  assert.match(calls.at(-1), /pg_advisory_unlock/);
-});
-
-test('release migration failure propagates and always releases the advisory lock', async () => {
-  const calls = [];
-  const client = {
-    async query(sql) {
-      calls.push(String(sql));
-      if (String(sql).includes('SELECT version, checksum')) return { rows: [] };
-      if (String(sql).includes('admin_audit_logs')) throw new Error('synthetic migration failure');
-      return { rows: [] };
-    },
-  };
-
-  await assert.rejects(
-    applyReleaseMigrations({
-      client,
-      migrationDir: __dirname + '/migrations',
-      migrations: [{ version: 18, file: '018_website_sessions_and_audit_metadata.sql' }],
-    }),
-    /synthetic migration failure/,
-  );
-  assert.match(calls.at(-1), /pg_advisory_unlock/);
-  assert.equal(calls.filter((sql) => sql.includes('INSERT INTO public.schema_migrations')).length, 0);
 });

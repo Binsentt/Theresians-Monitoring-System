@@ -61,6 +61,7 @@ test('read-only preflight audit is fixed to catalog and migration-ledger metadat
 
 test('Windows preflight utility uses a service alias, rejects inline passwords, and gates source/identity', () => {
   const script = read('run-release-preflight.ps1');
+  const validation = read('backupRestoreRehearsal.validation.psm1');
   assert.match(script, /tq_release_preflight_reader/);
   assert.match(script, /PGPASSWORD/);
   assert.match(script, /-w/);
@@ -75,6 +76,16 @@ test('Windows preflight utility uses a service alias, rejects inline passwords, 
   assert.match(script, /release-migration-preflight\.sql/);
   assert.match(script, /PreMigration026/);
   assert.match(script, /PostMigration026/);
+  assert.match(script, /Assert-ReviewedPreflightCredentialFiles/);
+  assert.match(script, /Assert-InteractiveAuthenticationEnvironment/);
+  assert.match(validation, /function Assert-ReviewedPreflightCredentialFiles/);
+  assert.match(validation, /function Assert-NoReparsePointPath/);
+  assert.match(validation, /function Assert-RestrictedStorageAcl/);
+  assert.match(validation, /function Assert-PostgresServiceConfiguration/);
+  assert.ok(script.indexOf('Assert-ReviewedPreflightCredentialFiles') < script.indexOf('& $PsqlPath'),
+    'credential path, ACL, and service validation must run before any psql invocation');
+  assert.doesNotMatch(script, /Write-(?:Output|Host)[^\r\n]*(?:Passfile|ServiceFile|serviceContents)/i,
+    'credential paths or service contents must not be printed');
 });
 
 test('PowerShell preflight accepts only an explicit matching source SHA before the psql stub', {
@@ -97,6 +108,31 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
   fs.writeFileSync(serviceFile, '[tq_release_preflight]\nhost=127.0.0.1\nport=5432\ndbname=fixture\nuser=tq_release_preflight_reader\n', 'utf8');
   fs.writeFileSync(psqlStub, `@echo invoked>>"${callMarker}"\r\n@exit /b 0\r\n`, 'utf8');
 
+  const protectSyntheticPath = (target, isDirectory) => {
+    const escapedTarget = target.replace(/'/g, "''");
+    const inheritance = isDirectory ? '(OI)(CI)' : '';
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      `$target = '${escapedTarget}'`,
+      "$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+      '& icacls.exe $target /inheritance:r | Out-Null',
+      'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
+      `$grants = @("*$($sid):${inheritance}F", "*S-1-5-18:${inheritance}F", "*S-1-5-32-544:${inheritance}F")`,
+      '& icacls.exe $target /grant:r $grants | Out-Null',
+      'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
+      `Import-Module '${path.join(scripts, 'backupRestoreRehearsal.validation.psm1').replace(/'/g, "''")}' -Force`,
+      'Assert-RestrictedStorageAcl -Path $target',
+    ].join('\n');
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    const result = spawnSync(powershellPath, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+      encoding: 'utf8', timeout: 15000,
+    });
+    assert.equal(result.status, 0, `${target} ACL fixture setup failed: ${result.stdout || ''}\n${result.stderr || ''}`);
+  };
+  protectSyntheticPath(tempDirectory, true);
+  protectSyntheticPath(passfile, false);
+  protectSyntheticPath(serviceFile, false);
+
   const sourceResult = spawnSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
   assert.equal(sourceResult.status, 0, sourceResult.stderr);
   const currentSourceSha = sourceResult.stdout.trim();
@@ -116,11 +152,15 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
       .map((name) => [name, process.env[name]]),
   );
 
-  const invoke = (sha) => spawnSync(
-    powershellPath,
-    sha === undefined ? baseArguments : [...baseArguments, '-ExpectedSourceCommit', sha],
-    { encoding: 'utf8', env: childEnv, timeout: 15000 },
-  );
+  const invoke = (sha, extraEnvironment = {}, { serviceFilePath } = {}) => {
+    const args = sha === undefined ? [...baseArguments] : [...baseArguments, '-ExpectedSourceCommit', sha];
+    if (serviceFilePath) args[args.indexOf('-ServiceFilePath') + 1] = serviceFilePath;
+    return spawnSync(
+      powershellPath,
+      args,
+      { encoding: 'utf8', env: { ...childEnv, ...extraEnvironment }, timeout: 15000 },
+    );
+  };
   const outputOf = (result) => `${result.stdout || ''}\n${result.stderr || ''}`;
 
   const missingSha = invoke(undefined);
@@ -135,6 +175,57 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
   assert.notEqual(mismatchedSha.status, 0);
   assert.match(outputOf(mismatchedSha), /HEAD does not match the approved commit/i);
   assert.equal(fs.existsSync(callMarker), false, 'a SHA mismatch must stop before invoking psql');
+
+  fs.rmSync(passfile);
+  const missingPassfile = invoke(currentSourceSha);
+  assert.notEqual(missingPassfile.status, 0);
+  assert.match(outputOf(missingPassfile), /PGPASSFILE file is missing/i);
+  assert.equal(fs.existsSync(callMarker), false, 'missing credential files must stop before invoking psql');
+  fs.writeFileSync(passfile, '', 'utf8');
+  protectSyntheticPath(passfile, false);
+
+  const unsafeEnvironment = invoke(currentSourceSha, { PGUSER: 'postgres' });
+  assert.notEqual(unsafeEnvironment.status, 0);
+  assert.match(outputOf(unsafeEnvironment), /PGUSER.*override/i);
+  assert.equal(fs.existsSync(callMarker), false, 'ambient connection overrides must stop before invoking psql');
+
+  const serviceSettings = fs.readFileSync(serviceFile, 'utf8');
+  fs.writeFileSync(serviceFile, `${serviceSettings}options=-c role=postgres\n`, 'utf8');
+  const unsafeService = invoke(currentSourceSha);
+  assert.notEqual(unsafeService.status, 0);
+  assert.match(outputOf(unsafeService), /unsafe|unsupported setting/i);
+  assert.equal(fs.existsSync(callMarker), false, 'unsafe service settings must stop before invoking psql');
+  fs.writeFileSync(serviceFile, serviceSettings, 'utf8');
+  protectSyntheticPath(serviceFile, false);
+
+  const broadAclScript = [
+    `$target = '${serviceFile.replace(/'/g, "''")}'`,
+    '& icacls.exe $target /grant "*S-1-5-11:R" | Out-Null',
+    'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
+  ].join('\n');
+  const broadAclEncoded = Buffer.from(broadAclScript, 'utf16le').toString('base64');
+  const broadAclSetup = spawnSync(powershellPath, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', broadAclEncoded], {
+    encoding: 'utf8', timeout: 15000,
+  });
+  assert.equal(broadAclSetup.status, 0, broadAclSetup.stderr || broadAclSetup.stdout);
+  const broadAcl = invoke(currentSourceSha);
+  assert.notEqual(broadAcl.status, 0);
+  assert.match(outputOf(broadAcl), /ACL grants access to an unapproved identity/i);
+  assert.equal(fs.existsSync(callMarker), false, 'broad ACLs must stop before invoking psql');
+  protectSyntheticPath(serviceFile, false);
+
+  const junction = path.join(tempDirectory, 'credential-junction');
+  const junctionResult = spawnSync(powershellPath, [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+    `New-Item -ItemType Junction -Path '${junction.replace(/'/g, "''")}' -Target '${tempDirectory.replace(/'/g, "''")}' | Out-Null`,
+  ], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(junctionResult.status, 0, junctionResult.stderr || junctionResult.stdout);
+  const reparsePath = invoke(currentSourceSha, {}, {
+    serviceFilePath: path.join(junction, path.basename(serviceFile)),
+  });
+  assert.notEqual(reparsePath.status, 0);
+  assert.match(outputOf(reparsePath), /reparse|symbolic link|junction/i);
+  assert.equal(fs.existsSync(callMarker), false, 'reparse paths must stop before invoking psql');
 
   const matchingSha = invoke(currentSourceSha);
   const matchingOutput = outputOf(matchingSha);

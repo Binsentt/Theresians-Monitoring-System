@@ -35,7 +35,7 @@ function approvalEnv(pending, overrides = {}) {
   };
 }
 
-function fakeClient({ identity, ledgerRows, ledgerPresent = true, migration024Counts } = {}) {
+function fakeClient({ identity, ledgerRows, ledgerPresent = true, migration024Counts, failMigration } = {}) {
   const calls = [];
   const client = {
     connected: false,
@@ -49,6 +49,7 @@ function fakeClient({ identity, ledgerRows, ledgerPresent = true, migration024Co
     async query(sql, params = []) {
       const text = String(sql);
       calls.push({ sql: text, params });
+      if (failMigration && text.includes(failMigration)) throw new Error('synthetic migration failure');
       if (text.includes('current_database()')) return { rows: [identity] };
       if (text.includes("to_regclass('public.schema_migrations')")) {
         return { rows: [{ ledger_present: ledgerPresent }] };
@@ -309,6 +310,31 @@ test('applies only the approved pending migration versions after target and ledg
   assert.equal(calls.some((call) => call.sql.includes('-- fixture migration 18')), false);
   assert.equal(calls.filter((call) => call.sql.includes('pg_advisory_lock')).length, 2);
   assert.equal(calls.filter((call) => call.sql.includes('pg_advisory_unlock')).length, 2);
+  assert.equal(client.ended, true);
+});
+
+test('private migration execution preserves lock cleanup when migration SQL fails', async (t) => {
+  const migrations = [{ version: 18, file: '018_fixture.sql' }];
+  const dir = tempMigrationDir(t, migrations);
+  const { client, calls } = fakeClient({
+    identity: matchingIdentity(),
+    ledgerRows: [],
+    failMigration: '-- fixture migration 18',
+  });
+
+  await assert.rejects(
+    runApprovedReleaseMigrations({
+      env: approvalEnv('18'),
+      databaseConfig: { host: 'fixture.invalid' },
+      migrationDir: dir,
+      migrations,
+      clientFactory: async () => client,
+    }),
+    /synthetic migration failure/,
+  );
+  assert.equal(calls.filter(({ sql }) => sql.includes('pg_advisory_lock')).length, 2);
+  assert.equal(calls.filter(({ sql }) => sql.includes('pg_advisory_unlock')).length, 2);
+  assert.equal(calls.some(({ sql }) => sql.includes('INSERT INTO public.schema_migrations')), false);
   assert.equal(client.ended, true);
 });
 

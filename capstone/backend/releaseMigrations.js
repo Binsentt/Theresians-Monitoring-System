@@ -1,6 +1,4 @@
 const crypto = require('node:crypto');
-const fs = require('node:fs');
-const path = require('node:path');
 
 const RELEASE_MIGRATIONS = Object.freeze([
   { version: 18, file: '018_website_sessions_and_audit_metadata.sql' },
@@ -15,27 +13,10 @@ const RELEASE_MIGRATIONS = Object.freeze([
 ]);
 
 const ADVISORY_LOCK_KEY = 4819020;
-const MIGRATION_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS public.schema_migrations (
-    version INTEGER PRIMARY KEY,
-    filename VARCHAR(255) NOT NULL,
-    checksum CHAR(64) NOT NULL,
-    applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-  )
-`;
 
 function migrationChecksum(sql) {
   const canonicalSql = sql.replace(/\r\n?/g, '\n');
   return crypto.createHash('sha256').update(canonicalSql, 'utf8').digest('hex');
-}
-
-function readMigration(migrationDir, migration) {
-  const filePath = path.resolve(migrationDir, migration.file);
-  const expectedDir = path.resolve(migrationDir);
-  if (!filePath.startsWith(`${expectedDir}${path.sep}`)) {
-    throw new Error(`migration path escapes migration directory: ${migration.file}`);
-  }
-  return fs.readFileSync(filePath, 'utf8');
 }
 
 function buildReleaseDatabaseConfig(env = process.env) {
@@ -61,44 +42,6 @@ function buildReleaseDatabaseConfig(env = process.env) {
   };
 }
 
-async function applyReleaseMigrations({
-  client,
-  migrationDir = path.join(__dirname, 'migrations'),
-  migrations = RELEASE_MIGRATIONS,
-}) {
-  if (!client || typeof client.query !== 'function') throw new TypeError('a PostgreSQL client is required');
-  await client.query("SET statement_timeout = '15000ms'");
-  await client.query('SELECT pg_advisory_lock($1)', [ADVISORY_LOCK_KEY]);
-  try {
-    await client.query(MIGRATION_TABLE_SQL);
-    const existing = await client.query(
-      'SELECT version, checksum FROM public.schema_migrations WHERE version = ANY($1::integer[])',
-      [migrations.map(({ version }) => version)],
-    );
-    const applied = new Map(existing.rows.map((row) => [Number(row.version), String(row.checksum)]));
-
-    for (const migration of migrations) {
-      const sql = readMigration(migrationDir, migration);
-      const checksum = migrationChecksum(sql);
-      const previousChecksum = applied.get(migration.version);
-      if (previousChecksum) {
-        if (previousChecksum !== checksum) {
-          throw new Error(`migration ${migration.version} checksum mismatch`);
-        }
-        continue;
-      }
-      await client.query(sql);
-      await client.query(
-        `INSERT INTO public.schema_migrations (version, filename, checksum)
-         VALUES ($1, $2, $3)`,
-        [migration.version, migration.file, checksum],
-      );
-    }
-  } finally {
-    await client.query('SELECT pg_advisory_unlock($1)', [ADVISORY_LOCK_KEY]);
-  }
-}
-
 async function runReleaseMigrations(options = {}) {
   // Defer loading the gate until module exports are initialized when run directly.
   await Promise.resolve();
@@ -118,7 +61,6 @@ if (require.main === module) {
 module.exports = {
   ADVISORY_LOCK_KEY,
   RELEASE_MIGRATIONS,
-  applyReleaseMigrations,
   buildReleaseDatabaseConfig,
   migrationChecksum,
   runReleaseMigrations,

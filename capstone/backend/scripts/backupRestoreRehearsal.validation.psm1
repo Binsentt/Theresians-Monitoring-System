@@ -57,10 +57,20 @@ function Assert-ApprovedRecoverySource {
 function Assert-InteractiveAuthenticationEnvironment {
   [CmdletBinding()]
   param([Parameter(Mandatory=$true)][System.Collections.IDictionary]$EnvironmentVariables)
-  foreach ($name in @('PGPASSWORD', 'PGPASSFILE', 'PGOPTIONS')) {
+  $overridingLibpqVariables = @(
+    'PGPASSWORD','PGPASSFILE','PGSERVICE','PGSERVICEFILE','PGSYSCONFDIR',
+    'PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGUSER','PGOPTIONS','PGAPPNAME',
+    'PGCONNECT_TIMEOUT','PGCLIENTENCODING','PGSSLMODE','PGREQUIRESSL','PGSSLCOMPRESSION',
+    'PGSSLCERT','PGSSLKEY','PGSSLROOTCERT','PGSSLCRL','PGSSLCRLDIR','PGGSSENCMODE',
+    'PGCHANNELBINDING','PGKRBSRVNAME','PGTARGETSESSIONATTRS','PGLOADBALANCEHOSTS','PGSSLNEGOTIATION'
+  )
+  foreach ($name in $overridingLibpqVariables) {
     if ($EnvironmentVariables.Contains($name) -and -not [string]::IsNullOrEmpty([string]$EnvironmentVariables[$name])) {
+      if ($name -in @('PGPASSWORD','PGPASSFILE')) {
+        throw "STOP: $name is present; remove ambient password sources and use only the separately reviewed protected credential file."
+      }
       if ($name -eq 'PGOPTIONS') { throw 'STOP: PGOPTIONS is present; role-setting and unreviewed libpq startup options are not allowed.' }
-      throw "STOP: $name is present; only reviewed interactive PostgreSQL password prompts are allowed."
+      throw "STOP: $name is present and could override the reviewed PostgreSQL service connection."
     }
   }
 }
@@ -69,7 +79,8 @@ function Assert-PostgresServiceConfiguration {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Text,
-    [Parameter(Mandatory=$true)][System.Collections.IDictionary]$ExpectedUsers
+    [Parameter(Mandatory=$true)][System.Collections.IDictionary]$ExpectedUsers,
+    [Parameter()][System.Collections.IDictionary]$ExpectedDatabases = @{}
   )
   if ($Text -match '(?im)(?:^|[\s;])(?:password|sslpassword|passfile)\s*=') {
     throw 'STOP: PostgreSQL service configuration contains a credential field.'
@@ -109,6 +120,9 @@ function Assert-PostgresServiceConfiguration {
     $port = 0
     if (-not [int]::TryParse([string]$settings['port'],[ref]$port) -or $port -lt 1 -or $port -gt 65535) { throw "STOP: PostgreSQL service alias $alias has an invalid port." }
     if ([string]$settings['user'] -cne [string]$ExpectedUsers[$alias]) { throw "STOP: PostgreSQL service alias $alias does not authenticate as its dedicated expected role." }
+    if ($ExpectedDatabases.Contains($alias) -and [string]$settings['dbname'] -cne [string]$ExpectedDatabases[$alias]) {
+      throw "STOP: PostgreSQL service alias $alias targets a different database than the reviewed target."
+    }
   }
 }
 
@@ -413,7 +427,9 @@ function Test-RestrictedStorageAclDescriptor {
 function Assert-RestrictedStorageAcl {
   [CmdletBinding()]
   param([Parameter(Mandatory=$true)][string]$Path)
-  if (-not $IsWindows) { throw 'STOP: Windows storage ACL semantics cannot be verified on this platform.' }
+  if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+    throw 'STOP: Windows storage ACL semantics cannot be verified on this platform.'
+  }
   try {
     $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
     $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -421,6 +437,80 @@ function Assert-RestrictedStorageAcl {
   } catch {
     if ($_.Exception.Message -like 'STOP:*') { throw }
     throw 'STOP: storage ACL is unavailable or cannot be independently verified.'
+  }
+}
+
+function Assert-ReviewedPreflightCredentialFiles {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)][AllowEmptyString()][string]$PassfilePath,
+    [Parameter(Mandatory=$true)][AllowEmptyString()][string]$ServiceFilePath,
+    [Parameter(Mandatory=$true)][string]$RepositoryRoot,
+    [Parameter(Mandatory=$true)][string]$ServiceName,
+    [Parameter(Mandatory=$true)][System.Collections.IDictionary]$ExpectedUsers,
+    [Parameter(Mandatory=$true)][System.Collections.IDictionary]$ExpectedDatabases
+  )
+
+  if (-not (Test-Path -LiteralPath $RepositoryRoot -PathType Container)) {
+    throw 'STOP: reviewed repository root is missing or is not a directory.'
+  }
+  $repositoryFullPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path).TrimEnd('\')
+  $validatedPaths = [ordered]@{}
+  foreach ($entry in @(
+    [pscustomobject]@{ Name='PGPASSFILE'; Path=$PassfilePath },
+    [pscustomobject]@{ Name='PGSERVICEFILE'; Path=$ServiceFilePath }
+  )) {
+    if ([string]::IsNullOrWhiteSpace($entry.Path)) { throw "STOP: $($entry.Name) path is required." }
+    $fullPath = Assert-NoReparsePointPath -Path $entry.Path
+    if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { throw "STOP: required $($entry.Name) file is missing or is not a regular file." }
+    $item = Get-Item -LiteralPath $fullPath -Force -ErrorAction Stop
+    if ($item.PSIsContainer -or (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+      throw "STOP: $($entry.Name) must be a regular file without reparse attributes."
+    }
+
+    $parentPath = [System.IO.Path]::GetDirectoryName($fullPath)
+    [void](Assert-NoReparsePointPath -Path $parentPath)
+    Assert-RestrictedStorageAcl -Path $parentPath
+    Assert-RestrictedStorageAcl -Path $fullPath
+
+    $resolvedPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $fullPath -ErrorAction Stop).Path)
+    $repositoryPrefix = $repositoryFullPath + [System.IO.Path]::DirectorySeparatorChar
+    if ($resolvedPath.Equals($repositoryFullPath, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $resolvedPath.StartsWith($repositoryPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+      throw "STOP: $($entry.Name) must remain outside the repository."
+    }
+    $validatedPaths[$entry.Name] = $resolvedPath
+  }
+
+  $passfileStream = $null
+  try {
+    $passfileStream = [System.IO.File]::Open(
+      $validatedPaths['PGPASSFILE'],
+      [System.IO.FileMode]::Open,
+      [System.IO.FileAccess]::Read,
+      [System.IO.FileShare]::ReadWrite
+    )
+  } catch {
+    throw 'STOP: PGPASSFILE cannot be opened for reading by the current operator; credential contents were not displayed.'
+  } finally {
+    if ($null -ne $passfileStream) { $passfileStream.Dispose() }
+  }
+
+  try {
+    $serviceText = [System.IO.File]::ReadAllText($validatedPaths['PGSERVICEFILE'])
+  } catch {
+    throw 'STOP: PostgreSQL service file is unreadable; credential contents were not displayed.'
+  }
+  if (-not $ExpectedUsers.Contains($ServiceName) -or -not $ExpectedDatabases.Contains($ServiceName)) {
+    throw 'STOP: reviewed PostgreSQL service alias, role, and database must be explicitly specified.'
+  }
+  $expectedServiceUsers = [ordered]@{ $ServiceName = $ExpectedUsers[$ServiceName] }
+  $expectedServiceDatabases = [ordered]@{ $ServiceName = $ExpectedDatabases[$ServiceName] }
+  Assert-PostgresServiceConfiguration -Text $serviceText -ExpectedUsers $expectedServiceUsers -ExpectedDatabases $expectedServiceDatabases
+
+  return [pscustomobject]@{
+    PassfilePath = $validatedPaths['PGPASSFILE']
+    ServiceFilePath = $validatedPaths['PGSERVICEFILE']
   }
 }
 
@@ -584,5 +674,5 @@ Export-ModuleMember -Function @(
   'Get-ExpectedReleaseMigrationManifest','Assert-ReleaseMigrationLedger','Assert-ReceiptSchemaState',
   'Get-BackupAggregateTables','ConvertFrom-BackupAggregateOutput','ConvertTo-StrictAggregateMap',
   'Assert-AggregateManifest','Assert-AggregateCountsMatch','Assert-IsolatedRestoreIdentity','Assert-IsolatedRestoreTarget','New-BackupAggregateSql',
-  'Assert-NoReparsePointPath','Assert-NoReparsePointAttributes','Test-RestrictedStorageAclDescriptor','Assert-RestrictedStorageAcl','Assert-EncryptionEvidence','Assert-BackupStorageDirectory','Assert-BackupCompletionManifest'
+  'Assert-NoReparsePointPath','Assert-NoReparsePointAttributes','Test-RestrictedStorageAclDescriptor','Assert-RestrictedStorageAcl','Assert-ReviewedPreflightCredentialFiles','Assert-EncryptionEvidence','Assert-BackupStorageDirectory','Assert-BackupCompletionManifest'
 )

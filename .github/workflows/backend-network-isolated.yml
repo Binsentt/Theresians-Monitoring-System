@@ -188,8 +188,13 @@ jobs:
                 backendRoot + '/migrations/012_add_activity_log_event_idempotency.sql',
                 'utf8',
               ));
-              const { applyReleaseMigrations } = require(backendRoot + '/releaseMigrations');
-              await applyReleaseMigrations({ client: pool });
+              const { runSyntheticApprovedReleaseMigrations } = require(
+                backendRoot + '/testSupport/runSyntheticApprovedReleaseMigrations',
+              );
+              await runSyntheticApprovedReleaseMigrations({
+                connectionString: databaseUrl,
+                expectedDatabaseName: 'tq_parent_route_test_ci',
+              });
               await assertDisposablePostgresDatabase({
                 client: pool,
                 connectionString: databaseUrl,
