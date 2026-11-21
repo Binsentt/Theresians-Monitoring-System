@@ -28,7 +28,10 @@ param(
   [string]$ServiceFilePath,
 
   [string]$PsqlPath = (Join-Path $env:ProgramFiles 'PostgreSQL\18\bin\psql.exe'),
-  [string]$ExpectedSourceCommit = '8a9ab3b6a3cfa3a6652538c62673c4655b03642d'
+
+  [Parameter(Mandatory = $true)]
+  [ValidatePattern('^[0-9a-fA-F]{40}$')]
+  [string]$ExpectedSourceCommit
 )
 
 $ErrorActionPreference = 'Stop'

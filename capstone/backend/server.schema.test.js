@@ -121,6 +121,45 @@ test('save receipt primary, event uniqueness, foreign key, and integrity checks 
   );
 });
 
+test('receipt readiness checks exact key columns, foreign-key behavior, and CHECK expressions', () => {
+  assert.match(SCHEMA_READINESS_SQL, /expected_key_columns/);
+  assert.match(SCHEMA_READINESS_SQL, /ARRAY\['student_id', 'learning_cycle_version', 'save_commit_id_hash'\]/);
+  assert.match(SCHEMA_READINESS_SQL, /ARRAY\['student_id', 'activity_event_key'\]/);
+  assert.match(SCHEMA_READINESS_SQL, /confrelid/);
+  assert.match(SCHEMA_READINESS_SQL, /confkey/);
+  assert.match(SCHEMA_READINESS_SQL, /confupdtype/);
+  assert.match(SCHEMA_READINESS_SQL, /confdeltype/);
+  assert.match(SCHEMA_READINESS_SQL, /pg_catalog\.pg_get_expr/);
+  assert.match(SCHEMA_READINESS_SQL, /regexp_matches/);
+  assert.match(SCHEMA_READINESS_SQL, /token\.parts\[1\] IS NOT NULL THEN token\.parts\[1\]/);
+  assert.match(SCHEMA_READINESS_SQL, /lower\(regexp_replace\([\s\S]*?token\.parts\[3\]/);
+  assert.match(SCHEMA_READINESS_SQL, /learning_cycle_version>=0/);
+  assert.match(SCHEMA_READINESS_SQL, /save_commit_id_hash~'\^\[0-9a-f\]\{64\}\$'/);
+  assert.match(SCHEMA_READINESS_SQL, /payload_sha256~'\^\[0-9a-f\]\{64\}\$'/);
+  assert.match(SCHEMA_READINESS_SQL, /response_status>=200andresponse_status<=299/);
+  assert.match(SCHEMA_READINESS_SQL, /response_bodyisnull=completed_atisnull/);
+});
+
+test('post-migration preflight fails closed on receipt constraint semantic mismatches', () => {
+  const preflight = fs.readFileSync(
+    path.join(__dirname, 'scripts', 'release-migration-preflight.sql'),
+    'utf8',
+  );
+  assert.match(preflight, /expected_key_columns/);
+  assert.match(preflight, /confkey/);
+  assert.match(preflight, /confupdtype/);
+  assert.match(preflight, /confdeltype/);
+  assert.match(preflight, /pg_catalog\.pg_get_expr/);
+  assert.match(preflight, /regexp_matches/);
+  assert.match(preflight, /token\.parts\[1\] IS NOT NULL THEN token\.parts\[1\]/);
+  assert.match(preflight, /lower\(regexp_replace\([\s\S]*?token\.parts\[3\]/);
+  assert.match(preflight, /learning_cycle_version>=0/);
+  assert.match(preflight, /save_commit_id_hash~'\^\[0-9a-f\]\{64\}\$'/);
+  assert.match(preflight, /payload_sha256~'\^\[0-9a-f\]\{64\}\$'/);
+  assert.match(preflight, /response_status>=200andresponse_status<=299/);
+  assert.match(preflight, /response_bodyisnull=completed_atisnull/);
+});
+
 test('playtime soft-delete fields used by live routes are required at startup', () => {
   const expectedTypes = {
     deleted_at: 'timestamp with time zone',

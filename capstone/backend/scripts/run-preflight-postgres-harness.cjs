@@ -5,15 +5,24 @@
 // or an arbitrary database name, and it refuses to run outside GitHub CI.
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const os = require('node:os');
+const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { REQUIRED_SCHEMA } = require('../database/startupSchemaReadiness');
+const { REQUIRED_SCHEMA, SCHEMA_READINESS_SQL } = require('../database/startupSchemaReadiness');
 const { RELEASE_MIGRATIONS, migrationChecksum } = require('../releaseMigrations');
 const fs = require('node:fs');
 
 const CONTAINER = 'tq-backend-test-postgres';
 const ROLE = 'tq_release_preflight_reader';
 const SENTINEL_PREFIX = 'tq-disposable-ci:';
+const PREFLIGHT_SQL = fs.readFileSync(require('node:path').join(__dirname, 'release-migration-preflight.sql'), 'utf8');
 let passedScenarioCount = 0;
+
+assert.match(PREFLIGHT_SQL, /^\s*BEGIN\s+READ\s+ONLY\s*;/im,
+  'the operator preflight must remain inside an explicit read-only transaction');
+assert.doesNotMatch(PREFLIGHT_SQL,
+  /^\s*(?:CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|TRUNCATE|GRANT|REVOKE|CALL|DO)\b/im,
+  'the operator preflight must not execute migration or other mutating SQL');
 
 function recordScenario(label) {
   passedScenarioCount += 1;
@@ -28,11 +37,13 @@ const CASES = Object.freeze({
   incompatibleGameStudentIdWidth: 'tq_preflight_game_student_id_width_test_ci',
   malformedLedger: 'tq_preflight_malformed_ledger_test_ci',
   pending024: 'tq_preflight_pending_024_test_ci',
+  pending025: 'tq_preflight_pending_025_test_ci',
   missingReceiptConstraint: 'tq_preflight_missing_receipt_constraint_test_ci',
   preMigration026: 'tq_preflight_pre_026_test_ci',
   partialReceipt026: 'tq_preflight_partial_receipt_026_test_ci',
   migration026Applied: 'tq_preflight_026_applied_test_ci',
   preMigration024Pending: 'tq_preflight_pre_024_test_ci',
+  wrongFilenameLedger: 'tq_preflight_wrong_filename_ledger_test_ci',
 });
 
 function docker(args, input = undefined) {
@@ -67,6 +78,98 @@ function psql(database, role, sql, variables = {}) {
   return docker(args, sql);
 }
 
+const backupValidationModule = fs.readFileSync(path.join(__dirname, 'backupRestoreRehearsal.validation.psm1'), 'utf8');
+const aggregateTableDefinition = backupValidationModule.match(/^\$script:AggregateTables\s*=\s*@\(\r?\n([\s\S]*?)^\)/m);
+assert.ok(aggregateTableDefinition, 'PowerShell backup module must expose its fixed aggregate table allowlist.');
+const baseAggregateTables = [...aggregateTableDefinition[1].matchAll(/'([a-z][a-z0-9_]*)'/g)].map((match) => match[1]);
+assert.equal(baseAggregateTables.length, 17, 'backup aggregate scope must remain exactly the pre-026 17 application tables.');
+assert.equal(new Set(baseAggregateTables).size, 17, 'backup aggregate table allowlist cannot contain duplicates.');
+const POST_026_AGGREGATE_TABLES = Object.freeze([...baseAggregateTables, 'game_progress_save_commits']);
+assert.equal(POST_026_AGGREGATE_TABLES.length, 18);
+
+function hashSha256(data) {
+  return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+function getSyntheticAggregateCounts(database, role) {
+  const selects = POST_026_AGGREGATE_TABLES.map((table) => {
+    assert.match(table, /^[a-z][a-z0-9_]*$/);
+    return `SELECT '${table}'::text AS table_name, COUNT(*)::bigint AS row_count FROM public.${table}`;
+  });
+  const sql = `BEGIN READ ONLY;
+SET LOCAL statement_timeout = '10min';
+SET LOCAL lock_timeout = '2s';
+SELECT table_name, row_count::text FROM (
+${selects.join('\nUNION ALL\n')}
+) AS table_counts ORDER BY table_name;
+ROLLBACK;`;
+  const result = psql(database, role, sql);
+  assert.equal(result.status, 0, `read-only synthetic aggregate query failed: ${result.stderr}`);
+  const counts = Object.create(null);
+  for (const line of result.stdout.trim().split(/\r?\n/).filter(Boolean)) {
+    const [table, count, ...extra] = line.split('|');
+    assert.equal(extra.length, 0, 'aggregate output must have exactly two columns.');
+    assert.ok(POST_026_AGGREGATE_TABLES.includes(table), `unexpected aggregate table ${table}`);
+    assert.match(count, /^\d+$/);
+    assert.equal(Object.hasOwn(counts, table), false, `duplicate aggregate count for ${table}`);
+    counts[table] = BigInt(count).toString();
+  }
+  assert.deepEqual(Object.keys(counts).sort(), [...POST_026_AGGREGATE_TABLES].sort(), 'source/restored counts must cover the exact 18-table contract.');
+  return Object.fromEntries(Object.entries(counts).sort(([left], [right]) => left.localeCompare(right)));
+}
+
+function assertSyntheticBackupBundle(directory, expected) {
+  const names = fs.readdirSync(directory).sort();
+  assert.deepEqual(names, [
+    'synthetic.dump',
+    'synthetic.dump.aggregates.json',
+    'synthetic.dump.complete.json',
+    'synthetic.dump.sha256.txt',
+    'synthetic.dump.toc.txt',
+  ].sort(), 'backup bundle must contain the complete fixed artifact set with no partial or extra files.');
+  const archivePath = path.join(directory, 'synthetic.dump');
+  const tocPath = `${archivePath}.toc.txt`;
+  const aggregatePath = `${archivePath}.aggregates.json`;
+  const hashPath = `${archivePath}.sha256.txt`;
+  const completionPath = `${archivePath}.complete.json`;
+  const archiveHash = hashSha256(fs.readFileSync(archivePath));
+  const tocHash = hashSha256(fs.readFileSync(tocPath));
+  const aggregateHash = hashSha256(fs.readFileSync(aggregatePath));
+  const hashFileHash = hashSha256(fs.readFileSync(hashPath));
+  const completionBytes = fs.readFileSync(completionPath);
+  assert.equal(hashSha256(completionBytes), expected.completionHash, 'completion marker digest must match a separately recorded value.');
+  const completion = JSON.parse(completionBytes.toString('utf8'));
+  const completionKeys = [
+    'Version', 'SchemaMode', 'SourceCommit', 'SnapshotId', 'ArchiveName', 'ArchiveSha256',
+    'TocName', 'TocSha256', 'AggregateManifestName', 'AggregateManifestSha256', 'HashFileName', 'HashFileSha256',
+  ].sort();
+  assert.deepEqual(Object.keys(completion).sort(), completionKeys, 'completion marker must have the exact complete shape.');
+  assert.equal(completion.Version, 1);
+  assert.equal(completion.SchemaMode, 'PostMigration026');
+  assert.equal(completion.SourceCommit, expected.sourceCommit);
+  assert.match(completion.SnapshotId, /^[A-Fa-f0-9]+-[A-Fa-f0-9]+-\d+$/);
+  assert.equal(completion.ArchiveName, 'synthetic.dump');
+  assert.equal(completion.TocName, 'synthetic.dump.toc.txt');
+  assert.equal(completion.AggregateManifestName, 'synthetic.dump.aggregates.json');
+  assert.equal(completion.HashFileName, 'synthetic.dump.sha256.txt');
+  assert.equal(completion.ArchiveSha256, archiveHash);
+  assert.equal(completion.TocSha256, tocHash);
+  assert.equal(completion.AggregateManifestSha256, aggregateHash);
+  assert.equal(completion.HashFileSha256, hashFileHash);
+  assert.equal(archiveHash, expected.archiveHash);
+  assert.equal(aggregateHash, expected.aggregateHash);
+  assert.equal(fs.readFileSync(hashPath, 'utf8').trim(), `${archiveHash}  synthetic.dump`);
+  const aggregate = JSON.parse(fs.readFileSync(aggregatePath, 'utf8'));
+  assert.deepEqual(Object.keys(aggregate).sort(), ['Version', 'SchemaMode', 'SourceCommit', 'SnapshotId', 'ArchiveSha256', 'Counts'].sort());
+  assert.equal(aggregate.Version, 1);
+  assert.equal(aggregate.SchemaMode, 'PostMigration026');
+  assert.equal(aggregate.SourceCommit, expected.sourceCommit);
+  assert.equal(aggregate.SnapshotId, completion.SnapshotId);
+  assert.equal(aggregate.ArchiveSha256, archiveHash);
+  assert.deepEqual(aggregate.Counts, expected.counts, 'sidecar aggregate counts must match the synthetic source database.');
+  return { archivePath, completionPath, tocPath, aggregatePath, hashPath, completion, aggregate };
+}
+
 function assertCiContainer() {
   assert.equal(process.env.CI, 'true', 'preflight integration requires CI=true');
   assert.equal(process.env.GITHUB_ACTIONS, 'true', 'preflight integration is allowed only on GitHub Actions');
@@ -82,6 +185,17 @@ function assertCiContainer() {
       || (portBindings && typeof portBindings === 'object' && Object.keys(portBindings).length === 0),
     'PostgreSQL must have no published ports',
   );
+
+  const expectedMajor = process.env.TQ_EXPECTED_POSTGRES_MAJOR || '';
+  assert.match(expectedMajor, /^(16|18)$/, 'the workflow must declare PostgreSQL 16 or 18 explicitly');
+  const serverVersion = docker([
+    'exec', CONTAINER, 'psql', '--host=127.0.0.1', '--username=postgres', '--dbname=postgres',
+    '--no-psqlrc', '--tuples-only', '--no-align', '--command=SHOW server_version_num;',
+  ]);
+  assert.equal(serverVersion.status, 0, serverVersion.stderr);
+  assert.equal(Math.floor(Number(serverVersion.stdout.trim()) / 10000), Number(expectedMajor),
+    `the container must run PostgreSQL ${expectedMajor}, got server_version_num=${serverVersion.stdout.trim()}`);
+  recordScenario(`disposable database server is PostgreSQL ${expectedMajor}`);
 
   for (const database of Object.values(CASES)) {
     assert.match(database, /^tq_preflight_[a-z0-9_]+_test_ci$/);
@@ -163,7 +277,7 @@ function fixtureSql(mode) {
   }
   for (const [table, columns] of Object.entries(REQUIRED_SCHEMA)) {
     if (table === 'game_progress_save_commits') {
-      if (['preMigration026', 'partialReceipt026', 'preMigration024Pending'].includes(mode)) {
+      if (['preMigration026', 'partialReceipt026', 'preMigration024Pending', 'pending025'].includes(mode)) {
         continue;
       }
       statements.push(fs.readFileSync(
@@ -238,16 +352,20 @@ function fixtureSql(mode) {
     statements.push('ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_pkey;');
   }
   if (!['pending024', 'missingLedger'].includes(mode)) {
-    const migrationsToSeed = mode === 'preMigration024Pending'
-      ? RELEASE_MIGRATIONS.filter(({ version }) => version < 24)
-      : ['preMigration026', 'partialReceipt026'].includes(mode)
-        ? RELEASE_MIGRATIONS.filter(({ version }) => version < 26)
-        : RELEASE_MIGRATIONS;
+    let migrationsToSeed = RELEASE_MIGRATIONS;
+    if (mode === 'preMigration024Pending') {
+      migrationsToSeed = RELEASE_MIGRATIONS.filter(({ version }) => version < 24);
+    } else if (mode === 'pending025') {
+      migrationsToSeed = RELEASE_MIGRATIONS.filter(({ version }) => version < 25);
+    } else if (['preMigration026', 'partialReceipt026'].includes(mode)) {
+      migrationsToSeed = RELEASE_MIGRATIONS.filter(({ version }) => version < 26);
+    }
     statements.push(...migrationsToSeed.map(({ version, file }) => {
       const checksum = mode === 'malformedLedger' && version === 18
         ? '0'.repeat(64)
         : migrationChecksum(fs.readFileSync(require('node:path').join(__dirname, '../migrations', file), 'utf8'));
-      return `INSERT INTO public.schema_migrations (version, filename, checksum) VALUES (${version}, '${file}', '${checksum}');`;
+      const filename = mode === 'wrongFilenameLedger' && version === 18 ? `wrong_${file}` : file;
+      return `INSERT INTO public.schema_migrations (version, filename, checksum) VALUES (${version}, '${filename}', '${checksum}');`;
     }));
   } else if (mode === 'pending024') {
     statements.push(...RELEASE_MIGRATIONS.filter(({ version }) => version < 24).map(({ version, file }) => {
@@ -263,13 +381,49 @@ function fixtureSql(mode) {
 }
 
 function invokePreflight(database, overrides = {}) {
-  return psql(database, ROLE, fs.readFileSync(require('node:path').join(__dirname, 'release-migration-preflight.sql'), 'utf8'), {
+  return psql(database, ROLE, PREFLIGHT_SQL, {
     expected_database: database,
     expected_role: ROLE,
     expected_server_address: '127.0.0.1',
     expected_server_port: '5432',
     ...overrides,
   });
+}
+
+function invokeStartupReadiness(database) {
+  const requiredSchemaJson = JSON.stringify(
+    Object.entries(REQUIRED_SCHEMA).map(([table_name, columns]) => ({ table_name, columns })),
+  ).replace(/'/g, "''");
+  assert.equal((SCHEMA_READINESS_SQL.match(/\$1::jsonb/g) || []).length, 1,
+    'startup readiness SQL must have exactly one schema-contract parameter');
+  const query = SCHEMA_READINESS_SQL.replace('$1::jsonb', `'${requiredSchemaJson}'::jsonb`);
+  return psql(database, ROLE, `BEGIN READ ONLY;\n${query};\nROLLBACK;`);
+}
+
+function assertReceiptConstraintMismatch({ label, constraintName, mutationSql, restoreSql }) {
+  const mutation = psql(CASES.valid, 'postgres', mutationSql);
+  assert.equal(mutation.status, 0, `${label} fixture mutation failed: ${mutation.stderr}`);
+
+  const startup = invokeStartupReadiness(CASES.valid);
+  assert.equal(startup.status, 0, `${label} catalog read failed: ${startup.stderr}`);
+  assert.ok(
+    startup.stdout.trim().split(/\r?\n/).includes(`game_progress_save_commits.${constraintName}`),
+    `${label} must be reported by the actual startup readiness SQL: ${startup.stdout}`,
+  );
+
+  const preflight = invokePreflight(CASES.valid);
+  assert.equal(preflight.status, 3,
+    `${label} must fail the release preflight closed: ${preflight.stderr}\n${preflight.stdout}`);
+  const preflightOutput = `${preflight.stdout}\n${preflight.stderr}`;
+  assert.match(preflightOutput, /STOP: migration 026 receipt constraints are missing or incompatible/,
+    `${label} must report the receipt-constraint STOP; stdout: ${preflight.stdout}; stderr: ${preflight.stderr}`);
+
+  const restore = psql(CASES.valid, 'postgres', restoreSql);
+  assert.equal(restore.status, 0, `${label} fixture restore failed: ${restore.stderr}`);
+  const recovered = invokeStartupReadiness(CASES.valid);
+  assert.equal(recovered.status, 0, `${label} restore query failed: ${recovered.stderr}`);
+  assert.equal(recovered.stdout.trim(), '', `${label} must restore the valid startup contract: ${recovered.stdout}`);
+  recordScenario(label);
 }
 
 function invokeRoleAudit(database) {
@@ -337,8 +491,26 @@ assert.equal(noApplicationSelect.stdout.trim(), 't', 'preflight role must not ha
 
 const valid = invokePreflight(CASES.valid);
 assert.equal(valid.status, 0, `valid disposable schema must pass: ${valid.stderr}\n${valid.stdout}`);
+assert.ok(valid.stdout.includes('Target database identity and read-only transaction match the approved values.'),
+  'the correctly bound synthetic database identity must pass');
 assert.match(valid.stdout, /Startup schema contract is complete: 18 tables and 278 required columns are present/);
 recordScenario('compatible 18-table/278-column post-migration schema and ledger');
+
+const validStartup = invokeStartupReadiness(CASES.valid);
+assert.equal(validStartup.status, 0, `valid startup catalog query must execute read-only: ${validStartup.stderr}`);
+assert.equal(validStartup.stdout.trim(), '', `valid startup schema must return no missing objects: ${validStartup.stdout}`);
+const receiptShape = psql(CASES.valid, ROLE, `BEGIN READ ONLY;
+  -- PostgreSQL 18 exposes NOT NULL as contype 'n'; count the eight structural constraints only.
+  SELECT (SELECT count(*) FROM pg_catalog.pg_attribute
+          WHERE attrelid = 'public.game_progress_save_commits'::regclass
+            AND attnum > 0 AND NOT attisdropped)::text || '|' ||
+         (SELECT count(*) FROM pg_catalog.pg_constraint
+          WHERE conrelid = 'public.game_progress_save_commits'::regclass
+            AND contype <> 'n')::text;
+ROLLBACK;`);
+assert.equal(receiptShape.status, 0, receiptShape.stderr);
+assert.equal(receiptShape.stdout.trim(), '9|8', 'receipt schema must have exactly nine columns and eight constraints');
+recordScenario('actual startup readiness SQL accepts nine receipt columns and eight canonical constraints');
 
 const validRoleAudit = invokeRoleAudit(CASES.valid);
 assert.equal(validRoleAudit.status, 0, `preflight-only role must pass the catalog audit: ${validRoleAudit.stderr}\n${validRoleAudit.stdout}`);
@@ -347,16 +519,21 @@ assert.match(validRoleAudit.stdout, /extra_ledger_column_select_count=0/);
 assert.match(validRoleAudit.stdout, /executable_security_definer_function_count=0/);
 assert.match(validRoleAudit.stdout, /table_write_privilege_count=0/);
 recordScenario('preflight role passes with migration-ledger SELECT and no application-data SELECT');
-
 const grantPublicTemp = psql('postgres', 'postgres', `GRANT TEMP ON DATABASE ${CASES.valid} TO PUBLIC;`);
 assert.equal(grantPublicTemp.status, 0, grantPublicTemp.stderr);
 const publicTempRoleAudit = invokeRoleAudit(CASES.valid);
 const revokePublicTemp = psql('postgres', 'postgres', `REVOKE TEMP ON DATABASE ${CASES.valid} FROM PUBLIC;`);
 assert.equal(revokePublicTemp.status, 0, revokePublicTemp.stderr);
 assert.equal(publicTempRoleAudit.status, 3,
-  `an inherited PUBLIC TEMP privilege must fail the least-privilege audit: ${publicTempRoleAudit.stderr}\n${publicTempRoleAudit.stdout}`);
+  `effective PUBLIC TEMP privilege must fail the least-privilege audit: ${publicTempRoleAudit.stderr}\n${publicTempRoleAudit.stdout}`);
 assert.match(publicTempRoleAudit.stdout, /STOP: preflight role identity or least-privilege requirements failed/);
-recordScenario('inherited PUBLIC TEMP privilege fails the least-privilege audit');
+const restoredPublicTempAudit = invokeRoleAudit(CASES.valid);
+assert.equal(restoredPublicTempAudit.status, 0,
+  `role audit must pass after PUBLIC TEMP is revoked: ${restoredPublicTempAudit.stderr}\n${restoredPublicTempAudit.stdout}`);
+assert.match(restoredPublicTempAudit.stdout, /PASS: target identity, read-only limits, and preflight-only privileges verified/);
+recordScenario('inherited PUBLIC TEMP fails the least-privilege audit and passes after revoke');
+
+
 
 const grantBroadLedgerRead = psql(CASES.valid, 'postgres', `GRANT SELECT ON public.schema_migrations TO ${ROLE};`);
 assert.equal(grantBroadLedgerRead.status, 0, grantBroadLedgerRead.stderr);
@@ -399,10 +576,35 @@ const dropSecurityDefiner = psql(CASES.valid, 'postgres', 'DROP FUNCTION public.
 assert.equal(dropSecurityDefiner.status, 0, dropSecurityDefiner.stderr);
 recordScenario('publicly executable security-definer function is rejected by the read-only role audit');
 
-const wrongTarget = invokePreflight(CASES.valid, { expected_database: 'unexpected_target' });
-assert.equal(wrongTarget.status, 3, `wrong target fingerprint must fail closed: ${wrongTarget.stderr}\n${wrongTarget.stdout}`);
-assert.match(wrongTarget.stdout, /STOP: target database identity or read-only transaction/);
-recordScenario('incorrect expected database identity fails closed');
+const identityStopMessage = 'STOP: target database identity or read-only transaction does not match the approved values.';
+function assertIdentityMismatchFailsClosed(label, overrides) {
+  const result = invokePreflight(CASES.valid, overrides);
+  const output = `${result.stdout}\n${result.stderr}`;
+  assert.equal(result.status, 3, `${label}: ${output}`);
+  assert.ok(result.stdout.trim().split(/\r?\n/).includes(identityStopMessage),
+    `${label} must emit the stable target-identity STOP message: ${output}`);
+  assert.doesNotMatch(output, /Startup schema contract is complete|PASS:|migration (?:024|025|026) is/i,
+    `${label} must stop before schema or migration results are reported: ${output}`);
+}
+assertIdentityMismatchFailsClosed('incorrect expected database identity fails closed', { expected_database: 'unexpected_target' });
+assertIdentityMismatchFailsClosed('incorrect expected database role fails closed', { expected_role: 'unexpected_role' });
+recordScenario('incorrect expected database and role identities fail closed');
+assertIdentityMismatchFailsClosed('incorrect expected server address fails closed', { expected_server_address: '192.0.2.25' });
+assertIdentityMismatchFailsClosed('incorrect expected server port fails closed', { expected_server_port: '5433' });
+recordScenario('incorrect expected server address and port fail closed');
+
+const revokeLedgerChecksum = psql(CASES.valid, 'postgres',
+  `REVOKE SELECT (checksum) ON public.schema_migrations FROM ${ROLE};`);
+assert.equal(revokeLedgerChecksum.status, 0, revokeLedgerChecksum.stderr);
+const insufficientLedgerRead = invokePreflight(CASES.valid);
+// The table-wide SELECT negative case may remove all column ACLs; restore only the allowed columns.
+const restoreLedgerColumnRead = psql(CASES.valid, 'postgres',
+  `GRANT SELECT (version, filename, checksum) ON public.schema_migrations TO ${ROLE};`);
+assert.equal(restoreLedgerColumnRead.status, 0, restoreLedgerColumnRead.stderr);
+assert.notEqual(insufficientLedgerRead.status, 0,
+  'missing required migration-ledger column SELECT must fail before a report is produced');
+assert.match(insufficientLedgerRead.stderr, /permission denied for table schema_migrations/);
+recordScenario('missing migration-ledger column privilege fails closed without application-row access');
 
 const grantWrite = psql(CASES.valid, 'postgres', `GRANT INSERT ON public.accounts TO ${ROLE};`);
 assert.equal(grantWrite.status, 0, grantWrite.stderr);
@@ -436,6 +638,149 @@ assert.equal(missingReceiptConstraint.status, 3,
 assert.match(missingReceiptConstraint.stdout, /STOP: migration 026 receipt constraints are missing or incompatible/);
 recordScenario('missing receipt primary key fails closed');
 
+assertReceiptConstraintMismatch({
+  label: 'primary-key column order mismatch fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_pkey',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_pkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_pkey
+    PRIMARY KEY (learning_cycle_version, student_id, save_commit_id_hash);`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_pkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_pkey
+    PRIMARY KEY (student_id, learning_cycle_version, save_commit_id_hash);`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'wrong unique-key composition fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_activity_event_unique',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_activity_event_unique;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_activity_event_unique
+    UNIQUE (student_id, learning_cycle_version, activity_event_key);`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_activity_event_unique;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_activity_event_unique
+    UNIQUE (student_id, activity_event_key);`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'foreign-key target mismatch fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_student_id_fkey',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_student_id_fkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_student_id_fkey
+    FOREIGN KEY (student_id) REFERENCES public.teacher_class_assignments(id) ON DELETE CASCADE;`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_student_id_fkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_student_id_fkey
+    FOREIGN KEY (student_id) REFERENCES public.accounts(id) ON DELETE CASCADE;`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'foreign-key column mapping mismatch fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_student_id_fkey',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_student_id_fkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_student_id_fkey
+    FOREIGN KEY (learning_cycle_version) REFERENCES public.accounts(id) ON DELETE CASCADE;`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_student_id_fkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_student_id_fkey
+    FOREIGN KEY (student_id) REFERENCES public.accounts(id) ON DELETE CASCADE;`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'foreign-key delete-action mismatch fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_student_id_fkey',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_student_id_fkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_student_id_fkey
+    FOREIGN KEY (student_id) REFERENCES public.accounts(id) ON DELETE SET NULL;`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_student_id_fkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_student_id_fkey
+    FOREIGN KEY (student_id) REFERENCES public.accounts(id) ON DELETE CASCADE;`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'altered learning-cycle CHECK fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_learning_cycle_version_check',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_learning_cycle_version_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_learning_cycle_version_check
+    CHECK (learning_cycle_version > 0);`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_learning_cycle_version_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_learning_cycle_version_check
+    CHECK (learning_cycle_version >= 0);`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'case-changed regular-expression literal fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_save_commit_id_hash_check',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_save_commit_id_hash_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_save_commit_id_hash_check
+    CHECK (save_commit_id_hash ~ '^[0-9A-F]{64}$');`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_save_commit_id_hash_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_save_commit_id_hash_check
+    CHECK (save_commit_id_hash ~ '^[0-9a-f]{64}$');`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'whitespace-changed regular-expression literal fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_save_commit_id_hash_check',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_save_commit_id_hash_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_save_commit_id_hash_check
+    CHECK (save_commit_id_hash ~ '^[0-9a-f]{ 64 }$');`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_save_commit_id_hash_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_save_commit_id_hash_check
+    CHECK (save_commit_id_hash ~ '^[0-9a-f]{64}$');`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'altered payload SHA-256 CHECK fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_payload_sha256_check',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_payload_sha256_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_payload_sha256_check
+    CHECK (payload_sha256 ~ '^[0-9a-f]{63,64}$');`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_payload_sha256_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_payload_sha256_check
+    CHECK (payload_sha256 ~ '^[0-9a-f]{64}$');`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'altered response-status CHECK fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_response_status_check',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_response_status_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_response_status_check
+    CHECK (response_status BETWEEN 201 AND 299);`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_response_status_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_response_status_check
+    CHECK (response_status BETWEEN 200 AND 299);`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'altered completion-consistency CHECK fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_completion_consistency',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_completion_consistency;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_completion_consistency
+    CHECK ((response_body IS NULL) OR (completed_at IS NULL));`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_completion_consistency;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_completion_consistency
+    CHECK ((response_body IS NULL) = (completed_at IS NULL));`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'unexpected deferrable unique constraint fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_activity_event_unique',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_activity_event_unique;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_activity_event_unique
+    UNIQUE (student_id, activity_event_key) DEFERRABLE INITIALLY DEFERRED;`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_activity_event_unique;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_activity_event_unique
+    UNIQUE (student_id, activity_event_key);`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'unvalidated CHECK constraint fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_learning_cycle_version_check',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_learning_cycle_version_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_learning_cycle_version_check
+    CHECK (learning_cycle_version >= 0) NOT VALID;`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_learning_cycle_version_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_learning_cycle_version_check
+    CHECK (learning_cycle_version >= 0);`,
+});
+
 const gameStudentIdWidth = invokePreflight(CASES.incompatibleGameStudentIdWidth);
 assert.equal(gameStudentIdWidth.status, 3, `incompatible game_student_id width must fail closed: ${gameStudentIdWidth.stderr}\n${gameStudentIdWidth.stdout}`);
 assert.match(gameStudentIdWidth.stdout, /STOP: accounts\.game_student_id must be VARCHAR\(8\)/);
@@ -445,6 +790,11 @@ const malformed = invokePreflight(CASES.malformedLedger);
 assert.equal(malformed.status, 3, `malformed migration metadata must fail closed: ${malformed.stderr}\n${malformed.stdout}`);
 assert.match(malformed.stdout, /STOP: applied migration filename or checksum differs/);
 recordScenario('malformed migration checksum fails closed');
+
+const wrongFilename = invokePreflight(CASES.wrongFilenameLedger);
+assert.equal(wrongFilename.status, 3, `inconsistent migration filename must fail closed: ${wrongFilename.stderr}\n${wrongFilename.stdout}`);
+assert.match(wrongFilename.stdout, /STOP: applied migration filename or checksum differs/);
+recordScenario('migration version with an inconsistent filename fails closed');
 
 const missingLedger = invokePreflight(CASES.missingLedger);
 assert.equal(missingLedger.status, 3, `missing migration ledger must fail closed: ${missingLedger.stderr}\n${missingLedger.stdout}`);
@@ -483,6 +833,12 @@ assert.match(preMigration026.stdout, /PASS: pre-026 metadata prerequisites verif
 assert.doesNotMatch(preMigration026.stderr, /permission denied for table/i);
 recordScenario('pre-migration 026 baseline passes with exactly 17 tables, 269 columns, and metadata-only access');
 
+const preMigrationStartup = invokeStartupReadiness(CASES.preMigration026);
+assert.equal(preMigrationStartup.status, 0, preMigrationStartup.stderr);
+assert.ok(preMigrationStartup.stdout.trim().split(/\r?\n/).includes('game_progress_save_commits'),
+  `the current-main startup contract must reject the valid pre-026 schema until the separately approved migration is applied: ${preMigrationStartup.stdout}`);
+recordScenario('current-main startup SQL blocks a valid pre-026 schema without changing its migration preflight result');
+
 const addPartialReceipt = psql(CASES.partialReceipt026, 'postgres',
   'CREATE TABLE public.game_progress_save_commits_partial (id integer);');
 assert.equal(addPartialReceipt.status, 0, addPartialReceipt.stderr);
@@ -491,6 +847,10 @@ const partialReceiptOutput = `${partialReceipt.stdout}\n${partialReceipt.stderr}
 assert.equal(partialReceipt.status, 3, `partial receipt object must stop preflight: ${partialReceiptOutput}`);
 assert.match(partialReceiptOutput, /receipt objects are present or partial/i);
 assert.doesNotMatch(partialReceiptOutput, /permission denied for table/i);
+const partialStartup = invokeStartupReadiness(CASES.partialReceipt026);
+assert.equal(partialStartup.status, 0, partialStartup.stderr);
+assert.ok(partialStartup.stdout.includes('game_progress_save_commits'),
+  `startup readiness must report the absent canonical receipt relation: ${partialStartup.stdout}`);
 recordScenario('partial migration-026 receipt objects are rejected using catalog-only access');
 
 const migration026Applied = invokePreMigration026(CASES.migration026Applied);
@@ -513,7 +873,22 @@ assert.equal(pre024StateAfter.status, 0, pre024StateAfter.stderr);
 assert.equal(pre024StateAfter.stdout.trim(), pre024StateBefore.stdout.trim(), 'pre-026 024 stop must not change synthetic rows or the ledger');
 recordScenario('pre-migration check stops on 024 before application-row reads or any migration');
 
-assert.equal(passedScenarioCount, 21, 'all expected disposable PostgreSQL preflight scenarios must execute');
+const pending025Before = psql(CASES.pending025, 'postgres',
+  'SELECT count(*)::text || \'|\' || COALESCE(max(version), 0)::text FROM public.schema_migrations;');
+assert.equal(pending025Before.status, 0, pending025Before.stderr);
+const pending025 = invokePreMigration026(CASES.pending025);
+const pending025Output = `${pending025.stdout}\n${pending025.stderr}`;
+assert.equal(pending025.status, 3, `pending migration 025 must stop preflight: ${pending025Output}`);
+assert.match(pending025Output, /STOP: migration 025 is pending/i);
+assert.doesNotMatch(pending025Output, /permission denied for table/i);
+const pending025After = psql(CASES.pending025, 'postgres',
+  'SELECT count(*)::text || \'|\' || COALESCE(max(version), 0)::text FROM public.schema_migrations;');
+assert.equal(pending025After.status, 0, pending025After.stderr);
+assert.equal(pending025After.stdout.trim(), pending025Before.stdout.trim(),
+  'pending-025 preflight must neither change the ledger nor execute a migration');
+recordScenario('migration 025 pending fails closed without changing the ledger or applying a migration');
+
+assert.equal(passedScenarioCount, 41, 'all expected PostgreSQL major-version and release-preflight scenarios must execute');
 
 const createSyntheticBackupProbe = psql(CASES.valid, 'postgres', `
   CREATE TABLE public.release_backup_synthetic_probe (marker text PRIMARY KEY);
@@ -539,6 +914,17 @@ assert.match(backupRoleAudit.stdout, /unreadable_sequence_count=0/);
 assert.match(backupRoleAudit.stdout, /relation_write_privilege_count=0/);
 recordScenario('synthetic backup role has read-only access to every fixture relation and sequence');
 
+const deniedApplicationDump = dockerBinary([
+  'exec', CONTAINER, 'pg_dump', '--host=127.0.0.1', '--port=5432',
+  `--username=${ROLE}`, `--dbname=${CASES.valid}`, '--no-password', '--format=custom',
+]);
+assert.notEqual(deniedApplicationDump.status, 0,
+  'the migration-only preflight role must not be able to export application tables.');
+recordScenario('preflight-only role cannot dump application data');
+
+const sourceAggregateCounts = getSyntheticAggregateCounts(CASES.valid, 'tq_prod_backup_reader');
+recordScenario('source backup captures fixed allowlisted aggregate counts for all 18 post-026 tables');
+
 const dump = dockerBinary([
   'exec', CONTAINER, 'pg_dump', '--host=127.0.0.1', '--port=5432',
   '--username=tq_prod_backup_reader', `--dbname=${CASES.valid}`,
@@ -547,8 +933,89 @@ const dump = dockerBinary([
 ]);
 assert.equal(dump.status, 0, `synthetic pg_dump must succeed without external networking: ${String(dump.stderr || '')}`);
 assert.ok(Buffer.isBuffer(dump.stdout) && dump.stdout.length > 0, 'custom-format synthetic archive must be nonempty');
-const archiveSha256 = crypto.createHash('sha256').update(dump.stdout).digest('hex');
+const archiveSha256 = hashSha256(dump.stdout);
 assert.match(archiveSha256, /^[a-f0-9]{64}$/);
+recordScenario('actual PostgreSQL custom-format pg_dump succeeds using the dedicated read-only backup role');
+
+const toc = dockerBinary(['exec', '-i', CONTAINER, 'pg_restore', '--list'], dump.stdout);
+assert.equal(toc.status, 0, `pg_restore must parse the actual custom archive TOC: ${String(toc.stderr || '')}`);
+assert.ok(Buffer.isBuffer(toc.stdout) && toc.stdout.length > 0, 'custom archive TOC must be nonempty.');
+recordScenario('pg_restore validates the actual custom-format archive TOC');
+
+const sourceCommit = process.env.GITHUB_SHA || '';
+assert.match(sourceCommit, /^[a-f0-9]{40}$/i, 'GitHub CI source commit must be an exact 40-character SHA.');
+const backupArtifactDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-synthetic-backup-restore-'));
+process.once('exit', () => {
+  try { fs.rmSync(backupArtifactDirectory, { recursive: true, force: true }); } catch {}
+});
+const archivePath = path.join(backupArtifactDirectory, 'synthetic.dump');
+const tocPath = `${archivePath}.toc.txt`;
+const aggregatePath = `${archivePath}.aggregates.json`;
+const hashPath = `${archivePath}.sha256.txt`;
+const completionPath = `${archivePath}.complete.json`;
+fs.writeFileSync(archivePath, dump.stdout, { flag: 'wx' });
+fs.writeFileSync(tocPath, toc.stdout, { flag: 'wx' });
+const tocSha256 = hashSha256(toc.stdout);
+const sourceAggregateManifest = {
+  Version: 1,
+  SchemaMode: 'PostMigration026',
+  SourceCommit: sourceCommit,
+  SnapshotId: '0000000000000000-0000000000000000-1',
+  ArchiveSha256: archiveSha256,
+  Counts: sourceAggregateCounts,
+};
+const aggregateBytes = Buffer.from(`${JSON.stringify(sourceAggregateManifest, null, 2)}\n`, 'utf8');
+fs.writeFileSync(aggregatePath, aggregateBytes, { flag: 'wx' });
+const aggregateSha256 = hashSha256(aggregateBytes);
+const hashFileBytes = Buffer.from(`${archiveSha256}  synthetic.dump\n`, 'utf8');
+fs.writeFileSync(hashPath, hashFileBytes, { flag: 'wx' });
+const completionManifest = {
+  Version: 1,
+  SchemaMode: 'PostMigration026',
+  SourceCommit: sourceCommit,
+  SnapshotId: sourceAggregateManifest.SnapshotId,
+  ArchiveName: 'synthetic.dump',
+  ArchiveSha256: archiveSha256,
+  TocName: 'synthetic.dump.toc.txt',
+  TocSha256: tocSha256,
+  AggregateManifestName: 'synthetic.dump.aggregates.json',
+  AggregateManifestSha256: aggregateSha256,
+  HashFileName: 'synthetic.dump.sha256.txt',
+  HashFileSha256: hashSha256(hashFileBytes),
+};
+const completionBytes = Buffer.from(`${JSON.stringify(completionManifest, null, 2)}\n`, 'utf8');
+fs.writeFileSync(completionPath, completionBytes, { flag: 'wx' });
+const expectedBundle = {
+  sourceCommit,
+  archiveHash: archiveSha256,
+  aggregateHash: aggregateSha256,
+  completionHash: hashSha256(completionBytes),
+  counts: sourceAggregateCounts,
+};
+assertSyntheticBackupBundle(backupArtifactDirectory, expectedBundle);
+recordScenario('actual archive, TOC, aggregate and hash sidecars, and completion marker verify as one complete bundle');
+
+const incompleteCompletion = { ...completionManifest };
+delete incompleteCompletion.HashFileSha256;
+fs.writeFileSync(completionPath, `${JSON.stringify(incompleteCompletion, null, 2)}\n`, 'utf8');
+assert.throws(() => assertSyntheticBackupBundle(backupArtifactDirectory, {
+  ...expectedBundle,
+  completionHash: hashSha256(fs.readFileSync(completionPath)),
+}), /exact complete shape/);
+fs.writeFileSync(completionPath, completionBytes);
+recordScenario('incomplete completion marker is rejected even when its altered digest is supplied');
+
+const originalArchiveBytes = fs.readFileSync(archivePath);
+const tamperedArchiveBytes = Buffer.from(originalArchiveBytes);
+tamperedArchiveBytes[0] ^= 0xff;
+fs.writeFileSync(archivePath, tamperedArchiveBytes);
+assert.throws(() => assertSyntheticBackupBundle(backupArtifactDirectory, expectedBundle));
+fs.writeFileSync(archivePath, originalArchiveBytes);
+const originalAggregateBytes = fs.readFileSync(aggregatePath);
+fs.writeFileSync(aggregatePath, Buffer.concat([originalAggregateBytes, Buffer.from('tamper', 'utf8')]));
+assert.throws(() => assertSyntheticBackupBundle(backupArtifactDirectory, expectedBundle));
+fs.writeFileSync(aggregatePath, originalAggregateBytes);
+recordScenario('tampered archive and aggregate sidecar are rejected by their independent digests');
 
 const restoreDatabase = 'tq_restore_backup_test_ci';
 const createRestoreRole = psql('postgres', 'postgres',
@@ -565,8 +1032,11 @@ assert.equal(stampRestoreDatabase.status, 0, stampRestoreDatabase.stderr);
 const restoreTarget = psql(restoreDatabase, 'tq_restore_operator', `
   SELECT current_database() = '${restoreDatabase}'
      AND current_user = 'tq_restore_operator'
+     AND session_user = current_user
      AND host(inet_server_addr()) = '127.0.0.1'
      AND inet_server_port() = 5432
+     AND (SELECT pg_catalog.pg_get_userbyid(datdba) = current_user FROM pg_catalog.pg_database WHERE datname=current_database())
+     AND has_schema_privilege(current_user, 'public', 'CREATE')
      AND NOT COALESCE((SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolinherit
                        FROM pg_catalog.pg_roles WHERE rolname=current_user), true)
      AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
@@ -574,6 +1044,21 @@ const restoreTarget = psql(restoreDatabase, 'tq_restore_operator', `
 `);
 assert.equal(restoreTarget.status, 0, restoreTarget.stderr);
 assert.equal(restoreTarget.stdout.trim(), 't', 'restore target must be an empty loopback DB owned by a non-admin NOINHERIT role');
+
+const failedRestore = dockerBinary([
+  'exec', '-i', CONTAINER, 'pg_restore', '--host=127.0.0.1', '--port=5432',
+  '--username=tq_restore_operator', `--dbname=${restoreDatabase}`,
+  '--no-password', '--format=custom', '--exit-on-error', '--single-transaction', '--no-owner', '--no-privileges',
+], Buffer.from('not a PostgreSQL custom archive', 'utf8'));
+assert.notEqual(failedRestore.status, 0, 'invalid custom archive must fail pg_restore.');
+const targetAfterFailedRestore = psql(restoreDatabase, 'tq_restore_operator', `
+  SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+                     WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f','S'));
+`);
+assert.equal(targetAfterFailedRestore.status, 0, targetAfterFailedRestore.stderr);
+assert.equal(targetAfterFailedRestore.stdout.trim(), 't', 'failed restore must leave the disposable target empty.');
+recordScenario('failed pg_restore is nonzero and the empty target remains unchanged');
+
 const restore = dockerBinary([
   'exec', '-i', CONTAINER, 'pg_restore', '--host=127.0.0.1', '--port=5432',
   '--username=tq_restore_operator', `--dbname=${restoreDatabase}`,
@@ -581,6 +1066,42 @@ const restore = dockerBinary([
   '--no-owner', '--no-privileges',
 ], dump.stdout);
 assert.equal(restore.status, 0, `synthetic pg_restore to empty loopback target must succeed: ${String(restore.stderr || '')}`);
+recordScenario('actual PostgreSQL custom-format pg_restore succeeds transactionally on the empty loopback database');
+
+const preflightBeforeLocalGrants = invokeRoleAudit(restoreDatabase);
+assert.equal(preflightBeforeLocalGrants.status, 3,
+  `restored preflight role must fail before the isolated database ACL is prepared: ${preflightBeforeLocalGrants.stderr}\n${preflightBeforeLocalGrants.stdout}`);
+assert.match(preflightBeforeLocalGrants.stdout, /STOP: preflight role identity or least-privilege requirements failed/);
+
+const prepareRestorePreflight = psql(restoreDatabase, 'tq_restore_operator', `
+  BEGIN;
+  SET LOCAL statement_timeout = '10s';
+  SET LOCAL lock_timeout = '2s';
+  REVOKE TEMP ON DATABASE "${restoreDatabase}" FROM PUBLIC;
+  GRANT USAGE ON SCHEMA public TO ${ROLE};
+  GRANT SELECT (version, filename, checksum) ON TABLE public.schema_migrations TO ${ROLE};
+  COMMIT;
+`);
+assert.equal(prepareRestorePreflight.status, 0, `isolated least-privilege restore ACL setup failed: ${prepareRestorePreflight.stderr}`);
+recordScenario('restore operator removes PUBLIC TEMP and grants only three migration-ledger columns');
+
+const restoredRoleAudit = invokeRoleAudit(restoreDatabase);
+assert.equal(restoredRoleAudit.status, 0,
+  `restored preflight role must pass after exact local grants: ${restoredRoleAudit.stderr}\n${restoredRoleAudit.stdout}`);
+assert.match(restoredRoleAudit.stdout, /application_relation_select_count=0/);
+assert.match(restoredRoleAudit.stdout, /extra_ledger_column_select_count=0/);
+assert.match(restoredRoleAudit.stdout, /table_write_privilege_count=0/);
+recordScenario('restored preflight role audit confirms no application data, write, extra-ledger, or PUBLIC TEMP access');
+
+const restoredReadiness = invokePreflight(restoreDatabase);
+assert.equal(restoredReadiness.status, 0,
+  `restored schema and exact migration ledger must pass the read-only preflight: ${restoredReadiness.stderr}\n${restoredReadiness.stdout}`);
+assert.match(restoredReadiness.stdout, /Startup schema contract is complete: 18 tables and 278 required columns are present/);
+assert.equal((restoredReadiness.stdout.match(/APPLIED_CHECKSUM_MATCH/g) || []).length, 9,
+  'the restored preflight role must read all nine exact migration checksums from the ledger.');
+assert.doesNotMatch(restoredReadiness.stdout, /STOP_CHECKSUM_MISMATCH|STOP_FILENAME_MISMATCH|PENDING/);
+recordScenario('restored database passes the actual read-only 18-table schema and exact 018-026 ledger preflight');
+
 const restoredProbe = psql(restoreDatabase, 'tq_restore_operator', `
   BEGIN READ ONLY;
   SELECT current_database() = '${restoreDatabase}'
@@ -592,7 +1113,11 @@ const restoredProbe = psql(restoreDatabase, 'tq_restore_operator', `
 `);
 assert.equal(restoredProbe.status, 0, restoredProbe.stderr);
 assert.equal(restoredProbe.stdout.trim(), 't', 'restored synthetic data and migration metadata must be present');
-recordScenario('custom archive restores transactionally into an empty isolated loopback database and retains synthetic data');
+recordScenario('restored database retains the synthetic backup probe and all nine canonical migration rows');
 
-assert.equal(passedScenarioCount, 23, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
+const restoredAggregateCounts = getSyntheticAggregateCounts(restoreDatabase, 'tq_restore_operator');
+assert.deepEqual(restoredAggregateCounts, sourceAggregateCounts, 'all fixed aggregate row counts must match source and restored synthetic databases.');
+recordScenario('source and restored synthetic aggregate counts match for every allowlisted application table and receipt table');
+
+assert.equal(passedScenarioCount, 56, 'all expected PostgreSQL version, release-preflight, and backup/restore scenarios must execute');
 console.log(`Preflight integration result: ${passedScenarioCount}/${passedScenarioCount} disposable PostgreSQL scenarios passed.`);

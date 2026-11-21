@@ -201,7 +201,7 @@ if (!databaseUrl) {
     const identity = await pool.query(`
       SELECT current_database() AS database_name,
              current_user AS database_user,
-             inet_server_addr()::text AS server_address,
+             host(inet_server_addr()) AS server_address,
              inet_server_port() AS server_port
     `);
     const target = identity.rows[0];

@@ -10,6 +10,7 @@ const {
   buildApprovalPlan,
   parseVersionList,
   runApprovedReleaseMigrations,
+  assertSameTarget,
 } = require('./run-approved-release-migrations');
 
 function tempMigrationDir(t, migrationRows) {
@@ -158,6 +159,71 @@ test('rejects an unexpected database identity before applying SQL', async (t) =>
   );
   assert.equal(calls.some((call) => call.sql.includes('-- fixture migration 18')), false);
   assert.equal(client.ended, true);
+});
+
+test('database identity accepts PostgreSQL host-formatted IPv4 and IPv6 addresses', () => {
+  const plan = {
+    expectedDatabase: 'tq_operator_fixture',
+    expectedUser: 'release_operator',
+    expectedServerAddress: '127.0.0.1',
+    expectedServerPort: 5432,
+  };
+  assert.doesNotThrow(() => assertSameTarget(matchingIdentity(), plan));
+  assert.doesNotThrow(() => assertSameTarget({
+    ...matchingIdentity(),
+    server_address: '2001:db8::1',
+  }, { ...plan, expectedServerAddress: '2001:db8::1' }));
+});
+
+test('database identity rejects address, format, database, role, port, and missing-address mismatches', () => {
+  const plan = {
+    expectedDatabase: 'tq_operator_fixture',
+    expectedUser: 'release_operator',
+    expectedServerAddress: '127.0.0.1',
+    expectedServerPort: 5432,
+  };
+  const mismatches = [
+    ['incorrect IPv4 address', { server_address: '127.0.0.2' }],
+    ['incorrect IPv6 address', { server_address: '2001:db8::2' }],
+    ['CIDR-suffixed address', { server_address: '127.0.0.1/32' }],
+    ['missing address', { server_address: null }],
+    ['incorrect database', { database_name: 'other_database' }],
+    ['incorrect role', { database_user: 'other_role' }],
+    ['incorrect port', { server_port: 5433 }],
+  ];
+
+  for (const [description, overrides] of mismatches) {
+    assert.throws(
+      () => assertSameTarget({ ...matchingIdentity(), ...overrides }, plan),
+      /identity does not match/i,
+      description,
+    );
+  }
+});
+
+test('migration runner obtains a host-formatted address and rejects mismatches before migration SQL', async (t) => {
+  const dir = tempMigrationDir(t, [{ version: 18, file: '018_fixture.sql' }]);
+  const { client, calls } = fakeClient({
+    identity: { ...matchingIdentity(), server_address: '127.0.0.1/32' },
+    ledgerRows: [],
+  });
+
+  await assert.rejects(
+    runApprovedReleaseMigrations({
+      env: approvalEnv('18'),
+      databaseConfig: { host: 'fixture.invalid' },
+      migrationDir: dir,
+      migrations: [{ version: 18, file: '018_fixture.sql' }],
+      clientFactory: async () => client,
+    }),
+    /identity does not match/i,
+  );
+
+  const identityQuery = calls.find((call) => call.sql.includes('current_database()'));
+  assert.ok(identityQuery, 'the runner must query the database identity');
+  assert.match(identityQuery.sql, /host\(inet_server_addr\(\)\)\s+AS server_address/i);
+  assert.doesNotMatch(identityQuery.sql, /inet_server_addr\(\)::text/i);
+  assert.equal(calls.some((call) => call.sql.includes('-- fixture migration 18')), false);
 });
 
 test('stops safely when the migration ledger is missing', async (t) => {
@@ -391,8 +457,11 @@ test('disposable PostgreSQL harness scenario counters match the executed scenari
   const dynamicModeScenario = preflightSection.match(/for\s*\(const \[mode, phrase\] of \[([\s\S]*?)\]\)\s*\{[\s\S]*?recordScenario\(/);
   assert.ok(dynamicModeScenario, 'the missing-table and missing-column scenarios must remain enumerated');
   const additionalDynamicRuns = (dynamicModeScenario[1].match(/^\s*\['[^']+'\s*,/gm) || []).length - 1;
-  const preflightScenarioCount = (preflightSection.match(/^\s*recordScenario\(/gm) || []).length + additionalDynamicRuns;
-  const totalScenarioCount = (harness.match(/^\s*recordScenario\(/gm) || []).length + additionalDynamicRuns;
+  const receiptConstraintScenarioRuns = (preflightSection.match(/\nassertReceiptConstraintMismatch\(\{/g) || []).length;
+  const preflightScenarioCount = (preflightSection.match(/^\s*recordScenario\(/gm) || []).length
+    + additionalDynamicRuns + receiptConstraintScenarioRuns - 1;
+  const totalScenarioCount = (harness.match(/^\s*recordScenario\(/gm) || []).length
+    + additionalDynamicRuns + receiptConstraintScenarioRuns - 1;
   assert.match(harness, new RegExp(`assert\\.equal\\(passedScenarioCount, ${preflightScenarioCount},`));
   assert.match(harness, new RegExp(`assert\\.equal\\(passedScenarioCount, ${totalScenarioCount},`));
 });
