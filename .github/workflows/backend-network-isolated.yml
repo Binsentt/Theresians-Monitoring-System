@@ -188,6 +188,12 @@ jobs:
                 backendRoot + '/migrations/012_add_activity_log_event_idempotency.sql',
                 'utf8',
               ));
+              await pool.query(`CREATE TABLE IF NOT EXISTS public.schema_migrations (
+                version INTEGER PRIMARY KEY,
+                filename VARCHAR(255) NOT NULL,
+                checksum CHAR(64) NOT NULL,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+              )`);
               const { runSyntheticApprovedReleaseMigrations } = require(
                 backendRoot + '/testSupport/runSyntheticApprovedReleaseMigrations',
               );

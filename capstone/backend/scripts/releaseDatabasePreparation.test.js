@@ -367,6 +367,12 @@ test('isolated backend workflow provisions and sentinel-marks every new syntheti
   assert.match(workflow, /TQ_EXPECTED_POSTGRES_MAJOR: '18'/);
   assert.match(workflow, /test "\$image_pgdata" = "\/var\/lib\/postgresql\/18\/docker"/);
   assert.match(workflow, /--tmpfs "\/var\/lib\/postgresql:rw,nosuid,nodev,size=1g/);
+  const parentProbe = workflow.match(/cat > "[^\"]*parent-route-postgres\.integration\.cjs" <<'PARENT_TEST'\r?\n([\s\S]*?)\r?\n\s+PARENT_TEST/);
+  assert.ok(parentProbe, 'the disposable Parent PostgreSQL probe script must remain discoverable');
+  const ledgerSetupIndex = parentProbe[1].indexOf('CREATE TABLE IF NOT EXISTS public.schema_migrations');
+  const gatedMigrationIndex = parentProbe[1].indexOf('runSyntheticApprovedReleaseMigrations');
+  assert.ok(ledgerSetupIndex >= 0 && ledgerSetupIndex < gatedMigrationIndex,
+    'the synthetic Parent PostgreSQL probe must prepare its ledger before using the gated migration helper');
 });
 
 test('disposable PostgreSQL harness exercises read-only backup audit and isolated archive restore', () => {
