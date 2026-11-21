@@ -320,7 +320,9 @@ function assertReceiptConstraintMismatch({ label, constraintName, mutationSql, r
   const preflight = invokePreflight(CASES.valid);
   assert.equal(preflight.status, 3,
     `${label} must fail the release preflight closed: ${preflight.stderr}\n${preflight.stdout}`);
-  assert.match(preflight.stdout, /STOP: migration 026 receipt constraints are missing or incompatible/);
+  const preflightOutput = `${preflight.stdout}\n${preflight.stderr}`;
+  assert.match(preflightOutput, /STOP: migration 026 receipt constraints are missing or incompatible/,
+    `${label} must report the receipt-constraint STOP; stdout: ${preflight.stdout}; stderr: ${preflight.stderr}`);
 
   const restore = psql(CASES.valid, 'postgres', restoreSql);
   assert.equal(restore.status, 0, `${label} fixture restore failed: ${restore.stderr}`);
@@ -404,11 +406,13 @@ const validStartup = invokeStartupReadiness(CASES.valid);
 assert.equal(validStartup.status, 0, `valid startup catalog query must execute read-only: ${validStartup.stderr}`);
 assert.equal(validStartup.stdout.trim(), '', `valid startup schema must return no missing objects: ${validStartup.stdout}`);
 const receiptShape = psql(CASES.valid, ROLE, `BEGIN READ ONLY;
+  -- PostgreSQL 18 exposes NOT NULL as contype 'n'; count the eight structural constraints only.
   SELECT (SELECT count(*) FROM pg_catalog.pg_attribute
           WHERE attrelid = 'public.game_progress_save_commits'::regclass
             AND attnum > 0 AND NOT attisdropped)::text || '|' ||
          (SELECT count(*) FROM pg_catalog.pg_constraint
-          WHERE conrelid = 'public.game_progress_save_commits'::regclass)::text;
+          WHERE conrelid = 'public.game_progress_save_commits'::regclass
+            AND contype <> 'n')::text;
 ROLLBACK;`);
 assert.equal(receiptShape.status, 0, receiptShape.stderr);
 assert.equal(receiptShape.stdout.trim(), '9|8', 'receipt schema must have exactly nine columns and eight constraints');
