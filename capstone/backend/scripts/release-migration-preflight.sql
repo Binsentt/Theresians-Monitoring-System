@@ -83,11 +83,11 @@ WITH role_checks AS (
            AND relation_namespace.nspname <> 'information_schema'
            AND relation_namespace.nspname !~ '^pg_'
            AND (
-             has_table_privilege(current_user, relation.oid, 'INSERT')
-             OR has_table_privilege(current_user, relation.oid, 'UPDATE')
+             has_any_column_privilege(current_user, relation.oid, 'INSERT')
+             OR has_any_column_privilege(current_user, relation.oid, 'UPDATE')
              OR has_table_privilege(current_user, relation.oid, 'DELETE')
              OR has_table_privilege(current_user, relation.oid, 'TRUNCATE')
-             OR has_table_privilege(current_user, relation.oid, 'REFERENCES')
+             OR has_any_column_privilege(current_user, relation.oid, 'REFERENCES')
              OR has_table_privilege(current_user, relation.oid, 'TRIGGER')
            )
        ) AS table_write_privileges_denied,
@@ -705,16 +705,23 @@ FROM type_mismatches
   SELECT 'preflight stopped: required core column type mismatch'::integer;
 \endif
 
-WITH required_receipt_constraints(constraint_name, constraint_type) AS (
+WITH required_receipt_constraints(
+  constraint_name,
+  constraint_type,
+  expected_key_columns,
+  expected_reference_relation,
+  expected_reference_columns,
+  expected_check_expression
+) AS (
   VALUES
-    ('game_progress_save_commits_pkey', 'p'),
-    ('game_progress_save_commits_activity_event_unique', 'u'),
-    ('game_progress_save_commits_student_id_fkey', 'f'),
-    ('game_progress_save_commits_learning_cycle_version_check', 'c'),
-    ('game_progress_save_commits_save_commit_id_hash_check', 'c'),
-    ('game_progress_save_commits_payload_sha256_check', 'c'),
-    ('game_progress_save_commits_response_status_check', 'c'),
-    ('game_progress_save_commits_completion_consistency', 'c')
+    ('game_progress_save_commits_pkey', 'p', ARRAY['student_id', 'learning_cycle_version', 'save_commit_id_hash']::text[], NULL::text, NULL::text[], NULL::text),
+    ('game_progress_save_commits_activity_event_unique', 'u', ARRAY['student_id', 'activity_event_key']::text[], NULL::text, NULL::text[], NULL::text),
+    ('game_progress_save_commits_student_id_fkey', 'f', ARRAY['student_id']::text[], 'public.accounts', ARRAY['id']::text[], NULL::text),
+    ('game_progress_save_commits_learning_cycle_version_check', 'c', ARRAY['learning_cycle_version']::text[], NULL::text, NULL::text[], 'learning_cycle_version>=0'),
+    ('game_progress_save_commits_save_commit_id_hash_check', 'c', ARRAY['save_commit_id_hash']::text[], NULL::text, NULL::text[], $$save_commit_id_hash~'^[0-9a-f]{64}$'$$),
+    ('game_progress_save_commits_payload_sha256_check', 'c', ARRAY['payload_sha256']::text[], NULL::text, NULL::text[], $$payload_sha256~'^[0-9a-f]{64}$'$$),
+    ('game_progress_save_commits_response_status_check', 'c', ARRAY['response_status']::text[], NULL::text, NULL::text[], 'response_status>=200andresponse_status<=299'),
+    ('game_progress_save_commits_completion_consistency', 'c', ARRAY['response_body', 'completed_at']::text[], NULL::text, NULL::text[], 'response_bodyisnull=completed_atisnull')
 )
 SELECT NOT EXISTS (
   SELECT 1
@@ -730,9 +737,53 @@ SELECT NOT EXISTS (
      OR constraint_record.oid IS NULL
      OR constraint_record.contype::text <> expected.constraint_type
      OR NOT constraint_record.convalidated
-     OR (expected.constraint_name = 'game_progress_save_commits_student_id_fkey'
-         AND (constraint_record.confdeltype <> 'c'
-              OR constraint_record.confrelid <> 'public.accounts'::regclass))
+     OR constraint_record.condeferrable
+     OR constraint_record.condeferred
+     OR ARRAY(
+       SELECT column_definition.attname::text
+       FROM unnest(constraint_record.conkey) WITH ORDINALITY AS key_column(attnum, ordinal_position)
+       JOIN pg_catalog.pg_attribute AS column_definition
+         ON column_definition.attrelid = constraint_record.conrelid
+        AND column_definition.attnum = key_column.attnum
+       ORDER BY key_column.ordinal_position
+     ) IS DISTINCT FROM expected.expected_key_columns
+     OR (
+       expected.expected_reference_relation IS NOT NULL
+       AND (
+         constraint_record.confrelid IS DISTINCT FROM pg_catalog.to_regclass(expected.expected_reference_relation)
+         OR constraint_record.confupdtype <> 'a'
+         OR constraint_record.confdeltype <> 'c'
+         OR constraint_record.confmatchtype <> 's'
+         OR ARRAY(
+           SELECT referenced_column.attname::text
+           FROM unnest(constraint_record.confkey) WITH ORDINALITY AS key_column(attnum, ordinal_position)
+           JOIN pg_catalog.pg_attribute AS referenced_column
+             ON referenced_column.attrelid = constraint_record.confrelid
+            AND referenced_column.attnum = key_column.attnum
+           ORDER BY key_column.ordinal_position
+         ) IS DISTINCT FROM expected.expected_reference_columns
+       )
+     )
+     OR (
+       expected.expected_check_expression IS NOT NULL
+       AND (
+         SELECT COALESCE(string_agg(
+           CASE
+             WHEN token.parts[1] IS NOT NULL THEN token.parts[1]
+             ELSE lower(regexp_replace(
+               regexp_replace(token.parts[3], '::text', '', 'gi'),
+               '[[:space:]()]', '', 'g'
+             ))
+           END,
+           '' ORDER BY token.ordinality
+         ), '')
+         FROM regexp_matches(
+           pg_catalog.pg_get_expr(constraint_record.conbin, constraint_record.conrelid),
+           $$('([^']|'')*')|([^']+)$$,
+           'g'
+         ) WITH ORDINALITY AS token(parts, ordinality)
+       ) IS DISTINCT FROM expected.expected_check_expression
+     )
 ) AS receipt_constraints_ready \gset
 \if :receipt_constraints_ready
   \echo 'Migration 026 receipt keys, checks, and student cascade are present and validated.'

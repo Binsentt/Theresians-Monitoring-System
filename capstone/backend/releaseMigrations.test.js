@@ -3,8 +3,64 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const { applyReleaseMigrations } = require('./releaseMigrations');
-const { RELEASE_MIGRATIONS } = require('./releaseMigrations');
+const releaseMigrationApi = require('./releaseMigrations');
+const { migrationChecksum, RELEASE_MIGRATIONS } = releaseMigrationApi;
+
+test('migration execution is not exposed through an ungated public API', () => {
+  assert.equal(Object.hasOwn(releaseMigrationApi, 'applyReleaseMigrations'), false);
+  assert.equal(Object.hasOwn(require('./scripts/run-approved-release-migrations'), 'executeApprovedMigrations'), false);
+  assert.equal(typeof releaseMigrationApi.runReleaseMigrations, 'function');
+});
+
+const EXPECTED_CANONICAL_MIGRATION_CHECKSUMS = Object.freeze({
+  18: 'f64e6e0de7abdf873fdb1bc93739d2704e4b16ed5bc428c991c7507407ea5668',
+  19: 'b76fa5f58daae29dbcf2120b4c9ff533eda3c41dc3f21efdab93b207fb8b2f4f',
+  20: '6e2cf94b9a8acdcee728e8a0283a95580fc7e63f6622dcb5890415f4b9e715af',
+  21: '3b5ff42ba45a158df434b92b95e935c608fc0a236516d8135d6d0329963beac6',
+  22: '5a45ef2133bc0d69fe117f7164eeb9af65eb16bcf6f4a1215804bd14919e3c76',
+  23: '2df0959d48efd554a8e7403ebbf331bfdfb6971b2d66e43a6ae267c02642f12d',
+  24: '2595a35fe97699376b611f21cc19aa4b7e26d495463fe7585bf7e1c96370e111',
+  25: '2a1b904056274c73903cfb713703c6db8e6c2ea37f9c8fd1863f9a3004e42e68',
+  26: '334f7b73ddc1c8d6ddcdafd547181f75fbeac85df713d4ba73995fb9c4d23b12',
+});
+
+test('migration checksums normalize CRLF and lone CR to the canonical LF content', () => {
+  const lfSql = 'CREATE TABLE example (id INTEGER);\nINSERT INTO example VALUES (1);\n';
+  const crlfSql = lfSql.replace(/\n/g, '\r\n');
+  const loneCrSql = lfSql.replace(/\n/g, '\r');
+
+  assert.equal(migrationChecksum(crlfSql), migrationChecksum(lfSql));
+  assert.equal(migrationChecksum(loneCrSql), migrationChecksum(lfSql));
+  assert.notEqual(migrationChecksum(lfSql.replace('VALUES (1)', 'VALUES (2)')), migrationChecksum(lfSql));
+});
+
+test('migrations 018-026 retain canonical LF checksums from the preflight manifest', () => {
+  const preflight = fs.readFileSync(path.join(__dirname, 'scripts', 'release-migration-preflight.sql'), 'utf8');
+  const preflightEntries = new Map(
+    [...preflight.matchAll(/\((\d+),\s*'([^']+)',\s*'([a-f0-9]{64})'\)/gi)].map(([, version, file, checksum]) => [
+      Number(version),
+      { file, checksum: checksum.toLowerCase() },
+    ]),
+  );
+  const migrations = RELEASE_MIGRATIONS.filter(({ version }) => version >= 18 && version <= 26);
+
+  assert.deepEqual(migrations.map(({ version }) => version), Object.keys(EXPECTED_CANONICAL_MIGRATION_CHECKSUMS).map(Number));
+
+  for (const migration of migrations) {
+    const expectedChecksum = EXPECTED_CANONICAL_MIGRATION_CHECKSUMS[migration.version];
+    const manifestEntry = preflightEntries.get(migration.version);
+    const sql = fs.readFileSync(path.join(__dirname, 'migrations', migration.file), 'utf8');
+    const canonicalLfSql = sql.replace(/\r\n?/g, '\n');
+
+    assert.ok(manifestEntry, `preflight manifest must contain migration ${migration.version}`);
+    assert.equal(manifestEntry.file, migration.file);
+    assert.equal(manifestEntry.checksum, expectedChecksum);
+    assert.equal(migrationChecksum(canonicalLfSql), expectedChecksum, `LF checksum changed for migration ${migration.version}`);
+    assert.equal(migrationChecksum(sql), expectedChecksum, `checkout line endings changed migration ${migration.version} checksum`);
+    assert.equal(migrationChecksum(canonicalLfSql.replace(/\n/g, '\r\n')), expectedChecksum);
+    assert.equal(migrationChecksum(canonicalLfSql.replace(/\n/g, '\r')), expectedChecksum);
+  }
+});
 
 test('release manifest includes migration 026 for game progress save commit idempotency', () => {
   assert.deepEqual(RELEASE_MIGRATIONS.at(-1), { version: 26, file: '026_game_progress_save_commit_idempotency.sql' });
@@ -41,75 +97,4 @@ test('legacy Student cleanup migration only targets exact six-digit Student IDs 
   assert.match(sql, /DELETE FROM public\.playtime_sessions/);
   assert.match(sql, /DELETE FROM public\.accounts/);
   assert.doesNotMatch(sql, /\^\[0-9\]\{8\}\$/);
-});
-
-test('release migrations apply in order under an advisory lock and record checksums', async () => {
-  const calls = [];
-  const client = {
-    async query(sql, params) {
-      calls.push({ sql: String(sql), params });
-      if (String(sql).includes('SELECT version, checksum')) return { rows: [] };
-      return { rows: [] };
-    },
-  };
-
-  await applyReleaseMigrations({
-    client,
-    migrationDir: __dirname + '/migrations',
-    migrations: [
-      { version: 18, file: '018_website_sessions_and_audit_metadata.sql' },
-      { version: 19, file: '019_playtime_history_removal.sql' },
-      { version: 20, file: '020_add_auth_otp_challenge_security.sql' },
-    ],
-  });
-
-  assert.match(calls.find(({ sql }) => sql.includes('pg_advisory_lock')).sql, /pg_advisory_lock/);
-  assert.match(calls.at(-1).sql, /pg_advisory_unlock/);
-  const migrationCalls = calls.filter(({ sql }) => /admin_audit_logs|playtime_sessions|otp_code_hash/.test(sql));
-  assert.equal(migrationCalls.length, 3);
-  assert.match(migrationCalls[0].sql, /admin_audit_logs|website_sessions/);
-  assert.match(migrationCalls[1].sql, /playtime_sessions/);
-  assert.match(migrationCalls[2].sql, /accounts/);
-  assert.equal(calls.filter(({ sql }) => sql.includes('INSERT INTO public.schema_migrations')).length, 3);
-});
-
-test('release migrations reject a checksum mismatch instead of silently reapplying a changed file', async () => {
-  const client = {
-    async query(sql) {
-      if (String(sql).includes('SELECT version, checksum')) return { rows: [{ version: 18, checksum: 'unexpected' }] };
-      return { rows: [] };
-    },
-  };
-
-  await assert.rejects(
-    applyReleaseMigrations({
-      client,
-      migrationDir: __dirname + '/migrations',
-      migrations: [{ version: 18, file: '018_website_sessions_and_audit_metadata.sql' }],
-    }),
-    /checksum mismatch/i,
-  );
-});
-
-test('release migration failure propagates and always releases the advisory lock', async () => {
-  const calls = [];
-  const client = {
-    async query(sql) {
-      calls.push(String(sql));
-      if (String(sql).includes('SELECT version, checksum')) return { rows: [] };
-      if (String(sql).includes('admin_audit_logs')) throw new Error('synthetic migration failure');
-      return { rows: [] };
-    },
-  };
-
-  await assert.rejects(
-    applyReleaseMigrations({
-      client,
-      migrationDir: __dirname + '/migrations',
-      migrations: [{ version: 18, file: '018_website_sessions_and_audit_metadata.sql' }],
-    }),
-    /synthetic migration failure/,
-  );
-  assert.match(calls.at(-1), /pg_advisory_unlock/);
-  assert.equal(calls.filter((sql) => sql.includes('INSERT INTO public.schema_migrations')).length, 0);
 });

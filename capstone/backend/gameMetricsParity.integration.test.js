@@ -5,7 +5,8 @@ const path = require('node:path');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const { calculateJourneyProgress, calculateWeightedCompletion } = require('./questGraph.utils');
-const { applyReleaseMigrations } = require('./releaseMigrations');
+const { RELEASE_MIGRATIONS } = require('./releaseMigrations');
+const { runSyntheticApprovedReleaseMigrations } = require('./testSupport/runSyntheticApprovedReleaseMigrations');
 const { applySyntheticTestSchema } = require('./testSupport/applySyntheticTestSchema');
 const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('./testSafety/disposablePostgres');
 
@@ -71,7 +72,17 @@ if (!databaseUrl) {
       'utf8',
     ));
     await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_game_metrics_test_ci' });
-    await applyReleaseMigrations({ client: pool });
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.schema_migrations (
+      version INTEGER PRIMARY KEY,
+      filename VARCHAR(255) NOT NULL,
+      checksum CHAR(64) NOT NULL,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await runSyntheticApprovedReleaseMigrations({
+      connectionString: databaseUrl,
+      expectedDatabaseName: 'tq_game_metrics_test_ci',
+      migrations: RELEASE_MIGRATIONS,
+    });
     await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_game_metrics_test_ci' });
     await pool.query('TRUNCATE public.accounts RESTART IDENTITY CASCADE');
 

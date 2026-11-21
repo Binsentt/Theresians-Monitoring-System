@@ -28,34 +28,50 @@ param(
   [string]$ServiceFilePath,
 
   [string]$PsqlPath = (Join-Path $env:ProgramFiles 'PostgreSQL\18\bin\psql.exe'),
-  [string]$ExpectedSourceCommit = '8a9ab3b6a3cfa3a6652538c62673c4655b03642d'
+
+  [Parameter(Mandatory = $true)]
+  [ValidatePattern('^[0-9a-fA-F]{40}$')]
+  [string]$ExpectedSourceCommit
 )
 
 $ErrorActionPreference = 'Stop'
 $expectedRole = 'tq_release_preflight_reader'
 $backendRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$validationModule = Join-Path $PSScriptRoot 'backupRestoreRehearsal.validation.psm1'
+if (-not (Test-Path -LiteralPath $validationModule -PathType Leaf)) {
+  throw 'STOP: reviewed PostgreSQL credential-validation module is missing.'
+}
+Import-Module $validationModule -Force
 $repositoryRoot = (& git -C $backendRoot rev-parse --show-toplevel 2>$null).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $repositoryRoot) {
   throw 'STOP: this utility must run from a Git checkout of the reviewed release source.'
 }
 $repositoryRoot = [System.IO.Path]::GetFullPath($repositoryRoot).TrimEnd('\')
 
-function Assert-OutsideRepository([string]$PathValue, [string]$Label) {
-  $resolved = (Resolve-Path -LiteralPath $PathValue).Path
-  $full = [System.IO.Path]::GetFullPath($resolved).TrimEnd('\')
-  if ($full.Equals($repositoryRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
-      $full.StartsWith($repositoryRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "STOP: $Label must remain outside the repository."
-  }
-  return $full
+$ambientLibpqNames = @(
+  'PGPASSWORD','PGPASSFILE','PGSERVICE','PGSERVICEFILE','PGSYSCONFDIR',
+  'PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGUSER','PGOPTIONS','PGAPPNAME',
+  'PGCONNECT_TIMEOUT','PGCLIENTENCODING','PGSSLMODE','PGREQUIRESSL','PGSSLCOMPRESSION',
+  'PGSSLCERT','PGSSLKEY','PGSSLROOTCERT','PGSSLCRL','PGSSLCRLDIR','PGGSSENCMODE',
+  'PGCHANNELBINDING','PGKRBSRVNAME','PGTARGETSESSIONATTRS','PGLOADBALANCEHOSTS','PGSSLNEGOTIATION'
+)
+$ambientLibpqVariables = @{}
+foreach ($name in $ambientLibpqNames) {
+  $environmentPath = 'Env:' + $name
+  if (Test-Path $environmentPath) { $ambientLibpqVariables[$name] = [Environment]::GetEnvironmentVariable($name) }
 }
+Assert-InteractiveAuthenticationEnvironment -EnvironmentVariables $ambientLibpqVariables
 
-if (Test-Path Env:PGPASSWORD) {
-  throw 'STOP: PGPASSWORD is present in the process environment. Remove it and use the protected PGPASSFILE instead.'
-}
 if (-not (Test-Path -LiteralPath $PsqlPath -PathType Leaf)) { throw 'STOP: PostgreSQL 18 psql.exe was not found.' }
-$passfile = Assert-OutsideRepository $PassfilePath 'PGPASSFILE'
-$serviceFile = Assert-OutsideRepository $ServiceFilePath 'PGSERVICEFILE'
+$reviewedCredentialFiles = Assert-ReviewedPreflightCredentialFiles `
+  -PassfilePath $PassfilePath `
+  -ServiceFilePath $ServiceFilePath `
+  -RepositoryRoot $repositoryRoot `
+  -ServiceName $ServiceName `
+  -ExpectedUsers ([ordered]@{ tq_release_preflight = $expectedRole }) `
+  -ExpectedDatabases ([ordered]@{ tq_release_preflight = $ExpectedDatabase })
+$passfile = $reviewedCredentialFiles.PassfilePath
+$serviceFile = $reviewedCredentialFiles.ServiceFilePath
 try { [void][System.Net.IPAddress]::Parse($ExpectedServerAddress) } catch { throw 'STOP: expected server address must be a literal IPv4 or IPv6 address.' }
 
 $sourceHead = (& git -C $repositoryRoot rev-parse HEAD 2>$null).Trim()
