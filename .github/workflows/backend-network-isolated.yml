@@ -1170,6 +1170,19 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Set up Node 20 for Windows preflight integration tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run Windows preflight source-pin and credential-file regressions
+        shell: pwsh
+        run: |
+          $nodeVersion = (& node --version).Trim()
+          if ($nodeVersion -notmatch '^v20\.') { throw "Expected Node 20, found $nodeVersion." }
+          & node --test 'capstone/backend/scripts/releaseDatabasePreparation.test.js'
+          if ($LASTEXITCODE -ne 0) { throw "Windows preflight integration tests failed with exit code $LASTEXITCODE." }
+
       - name: Parse and run backup/restore Windows safety tests
         shell: pwsh
         run: |

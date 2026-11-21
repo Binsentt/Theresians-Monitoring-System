@@ -373,6 +373,11 @@ test('isolated backend workflow provisions and sentinel-marks every new syntheti
   const gatedMigrationIndex = parentProbe[1].indexOf('runSyntheticApprovedReleaseMigrations');
   assert.ok(ledgerSetupIndex >= 0 && ledgerSetupIndex < gatedMigrationIndex,
     'the synthetic Parent PostgreSQL probe must prepare its ledger before using the gated migration helper');
+  const windowsJob = workflow.slice(workflow.indexOf('\n  windows-backup-validation:'));
+  assert.match(windowsJob, /uses:\s*actions\/setup-node@v4[\s\S]*?node-version:\s*['\"]20['\"]/,
+    'the Windows-only preflight integration test must run under Node 20');
+  assert.match(windowsJob, /node --test ['\"]?capstone\/backend\/scripts\/releaseDatabasePreparation\.test\.js['\"]?/,
+    'the Windows job must execute the psql-stub credential and source-pin regression');
 });
 
 test('disposable PostgreSQL harness exercises read-only backup audit and isolated archive restore', () => {
