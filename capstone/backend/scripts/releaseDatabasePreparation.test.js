@@ -1,7 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { REQUIRED_SCHEMA } = require('../database/startupSchemaReadiness');
 const { RELEASE_MIGRATIONS, migrationChecksum } = require('../releaseMigrations');
 
@@ -31,12 +33,87 @@ test('Windows preflight utility uses a service alias, rejects inline passwords, 
   assert.match(script, /-w/);
   assert.match(script, /service=/);
   assert.match(script, /ExpectedSourceCommit/);
+  assert.match(script, /\[Parameter\(Mandatory\s*=\s*\$true\)\][\s\S]*?\[ValidatePattern\('\^\[0-9a-fA-F\]\{40\}\$'\)\][\s\S]*?\[string\]\$ExpectedSourceCommit/);
+  assert.doesNotMatch(script, /\$ExpectedSourceCommit\s*=\s*['"]/);
+  assert.match(script, /sourceHead\s+-ne\s+\$ExpectedSourceCommit/);
   assert.match(script, /reviewed preflight files or migrations are modified\/untracked/);
   assert.match(script, /release-preflight-role-audit\.sql/);
   assert.match(script, /release-migration-026-prerequisite-preflight\.sql/);
   assert.match(script, /release-migration-preflight\.sql/);
   assert.match(script, /PreMigration026/);
   assert.match(script, /PostMigration026/);
+});
+
+test('PowerShell preflight accepts only an explicit matching source SHA before the psql stub', {
+  skip: process.platform !== 'win32',
+}, (t) => {
+  const scriptPath = path.join(scripts, 'run-release-preflight.ps1');
+  const repositoryRoot = path.resolve(scripts, '../../..');
+  const powershellPath = path.join(
+    process.env.SystemRoot || 'C:\\Windows',
+    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+  );
+  const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-preflight-source-sha-'));
+  t.after(() => fs.rmSync(tempDirectory, { recursive: true, force: true }));
+
+  const passfile = path.join(tempDirectory, 'pgpass.conf');
+  const serviceFile = path.join(tempDirectory, 'pg_service.conf');
+  const callMarker = path.join(tempDirectory, 'psql-stub-calls.txt');
+  const psqlStub = path.join(tempDirectory, 'psql-stub.cmd');
+  fs.writeFileSync(passfile, '', 'utf8');
+  fs.writeFileSync(serviceFile, '[tq_release_preflight]\nhost=127.0.0.1\nport=5432\ndbname=fixture\nuser=tq_release_preflight_reader\n', 'utf8');
+  fs.writeFileSync(psqlStub, `@echo invoked>>"${callMarker}"\r\n@exit /b 0\r\n`, 'utf8');
+
+  const sourceResult = spawnSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+  assert.equal(sourceResult.status, 0, sourceResult.stderr);
+  const currentSourceSha = sourceResult.stdout.trim();
+  const baseArguments = [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-File', scriptPath,
+    '-ServiceName', 'tq_release_preflight',
+    '-ExpectedDatabase', 'fixture',
+    '-ExpectedServerAddress', '127.0.0.1',
+    '-ExpectedServerPort', '5432',
+    '-PassfilePath', passfile,
+    '-ServiceFilePath', serviceFile,
+    '-PsqlPath', psqlStub,
+  ];
+  const childEnv = Object.fromEntries(
+    ['PATH', 'PATHEXT', 'SystemRoot', 'ProgramFiles', 'ProgramFiles(x86)', 'COMSPEC', 'TEMP', 'TMP']
+      .filter((name) => process.env[name])
+      .map((name) => [name, process.env[name]]),
+  );
+
+  const invoke = (sha) => spawnSync(
+    powershellPath,
+    sha === undefined ? baseArguments : [...baseArguments, '-ExpectedSourceCommit', sha],
+    { encoding: 'utf8', env: childEnv, timeout: 15000 },
+  );
+  const outputOf = (result) => `${result.stdout || ''}\n${result.stderr || ''}`;
+
+  const missingSha = invoke(undefined);
+  assert.notEqual(missingSha.status, 0);
+  assert.match(outputOf(missingSha), /ExpectedSourceCommit|Mandatory/i);
+
+  const malformedSha = invoke('not-a-commit');
+  assert.notEqual(malformedSha.status, 0);
+  assert.match(outputOf(malformedSha), /ExpectedSourceCommit|ValidatePattern/i);
+
+  const mismatchedSha = invoke('0000000000000000000000000000000000000000');
+  assert.notEqual(mismatchedSha.status, 0);
+  assert.match(outputOf(mismatchedSha), /HEAD does not match the approved commit/i);
+  assert.equal(fs.existsSync(callMarker), false, 'a SHA mismatch must stop before invoking psql');
+
+  const matchingSha = invoke(currentSourceSha);
+  const matchingOutput = outputOf(matchingSha);
+  assert.doesNotMatch(matchingOutput, /HEAD does not match the approved commit/i);
+  if (/reviewed preflight files or migrations are modified\/untracked/i.test(matchingOutput)) {
+    assert.notEqual(matchingSha.status, 0, 'dirty reviewed inputs must still fail closed');
+    assert.equal(fs.existsSync(callMarker), false);
+  } else {
+    assert.equal(matchingSha.status, 0, matchingOutput);
+    assert.equal(fs.readFileSync(callMarker, 'utf8').trim().split(/\r?\n/).length, 2,
+      'the matching SHA path should invoke only the harmless psql stub twice');
+  }
 });
 
 test('pre-migration 026 SQL matches current source metadata and stays metadata-only/read-only', () => {
@@ -90,15 +167,33 @@ test('isolated backend workflow provisions and sentinel-marks every new syntheti
   assert.ok(workflowPath, `backend workflow must exist at one of: ${workflowPathCandidates.join(', ')}`);
   const workflow = fs.readFileSync(workflowPath, 'utf8');
   for (const database of [
+    'tq_preflight_valid_test_ci',
+    'tq_preflight_missing_ledger_test_ci',
+    'tq_preflight_missing_table_test_ci',
+    'tq_preflight_missing_column_test_ci',
+    'tq_preflight_incompatible_type_test_ci',
+    'tq_preflight_game_student_id_width_test_ci',
+    'tq_preflight_malformed_ledger_test_ci',
+    'tq_preflight_pending_024_test_ci',
+    'tq_preflight_pending_025_test_ci',
+    'tq_preflight_missing_receipt_constraint_test_ci',
     'tq_preflight_pre_026_test_ci',
     'tq_preflight_partial_receipt_026_test_ci',
     'tq_preflight_026_applied_test_ci',
     'tq_preflight_pre_024_test_ci',
+    'tq_preflight_wrong_filename_ledger_test_ci',
   ]) {
-    assert.equal(workflow.split(database).length - 1, 2, `${database} must be both created and stamped with the disposable sentinel`);
+    assert.equal(workflow.split(database).length - 1, 3,
+      `${database} must be created and sentinel-marked in the PostgreSQL 16 and 18 jobs`);
   }
   assert.match(workflow, /--network none/);
   assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /postgres:16-bookworm/);
+  assert.match(workflow, /postgres:18-bookworm/);
+  assert.match(workflow, /TQ_EXPECTED_POSTGRES_MAJOR: '16'/);
+  assert.match(workflow, /TQ_EXPECTED_POSTGRES_MAJOR: '18'/);
+  assert.match(workflow, /test "\$image_pgdata" = "\/var\/lib\/postgresql\/18\/docker"/);
+  assert.match(workflow, /--tmpfs "\/var\/lib\/postgresql:rw,nosuid,nodev,size=1g/);
 });
 
 test('disposable PostgreSQL harness exercises read-only backup audit and isolated archive restore', () => {
@@ -109,7 +204,16 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
   assert.match(harness, /--no-owner/);
   assert.match(harness, /synthetic-only-backup-probe/);
   assert.match(harness, /tq_restore_backup_test_ci/);
-  assert.match(harness, /passedScenarioCount, 23/);
+  assert.match(harness, /SCHEMA_READINESS_SQL/);
+  assert.match(harness, /BEGIN READ ONLY;/);
+  assert.match(harness, /primary-key column order mismatch/);
+  assert.match(harness, /foreign-key target mismatch/);
+  assert.match(harness, /case-changed regular-expression literal/);
+  assert.match(harness, /whitespace-changed regular-expression literal/);
+  assert.match(harness, /unexpected deferrable unique constraint/);
+  assert.match(harness, /unvalidated CHECK constraint/);
+  assert.match(harness, /passedScenarioCount, 41/);
+  assert.match(harness, /passedScenarioCount, 43/);
   assert.match(harness, /assertCiContainer\(\)/);
 });
 

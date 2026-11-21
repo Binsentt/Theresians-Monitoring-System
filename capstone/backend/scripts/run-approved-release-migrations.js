@@ -190,7 +190,7 @@ async function runApprovedReleaseMigrations({
     const identitySql = [
       'SELECT current_database() AS database_name,',
       '       current_user AS database_user,',
-      '       inet_server_addr()::text AS server_address,',
+      '       host(inet_server_addr()) AS server_address,',
       '       inet_server_port() AS server_port',
     ].join('\n');
     const identityResult = await client.query(identitySql);
