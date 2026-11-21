@@ -38,11 +38,11 @@ WITH target_role AS (
       WHERE NOT has_table_privilege(current_user, relation.oid, 'SELECT')
     )::integer AS unreadable_relation_count,
     COUNT(*) FILTER (
-      WHERE has_table_privilege(current_user, relation.oid, 'INSERT')
-         OR has_table_privilege(current_user, relation.oid, 'UPDATE')
+      WHERE has_any_column_privilege(current_user, relation.oid, 'INSERT')
+         OR has_any_column_privilege(current_user, relation.oid, 'UPDATE')
          OR has_table_privilege(current_user, relation.oid, 'DELETE')
          OR has_table_privilege(current_user, relation.oid, 'TRUNCATE')
-         OR has_table_privilege(current_user, relation.oid, 'REFERENCES')
+         OR has_any_column_privilege(current_user, relation.oid, 'REFERENCES')
          OR has_table_privilege(current_user, relation.oid, 'TRIGGER')
     )::integer AS relation_write_privilege_count,
     COUNT(*) FILTER (WHERE relation.relrowsecurity)::integer AS row_security_relation_count,

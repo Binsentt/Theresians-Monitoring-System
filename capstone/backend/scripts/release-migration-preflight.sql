@@ -83,11 +83,11 @@ WITH role_checks AS (
            AND relation_namespace.nspname <> 'information_schema'
            AND relation_namespace.nspname !~ '^pg_'
            AND (
-             has_table_privilege(current_user, relation.oid, 'INSERT')
-             OR has_table_privilege(current_user, relation.oid, 'UPDATE')
+             has_any_column_privilege(current_user, relation.oid, 'INSERT')
+             OR has_any_column_privilege(current_user, relation.oid, 'UPDATE')
              OR has_table_privilege(current_user, relation.oid, 'DELETE')
              OR has_table_privilege(current_user, relation.oid, 'TRUNCATE')
-             OR has_table_privilege(current_user, relation.oid, 'REFERENCES')
+             OR has_any_column_privilege(current_user, relation.oid, 'REFERENCES')
              OR has_table_privilege(current_user, relation.oid, 'TRIGGER')
            )
        ) AS table_write_privileges_denied,

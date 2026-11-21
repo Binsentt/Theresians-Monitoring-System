@@ -17,6 +17,7 @@ test('read-only preflight audit is fixed to catalog and migration-ledger metadat
   assert.match(sql, /schema_migrations/);
   assert.match(sql, /application_relation_select_count/);
   assert.match(sql, /has_column_privilege/);
+  assert.match(sql, /has_any_column_privilege/);
   assert.match(sql, /extra_ledger_column_select_count/);
   assert.match(sql, /executable_security_definer_function_count/);
   assert.match(sql, /ROLLBACK/i);
@@ -119,10 +120,14 @@ test('backup utility has separate explicit backup and isolated-restore gates', (
   assert.match(script, /ExecuteApprovedProductionBackup/);
   assert.match(script, /ExecuteIsolatedRestore/);
   assert.match(script, /ExpectedSourceCommit/);
-  assert.match(script, /EncryptedStorageConfirmed/);
+  assert.match(script, /EncryptionEvidencePath/);
+  assert.match(script, /ExpectedEncryptionEvidenceSha256/);
+  assert.match(script, /Assert-BackupStorageDirectory/);
+  assert.doesNotMatch(script, /EncryptedStorageConfirmed/);
   assert.match(script, /pg_dump/);
   assert.match(script, /pg_restore/);
   assert.match(script, /--single-transaction/);
+  assert.match(script, /& \$PgRestorePath @restoreArgs \*>\s*\$null/, 'restore diagnostics must not stream row values to terminal logs');
   assert.match(script, /--exit-on-error/);
   assert.match(script, /restore-input\.toc\.txt/);
   assert.match(script, /backup\/preflight files or migrations are modified\/untracked/);
@@ -147,4 +152,56 @@ test('migration 026 remains additive and runner accepts only the exact approved 
   assert.match(runner, /database migration filename does not match this source revision/);
   assert.match(runner, /database migration checksum does not match this source revision/);
   assert.match(runner, /migration 024/i);
+});
+
+test('offline backup rehearsal pins source, forces interactive auth, and validates mode-specific snapshots', () => {
+  const script = read('backup-restore-rehearsal.ps1');
+  const validation = read('backupRestoreRehearsal.validation.psm1');
+
+  assert.match(script, /Set-StrictMode\s+-Version\s+Latest/);
+  assert.match(script, /\[Parameter\(Mandatory=\$true\)\]\[string\]\$ExpectedSourceCommit/);
+  assert.doesNotMatch(script, /\$ExpectedSourceCommit\s*=/);
+  assert.match(script, /ValidateSet\('PreMigration026','PostMigration026'\)/);
+  assert.match(script, /Assert-ApprovedRecoverySource/);
+  assert.match(script, /Assert-ReleaseMigrationLedger/);
+  assert.match(script, /Assert-ReceiptSchemaState/);
+  assert.match(script, /release-preflight-role-audit\.sql/);
+  assert.match(script, /NOT\s+t\.tgisinternal/i, 'receipt validation must ignore PostgreSQL internal FK triggers');
+  assert.doesNotMatch(script, /relkind\s+NOT\s+IN\s*\('i','I'\)/i, 'pre-026 receipt scan must include named index relations');
+  assert.match(script, /pg_catalog\.pg_type[\s\S]*?typrelid=0/, 'restore target preflight must detect standalone user-defined types');
+  assert.match(script, /rolreplication/, 'restore target role must not have replication privilege');
+  assert.match(script, /--password/);
+  assert.doesNotMatch(script, /--no-password/);
+  assert.doesNotMatch(script, /\$env:PGPASSWORD\s*=/);
+  assert.doesNotMatch(script, /\$env:PGPASSFILE\s*=/);
+  assert.match(script, /--snapshot=\$SnapshotId/);
+  assert.match(script, /ExpectedAggregateManifestSha256/);
+  assert.match(script, /Assert-IsolatedRestoreTarget/);
+  assert.match(script, /return \$fields/);
+  assert.doesNotMatch(script, /return ,\$fields/);
+  assert.match(script, /--single-transaction/);
+  assert.doesNotMatch(script, /--clean\b|--create\b/i);
+  assert.doesNotMatch(script, /\$Variables\b/, 'psql wrapper must not use an undefined variables collection');
+  assert.match(script, /\$tocFinal="\$archive\.toc\.txt"/, 'completed TOC path must be checked before writing');
+  assert.match(script, /foreach\(\$path in @\(\$archive,\$partial,\$tocPartial,\$tocFinal/);
+
+  const tableBlock = validation.match(/\$script:AggregateTables\s*=\s*@\(([\s\S]*?)\)/);
+  assert.ok(tableBlock, 'aggregate table allowlist must be explicit');
+  const tables = [...tableBlock[1].matchAll(/'([^']+)'/g)].map(([, table]) => table);
+  assert.deepEqual(tables, Object.keys(REQUIRED_SCHEMA).filter((table) => table !== 'game_progress_save_commits'));
+  assert.match(validation, /SET TRANSACTION SNAPSHOT '\$SnapshotId'/);
+  const aggregateBuilderStart = validation.indexOf('function New-BackupAggregateSql');
+  assert.notEqual(aggregateBuilderStart, -1, 'aggregate SQL builder must exist');
+  const aggregateBuilder = validation.slice(aggregateBuilderStart);
+  assert.doesNotMatch(aggregateBuilder, /SELECT\s+\*|student_id|student_name|question_text|answer_text|email/i);
+  assert.match(validation, /duplicate migration ledger filename/);
+});
+
+test('backup and migration preflight role audits reject column-level write grants', () => {
+  for (const name of ['backup-role-preflight.sql', 'release-migration-preflight.sql']) {
+    const sql = read(name);
+    assert.match(sql, /has_any_column_privilege\([^\n]+,\s*'INSERT'\)/i, `${name} must reject column INSERT grants`);
+    assert.match(sql, /has_any_column_privilege\([^\n]+,\s*'UPDATE'\)/i, `${name} must reject column UPDATE grants`);
+    assert.match(sql, /has_any_column_privilege\([^\n]+,\s*'REFERENCES'\)/i, `${name} must reject column REFERENCES grants`);
+  }
 });
