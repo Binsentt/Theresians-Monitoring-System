@@ -46,16 +46,23 @@ const SCHEMA_READINESS_SQL = `
    AND column_definition.attnum > 0
    AND column_definition.attisdropped = false
   WHERE relation.oid IS NULL OR column_definition.attnum IS NULL
-  ), required_receipt_constraints(constraint_name, constraint_type) AS (
+  ), required_receipt_constraints(
+    constraint_name,
+    constraint_type,
+    expected_key_columns,
+    expected_reference_relation,
+    expected_reference_columns,
+    expected_check_expression
+  ) AS (
     VALUES
-      ('game_progress_save_commits_pkey', 'p'),
-      ('game_progress_save_commits_activity_event_unique', 'u'),
-      ('game_progress_save_commits_student_id_fkey', 'f'),
-      ('game_progress_save_commits_learning_cycle_version_check', 'c'),
-      ('game_progress_save_commits_save_commit_id_hash_check', 'c'),
-      ('game_progress_save_commits_payload_sha256_check', 'c'),
-      ('game_progress_save_commits_response_status_check', 'c'),
-      ('game_progress_save_commits_completion_consistency', 'c')
+      ('game_progress_save_commits_pkey', 'p', ARRAY['student_id', 'learning_cycle_version', 'save_commit_id_hash']::text[], NULL::text, NULL::text[], NULL::text),
+      ('game_progress_save_commits_activity_event_unique', 'u', ARRAY['student_id', 'activity_event_key']::text[], NULL::text, NULL::text[], NULL::text),
+      ('game_progress_save_commits_student_id_fkey', 'f', ARRAY['student_id']::text[], 'public.accounts', ARRAY['id']::text[], NULL::text),
+      ('game_progress_save_commits_learning_cycle_version_check', 'c', ARRAY['learning_cycle_version']::text[], NULL::text, NULL::text[], 'learning_cycle_version>=0'),
+      ('game_progress_save_commits_save_commit_id_hash_check', 'c', ARRAY['save_commit_id_hash']::text[], NULL::text, NULL::text[], $$save_commit_id_hash~'^[0-9a-f]{64}$'$$),
+      ('game_progress_save_commits_payload_sha256_check', 'c', ARRAY['payload_sha256']::text[], NULL::text, NULL::text[], $$payload_sha256~'^[0-9a-f]{64}$'$$),
+      ('game_progress_save_commits_response_status_check', 'c', ARRAY['response_status']::text[], NULL::text, NULL::text[], 'response_status>=200andresponse_status<=299'),
+      ('game_progress_save_commits_completion_consistency', 'c', ARRAY['response_body', 'completed_at']::text[], NULL::text, NULL::text[], 'response_bodyisnull=completed_atisnull')
   ), missing_receipt_constraints AS (
     SELECT 'game_progress_save_commits.' || required_receipt_constraints.constraint_name AS missing_object
     FROM required_receipt_constraints
@@ -70,6 +77,53 @@ const SCHEMA_READINESS_SQL = `
        OR constraint_definition.oid IS NULL
        OR constraint_definition.contype::text <> required_receipt_constraints.constraint_type
        OR NOT constraint_definition.convalidated
+       OR constraint_definition.condeferrable
+       OR constraint_definition.condeferred
+       OR ARRAY(
+         SELECT column_definition.attname::text
+         FROM unnest(constraint_definition.conkey) WITH ORDINALITY AS key_column(attnum, ordinal_position)
+         JOIN pg_catalog.pg_attribute AS column_definition
+           ON column_definition.attrelid = constraint_definition.conrelid
+          AND column_definition.attnum = key_column.attnum
+         ORDER BY key_column.ordinal_position
+       ) IS DISTINCT FROM required_receipt_constraints.expected_key_columns
+       OR (
+         required_receipt_constraints.expected_reference_relation IS NOT NULL
+         AND (
+           constraint_definition.confrelid IS DISTINCT FROM pg_catalog.to_regclass(required_receipt_constraints.expected_reference_relation)
+           OR constraint_definition.confupdtype <> 'a'
+           OR constraint_definition.confdeltype <> 'c'
+           OR constraint_definition.confmatchtype <> 's'
+           OR ARRAY(
+             SELECT referenced_column.attname::text
+             FROM unnest(constraint_definition.confkey) WITH ORDINALITY AS key_column(attnum, ordinal_position)
+             JOIN pg_catalog.pg_attribute AS referenced_column
+               ON referenced_column.attrelid = constraint_definition.confrelid
+              AND referenced_column.attnum = key_column.attnum
+             ORDER BY key_column.ordinal_position
+           ) IS DISTINCT FROM required_receipt_constraints.expected_reference_columns
+         )
+       )
+       OR (
+         required_receipt_constraints.expected_check_expression IS NOT NULL
+         AND (
+           SELECT COALESCE(string_agg(
+             CASE
+               WHEN token.parts[1] IS NOT NULL THEN token.parts[1]
+               ELSE lower(regexp_replace(
+                 regexp_replace(token.parts[3], '::text', '', 'gi'),
+                 '[[:space:]()]', '', 'g'
+               ))
+             END,
+             '' ORDER BY token.ordinality
+           ), '')
+           FROM regexp_matches(
+             pg_catalog.pg_get_expr(constraint_definition.conbin, constraint_definition.conrelid),
+             $$('([^']|'')*')|([^']+)$$,
+             'g'
+           ) WITH ORDINALITY AS token(parts, ordinality)
+         ) IS DISTINCT FROM required_receipt_constraints.expected_check_expression
+       )
   )
   SELECT missing_object FROM missing_columns
   UNION ALL

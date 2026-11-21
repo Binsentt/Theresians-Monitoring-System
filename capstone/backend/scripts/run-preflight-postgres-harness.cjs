@@ -6,7 +6,7 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
-const { REQUIRED_SCHEMA } = require('../database/startupSchemaReadiness');
+const { REQUIRED_SCHEMA, SCHEMA_READINESS_SQL } = require('../database/startupSchemaReadiness');
 const { RELEASE_MIGRATIONS, migrationChecksum } = require('../releaseMigrations');
 const fs = require('node:fs');
 
@@ -28,11 +28,13 @@ const CASES = Object.freeze({
   incompatibleGameStudentIdWidth: 'tq_preflight_game_student_id_width_test_ci',
   malformedLedger: 'tq_preflight_malformed_ledger_test_ci',
   pending024: 'tq_preflight_pending_024_test_ci',
+  pending025: 'tq_preflight_pending_025_test_ci',
   missingReceiptConstraint: 'tq_preflight_missing_receipt_constraint_test_ci',
   preMigration026: 'tq_preflight_pre_026_test_ci',
   partialReceipt026: 'tq_preflight_partial_receipt_026_test_ci',
   migration026Applied: 'tq_preflight_026_applied_test_ci',
   preMigration024Pending: 'tq_preflight_pre_024_test_ci',
+  wrongFilenameLedger: 'tq_preflight_wrong_filename_ledger_test_ci',
 });
 
 function docker(args, input = undefined) {
@@ -82,6 +84,17 @@ function assertCiContainer() {
       || (portBindings && typeof portBindings === 'object' && Object.keys(portBindings).length === 0),
     'PostgreSQL must have no published ports',
   );
+
+  const expectedMajor = process.env.TQ_EXPECTED_POSTGRES_MAJOR || '';
+  assert.match(expectedMajor, /^(16|18)$/, 'the workflow must declare PostgreSQL 16 or 18 explicitly');
+  const serverVersion = docker([
+    'exec', CONTAINER, 'psql', '--host=127.0.0.1', '--username=postgres', '--dbname=postgres',
+    '--no-psqlrc', '--tuples-only', '--no-align', '--command=SHOW server_version_num;',
+  ]);
+  assert.equal(serverVersion.status, 0, serverVersion.stderr);
+  assert.equal(Math.floor(Number(serverVersion.stdout.trim()) / 10000), Number(expectedMajor),
+    `the container must run PostgreSQL ${expectedMajor}, got server_version_num=${serverVersion.stdout.trim()}`);
+  recordScenario(`disposable database server is PostgreSQL ${expectedMajor}`);
 
   for (const database of Object.values(CASES)) {
     assert.match(database, /^tq_preflight_[a-z0-9_]+_test_ci$/);
@@ -163,7 +176,7 @@ function fixtureSql(mode) {
   }
   for (const [table, columns] of Object.entries(REQUIRED_SCHEMA)) {
     if (table === 'game_progress_save_commits') {
-      if (['preMigration026', 'partialReceipt026', 'preMigration024Pending'].includes(mode)) {
+      if (['preMigration026', 'partialReceipt026', 'preMigration024Pending', 'pending025'].includes(mode)) {
         continue;
       }
       statements.push(fs.readFileSync(
@@ -238,16 +251,20 @@ function fixtureSql(mode) {
     statements.push('ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_pkey;');
   }
   if (!['pending024', 'missingLedger'].includes(mode)) {
-    const migrationsToSeed = mode === 'preMigration024Pending'
-      ? RELEASE_MIGRATIONS.filter(({ version }) => version < 24)
-      : ['preMigration026', 'partialReceipt026'].includes(mode)
-        ? RELEASE_MIGRATIONS.filter(({ version }) => version < 26)
-        : RELEASE_MIGRATIONS;
+    let migrationsToSeed = RELEASE_MIGRATIONS;
+    if (mode === 'preMigration024Pending') {
+      migrationsToSeed = RELEASE_MIGRATIONS.filter(({ version }) => version < 24);
+    } else if (mode === 'pending025') {
+      migrationsToSeed = RELEASE_MIGRATIONS.filter(({ version }) => version < 25);
+    } else if (['preMigration026', 'partialReceipt026'].includes(mode)) {
+      migrationsToSeed = RELEASE_MIGRATIONS.filter(({ version }) => version < 26);
+    }
     statements.push(...migrationsToSeed.map(({ version, file }) => {
       const checksum = mode === 'malformedLedger' && version === 18
         ? '0'.repeat(64)
         : migrationChecksum(fs.readFileSync(require('node:path').join(__dirname, '../migrations', file), 'utf8'));
-      return `INSERT INTO public.schema_migrations (version, filename, checksum) VALUES (${version}, '${file}', '${checksum}');`;
+      const filename = mode === 'wrongFilenameLedger' && version === 18 ? `wrong_${file}` : file;
+      return `INSERT INTO public.schema_migrations (version, filename, checksum) VALUES (${version}, '${filename}', '${checksum}');`;
     }));
   } else if (mode === 'pending024') {
     statements.push(...RELEASE_MIGRATIONS.filter(({ version }) => version < 24).map(({ version, file }) => {
@@ -270,6 +287,40 @@ function invokePreflight(database, overrides = {}) {
     expected_server_port: '5432',
     ...overrides,
   });
+}
+
+function invokeStartupReadiness(database) {
+  const requiredSchemaJson = JSON.stringify(
+    Object.entries(REQUIRED_SCHEMA).map(([table_name, columns]) => ({ table_name, columns })),
+  ).replace(/'/g, "''");
+  assert.equal((SCHEMA_READINESS_SQL.match(/\$1::jsonb/g) || []).length, 1,
+    'startup readiness SQL must have exactly one schema-contract parameter');
+  const query = SCHEMA_READINESS_SQL.replace('$1::jsonb', `'${requiredSchemaJson}'::jsonb`);
+  return psql(database, ROLE, `BEGIN READ ONLY;\n${query};\nROLLBACK;`);
+}
+
+function assertReceiptConstraintMismatch({ label, constraintName, mutationSql, restoreSql }) {
+  const mutation = psql(CASES.valid, 'postgres', mutationSql);
+  assert.equal(mutation.status, 0, `${label} fixture mutation failed: ${mutation.stderr}`);
+
+  const startup = invokeStartupReadiness(CASES.valid);
+  assert.equal(startup.status, 0, `${label} catalog read failed: ${startup.stderr}`);
+  assert.ok(
+    startup.stdout.trim().split(/\r?\n/).includes(`game_progress_save_commits.${constraintName}`),
+    `${label} must be reported by the actual startup readiness SQL: ${startup.stdout}`,
+  );
+
+  const preflight = invokePreflight(CASES.valid);
+  assert.equal(preflight.status, 3,
+    `${label} must fail the release preflight closed: ${preflight.stderr}\n${preflight.stdout}`);
+  assert.match(preflight.stdout, /STOP: migration 026 receipt constraints are missing or incompatible/);
+
+  const restore = psql(CASES.valid, 'postgres', restoreSql);
+  assert.equal(restore.status, 0, `${label} fixture restore failed: ${restore.stderr}`);
+  const recovered = invokeStartupReadiness(CASES.valid);
+  assert.equal(recovered.status, 0, `${label} restore query failed: ${recovered.stderr}`);
+  assert.equal(recovered.stdout.trim(), '', `${label} must restore the valid startup contract: ${recovered.stdout}`);
+  recordScenario(label);
 }
 
 function invokeRoleAudit(database) {
@@ -340,6 +391,20 @@ assert.equal(valid.status, 0, `valid disposable schema must pass: ${valid.stderr
 assert.match(valid.stdout, /Startup schema contract is complete: 18 tables and 278 required columns are present/);
 recordScenario('compatible 18-table/278-column post-migration schema and ledger');
 
+const validStartup = invokeStartupReadiness(CASES.valid);
+assert.equal(validStartup.status, 0, `valid startup catalog query must execute read-only: ${validStartup.stderr}`);
+assert.equal(validStartup.stdout.trim(), '', `valid startup schema must return no missing objects: ${validStartup.stdout}`);
+const receiptShape = psql(CASES.valid, ROLE, `BEGIN READ ONLY;
+  SELECT (SELECT count(*) FROM pg_catalog.pg_attribute
+          WHERE attrelid = 'public.game_progress_save_commits'::regclass
+            AND attnum > 0 AND NOT attisdropped)::text || '|' ||
+         (SELECT count(*) FROM pg_catalog.pg_constraint
+          WHERE conrelid = 'public.game_progress_save_commits'::regclass)::text;
+ROLLBACK;`);
+assert.equal(receiptShape.status, 0, receiptShape.stderr);
+assert.equal(receiptShape.stdout.trim(), '9|8', 'receipt schema must have exactly nine columns and eight constraints');
+recordScenario('actual startup readiness SQL accepts nine receipt columns and eight canonical constraints');
+
 const validRoleAudit = invokeRoleAudit(CASES.valid);
 assert.equal(validRoleAudit.status, 0, `preflight-only role must pass the catalog audit: ${validRoleAudit.stderr}\n${validRoleAudit.stdout}`);
 assert.match(validRoleAudit.stdout, /application_relation_select_count=0/);
@@ -404,6 +469,23 @@ assert.equal(wrongTarget.status, 3, `wrong target fingerprint must fail closed: 
 assert.match(wrongTarget.stdout, /STOP: target database identity or read-only transaction/);
 recordScenario('incorrect expected database identity fails closed');
 
+const wrongRole = invokePreflight(CASES.valid, { expected_role: 'unexpected_role' });
+assert.equal(wrongRole.status, 3, `wrong expected role must fail closed: ${wrongRole.stderr}\n${wrongRole.stdout}`);
+assert.match(wrongRole.stdout, /STOP: target database identity or read-only transaction mismatch/);
+recordScenario('incorrect expected database role fails closed');
+
+const revokeLedgerChecksum = psql(CASES.valid, 'postgres',
+  `REVOKE SELECT (checksum) ON public.schema_migrations FROM ${ROLE};`);
+assert.equal(revokeLedgerChecksum.status, 0, revokeLedgerChecksum.stderr);
+const insufficientLedgerRead = invokePreflight(CASES.valid);
+const regrantLedgerChecksum = psql(CASES.valid, 'postgres',
+  `GRANT SELECT (checksum) ON public.schema_migrations TO ${ROLE};`);
+assert.equal(regrantLedgerChecksum.status, 0, regrantLedgerChecksum.stderr);
+assert.notEqual(insufficientLedgerRead.status, 0,
+  'missing required migration-ledger column SELECT must fail before a report is produced');
+assert.match(insufficientLedgerRead.stderr, /permission denied for table schema_migrations/);
+recordScenario('missing migration-ledger column privilege fails closed without application-row access');
+
 const grantWrite = psql(CASES.valid, 'postgres', `GRANT INSERT ON public.accounts TO ${ROLE};`);
 assert.equal(grantWrite.status, 0, grantWrite.stderr);
 const writableRole = invokePreflight(CASES.valid);
@@ -436,6 +518,149 @@ assert.equal(missingReceiptConstraint.status, 3,
 assert.match(missingReceiptConstraint.stdout, /STOP: migration 026 receipt constraints are missing or incompatible/);
 recordScenario('missing receipt primary key fails closed');
 
+assertReceiptConstraintMismatch({
+  label: 'primary-key column order mismatch fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_pkey',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_pkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_pkey
+    PRIMARY KEY (learning_cycle_version, student_id, save_commit_id_hash);`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_pkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_pkey
+    PRIMARY KEY (student_id, learning_cycle_version, save_commit_id_hash);`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'wrong unique-key composition fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_activity_event_unique',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_activity_event_unique;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_activity_event_unique
+    UNIQUE (student_id, learning_cycle_version, activity_event_key);`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_activity_event_unique;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_activity_event_unique
+    UNIQUE (student_id, activity_event_key);`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'foreign-key target mismatch fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_student_id_fkey',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_student_id_fkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_student_id_fkey
+    FOREIGN KEY (student_id) REFERENCES public.teacher_class_assignments(id) ON DELETE CASCADE;`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_student_id_fkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_student_id_fkey
+    FOREIGN KEY (student_id) REFERENCES public.accounts(id) ON DELETE CASCADE;`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'foreign-key column mapping mismatch fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_student_id_fkey',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_student_id_fkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_student_id_fkey
+    FOREIGN KEY (learning_cycle_version) REFERENCES public.accounts(id) ON DELETE CASCADE;`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_student_id_fkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_student_id_fkey
+    FOREIGN KEY (student_id) REFERENCES public.accounts(id) ON DELETE CASCADE;`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'foreign-key delete-action mismatch fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_student_id_fkey',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_student_id_fkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_student_id_fkey
+    FOREIGN KEY (student_id) REFERENCES public.accounts(id) ON DELETE SET NULL;`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_student_id_fkey;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_student_id_fkey
+    FOREIGN KEY (student_id) REFERENCES public.accounts(id) ON DELETE CASCADE;`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'altered learning-cycle CHECK fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_learning_cycle_version_check',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_learning_cycle_version_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_learning_cycle_version_check
+    CHECK (learning_cycle_version > 0);`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_learning_cycle_version_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_learning_cycle_version_check
+    CHECK (learning_cycle_version >= 0);`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'case-changed regular-expression literal fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_save_commit_id_hash_check',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_save_commit_id_hash_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_save_commit_id_hash_check
+    CHECK (save_commit_id_hash ~ '^[0-9A-F]{64}$');`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_save_commit_id_hash_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_save_commit_id_hash_check
+    CHECK (save_commit_id_hash ~ '^[0-9a-f]{64}$');`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'whitespace-changed regular-expression literal fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_save_commit_id_hash_check',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_save_commit_id_hash_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_save_commit_id_hash_check
+    CHECK (save_commit_id_hash ~ '^[0-9a-f]{ 64 }$');`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_save_commit_id_hash_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_save_commit_id_hash_check
+    CHECK (save_commit_id_hash ~ '^[0-9a-f]{64}$');`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'altered payload SHA-256 CHECK fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_payload_sha256_check',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_payload_sha256_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_payload_sha256_check
+    CHECK (payload_sha256 ~ '^[0-9a-f]{63,64}$');`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_payload_sha256_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_payload_sha256_check
+    CHECK (payload_sha256 ~ '^[0-9a-f]{64}$');`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'altered response-status CHECK fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_response_status_check',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_response_status_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_response_status_check
+    CHECK (response_status BETWEEN 201 AND 299);`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_response_status_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_response_status_check
+    CHECK (response_status BETWEEN 200 AND 299);`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'altered completion-consistency CHECK fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_completion_consistency',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_completion_consistency;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_completion_consistency
+    CHECK ((response_body IS NULL) OR (completed_at IS NULL));`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_completion_consistency;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_completion_consistency
+    CHECK ((response_body IS NULL) = (completed_at IS NULL));`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'unexpected deferrable unique constraint fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_activity_event_unique',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_activity_event_unique;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_activity_event_unique
+    UNIQUE (student_id, activity_event_key) DEFERRABLE INITIALLY DEFERRED;`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_activity_event_unique;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_activity_event_unique
+    UNIQUE (student_id, activity_event_key);`,
+});
+
+assertReceiptConstraintMismatch({
+  label: 'unvalidated CHECK constraint fails actual startup and release checks',
+  constraintName: 'game_progress_save_commits_learning_cycle_version_check',
+  mutationSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_learning_cycle_version_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_learning_cycle_version_check
+    CHECK (learning_cycle_version >= 0) NOT VALID;`,
+  restoreSql: `ALTER TABLE public.game_progress_save_commits DROP CONSTRAINT game_progress_save_commits_learning_cycle_version_check;
+    ALTER TABLE public.game_progress_save_commits ADD CONSTRAINT game_progress_save_commits_learning_cycle_version_check
+    CHECK (learning_cycle_version >= 0);`,
+});
+
 const gameStudentIdWidth = invokePreflight(CASES.incompatibleGameStudentIdWidth);
 assert.equal(gameStudentIdWidth.status, 3, `incompatible game_student_id width must fail closed: ${gameStudentIdWidth.stderr}\n${gameStudentIdWidth.stdout}`);
 assert.match(gameStudentIdWidth.stdout, /STOP: accounts\.game_student_id must be VARCHAR\(8\)/);
@@ -445,6 +670,11 @@ const malformed = invokePreflight(CASES.malformedLedger);
 assert.equal(malformed.status, 3, `malformed migration metadata must fail closed: ${malformed.stderr}\n${malformed.stdout}`);
 assert.match(malformed.stdout, /STOP: applied migration filename or checksum differs/);
 recordScenario('malformed migration checksum fails closed');
+
+const wrongFilename = invokePreflight(CASES.wrongFilenameLedger);
+assert.equal(wrongFilename.status, 3, `inconsistent migration filename must fail closed: ${wrongFilename.stderr}\n${wrongFilename.stdout}`);
+assert.match(wrongFilename.stdout, /STOP: applied migration filename or checksum differs/);
+recordScenario('migration version with an inconsistent filename fails closed');
 
 const missingLedger = invokePreflight(CASES.missingLedger);
 assert.equal(missingLedger.status, 3, `missing migration ledger must fail closed: ${missingLedger.stderr}\n${missingLedger.stdout}`);
@@ -483,6 +713,12 @@ assert.match(preMigration026.stdout, /PASS: pre-026 metadata prerequisites verif
 assert.doesNotMatch(preMigration026.stderr, /permission denied for table/i);
 recordScenario('pre-migration 026 baseline passes with exactly 17 tables, 269 columns, and metadata-only access');
 
+const preMigrationStartup = invokeStartupReadiness(CASES.preMigration026);
+assert.equal(preMigrationStartup.status, 0, preMigrationStartup.stderr);
+assert.ok(preMigrationStartup.stdout.trim().split(/\r?\n/).includes('game_progress_save_commits'),
+  `the current-main startup contract must reject the valid pre-026 schema until the separately approved migration is applied: ${preMigrationStartup.stdout}`);
+recordScenario('current-main startup SQL blocks a valid pre-026 schema without changing its migration preflight result');
+
 const addPartialReceipt = psql(CASES.partialReceipt026, 'postgres',
   'CREATE TABLE public.game_progress_save_commits_partial (id integer);');
 assert.equal(addPartialReceipt.status, 0, addPartialReceipt.stderr);
@@ -491,6 +727,10 @@ const partialReceiptOutput = `${partialReceipt.stdout}\n${partialReceipt.stderr}
 assert.equal(partialReceipt.status, 3, `partial receipt object must stop preflight: ${partialReceiptOutput}`);
 assert.match(partialReceiptOutput, /receipt objects are present or partial/i);
 assert.doesNotMatch(partialReceiptOutput, /permission denied for table/i);
+const partialStartup = invokeStartupReadiness(CASES.partialReceipt026);
+assert.equal(partialStartup.status, 0, partialStartup.stderr);
+assert.ok(partialStartup.stdout.includes('game_progress_save_commits'),
+  `startup readiness must report the absent canonical receipt relation: ${partialStartup.stdout}`);
 recordScenario('partial migration-026 receipt objects are rejected using catalog-only access');
 
 const migration026Applied = invokePreMigration026(CASES.migration026Applied);
@@ -513,7 +753,22 @@ assert.equal(pre024StateAfter.status, 0, pre024StateAfter.stderr);
 assert.equal(pre024StateAfter.stdout.trim(), pre024StateBefore.stdout.trim(), 'pre-026 024 stop must not change synthetic rows or the ledger');
 recordScenario('pre-migration check stops on 024 before application-row reads or any migration');
 
-assert.equal(passedScenarioCount, 21, 'all expected disposable PostgreSQL preflight scenarios must execute');
+const pending025Before = psql(CASES.pending025, 'postgres',
+  'SELECT count(*)::text || \'|\' || COALESCE(max(version), 0)::text FROM public.schema_migrations;');
+assert.equal(pending025Before.status, 0, pending025Before.stderr);
+const pending025 = invokePreMigration026(CASES.pending025);
+const pending025Output = `${pending025.stdout}\n${pending025.stderr}`;
+assert.equal(pending025.status, 3, `pending migration 025 must stop preflight: ${pending025Output}`);
+assert.match(pending025Output, /STOP: migration 025 is pending/i);
+assert.doesNotMatch(pending025Output, /permission denied for table/i);
+const pending025After = psql(CASES.pending025, 'postgres',
+  'SELECT count(*)::text || \'|\' || COALESCE(max(version), 0)::text FROM public.schema_migrations;');
+assert.equal(pending025After.status, 0, pending025After.stderr);
+assert.equal(pending025After.stdout.trim(), pending025Before.stdout.trim(),
+  'pending-025 preflight must neither change the ledger nor execute a migration');
+recordScenario('migration 025 pending fails closed without changing the ledger or applying a migration');
+
+assert.equal(passedScenarioCount, 41, 'all expected PostgreSQL major-version and release-preflight scenarios must execute');
 
 const createSyntheticBackupProbe = psql(CASES.valid, 'postgres', `
   CREATE TABLE public.release_backup_synthetic_probe (marker text PRIMARY KEY);
@@ -594,5 +849,5 @@ assert.equal(restoredProbe.status, 0, restoredProbe.stderr);
 assert.equal(restoredProbe.stdout.trim(), 't', 'restored synthetic data and migration metadata must be present');
 recordScenario('custom archive restores transactionally into an empty isolated loopback database and retains synthetic data');
 
-assert.equal(passedScenarioCount, 23, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
+assert.equal(passedScenarioCount, 43, 'all expected PostgreSQL version, release-preflight, and backup scenarios must execute');
 console.log(`Preflight integration result: ${passedScenarioCount}/${passedScenarioCount} disposable PostgreSQL scenarios passed.`);
