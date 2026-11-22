@@ -1175,6 +1175,17 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Verify Windows disposable ACL capability
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probeScript = (Resolve-Path -LiteralPath '.\capstone\backend\scripts\windowsAclCapabilityProbe.ps1').Path
+          $probeHost = (Get-Command 'pwsh.exe' -CommandType Application -ErrorAction Stop).Source
+          & $probeHost -NoLogo -NoProfile -NonInteractive -File $probeScript
+          $probeExit = $LASTEXITCODE
+          if ($null -eq $probeExit -or $probeExit -ne 0) {
+            throw "Windows ACL capability probe failed with process exit $probeExit; refusing to run the ACL integration suite."
+          }
       - name: Run Windows preflight source-pin and credential-file regressions
         shell: pwsh
         run: |
