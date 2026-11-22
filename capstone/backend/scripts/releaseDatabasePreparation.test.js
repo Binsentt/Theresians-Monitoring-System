@@ -108,6 +108,23 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
   fs.writeFileSync(serviceFile, '[tq_release_preflight]\nhost=127.0.0.1\nport=5432\ndbname=fixture\nuser=tq_release_preflight_reader\n', 'utf8');
   fs.writeFileSync(psqlStub, `@echo invoked>>"${callMarker}"\r\n@exit /b 0\r\n`, 'utf8');
 
+  const childEnv = Object.fromEntries(
+    ['PATH', 'PATHEXT', 'SystemRoot', 'ProgramFiles', 'ProgramFiles(x86)', 'COMSPEC', 'TEMP', 'TMP']
+      .filter((name) => process.env[name])
+      .map((name) => [name, process.env[name]]),
+  );
+  childEnv.PSModulePath = path.join(
+    process.env.SystemRoot || 'C:\\Windows',
+    'System32', 'WindowsPowerShell', 'v1.0', 'Modules',
+  );
+
+  const invokePowerShellScript = (script) => {
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    return spawnSync(powershellPath, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+      encoding: 'utf8', env: childEnv, timeout: 15000,
+    });
+  };
+
   const protectSyntheticPath = (target, isDirectory) => {
     const escapedTarget = target.replace(/'/g, "''");
     const inheritance = isDirectory ? '(OI)(CI)' : '';
@@ -123,10 +140,7 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
       `Import-Module '${path.join(scripts, 'backupRestoreRehearsal.validation.psm1').replace(/'/g, "''")}' -Force`,
       'Assert-RestrictedStorageAcl -Path $target',
     ].join('\n');
-    const encoded = Buffer.from(script, 'utf16le').toString('base64');
-    const result = spawnSync(powershellPath, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
-      encoding: 'utf8', timeout: 15000,
-    });
+    const result = invokePowerShellScript(script);
     assert.equal(result.status, 0, `${target} ACL fixture setup failed: ${result.stdout || ''}\n${result.stderr || ''}`);
   };
   protectSyntheticPath(tempDirectory, true);
@@ -146,12 +160,6 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
     '-ServiceFilePath', serviceFile,
     '-PsqlPath', psqlStub,
   ];
-  const childEnv = Object.fromEntries(
-    ['PATH', 'PATHEXT', 'SystemRoot', 'ProgramFiles', 'ProgramFiles(x86)', 'COMSPEC', 'TEMP', 'TMP']
-      .filter((name) => process.env[name])
-      .map((name) => [name, process.env[name]]),
-  );
-
   const invoke = (sha, extraEnvironment = {}, { serviceFilePath } = {}) => {
     const args = sha === undefined ? [...baseArguments] : [...baseArguments, '-ExpectedSourceCommit', sha];
     if (serviceFilePath) args[args.indexOf('-ServiceFilePath') + 1] = serviceFilePath;
@@ -212,6 +220,12 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
   assert.notEqual(broadAcl.status, 0);
   assert.match(outputOf(broadAcl), /ACL grants access to an unapproved identity/i);
   assert.equal(fs.existsSync(callMarker), false, 'broad ACLs must stop before invoking psql');
+  const removeBroadAcl = invokePowerShellScript([
+    `$target = '${serviceFile.replace(/'/g, "''")}'`,
+    '& icacls.exe $target /remove:g "*S-1-5-11" | Out-Null',
+    'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
+  ].join('\n'));
+  assert.equal(removeBroadAcl.status, 0, removeBroadAcl.stderr || removeBroadAcl.stdout);
   protectSyntheticPath(serviceFile, false);
 
   const junction = path.join(tempDirectory, 'credential-junction');
