@@ -9,6 +9,22 @@ $script:outputDrainWaitMs = 1000
 $script:outputCloseWaitMs = 500
 $script:maxOutputChars = 8192
 $envMap = $null
+$sidUniqueCountSource = @'
+function Get-UniqueSidCount {
+  param([Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$SidValues)
+  if ($null -eq $SidValues) { throw [InvalidOperationException]::new('unapproved-sid-values-unavailable') }
+  $uniqueSids = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+  foreach ($sidValue in $SidValues) {
+    if ($null -eq $sidValue -or $sidValue -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$sidValue)) {
+      throw [InvalidOperationException]::new('unapproved-sid-invalid')
+    }
+    $sidText = [string]$sidValue
+    [void][Security.Principal.SecurityIdentifier]::new($sidText)
+    [void]$uniqueSids.Add($sidText)
+  }
+  return $uniqueSids.Count
+}
+'@
 
 function Report([string]$status, [string]$stage, [string]$details) {
   [Console]::Out.WriteLine("[acl-capability] $status stage=$stage $details")
@@ -53,8 +69,8 @@ function Get-PowerShell51StageTrace([string]$output) {
     'complete:unapproved-allow-filter'
     'begin:unapproved-sid-project'
     'complete:unapproved-sid-project'
-    'begin:unapproved-sid-sort-unique'
-    'complete:unapproved-sid-sort-unique'
+    'begin:unapproved-sid-deduplicate-count'
+    'complete:unapproved-sid-deduplicate-count'
     'begin:probe-grant-function-prepare'
     'complete:probe-grant-function-prepare'
     'begin:protected-dacl-read'
@@ -89,7 +105,7 @@ function Get-PowerShell51StageTrace([string]$output) {
     'approved-sid-add-administrators'
     'unapproved-allow-filter'
     'unapproved-sid-project'
-    'unapproved-sid-sort-unique'
+    'unapproved-sid-deduplicate-count'
     'probe-grant-function-prepare'
     'protected-dacl-read'
     'owner-approval-check'
@@ -543,6 +559,9 @@ try {
     '  [Console]::Out.Flush()'
     '}'
     'try {'
+  )
+  $childLines += @($sidUniqueCountSource.Trim() -split "\r?\n" | ForEach-Object { '  ' + $_ })
+  $childLines += @(
     '  Write-Stage ''complete'' ''script-started'''
     '  Write-Stage ''begin'' ''trivial-command'''
     '  $null = 1 + 1'
@@ -589,9 +608,9 @@ try {
     '  Write-Stage ''begin'' ''unapproved-sid-project'''
     '  $unapprovedSidValues = @($unapprovedAllowRules | ForEach-Object { $_.IdentityReference.Value })'
     '  Write-Stage ''complete'' ''unapproved-sid-project'''
-    '  Write-Stage ''begin'' ''unapproved-sid-sort-unique'''
-    '  $unapprovedSids = @($unapprovedSidValues | Sort-Object -Unique)'
-    '  Write-Stage ''complete'' ''unapproved-sid-sort-unique'''
+    '  Write-Stage ''begin'' ''unapproved-sid-deduplicate-count'''
+    '  $unapprovedSidCount = Get-UniqueSidCount -SidValues $unapprovedSidValues'
+    '  Write-Stage ''complete'' ''unapproved-sid-deduplicate-count'''
     '  Write-Stage ''begin'' ''probe-grant-function-prepare'''
     '  function Test-ProbeGrant([string]$sid, [bool]$inherited) {'
     '    $full = [int][Security.AccessControl.FileSystemRights]::FullControl'
@@ -624,7 +643,7 @@ try {
     '  $inheritedAllowCount = @($allow | Where-Object { $_.IsInherited }).Count'
     '  Write-Stage ''complete'' ''inherited-allow-count'''
     '  Write-Stage ''begin'' ''unapproved-allow-count'''
-    '  $unapprovedCount = $unapprovedSids.Count'
+    '  $unapprovedCount = $unapprovedSidCount'
     '  Write-Stage ''complete'' ''unapproved-allow-count'''
     '  Write-Stage ''complete'' ''approved-grant-verification'''
     '  [Console]::Out.WriteLine("ACL_PROBE_PS51:version=$($PSVersionTable.PSVersion.ToString());protected=$protected;allow=$($allow.Count);inherited=$inheritedAllowCount;unapproved=$unapprovedCount;ownerApproved=$ownerApproved;userFullControl=$userGrant;systemFullControl=$systemGrant;administratorsFullControl=$administratorsGrant")'
