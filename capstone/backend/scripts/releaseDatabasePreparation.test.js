@@ -120,28 +120,67 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
 
   const invokePowerShellScript = (script) => {
     const encoded = Buffer.from(script, 'utf16le').toString('base64');
-    return spawnSync(powershellPath, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+    const startedAt = Date.now();
+    const result = spawnSync(powershellPath, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
       encoding: 'utf8', env: childEnv, timeout: 15000,
     });
+    const stages = [...String(result.stdout || '').matchAll(/PR48_STAGE:(begin|complete):([a-z0-9-]+)/gi)]
+      .map(([, phase, operation]) => ({ phase: phase.toLowerCase(), operation }));
+    const completedOperations = stages.filter(({ phase }) => phase === 'complete').map(({ operation }) => operation);
+    const stageTrace = stages.map(({ phase, operation }) => `${phase}:${operation}`).join('>') || 'none';
+    const observation = {
+      ...result,
+      elapsedMs: Date.now() - startedAt,
+      completedOperations,
+      stageTrace,
+      lastObservedStage: stages.length ? `${stages.at(-1).phase}:${stages.at(-1).operation}` : 'none',
+      lastCompletedOperation: completedOperations.at(-1) || 'none (PowerShell startup or first operation)',
+    };
+    if (process.env.TQ_WINDOWS_ACL_DIAGNOSTICS === '1') {
+      process.stderr.write(`[pr48-acl-fixture] elapsedMs=${observation.elapsedMs}; status=${String(observation.status)}; signal=${observation.signal || 'none'}; errorCode=${observation.error?.code || 'none'}; lastCompletedOperation=${observation.lastCompletedOperation}; lastObservedStage=${observation.lastObservedStage}; stageTrace=${stageTrace}\n`);
+    }
+    return observation;
   };
+  const powerShellDiagnostic = (result) => [
+    `elapsedMs=${result.elapsedMs}`,
+    `status=${String(result.status)}`,
+    `signal=${result.signal || 'none'}`,
+    `errorCode=${result.error?.code || 'none'}`,
+    `lastCompletedOperation=${result.lastCompletedOperation || 'not instrumented'}`,
+    `lastObservedStage=${result.lastObservedStage || 'not instrumented'}`,
+    `stageTrace=${result.stageTrace || 'none'}`,
+  ].join('; ');
 
   const protectSyntheticPath = (target, isDirectory) => {
     const escapedTarget = target.replace(/'/g, "''");
     const inheritance = isDirectory ? '(OI)(CI)' : '';
     const script = [
       "$ErrorActionPreference = 'Stop'",
+      'function Write-FixtureStage([string]$Phase, [string]$Operation) { [Console]::Out.WriteLine("PR48_STAGE:${Phase}:${Operation}"); [Console]::Out.Flush() }',
+      'Write-FixtureStage complete powershell-startup',
       `$target = '${escapedTarget}'`,
+      'Write-FixtureStage begin identity-lookup',
       "$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+      'Write-FixtureStage complete identity-lookup',
+      'Write-FixtureStage begin icacls-inheritance',
       '& icacls.exe $target /inheritance:r | Out-Null',
       'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
+      'Write-FixtureStage complete icacls-inheritance',
       `$grants = @("*$($sid):${inheritance}F", "*S-1-5-18:${inheritance}F", "*S-1-5-32-544:${inheritance}F")`,
+      'Write-FixtureStage begin icacls-grant',
       '& icacls.exe $target /grant:r $grants | Out-Null',
       'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
+      'Write-FixtureStage complete icacls-grant',
+      'Write-FixtureStage begin module-import',
       `Import-Module '${path.join(scripts, 'backupRestoreRehearsal.validation.psm1').replace(/'/g, "''")}' -Force`,
+      'Write-FixtureStage complete module-import',
+      'Write-FixtureStage begin restricted-acl-assertion',
       'Assert-RestrictedStorageAcl -Path $target',
+      'Write-FixtureStage complete restricted-acl-assertion',
     ].join('\n');
     const result = invokePowerShellScript(script);
-    assert.equal(result.status, 0, `${target} ACL fixture setup failed: ${result.stdout || ''}\n${result.stderr || ''}`);
+    assert.equal(result.status, 0,
+      `${path.basename(target)} ACL fixture setup failed: ${powerShellDiagnostic(result)}`);
   };
   protectSyntheticPath(tempDirectory, true);
   protectSyntheticPath(passfile, false);
@@ -225,7 +264,7 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
     '& icacls.exe $target /remove:g "*S-1-5-11" | Out-Null',
     'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
   ].join('\n'));
-  assert.equal(removeBroadAcl.status, 0, removeBroadAcl.stderr || removeBroadAcl.stdout);
+  assert.equal(removeBroadAcl.status, 0, powerShellDiagnostic(removeBroadAcl));
   protectSyntheticPath(serviceFile, false);
 
   const junction = path.join(tempDirectory, 'credential-junction');
