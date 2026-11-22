@@ -23,6 +23,75 @@ function ErrorKind([string]$text) {
   if ($text -match '(?i)access denied') { return 'access-denied' }
   return 'nonempty-other'
 }
+function Get-PowerShell51StageTrace([string]$output) {
+  $expectedEvents = @(
+    'complete:script-started'
+    'begin:trivial-command'
+    'complete:trivial-command'
+    'begin:security-module-load'
+    'complete:security-module-load'
+    'begin:get-acl-command-resolution'
+    'complete:get-acl-command-resolution'
+    'begin:get-acl-retrieval'
+    'complete:get-acl-retrieval'
+    'begin:current-identity-read'
+    'complete:current-identity-read'
+    'begin:acl-owner-read'
+    'complete:acl-owner-read'
+    'begin:access-rule-enumeration'
+    'complete:access-rule-enumeration'
+    'begin:approved-grant-verification'
+    'complete:approved-grant-verification'
+  )
+  $knownStages = @(
+    'script-started'
+    'trivial-command'
+    'security-module-load'
+    'get-acl-command-resolution'
+    'get-acl-retrieval'
+    'current-identity-read'
+    'acl-owner-read'
+    'access-rule-enumeration'
+    'approved-grant-verification'
+  )
+  $markerPrefixCount = [regex]::Matches($output, '(?m)^ACL_PROBE_PS51_STAGE:').Count
+  $markerMatches = [regex]::Matches($output, '(?m)^ACL_PROBE_PS51_STAGE:(begin|complete):([a-z-]+)\r?$')
+  $observedEvents = @($markerMatches | ForEach-Object { $_.Groups[1].Value + ':' + $_.Groups[2].Value })
+  $sequenceValid = $markerPrefixCount -eq $observedEvents.Count -and $observedEvents.Count -le $expectedEvents.Count
+  for ($index = 0; $index -lt $observedEvents.Count; $index++) {
+    if ($observedEvents[$index] -ne $expectedEvents[$index]) {
+      $sequenceValid = $false
+      break
+    }
+  }
+  $lastCompletedStage = 'none'
+  $currentStage = 'none'
+  foreach ($markerMatch in $markerMatches) {
+    $phase = $markerMatch.Groups[1].Value
+    $stage = $markerMatch.Groups[2].Value
+    if ($knownStages -notcontains $stage) {
+      $lastCompletedStage = 'unrecognized'
+      $currentStage = 'unrecognized'
+      continue
+    }
+    if ($phase -eq 'begin') {
+      $currentStage = $stage
+    } else {
+      $lastCompletedStage = $stage
+      $currentStage = 'none'
+    }
+  }
+  $scriptStarted = $observedEvents.Count -gt 0 -and $observedEvents[0] -eq 'complete:script-started'
+  return [pscustomobject]@{
+    LastCompletedStage = $lastCompletedStage
+    CurrentStage = $currentStage
+    MarkerCount = $observedEvents.Count
+    SequenceValid = $sequenceValid
+    Complete = $sequenceValid -and $observedEvents.Count -eq $expectedEvents.Count
+    ScriptStarted = $scriptStarted
+  }
+}
+
 function ChildEnvironment {
   $child = @{}
   foreach ($name in @('PATH','PATHEXT','SystemRoot','ProgramFiles','ProgramFiles(x86)','COMSPEC','TEMP','TMP')) {
@@ -424,16 +493,42 @@ try {
   $childLines = @(
     'param([string]$Target)'
     '$ErrorActionPreference = ''Stop'''
+    'function Write-Stage([string]$Phase, [string]$Name) {'
+    '  [Console]::Out.WriteLine(''ACL_PROBE_PS51_STAGE:'' + $Phase + '':'' + $Name)'
+    '  [Console]::Out.Flush()'
+    '}'
     'try {'
+    '  Write-Stage ''complete'' ''script-started'''
+    '  Write-Stage ''begin'' ''trivial-command'''
+    '  $null = 1 + 1'
+    '  Write-Stage ''complete'' ''trivial-command'''
+    '  Write-Stage ''begin'' ''security-module-load'''
+    '  Import-Module -Name Microsoft.PowerShell.Security -ErrorAction Stop'
+    '  Write-Stage ''complete'' ''security-module-load'''
+    '  Write-Stage ''begin'' ''get-acl-command-resolution'''
+    '  $getAclCommand = Get-Command -Name Get-Acl -CommandType Cmdlet -ErrorAction Stop'
+    '  if ($getAclCommand.ModuleName -ne ''Microsoft.PowerShell.Security'') { throw [InvalidOperationException]::new(''get-acl-command-module-mismatch'') }'
+    '  Write-Stage ''complete'' ''get-acl-command-resolution'''
+    '  Write-Stage ''begin'' ''get-acl-retrieval'''
     '  $acl = Get-Acl -LiteralPath $Target -ErrorAction Stop'
+    '  Write-Stage ''complete'' ''get-acl-retrieval'''
+    '  Write-Stage ''begin'' ''current-identity-read'''
+    '  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()'
+    '  if ($null -eq $identity -or $null -eq $identity.User) { throw [InvalidOperationException]::new(''current-identity-unavailable'') }'
+    '  $currentSid = $identity.User.Value'
+    '  Write-Stage ''complete'' ''current-identity-read'''
+    '  Write-Stage ''begin'' ''acl-owner-read'''
+    '  $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value'
+    '  Write-Stage ''complete'' ''acl-owner-read'''
+    '  Write-Stage ''begin'' ''access-rule-enumeration'''
     '  $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))'
     '  $allow = @($rules | Where-Object { $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow })'
-    '  $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value'
+    '  Write-Stage ''complete'' ''access-rule-enumeration'''
+    '  Write-Stage ''begin'' ''approved-grant-verification'''
     '  $systemSid = ''S-1-5-18''; $administratorsSid = ''S-1-5-32-544'''
     '  $approved = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)'
     '  [void]$approved.Add($currentSid); [void]$approved.Add($systemSid); [void]$approved.Add($administratorsSid)'
-    '  $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value'
-    '  $unapprovedCount = @($allow | Where-Object { -not $approved.Contains($_.IdentityReference.Value) } | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique).Count'
+    '  $unapprovedSids = @($allow | Where-Object { -not $approved.Contains($_.IdentityReference.Value) } | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique)'
     '  function Test-ProbeGrant([string]$sid, [bool]$inherited) {'
     '    $full = [int][Security.AccessControl.FileSystemRights]::FullControl'
     '    $needed = [int]([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit)'
@@ -451,6 +546,8 @@ try {
     '  $systemGrant = (Test-ProbeGrant $systemSid $false).ToString().ToLowerInvariant()'
     '  $administratorsGrant = (Test-ProbeGrant $administratorsSid $false).ToString().ToLowerInvariant()'
     '  $inheritedAllowCount = @($allow | Where-Object { $_.IsInherited }).Count'
+    '  $unapprovedCount = $unapprovedSids.Count'
+    '  Write-Stage ''complete'' ''approved-grant-verification'''
     '  [Console]::Out.WriteLine("ACL_PROBE_PS51:version=$($PSVersionTable.PSVersion.ToString());protected=$protected;allow=$($allow.Count);inherited=$inheritedAllowCount;unapproved=$unapprovedCount;ownerApproved=$ownerApproved;userFullControl=$userGrant;systemFullControl=$systemGrant;administratorsFullControl=$administratorsGrant")'
     '  exit 0'
     '} catch { [Console]::Error.WriteLine("ACL_PROBE_PS51:read-failed;category=$($_.Exception.GetType().Name)"); exit 21 }'
@@ -461,6 +558,14 @@ try {
   $powershell51 = Join-Path (Join-Path (Join-Path $systemDirectory 'WindowsPowerShell') 'v1.0') 'powershell.exe'
   if (-not (Test-Path -LiteralPath $powershell51 -PathType Leaf)) { Fail 'powershell-51-readback-mismatch' $script:stage 'windows-powershell-51-unavailable'; throw [InvalidOperationException]::new('powershell-51-unavailable') }
   $readback51 = RunBounded $powershell51 @('-NoLogo','-NoProfile','-NonInteractive','-File',$childPath,'-Target',$target) $envMap
+  $stageTrace = Get-PowerShell51StageTrace $readback51.StandardOutput
+  $startupEvidence = if (-not $readback51.Started) {
+    'process-not-started'
+  } elseif ($stageTrace.ScriptStarted) {
+    'script-entered'
+  } else {
+    'unconfirmed-no-script-marker'
+  }
   $readbackMatch = [regex]::Match($readback51.StandardOutput, '(?m)^ACL_PROBE_PS51:version=([^;]+);protected=(true|false);allow=(\d+);inherited=(\d+);unapproved=(\d+);ownerApproved=(true|false);userFullControl=(true|false);systemFullControl=(true|false);administratorsFullControl=(true|false)\r?$')
   $versionOk = $readbackMatch.Success -and $readbackMatch.Groups[1].Value -match '^5\.1(\.|$)'
   $readbackAgrees = $readbackMatch.Success -and
@@ -474,8 +579,9 @@ try {
     ($readbackMatch.Groups[9].Value -eq $final.AdministratorsGrant.ToString().ToLowerInvariant())
   $ps51Ok = -not $readback51.TimedOut -and $readback51.Started -and $readback51.Exited -and
     $readback51.ExitCode -eq 0 -and $readback51.OutputComplete -and
-    -not $readback51.StandardOutputTruncated -and -not $readback51.StandardErrorTruncated -and $versionOk -and $readbackAgrees
-  Report $(if ($ps51Ok) { 'PASS' } else { 'FAIL' }) $script:stage "version=$(if($readbackMatch.Success){$readbackMatch.Groups[1].Value}else{'unavailable'}) elapsedMs=$($readback51.ElapsedMilliseconds) exitCode=$($readback51.ExitCode) timedOut=$($readback51.TimedOut) outputComplete=$($readback51.OutputComplete) agreesWithPwsh=$readbackAgrees errorCategory=$($readback51.ErrorCategory) stderrCategory=$(ErrorKind $readback51.StandardError)"
+    -not $readback51.StandardOutputTruncated -and -not $readback51.StandardErrorTruncated -and
+    $versionOk -and $readbackAgrees -and $stageTrace.SequenceValid -and $stageTrace.Complete
+  Report $(if ($ps51Ok) { 'PASS' } else { 'FAIL' }) $script:stage "version=$(if($readbackMatch.Success){$readbackMatch.Groups[1].Value}else{'unavailable'}) elapsedMs=$($readback51.ElapsedMilliseconds) exitCode=$($readback51.ExitCode) timedOut=$($readback51.TimedOut) outputComplete=$($readback51.OutputComplete) agreesWithPwsh=$readbackAgrees lastCompletedStage=$($stageTrace.LastCompletedStage) currentStage=$($stageTrace.CurrentStage) markerCount=$($stageTrace.MarkerCount) stageTraceValid=$($stageTrace.SequenceValid) startupEvidence=$startupEvidence errorCategory=$($readback51.ErrorCategory) stderrCategory=$(ErrorKind $readback51.StandardError)"
   if ($readback51.TimedOut) { Fail 'process-timeout' $script:stage 'windows-powershell-51-readback-timeout'; throw [InvalidOperationException]::new('process-timeout') }
   if (-not $ps51Ok) { Fail 'powershell-51-readback-mismatch' $script:stage 'readback-disagrees-with-final-acl'; throw [InvalidOperationException]::new('powershell-51-readback-mismatch') }
 
