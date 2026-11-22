@@ -30,6 +30,31 @@ $script:ReceiptConstraints = [ordered]@{
   game_progress_save_commits_completion_consistency = @{ Type='c'; Columns=@('response_body','completed_at'); ReferencedSchema=''; ReferencedTable=''; ReferencedColumns=@(); MatchType=''; UpdateAction=''; DeleteAction=''; NullsNotDistinct=$false; CheckExpressions=@('response_bodyisnull=completed_atisnull') }
 }
 
+function Write-PreflightDiagnosticStage {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)][ValidateSet('begin','complete')][string]$Phase,
+    [Parameter(Mandatory=$true)][ValidateSet(
+      'credential-repository-root-validation',
+      'passfile-path-reparse-validation','passfile-existence-validation',
+      'passfile-attributes-validation','passfile-parent-reparse-validation',
+      'passfile-parent-acl-validation','passfile-file-acl-validation',
+      'passfile-resolved-path-validation','service-file-path-reparse-validation',
+      'service-file-existence-validation','service-file-attributes-validation',
+      'service-file-parent-reparse-validation','service-file-parent-acl-validation',
+      'service-file-file-acl-validation','service-file-resolved-path-validation',
+      'passfile-readability','service-file-readability','service-configuration-validation',
+      'restricted-acl-get-acl','restricted-acl-current-identity',
+      'restricted-acl-owner-retrieval','restricted-acl-rule-enumeration',
+      'restricted-acl-grant-verification'
+    )][string]$Operation
+  )
+  if ($env:TQ_RELEASE_PREFLIGHT_DIAGNOSTICS -ceq '1') {
+    [Console]::Error.WriteLine(('TQ_PREFLIGHT_STAGE:{0}:{1}' -f $Phase,$Operation))
+    [Console]::Error.Flush()
+  }
+}
+
 function ConvertTo-ConstraintSignature {
   [CmdletBinding()]
   param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Definition)
@@ -410,14 +435,20 @@ function Test-RestrictedStorageAclDescriptor {
     [void]$allowed.Add($CurrentUserSid)
     [void]$allowed.Add('S-1-5-18')
     [void]$allowed.Add('S-1-5-32-544')
+    Write-PreflightDiagnosticStage -Phase 'begin' -Operation 'restricted-acl-owner-retrieval'
     $ownerSid = $Acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    Write-PreflightDiagnosticStage -Phase 'complete' -Operation 'restricted-acl-owner-retrieval'
     if (-not $allowed.Contains($ownerSid)) { throw 'STOP: storage destination owner is outside the approved local identity set.' }
+    Write-PreflightDiagnosticStage -Phase 'begin' -Operation 'restricted-acl-rule-enumeration'
     $accessRules = $Acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])
+    Write-PreflightDiagnosticStage -Phase 'complete' -Operation 'restricted-acl-rule-enumeration'
+    Write-PreflightDiagnosticStage -Phase 'begin' -Operation 'restricted-acl-grant-verification'
     foreach ($rule in $accessRules) {
       if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
       $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
       if (-not $allowed.Contains($sid)) { throw "STOP: storage ACL grants access to an unapproved identity ($sid)." }
     }
+    Write-PreflightDiagnosticStage -Phase 'complete' -Operation 'restricted-acl-grant-verification'
   } catch {
     if ($_.Exception.Message -like 'STOP:*') { throw }
     throw 'STOP: storage ACL is unavailable or cannot be independently verified.'
@@ -431,8 +462,12 @@ function Assert-RestrictedStorageAcl {
     throw 'STOP: Windows storage ACL semantics cannot be verified on this platform.'
   }
   try {
+    Write-PreflightDiagnosticStage -Phase 'begin' -Operation 'restricted-acl-get-acl'
     $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    Write-PreflightDiagnosticStage -Phase 'complete' -Operation 'restricted-acl-get-acl'
+    Write-PreflightDiagnosticStage -Phase 'begin' -Operation 'restricted-acl-current-identity'
     $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    Write-PreflightDiagnosticStage -Phase 'complete' -Operation 'restricted-acl-current-identity'
     Test-RestrictedStorageAclDescriptor -Acl $acl -CurrentUserSid $currentSid
   } catch {
     if ($_.Exception.Message -like 'STOP:*') { throw }
@@ -451,29 +486,46 @@ function Assert-ReviewedPreflightCredentialFiles {
     [Parameter(Mandatory=$true)][System.Collections.IDictionary]$ExpectedDatabases
   )
 
+  Write-PreflightDiagnosticStage -Phase 'begin' -Operation 'credential-repository-root-validation'
   if (-not (Test-Path -LiteralPath $RepositoryRoot -PathType Container)) {
     throw 'STOP: reviewed repository root is missing or is not a directory.'
   }
   $repositoryFullPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path).TrimEnd('\')
+  Write-PreflightDiagnosticStage -Phase 'complete' -Operation 'credential-repository-root-validation'
   $validatedPaths = [ordered]@{}
   foreach ($entry in @(
     [pscustomobject]@{ Name='PGPASSFILE'; Path=$PassfilePath },
     [pscustomobject]@{ Name='PGSERVICEFILE'; Path=$ServiceFilePath }
   )) {
     if ([string]::IsNullOrWhiteSpace($entry.Path)) { throw "STOP: $($entry.Name) path is required." }
+    $operationPrefix = if ($entry.Name -eq 'PGPASSFILE') { 'passfile' } else { 'service-file' }
+    Write-PreflightDiagnosticStage -Phase 'begin' -Operation ($operationPrefix + '-path-reparse-validation')
     $fullPath = Assert-NoReparsePointPath -Path $entry.Path
+    Write-PreflightDiagnosticStage -Phase 'complete' -Operation ($operationPrefix + '-path-reparse-validation')
+    Write-PreflightDiagnosticStage -Phase 'begin' -Operation ($operationPrefix + '-existence-validation')
     if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { throw "STOP: required $($entry.Name) file is missing or is not a regular file." }
+    Write-PreflightDiagnosticStage -Phase 'complete' -Operation ($operationPrefix + '-existence-validation')
+    Write-PreflightDiagnosticStage -Phase 'begin' -Operation ($operationPrefix + '-attributes-validation')
     $item = Get-Item -LiteralPath $fullPath -Force -ErrorAction Stop
     if ($item.PSIsContainer -or (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
       throw "STOP: $($entry.Name) must be a regular file without reparse attributes."
     }
+    Write-PreflightDiagnosticStage -Phase 'complete' -Operation ($operationPrefix + '-attributes-validation')
 
     $parentPath = [System.IO.Path]::GetDirectoryName($fullPath)
+    Write-PreflightDiagnosticStage -Phase 'begin' -Operation ($operationPrefix + '-parent-reparse-validation')
     [void](Assert-NoReparsePointPath -Path $parentPath)
+    Write-PreflightDiagnosticStage -Phase 'complete' -Operation ($operationPrefix + '-parent-reparse-validation')
+    Write-PreflightDiagnosticStage -Phase 'begin' -Operation ($operationPrefix + '-parent-acl-validation')
     Assert-RestrictedStorageAcl -Path $parentPath
+    Write-PreflightDiagnosticStage -Phase 'complete' -Operation ($operationPrefix + '-parent-acl-validation')
+    Write-PreflightDiagnosticStage -Phase 'begin' -Operation ($operationPrefix + '-file-acl-validation')
     Assert-RestrictedStorageAcl -Path $fullPath
+    Write-PreflightDiagnosticStage -Phase 'complete' -Operation ($operationPrefix + '-file-acl-validation')
 
+    Write-PreflightDiagnosticStage -Phase 'begin' -Operation ($operationPrefix + '-resolved-path-validation')
     $resolvedPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $fullPath -ErrorAction Stop).Path)
+    Write-PreflightDiagnosticStage -Phase 'complete' -Operation ($operationPrefix + '-resolved-path-validation')
     $repositoryPrefix = $repositoryFullPath + [System.IO.Path]::DirectorySeparatorChar
     if ($resolvedPath.Equals($repositoryFullPath, [System.StringComparison]::OrdinalIgnoreCase) -or
         $resolvedPath.StartsWith($repositoryPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -483,6 +535,7 @@ function Assert-ReviewedPreflightCredentialFiles {
   }
 
   $passfileStream = $null
+  Write-PreflightDiagnosticStage -Phase 'begin' -Operation 'passfile-readability'
   try {
     $passfileStream = [System.IO.File]::Open(
       $validatedPaths['PGPASSFILE'],
@@ -495,18 +548,23 @@ function Assert-ReviewedPreflightCredentialFiles {
   } finally {
     if ($null -ne $passfileStream) { $passfileStream.Dispose() }
   }
+  Write-PreflightDiagnosticStage -Phase 'complete' -Operation 'passfile-readability'
 
+  Write-PreflightDiagnosticStage -Phase 'begin' -Operation 'service-file-readability'
   try {
     $serviceText = [System.IO.File]::ReadAllText($validatedPaths['PGSERVICEFILE'])
   } catch {
     throw 'STOP: PostgreSQL service file is unreadable; credential contents were not displayed.'
   }
+  Write-PreflightDiagnosticStage -Phase 'complete' -Operation 'service-file-readability'
+  Write-PreflightDiagnosticStage -Phase 'begin' -Operation 'service-configuration-validation'
   if (-not $ExpectedUsers.Contains($ServiceName) -or -not $ExpectedDatabases.Contains($ServiceName)) {
     throw 'STOP: reviewed PostgreSQL service alias, role, and database must be explicitly specified.'
   }
   $expectedServiceUsers = [ordered]@{ $ServiceName = $ExpectedUsers[$ServiceName] }
   $expectedServiceDatabases = [ordered]@{ $ServiceName = $ExpectedDatabases[$ServiceName] }
   Assert-PostgresServiceConfiguration -Text $serviceText -ExpectedUsers $expectedServiceUsers -ExpectedDatabases $expectedServiceDatabases
+  Write-PreflightDiagnosticStage -Phase 'complete' -Operation 'service-configuration-validation'
 
   return [pscustomobject]@{
     PassfilePath = $validatedPaths['PGPASSFILE']

@@ -9,6 +9,148 @@ const { RELEASE_MIGRATIONS, migrationChecksum } = require('../releaseMigrations'
 
 const scripts = __dirname;
 const read = (name) => fs.readFileSync(path.join(scripts, name), 'utf8');
+const PREFLIGHT_DIAGNOSTIC_OPERATIONS = new Set([
+  'preflight-entry', 'backend-root-resolution', 'validator-module-path-check',
+  'security-module-import', 'get-acl-command-resolution', 'validator-module-import',
+  'repository-root-lookup', 'ambient-libpq-check', 'psql-path-check',
+  'credential-validation', 'server-address-validation', 'source-head-lookup',
+  'source-head-comparison', 'reviewed-input-cleanliness',
+  'credential-repository-root-validation',
+  'passfile-path-reparse-validation', 'passfile-existence-validation',
+  'passfile-attributes-validation', 'passfile-parent-reparse-validation',
+  'passfile-parent-acl-validation', 'passfile-file-acl-validation',
+  'passfile-resolved-path-validation', 'service-file-path-reparse-validation',
+  'service-file-existence-validation', 'service-file-attributes-validation',
+  'service-file-parent-reparse-validation', 'service-file-parent-acl-validation',
+  'service-file-file-acl-validation', 'service-file-resolved-path-validation',
+  'passfile-readability', 'service-file-readability', 'service-configuration-validation',
+  'restricted-acl-get-acl', 'restricted-acl-current-identity',
+  'restricted-acl-owner-retrieval', 'restricted-acl-rule-enumeration',
+  'restricted-acl-grant-verification',
+]);
+const parsePreflightDiagnosticTrace = (output = '') => {
+  const stack = [];
+  let markerCount = 0;
+  let lastCompletedOperation = 'none';
+  let invalidReason = null;
+  for (const line of String(output).split(/\r?\n/)) {
+    if (!line.includes('TQ_PREFLIGHT_STAGE:')) continue;
+    const match = line.match(/^TQ_PREFLIGHT_STAGE:(begin|complete):([a-z0-9-]+)$/);
+    if (!match) { invalidReason = 'malformed'; break; }
+    const [, phase, operation] = match;
+    if (!PREFLIGHT_DIAGNOSTIC_OPERATIONS.has(operation)) { invalidReason = 'unknown-operation'; break; }
+    markerCount += 1;
+    if (phase === 'begin') {
+      stack.push(operation);
+    } else if (stack.at(-1) !== operation) {
+      invalidReason = 'out-of-order';
+      break;
+    } else {
+      stack.pop();
+      lastCompletedOperation = operation;
+    }
+  }
+  const stageTraceValid = markerCount > 0 && invalidReason === null;
+  return {
+    markerCount,
+    lastCompletedOperation,
+    currentOperation: stageTraceValid ? (stack.at(-1) || 'none') : 'none',
+    stageTraceValid,
+    traceComplete: stageTraceValid && stack.length === 0,
+    invalidReason: invalidReason || (markerCount === 0 ? 'missing' : 'none'),
+  };
+};
+
+test('preflight diagnostic parser accepts complete and partial fixed-stage traces', () => {
+  const complete = parsePreflightDiagnosticTrace([
+    'TQ_PREFLIGHT_STAGE:begin:preflight-entry',
+    'TQ_PREFLIGHT_STAGE:complete:preflight-entry',
+    'TQ_PREFLIGHT_STAGE:begin:source-head-comparison',
+    'TQ_PREFLIGHT_STAGE:complete:source-head-comparison',
+  ].join('\n'));
+  assert.deepEqual(complete, {
+    markerCount: 4,
+    lastCompletedOperation: 'source-head-comparison',
+    currentOperation: 'none',
+    stageTraceValid: true,
+    traceComplete: true,
+    invalidReason: 'none',
+  });
+
+  const partial = parsePreflightDiagnosticTrace([
+    'TQ_PREFLIGHT_STAGE:begin:credential-validation',
+    'TQ_PREFLIGHT_STAGE:begin:passfile-file-acl-validation',
+    'TQ_PREFLIGHT_STAGE:begin:restricted-acl-get-acl',
+  ].join('\n'));
+  assert.equal(partial.stageTraceValid, true);
+  assert.equal(partial.traceComplete, false);
+  assert.equal(partial.lastCompletedOperation, 'none');
+  assert.equal(partial.currentOperation, 'restricted-acl-get-acl');
+});
+
+test('preflight diagnostic parser rejects missing, malformed, unknown, and out-of-order traces safely', () => {
+  assert.deepEqual(parsePreflightDiagnosticTrace('ordinary error output'), {
+    markerCount: 0,
+    lastCompletedOperation: 'none',
+    currentOperation: 'none',
+    stageTraceValid: false,
+    traceComplete: false,
+    invalidReason: 'missing',
+  });
+  for (const trace of [
+    'TQ_PREFLIGHT_STAGE:begin:credential-validation extra=private-path',
+    'TQ_PREFLIGHT_STAGE:begin:unrecognized-stage',
+    'TQ_PREFLIGHT_STAGE:begin:credential-validation\nTQ_PREFLIGHT_STAGE:complete:passfile-readability',
+  ]) {
+    const summary = parsePreflightDiagnosticTrace(trace);
+    assert.equal(summary.stageTraceValid, false);
+    assert.equal(summary.traceComplete, false);
+    assert.equal(JSON.stringify(summary).includes('private-path'), false);
+  }
+});
+
+test('preflight diagnostic parser handles LF and CRLF without retaining arbitrary output', () => {
+  const lf = 'TQ_PREFLIGHT_STAGE:begin:preflight-entry\nTQ_PREFLIGHT_STAGE:complete:preflight-entry\n';
+  assert.deepEqual(parsePreflightDiagnosticTrace(lf), parsePreflightDiagnosticTrace(lf.replace(/\n/g, '\r\n')));
+  const rawOutput = `${lf}password=must-not-be-reported\nC:\\private\\passfile`;
+  assert.doesNotMatch(JSON.stringify(parsePreflightDiagnosticTrace(rawOutput)), /password|must-not-be-reported|private|passfile/i);
+});
+
+test('preflight diagnostic markers are opt-in, fixed-label, and cover the guarded startup path', () => {
+  const script = read('run-release-preflight.ps1');
+  const validation = read('backupRestoreRehearsal.validation.psm1');
+  for (const source of [script, validation]) {
+    assert.match(source, /\$env:TQ_RELEASE_PREFLIGHT_DIAGNOSTICS\s+-ceq\s+'1'/);
+    assert.match(source, /\[Console\]::Error\.WriteLine\(/);
+    assert.match(source, /\[Console\]::Error\.Flush\(\)/);
+  }
+  for (const operation of [
+    'security-module-import', 'get-acl-command-resolution', 'validator-module-import',
+    'repository-root-lookup', 'ambient-libpq-check', 'psql-path-check',
+    'credential-validation', 'server-address-validation', 'source-head-lookup',
+    'source-head-comparison', 'reviewed-input-cleanliness',
+  ]) {
+    assert.match(script, new RegExp(`-Operation '${operation}'`));
+  }
+  for (const operation of [
+    'credential-repository-root-validation', 'passfile-path-reparse-validation',
+    'service-file-path-reparse-validation', 'passfile-parent-acl-validation',
+    'service-file-file-acl-validation', 'passfile-readability',
+    'service-file-readability', 'service-configuration-validation',
+    'restricted-acl-get-acl', 'restricted-acl-current-identity',
+    'restricted-acl-owner-retrieval', 'restricted-acl-rule-enumeration',
+    'restricted-acl-grant-verification',
+  ]) {
+    assert.ok(validation.includes(`'${operation}'`), `missing sanitized stage ${operation}`);
+  }
+  for (const source of [script, validation]) {
+    const helper = source.match(/function Write-PreflightDiagnosticStage \{([\s\S]*?)\n\}/);
+    assert.ok(helper, 'diagnostic helper should be defined');
+    assert.doesNotMatch(helper[1], /\$Path|\$sid|\$Expected|\$passfile|\$serviceText|Exception/i,
+      'diagnostic marker content must not include paths, identities, credentials, or exception text');
+  }
+});
+
 const readIsolatedBackendWorkflow = (
   workflowPathOverride = process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH
 ) => {
@@ -220,9 +362,32 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
       args,
       { encoding: 'utf8', env: { ...childEnv, ...extraEnvironment }, timeout: 15000 },
     );
-    return { ...result, elapsedMs: Date.now() - startedAt };
+    const elapsedMs = Date.now() - startedAt;
+    const timedOut = result.error?.code === 'ETIMEDOUT';
+    const trace = parsePreflightDiagnosticTrace(result.stderr || '');
+    return {
+      ...result,
+      elapsedMs,
+      timedOut,
+      exitCode: result.status,
+      outputComplete: !timedOut && !result.error,
+      trace,
+    };
   };
   const outputOf = (result) => `${result.stdout || ''}\n${result.stderr || ''}`;
+  const diagnosticSummary = (result) => [
+    `lastCompletedOperation=${result.trace.lastCompletedOperation}`,
+    `currentOperation=${result.trace.currentOperation}`,
+    `markerCount=${result.trace.markerCount}`,
+    `stageTraceValid=${result.trace.stageTraceValid}`,
+    `traceComplete=${result.trace.traceComplete}`,
+    `elapsedMs=${result.elapsedMs}`,
+    `timedOut=${result.timedOut}`,
+    `exitCode=${String(result.exitCode)}`,
+    `signal=${result.signal || 'none'}`,
+    `outputComplete=${result.outputComplete}`,
+    `errorCode=${result.error?.code || 'none'}`,
+  ].join('; ');
 
   const missingSha = invoke(undefined);
   assert.notEqual(missingSha.status, 0);
@@ -232,9 +397,22 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
   assert.notEqual(malformedSha.status, 0);
   assert.match(outputOf(malformedSha), /ExpectedSourceCommit|ValidatePattern/i);
 
-  const mismatchedSha = invoke('0000000000000000000000000000000000000000');
+  const mismatchedSha = invoke('0000000000000000000000000000000000000000', {
+    TQ_RELEASE_PREFLIGHT_DIAGNOSTICS: '1',
+  });
   assert.notEqual(mismatchedSha.status, 0);
-  assert.match(outputOf(mismatchedSha), /HEAD does not match the approved commit/i, powerShellDiagnostic(mismatchedSha));
+  assert.equal(mismatchedSha.timedOut, false,
+    `source mismatch must fail before the timeout: ${diagnosticSummary(mismatchedSha)}`);
+  assert.ok(mismatchedSha.outputComplete && mismatchedSha.exitCode !== null,
+    `source mismatch should return a completed process result: ${diagnosticSummary(mismatchedSha)}`);
+  assert.ok(/HEAD does not match the approved commit/i.test(outputOf(mismatchedSha)),
+    `the preflight must report its expected source mismatch: ${diagnosticSummary(mismatchedSha)}`);
+  assert.equal(mismatchedSha.trace.stageTraceValid, true,
+    `the opt-in trace must contain only recognized, ordered markers: ${diagnosticSummary(mismatchedSha)}`);
+  assert.equal(mismatchedSha.trace.traceComplete, false,
+    'the failing source comparison should remain the current incomplete operation');
+  assert.equal(mismatchedSha.trace.currentOperation, 'source-head-comparison', diagnosticSummary(mismatchedSha));
+  assert.equal(mismatchedSha.trace.lastCompletedOperation, 'source-head-lookup', diagnosticSummary(mismatchedSha));
   assert.equal(fs.existsSync(callMarker), false, 'a SHA mismatch must stop before invoking psql');
 
   fs.rmSync(passfile);
