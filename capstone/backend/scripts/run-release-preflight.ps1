@@ -41,6 +41,16 @@ $validationModule = Join-Path $PSScriptRoot 'backupRestoreRehearsal.validation.p
 if (-not (Test-Path -LiteralPath $validationModule -PathType Leaf)) {
   throw 'STOP: reviewed PostgreSQL credential-validation module is missing.'
 }
+try {
+  Import-Module -Name Microsoft.PowerShell.Security -ErrorAction Stop
+  $getAclCommand = Get-Command -Name Get-Acl -CommandType Cmdlet -ErrorAction Stop
+  if ($getAclCommand.ModuleName -ne 'Microsoft.PowerShell.Security') {
+    throw 'STOP: Windows PowerShell security module resolved to an unexpected ACL command.'
+  }
+} catch {
+  if ($_.Exception.Message -like 'STOP:*') { throw }
+  throw 'STOP: Windows PowerShell security module is unavailable or ACL command cannot be resolved.'
+}
 Import-Module $validationModule -Force
 $repositoryRoot = (& git -C $backendRoot rev-parse --show-toplevel 2>$null).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $repositoryRoot) {

@@ -78,6 +78,12 @@ test('Windows preflight utility uses a service alias, rejects inline passwords, 
   assert.match(script, /PostMigration026/);
   assert.match(script, /Assert-ReviewedPreflightCredentialFiles/);
   assert.match(script, /Assert-InteractiveAuthenticationEnvironment/);
+  const securityModuleImport = script.indexOf("Import-Module -Name Microsoft.PowerShell.Security -ErrorAction Stop");
+  const validationModuleImport = script.indexOf('Import-Module $validationModule -Force');
+  assert.ok(securityModuleImport >= 0 && securityModuleImport < validationModuleImport,
+    'PowerShell security cmdlets must be explicitly loaded before the validator module');
+  assert.match(script, /Get-Command -Name Get-Acl -CommandType Cmdlet -ErrorAction Stop/);
+  assert.ok(script.includes("$getAclCommand.ModuleName -ne 'Microsoft.PowerShell.Security'"));
   assert.match(validation, /function Assert-ReviewedPreflightCredentialFiles/);
   assert.match(validation, /function Assert-NoReparsePointPath/);
   assert.match(validation, /function Assert-RestrictedStorageAcl/);
@@ -208,11 +214,13 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
   const invoke = (sha, extraEnvironment = {}, { serviceFilePath } = {}) => {
     const args = sha === undefined ? [...baseArguments] : [...baseArguments, '-ExpectedSourceCommit', sha];
     if (serviceFilePath) args[args.indexOf('-ServiceFilePath') + 1] = serviceFilePath;
-    return spawnSync(
+    const startedAt = Date.now();
+    const result = spawnSync(
       powershellPath,
       args,
       { encoding: 'utf8', env: { ...childEnv, ...extraEnvironment }, timeout: 15000 },
     );
+    return { ...result, elapsedMs: Date.now() - startedAt };
   };
   const outputOf = (result) => `${result.stdout || ''}\n${result.stderr || ''}`;
 
@@ -226,7 +234,7 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
 
   const mismatchedSha = invoke('0000000000000000000000000000000000000000');
   assert.notEqual(mismatchedSha.status, 0);
-  assert.match(outputOf(mismatchedSha), /HEAD does not match the approved commit/i);
+  assert.match(outputOf(mismatchedSha), /HEAD does not match the approved commit/i, powerShellDiagnostic(mismatchedSha));
   assert.equal(fs.existsSync(callMarker), false, 'a SHA mismatch must stop before invoking psql');
 
   fs.rmSync(passfile);
