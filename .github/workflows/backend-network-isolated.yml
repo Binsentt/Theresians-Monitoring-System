@@ -188,8 +188,19 @@ jobs:
                 backendRoot + '/migrations/012_add_activity_log_event_idempotency.sql',
                 'utf8',
               ));
-              const { applyReleaseMigrations } = require(backendRoot + '/releaseMigrations');
-              await applyReleaseMigrations({ client: pool });
+              await pool.query(`CREATE TABLE IF NOT EXISTS public.schema_migrations (
+                version INTEGER PRIMARY KEY,
+                filename VARCHAR(255) NOT NULL,
+                checksum CHAR(64) NOT NULL,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+              )`);
+              const { runSyntheticApprovedReleaseMigrations } = require(
+                backendRoot + '/testSupport/runSyntheticApprovedReleaseMigrations',
+              );
+              await runSyntheticApprovedReleaseMigrations({
+                connectionString: databaseUrl,
+                expectedDatabaseName: 'tq_parent_route_test_ci',
+              });
               await assertDisposablePostgresDatabase({
                 client: pool,
                 connectionString: databaseUrl,
@@ -424,11 +435,13 @@ jobs:
             tq_preflight_game_student_id_width_test_ci \
             tq_preflight_malformed_ledger_test_ci \
             tq_preflight_pending_024_test_ci \
+            tq_preflight_pending_025_test_ci \
             tq_preflight_missing_receipt_constraint_test_ci \
             tq_preflight_pre_026_test_ci \
             tq_preflight_partial_receipt_026_test_ci \
             tq_preflight_026_applied_test_ci \
-            tq_preflight_pre_024_test_ci; do
+            tq_preflight_pre_024_test_ci \
+            tq_preflight_wrong_filename_ledger_test_ci; do
             docker exec tq-backend-test-postgres createdb --host=127.0.0.1 --username=postgres "$database"
           done
           disposable_sentinel="$(openssl rand -hex 24)"
@@ -455,11 +468,13 @@ jobs:
             tq_preflight_game_student_id_width_test_ci \
             tq_preflight_malformed_ledger_test_ci \
             tq_preflight_pending_024_test_ci \
+            tq_preflight_pending_025_test_ci \
             tq_preflight_missing_receipt_constraint_test_ci \
             tq_preflight_pre_026_test_ci \
             tq_preflight_partial_receipt_026_test_ci \
             tq_preflight_026_applied_test_ci \
-            tq_preflight_pre_024_test_ci; do
+            tq_preflight_pre_024_test_ci \
+            tq_preflight_wrong_filename_ledger_test_ci; do
             if [[ ! "$database" =~ ^tq_[a-z0-9_]+_test_ci$ ]]; then
               echo "Refusing to mark an unrecognized PostgreSQL test database: $database" >&2
               exit 1
@@ -478,6 +493,7 @@ jobs:
         shell: bash
         env:
           CI: 'true'
+          TQ_EXPECTED_POSTGRES_MAJOR: '16'
           TQ_DISPOSABLE_DB_SENTINEL: ${{ steps.start-postgres.outputs.sentinel }}
         run: node capstone/backend/scripts/run-preflight-postgres-harness.cjs
 
@@ -935,3 +951,263 @@ jobs:
             echo "At least one backend test file failed or timed out."
             exit 1
           fi
+
+  postgres18-preflight:
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    env:
+      CI: 'true'
+
+    steps:
+      - name: Check out candidate without persisting credentials
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node 20 for the PostgreSQL integration harness
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify runner tools and source hygiene
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          node --version | grep -Eq '^v20\.'
+          docker version
+          docker info --format 'Docker server {{.ServerVersion}}'
+          for candidate in capstone/.env capstone/backend/.env; do
+            if [[ -f "$candidate" ]]; then
+              echo "::error::Unexpected dotenv file in clean checkout: $candidate"
+              exit 1
+            fi
+          done
+
+      - name: Pull disposable PostgreSQL 18 image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull postgres:18-bookworm
+
+      - name: Start isolated PostgreSQL 18 with disposable PGDATA
+        id: start-postgres18
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_pgdata="$(docker run --rm --network none postgres:18-bookworm sh -ec 'printf "%s" "$PGDATA"')"
+          test "$image_pgdata" = "/var/lib/postgresql/18/docker"
+          image_volumes="$(docker image inspect --format='{{json .Config.Volumes}}' postgres:18-bookworm)"
+          case "$image_volumes" in
+            *'"/var/lib/postgresql"'*) ;;
+            *) echo "Unexpected PostgreSQL 18 image volume contract: ${image_volumes}" >&2; exit 1 ;;
+          esac
+          postgres_uid="$(docker run --rm --network none postgres:18-bookworm id -u postgres)"
+          postgres_gid="$(docker run --rm --network none postgres:18-bookworm id -g postgres)"
+          container_id="$(docker run --detach \
+            --name tq-backend-test-postgres \
+            --network none \
+            --user "${postgres_uid}:${postgres_gid}" \
+            --read-only \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --pids-limit=256 \
+            --memory=2g \
+            --cpus=2 \
+            --shm-size=256m \
+            --tmpfs "/var/lib/postgresql:rw,nosuid,nodev,size=1g,uid=${postgres_uid},gid=${postgres_gid},mode=0700" \
+            --tmpfs "/var/run/postgresql:rw,nosuid,nodev,size=64m,uid=${postgres_uid},gid=${postgres_gid},mode=3775" \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777 \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_DB=postgres \
+            --env POSTGRES_HOST_AUTH_METHOD=trust \
+            postgres:18-bookworm)"
+          container_state="$(docker inspect --format='{{.State.Status}}' tq-backend-test-postgres)"
+          container_exit="$(docker inspect --format='{{.State.ExitCode}}' tq-backend-test-postgres)"
+          container_oom="$(docker inspect --format='{{.State.OOMKilled}}' tq-backend-test-postgres)"
+          container_error="$(docker inspect --format='{{.State.Error}}' tq-backend-test-postgres)"
+          network_mode="$(docker inspect --format='{{.HostConfig.NetworkMode}}' tq-backend-test-postgres)"
+          readonly_root="$(docker inspect --format='{{.HostConfig.ReadonlyRootfs}}' tq-backend-test-postgres)"
+          port_bindings="$(docker inspect --format='{{json .HostConfig.PortBindings}}' tq-backend-test-postgres)"
+          cap_drop="$(docker inspect --format='{{json .HostConfig.CapDrop}}' tq-backend-test-postgres)"
+          security_options="$(docker inspect --format='{{json .HostConfig.SecurityOpt}}' tq-backend-test-postgres)"
+          configured_tmpfs="$(docker inspect --format='{{json .HostConfig.Tmpfs}}' tq-backend-test-postgres)"
+          mount_info="$(docker inspect --format='{{range .Mounts}}{{.Type}}|{{.Destination}}|rw={{.RW}}{{"\n"}}{{end}}' tq-backend-test-postgres)"
+          printf 'PostgreSQL 18 image PGDATA=%s declared-volumes=%s\n' "$image_pgdata" "$image_volumes"
+          printf 'Container id=%s state=%s exit=%s oom=%s error=%s\n' "${container_id:0:12}" "$container_state" "$container_exit" "$container_oom" "${container_error:-none}"
+          printf 'Container isolation network=%s readonly-root=%s port-bindings=%s cap-drop=%s security-options=%s\n' \
+            "$network_mode" "$readonly_root" "$port_bindings" "$cap_drop" "$security_options"
+          printf 'Configured tmpfs targets/options=%s\nEffective mounts (type|destination|rw):\n%s' "$configured_tmpfs" "$mount_info"
+          if [[ "$container_state" != running && "$container_state" != created ]]; then
+            echo "PostgreSQL 18 container stopped during startup. Sanitized startup log follows:"
+            docker logs --tail 80 tq-backend-test-postgres || true
+            exit 1
+          fi
+          test "$network_mode" = none
+          test "$readonly_root" = true
+          [[ "$port_bindings" == null || "$port_bindings" == '{}' ]]
+          [[ "$cap_drop" == '["ALL"]' ]]
+          [[ "$security_options" == *no-new-privileges* ]]
+          [[ "$configured_tmpfs" == *'"/var/lib/postgresql"'* ]]
+          unsafe_data_mount=false
+          while IFS='|' read -r mount_type mount_destination mount_readonly; do
+            if [[ "$mount_type" == volume || "$mount_type" == bind ]]; then
+              if [[ "$mount_destination" == "$image_pgdata" || "$mount_destination" == "$image_pgdata/"* ]]; then
+                echo "Unsafe persistent mount overlaps PostgreSQL PGDATA: ${mount_type} ${mount_destination}" >&2
+                unsafe_data_mount=true
+              fi
+            fi
+          done <<< "$mount_info"
+          if [[ "$unsafe_data_mount" == true ]]; then exit 1; fi
+          pgdata_filesystem="$(docker exec tq-backend-test-postgres stat -f -c '%T' -- "$image_pgdata")"
+          socket_filesystem="$(docker exec tq-backend-test-postgres stat -f -c '%T' -- /var/run/postgresql)"
+          printf 'Effective filesystem PGDATA=%s socket=%s\n' "$pgdata_filesystem" "$socket_filesystem"
+          test "$pgdata_filesystem" = tmpfs
+          test "$socket_filesystem" = tmpfs
+          ready=false
+          for attempt in $(seq 1 60); do
+            container_state="$(docker inspect --format='{{.State.Status}}' tq-backend-test-postgres 2>/dev/null || true)"
+            if [[ "$container_state" != running && "$container_state" != created ]]; then
+              echo "PostgreSQL 18 container stopped before readiness (state=${container_state:-missing})."
+              docker inspect --format='exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}}' tq-backend-test-postgres || true
+              docker logs tq-backend-test-postgres || true
+              exit 1
+            fi
+            if docker exec tq-backend-test-postgres pg_isready --host=127.0.0.1 --username=postgres --dbname=postgres >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != true ]]; then
+            echo "PostgreSQL 18 did not become ready. Container and sanitized startup details follow:"
+            docker inspect --format='state={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}} network={{.HostConfig.NetworkMode}} readonly={{.HostConfig.ReadonlyRootfs}}' tq-backend-test-postgres || true
+            docker logs --tail 80 tq-backend-test-postgres || true
+            exit 1
+          fi
+
+          databases=(
+            tq_preflight_valid_test_ci
+            tq_preflight_missing_ledger_test_ci
+            tq_preflight_missing_table_test_ci
+            tq_preflight_missing_column_test_ci
+            tq_preflight_incompatible_type_test_ci
+            tq_preflight_game_student_id_width_test_ci
+            tq_preflight_malformed_ledger_test_ci
+            tq_preflight_pending_024_test_ci
+            tq_preflight_pending_025_test_ci
+            tq_preflight_missing_receipt_constraint_test_ci
+            tq_preflight_pre_026_test_ci
+            tq_preflight_partial_receipt_026_test_ci
+            tq_preflight_026_applied_test_ci
+            tq_preflight_pre_024_test_ci
+            tq_preflight_wrong_filename_ledger_test_ci
+          )
+          for database in "${databases[@]}"; do
+            if [[ ! "$database" =~ ^tq_preflight_[a-z0-9_]+_test_ci$ ]]; then
+              echo "Refusing to create an unrecognized PostgreSQL test database: $database" >&2
+              exit 1
+            fi
+            docker exec tq-backend-test-postgres createdb --host=127.0.0.1 --username=postgres "$database"
+          done
+          disposable_sentinel="$(openssl rand -hex 24)"
+          if [[ ! "$disposable_sentinel" =~ ^[a-f0-9]{48}$ ]]; then
+            echo "Unable to generate the run-specific disposable PostgreSQL sentinel." >&2
+            exit 1
+          fi
+          for database in "${databases[@]}"; do
+            docker exec tq-backend-test-postgres psql \
+              --username=postgres \
+              --dbname="$database" \
+              --no-psqlrc \
+              --set=ON_ERROR_STOP=1 \
+              --command "COMMENT ON DATABASE \"$database\" IS 'tq-disposable-ci:${disposable_sentinel}';" >/dev/null
+          done
+          echo "sentinel=${disposable_sentinel}" >> "$GITHUB_OUTPUT"
+          docker inspect --format='PostgreSQL {{.Config.Image}} network={{.HostConfig.NetworkMode}} readonly={{.HostConfig.ReadonlyRootfs}} published-ports={{json .HostConfig.PortBindings}}' tq-backend-test-postgres
+
+      - name: Run PostgreSQL catalog and release-preflight scenarios on Node 20
+        id: postgres18-harness
+        shell: bash
+        env:
+          CI: 'true'
+          TQ_EXPECTED_POSTGRES_MAJOR: '18'
+          TQ_DISPOSABLE_DB_SENTINEL: ${{ steps.start-postgres18.outputs.sentinel }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/tq-postgres18-logs"
+          node capstone/backend/scripts/run-preflight-postgres-harness.cjs 2>&1 | tee "$RUNNER_TEMP/tq-postgres18-logs/postgres18-harness.log"
+
+      - name: Upload PostgreSQL 18 runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres18-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tq-postgres18-logs/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove disposable PostgreSQL 18 container
+        if: always()
+        shell: bash
+        run: docker rm -f -v tq-backend-test-postgres >/dev/null 2>&1 || true
+
+  windows-backup-validation:
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+    runs-on: windows-2022
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out candidate without persisting credentials
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node 20 for Windows preflight integration tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify Windows disposable ACL capability
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probeScript = (Resolve-Path -LiteralPath '.\capstone\backend\scripts\windowsAclCapabilityProbe.ps1').Path
+          $probeHost = (Get-Command 'pwsh.exe' -CommandType Application -ErrorAction Stop).Source
+          & $probeHost -NoLogo -NoProfile -NonInteractive -File $probeScript
+          $probeExit = $LASTEXITCODE
+          if ($null -eq $probeExit -or $probeExit -ne 0) {
+            throw "Windows ACL capability probe failed with process exit $probeExit; refusing to run the ACL integration suite."
+          }
+      - name: Run Windows preflight source-pin and credential-file regressions
+        shell: pwsh
+        run: |
+          $nodeVersion = (& node --version).Trim()
+          if ($nodeVersion -notmatch '^v20\.') { throw "Expected Node 20, found $nodeVersion." }
+          & node --test 'capstone/backend/scripts/releaseDatabasePreparation.test.js'
+          if ($LASTEXITCODE -ne 0) { throw "Windows preflight integration tests failed with exit code $LASTEXITCODE." }
+
+      - name: Parse and run backup/restore Windows safety tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(
+            'capstone/backend/scripts/backup-restore-rehearsal.ps1',
+            'capstone/backend/scripts/backupRestoreRehearsal.validation.psm1',
+            'capstone/backend/scripts/backupRestoreRehearsal.validation.test.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $file), [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) { throw "PowerShell parse failed for ${file}: $($parseErrors[0].Message)" }
+          }
+          & pwsh -NoProfile -File 'capstone/backend/scripts/backupRestoreRehearsal.validation.test.ps1'
+          if ($LASTEXITCODE -ne 0) { throw "PowerShell backup/restore validation tests failed with exit code $LASTEXITCODE." }

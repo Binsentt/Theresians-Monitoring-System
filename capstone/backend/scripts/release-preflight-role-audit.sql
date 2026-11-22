@@ -50,11 +50,11 @@ WITH target_role AS (
         )
     )::integer AS application_relation_select_count,
     COUNT(*) FILTER (
-      WHERE has_table_privilege(current_user, relation.oid, 'INSERT')
-         OR has_table_privilege(current_user, relation.oid, 'UPDATE')
+      WHERE has_any_column_privilege(current_user, relation.oid, 'INSERT')
+         OR has_any_column_privilege(current_user, relation.oid, 'UPDATE')
          OR has_table_privilege(current_user, relation.oid, 'DELETE')
          OR has_table_privilege(current_user, relation.oid, 'TRUNCATE')
-         OR has_table_privilege(current_user, relation.oid, 'REFERENCES')
+         OR has_any_column_privilege(current_user, relation.oid, 'REFERENCES')
          OR has_table_privilege(current_user, relation.oid, 'TRIGGER')
     )::integer AS table_write_privilege_count
   FROM pg_catalog.pg_class AS relation

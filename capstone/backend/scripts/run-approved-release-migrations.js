@@ -3,13 +3,20 @@ const path = require('node:path');
 const {
   ADVISORY_LOCK_KEY,
   RELEASE_MIGRATIONS,
-  applyReleaseMigrations,
   buildReleaseDatabaseConfig,
   migrationChecksum,
 } = require('../releaseMigrations');
 
 const DEFAULT_MIGRATION_DIR = path.resolve(__dirname, '../migrations');
 const MIN_RELEASE_VERSION = 18;
+const MIGRATION_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS public.schema_migrations (
+    version INTEGER PRIMARY KEY,
+    filename VARCHAR(255) NOT NULL,
+    checksum CHAR(64) NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )
+`;
 
 function requiredValue(env, name) {
   const value = String(env[name] ?? '').trim();
@@ -48,6 +55,42 @@ function readMigrationSql(migrationDir, migration) {
     throw new Error('migration path escapes migration directory');
   }
   return fs.readFileSync(filePath, 'utf8');
+}
+
+// Deliberately private: callers must pass the complete approval, target,
+// ledger, checksum, and migration-024 checks in runApprovedReleaseMigrations.
+async function executeApprovedMigrations({ client, migrationDir, migrations }) {
+  if (!client || typeof client.query !== 'function') throw new TypeError('a PostgreSQL client is required');
+  await client.query("SET statement_timeout = '15000ms'");
+  await client.query('SELECT pg_advisory_lock($1)', [ADVISORY_LOCK_KEY]);
+  try {
+    await client.query(MIGRATION_TABLE_SQL);
+    const existing = await client.query(
+      'SELECT version, checksum FROM public.schema_migrations WHERE version = ANY($1::integer[])',
+      [migrations.map(({ version }) => version)],
+    );
+    const applied = new Map(existing.rows.map((row) => [Number(row.version), String(row.checksum)]));
+
+    for (const migration of migrations) {
+      const sql = readMigrationSql(migrationDir, migration);
+      const checksum = migrationChecksum(sql);
+      const previousChecksum = applied.get(migration.version);
+      if (previousChecksum) {
+        if (previousChecksum !== checksum) {
+          throw new Error(`migration ${migration.version} checksum mismatch`);
+        }
+        continue;
+      }
+      await client.query(sql);
+      await client.query(
+        `INSERT INTO public.schema_migrations (version, filename, checksum)
+         VALUES ($1, $2, $3)`,
+        [migration.version, migration.file, checksum],
+      );
+    }
+  } finally {
+    await client.query('SELECT pg_advisory_unlock($1)', [ADVISORY_LOCK_KEY]);
+  }
 }
 
 function buildApprovalPlan(env, migrations) {
@@ -190,7 +233,7 @@ async function runApprovedReleaseMigrations({
     const identitySql = [
       'SELECT current_database() AS database_name,',
       '       current_user AS database_user,',
-      '       inet_server_addr()::text AS server_address,',
+      '       host(inet_server_addr()) AS server_address,',
       '       inet_server_port() AS server_port',
     ].join('\n');
     const identityResult = await client.query(identitySql);
@@ -237,10 +280,10 @@ async function runApprovedReleaseMigrations({
       await assertMigration024Impact({ client, plan });
     }
 
-    // applyReleaseMigrations uses the same session advisory lock. PostgreSQL
+    // The private executor takes the same session advisory lock. PostgreSQL
     // session locks are reentrant; its unlock releases its own acquisition,
     // and this outer acquisition stays held through preflight and execution.
-    await applyReleaseMigrations({ client, migrationDir, migrations: pending });
+    await executeApprovedMigrations({ client, migrationDir, migrations: pending });
     return {
       approvalReference: plan.approvalReference,
       appliedVersions: pending.map(({ version }) => version),

@@ -2,8 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { Client, Pool } = require('pg');
-const { RELEASE_MIGRATIONS, applyReleaseMigrations, runReleaseMigrations } = require('./releaseMigrations');
+const { Pool } = require('pg');
+const { RELEASE_MIGRATIONS, runReleaseMigrations } = require('./releaseMigrations');
+const { runSyntheticApprovedReleaseMigrations } = require('./testSupport/runSyntheticApprovedReleaseMigrations');
 const { buildProgressActivityEventKey, hashSaveCommitId } = require('./gameProgressSaveCommit.utils');
 const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('./testSafety/disposablePostgres');
 
@@ -140,14 +141,19 @@ if (!databaseUrl) {
     await pool.query('TRUNCATE public.accounts RESTART IDENTITY CASCADE');
 
     const priorReleaseMigrations = RELEASE_MIGRATIONS.filter(({ version }) => version < 26);
-    const migrationClient = new Client({ connectionString: databaseUrl });
-    await migrationClient.connect();
-    try {
-      await assertDisposablePostgresDatabase({ client: migrationClient, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
-      await applyReleaseMigrations({ client: migrationClient, migrations: priorReleaseMigrations });
-    } finally {
-      await migrationClient.end();
-    }
+    await pool.query(`CREATE TABLE IF NOT EXISTS public.schema_migrations (
+      version INTEGER PRIMARY KEY,
+      filename VARCHAR(255) NOT NULL,
+      checksum CHAR(64) NOT NULL,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
+    await pool.query('DELETE FROM public.schema_migrations WHERE version BETWEEN 18 AND 26');
+    await runSyntheticApprovedReleaseMigrations({
+      connectionString: databaseUrl,
+      expectedDatabaseName: 'tq_backend_test_ci',
+      migrations: priorReleaseMigrations,
+    });
 
     const parentResult = await pool.query(`
       INSERT INTO public.accounts (name, email, password, role, status, is_archived, session_version, parent_id)
@@ -201,7 +207,7 @@ if (!databaseUrl) {
     const identity = await pool.query(`
       SELECT current_database() AS database_name,
              current_user AS database_user,
-             inet_server_addr()::text AS server_address,
+             host(inet_server_addr()) AS server_address,
              inet_server_port() AS server_port
     `);
     const target = identity.rows[0];
