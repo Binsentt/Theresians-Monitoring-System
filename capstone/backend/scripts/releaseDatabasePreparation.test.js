@@ -399,10 +399,13 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
 });
 
 
-test('role audit exposes membership count and disposable harness restores valid audit after PUBLIC TEMP revoke', () => {
+test('role audits expose membership counts and disposable harness restores valid audit after PUBLIC TEMP revoke', () => {
   const audit = read('release-preflight-role-audit.sql');
+  const backupAudit = read('backup-role-preflight.sql');
   const harness = read('run-preflight-postgres-harness.cjs');
   assert.match(audit, /role_membership_count=:role_membership_count/);
+  assert.match(backupAudit, /\(SELECT role_membership_count FROM role_membership_audit\) AS role_membership_count/);
+  assert.match(backupAudit, /\\echo Backup-role catalog counts:[^\n]*role_membership_count=:role_membership_count/);
 
   const grantAt = harness.indexOf('const grantPublicTemp');
   const negativeAuditAt = harness.indexOf('const publicTempRoleAudit', grantAt);
