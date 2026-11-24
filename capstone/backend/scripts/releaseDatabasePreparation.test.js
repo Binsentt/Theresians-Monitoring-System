@@ -552,6 +552,71 @@ test('restore metadata is bound to the exact reviewed backup-tool source commit'
 });
 
 
+
+test('backup classifier accounts for PostgreSQL 16 and 18 NOT NULL catalog constraints', () => {
+  const sql = read('backup-release-state-preflight.sql');
+  assert.match(sql, /current_setting\('server_version_num'\)::integer\s*>=\s*180000/,
+    'PG18+ catalog-specific NOT NULL rows must be handled explicitly');
+  assert.match(sql, /COUNT\(\*\)\s+FILTER\s*\(WHERE\s+constraint_record\.contype\s*=\s*'p'\)\s*=\s*1/,
+    'the ledger must retain exactly one primary key constraint');
+  assert.match(sql, /COUNT\(\*\)\s+FILTER\s*\(WHERE\s+constraint_record\.contype\s*=\s*'n'\)[\s\S]*?THEN 4 ELSE 0 END/,
+    'ledger NOT NULL catalog rows must be zero on PG16 and exactly four on PG18+');
+  assert.match(sql, /attribute_record\.attname IN \('version',\s*'filename',\s*'checksum',\s*'applied_at'\)/,
+    'PG18 ledger NOT NULL constraints must map only to canonical ledger columns');
+  assert.match(sql, /COUNT\(\*\)\s+FILTER\s*\(WHERE\s+c\.contype\s*<>\s*'n'\)\s*=\s*8/,
+    'the receipt table must retain its exact eight structural constraints');
+  assert.match(sql, /COUNT\(\*\)\s*=\s*7[\s\S]*?COUNT\(DISTINCT\s+attribute_record\.attname\)\s*=\s*7/,
+    'PG18 receipt NOT NULL catalog rows must map one-to-one to seven required columns');
+  assert.match(sql, /expected_columns AS e\s+ON e\.attname\s*=\s*attribute_record\.attname\s+AND e\.required_not_null/,
+    'receipt NOT NULL rows must correspond only to the existing required-column manifest');
+  assert.match(sql, /constraint_record\.convalidated\s+AND NOT constraint_record\.condeferrable\s+AND NOT constraint_record\.condeferred/,
+    'catalog not-null rows must be validated and non-deferrable');
+});
+
+test('backup-role system-schema privilege regression uses the post-revoke audit result', () => {
+  const harness = read('run-preflight-postgres-harness.cjs');
+  const audit = harness.match(/const postSystemSchemaCreateAudit = invokeBackupRoleAudit\(CASES\.valid\);([\s\S]{0,500})/);
+  assert.ok(audit, 'the synthetic positive audit must run after revoking system-schema CREATE');
+  assert.match(audit[1], /postSystemSchemaCreateAudit\.status,\s*0/);
+  assert.match(audit[1], /\$\{postSystemSchemaCreateAudit\.stderr\}/);
+  assert.match(audit[1], /\$\{postSystemSchemaCreateAudit\.stdout\}/);
+  assert.doesNotMatch(audit[1], /\$\{postSystemSchemaCreate\.(?:stderr|stdout)\}/,
+    'failure diagnostics must reference the post-revoke result and never throw a ReferenceError');
+});
+
+test('pre-migration 026 constraint and index diagnostics use independent exact 17-table scopes', () => {
+  const sql = read('release-migration-026-prerequisite-preflight.sql');
+  const expectedTables = Object.keys(REQUIRED_SCHEMA)
+    .filter((tableName) => tableName !== 'game_progress_save_commits')
+    .sort();
+  const cteStarts = [...sql.matchAll(/WITH required_tables\(table_name\) AS \(/g)]
+    .map((match) => match.index);
+  assert.equal(cteStarts.length, 2, 'constraint and index queries must each define a statement-local table CTE');
+
+  const assertScopedTables = (query, label) => {
+    const cte = query.match(/WITH required_tables\(table_name\) AS \(\s*VALUES([\s\S]*?)\)\s*SELECT/);
+    assert.ok(cte, `${label} diagnostic must define required_tables in its own statement`);
+    const tables = [...cte[1].matchAll(/\('([^']+)'\)/g)].map(([, tableName]) => tableName).sort();
+    assert.equal(tables.length, 17, `${label} diagnostic must stay within the 17-table pre-migration scope`);
+    assert.deepEqual(tables, expectedTables, `${label} diagnostic must use the canonical pre-migration table set`);
+    assert.doesNotMatch(query, /required_columns/, `${label} diagnostic must not reference an out-of-scope column CTE`);
+  };
+
+  const constraintEnd = sql.indexOf('ORDER BY relation.relname,c.conname;', cteStarts[0]);
+  assert.ok(constraintEnd > cteStarts[0]);
+  const constraintQuery = sql.slice(cteStarts[0], constraintEnd + 'ORDER BY relation.relname,c.conname;'.length);
+  assertScopedTables(constraintQuery, 'constraint');
+  assert.match(constraintQuery, /pg_catalog\.pg_constraint/);
+  assert.match(constraintQuery, /relation\.relname IN \(SELECT table_name FROM required_tables\)/);
+
+  const indexEnd = sql.indexOf('ORDER BY tablename,indexname;', cteStarts[1]);
+  assert.ok(indexEnd > cteStarts[1]);
+  const indexQuery = sql.slice(cteStarts[1], indexEnd + 'ORDER BY tablename,indexname;'.length);
+  assertScopedTables(indexQuery, 'index');
+  assert.match(indexQuery, /pg_catalog\.pg_indexes/);
+  assert.match(indexQuery, /tablename IN \(SELECT table_name FROM required_tables\)/);
+});
+
 test('backup state classifier enforces the exact ledger and current 026 schema contracts', () => {
   const sql = read('backup-release-state-preflight.sql');
   assert.match(sql, /SET LOCAL search_path\s*=\s*pg_catalog\s*;/,

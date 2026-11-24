@@ -1175,7 +1175,7 @@ const revokeSystemSchemaCreate = psql(CASES.valid, 'postgres',
 assert.equal(revokeSystemSchemaCreate.status, 0, revokeSystemSchemaCreate.stderr);
 const postSystemSchemaCreateAudit = invokeBackupRoleAudit(CASES.valid);
 assert.equal(postSystemSchemaCreateAudit.status, 0,
-  `revoking synthetic system-schema CREATE should restore audit readiness: ${postSystemSchemaCreate.stderr}\n${postSystemSchemaCreate.stdout}`);
+  `revoking synthetic system-schema CREATE should restore audit readiness: ${postSystemSchemaCreateAudit.stderr}\n${postSystemSchemaCreateAudit.stdout}`);
 recordScenario('CREATE privilege on pg_catalog is rejected by backup-role audit');
 
 const backupRoleServerVersion = psql(CASES.valid, 'postgres', "SELECT current_setting('server_version_num');");

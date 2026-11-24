@@ -104,8 +104,36 @@ SELECT
     WHERE constraint_record.conrelid = 'public.schema_migrations'::regclass
       AND constraint_record.contype = 'p'
   )
-  AND (SELECT COUNT(*) = 1 FROM pg_catalog.pg_constraint
-       WHERE conrelid = 'public.schema_migrations'::regclass)
+  AND (
+    SELECT COUNT(*) FILTER (WHERE constraint_record.contype = 'p') = 1
+       AND COUNT(*) FILTER (WHERE constraint_record.contype = 'n') =
+           CASE WHEN current_setting('server_version_num')::integer >= 180000 THEN 4 ELSE 0 END
+       AND COUNT(*) FILTER (WHERE constraint_record.contype NOT IN ('p', 'n')) = 0
+    FROM pg_catalog.pg_constraint AS constraint_record
+    WHERE constraint_record.conrelid = 'public.schema_migrations'::regclass
+  )
+  AND (
+    current_setting('server_version_num')::integer < 180000
+    OR (
+      SELECT COUNT(*) = 4
+         AND COUNT(DISTINCT attribute_record.attname) = 4
+         AND BOOL_AND(attribute_record.attname IN ('version', 'filename', 'checksum', 'applied_at'))
+         AND BOOL_AND(
+           cardinality(constraint_record.conkey) = 1
+           AND constraint_record.convalidated
+           AND NOT constraint_record.condeferrable
+           AND NOT constraint_record.condeferred
+         )
+      FROM pg_catalog.pg_constraint AS constraint_record
+      JOIN LATERAL unnest(constraint_record.conkey) AS key_record(attnum) ON true
+      JOIN pg_catalog.pg_attribute AS attribute_record
+        ON attribute_record.attrelid = constraint_record.conrelid
+       AND attribute_record.attnum = key_record.attnum
+       AND attribute_record.attnum > 0 AND NOT attribute_record.attisdropped
+      WHERE constraint_record.conrelid = 'public.schema_migrations'::regclass
+        AND constraint_record.contype = 'n'
+    )
+  )
   AND (
     SELECT COUNT(*) = 1 AND BOOL_AND(
       index_record.indisunique AND index_record.indisprimary AND index_record.indimmediate
@@ -217,8 +245,38 @@ WITH expected(version, filename, source_sha256) AS (
     ('game_progress_save_commits_completion_consistency', 'c', 'check(((response_bodyisnull)=(completed_atisnull)))')
 ), receipt_constraints_ok AS (
   SELECT EXISTS (SELECT 1 FROM receipt_table WHERE relkind = 'r')
-     AND (SELECT COUNT(*) = 8 FROM pg_catalog.pg_constraint AS c
-          WHERE c.conrelid = (SELECT oid FROM receipt_table))
+     AND (
+       SELECT COUNT(*) FILTER (WHERE c.contype <> 'n') = 8
+          AND COUNT(*) FILTER (WHERE c.contype = 'n') =
+              CASE WHEN current_setting('server_version_num')::integer >= 180000 THEN 7 ELSE 0 END
+       FROM pg_catalog.pg_constraint AS c
+       WHERE c.conrelid = (SELECT oid FROM receipt_table)
+     )
+     AND (
+       current_setting('server_version_num')::integer < 180000
+       OR (
+         SELECT COUNT(*) = 7
+            AND COUNT(DISTINCT attribute_record.attname) = 7
+            AND BOOL_AND(e.attname IS NOT NULL)
+            AND BOOL_AND(
+              cardinality(c.conkey) = 1
+              AND c.convalidated
+              AND NOT c.condeferrable
+              AND NOT c.condeferred
+            )
+         FROM pg_catalog.pg_constraint AS c
+         JOIN LATERAL unnest(c.conkey) AS key_record(attnum) ON true
+         JOIN pg_catalog.pg_attribute AS attribute_record
+           ON attribute_record.attrelid = c.conrelid
+          AND attribute_record.attnum = key_record.attnum
+          AND attribute_record.attnum > 0 AND NOT attribute_record.attisdropped
+         LEFT JOIN expected_columns AS e
+           ON e.attname = attribute_record.attname
+          AND e.required_not_null
+         WHERE c.conrelid = (SELECT oid FROM receipt_table)
+           AND c.contype = 'n'
+       )
+     )
      AND NOT EXISTS (
        SELECT 1
        FROM expected_constraints AS e
