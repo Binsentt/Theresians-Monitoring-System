@@ -76,6 +76,28 @@ function psql(database, role, sql, variables = {}) {
   return docker(args, sql);
 }
 
+function invokeBackupReleaseState(database, role = 'postgres', overrides = {}) {
+  return psql(database, role, fs.readFileSync(
+    require('node:path').join(__dirname, 'backup-release-state-preflight.sql'),
+    'utf8',
+  ), {
+    expected_database: database,
+    expected_role: role,
+    expected_server_address: '127.0.0.1',
+    expected_server_port: '5432',
+    ...overrides,
+  });
+}
+
+function parseBackupReleaseState(result) {
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (result.status !== 0 && /BACKUP_TARGET_IDENTITY=FAIL/.test(output)) return 'IDENTITY_FAIL';
+  assert.match(output, /^BACKUP_TARGET_IDENTITY=PASS$/m, output);
+  const row = output.match(/^BACKUP_RELEASE_READINESS=(PRE_MIGRATION_026|POST_MIGRATION_026|UNVERIFIED)\|BACKUP_METADATA_FINGERPRINT=([a-f0-9]{32}|UNAVAILABLE)\|BACKUP_DATABASE_SIZE_BYTES=(\d+)$/m);
+  assert.ok(row, `backup release-state metadata row missing: ${output}`);
+  return { readiness: row[1], fingerprint: row[2], databaseSizeBytes: Number(row[3]) };
+}
+
 function assertCiContainer() {
   assert.equal(process.env.CI, 'true', 'preflight integration requires CI=true');
   assert.equal(process.env.GITHUB_ACTIONS, 'true', 'preflight integration is allowed only on GitHub Actions');
@@ -795,6 +817,157 @@ recordScenario('migration 025 pending fails closed without changing the ledger o
 
 assert.equal(passedScenarioCount, 41, 'all expected PostgreSQL major-version and release-preflight scenarios must execute');
 
+const preBackupStateResult = invokeBackupReleaseState(CASES.preMigration026);
+assert.equal(preBackupStateResult.status, 0, preBackupStateResult.stderr);
+const preBackupState = parseBackupReleaseState(preBackupStateResult);
+assert.equal(preBackupState.readiness, 'PRE_MIGRATION_026');
+assert.match(preBackupState.fingerprint, /^[a-f0-9]{32}$/);
+assert.ok(preBackupState.databaseSizeBytes > 0);
+const preBackupStateRepeat = parseBackupReleaseState(invokeBackupReleaseState(CASES.preMigration026));
+assert.deepEqual(preBackupStateRepeat, preBackupState, 'metadata-only fingerprint must remain stable without schema/data changes');
+recordScenario('read-only backup classifier recognizes stable exact pre-026 migration history');
+
+const postBackupStateResult = invokeBackupReleaseState(CASES.migration026Applied);
+assert.equal(postBackupStateResult.status, 0, postBackupStateResult.stderr);
+const postBackupState = parseBackupReleaseState(postBackupStateResult);
+assert.equal(postBackupState.readiness, 'POST_MIGRATION_026');
+recordScenario('read-only backup classifier recognizes complete post-026 receipt schema and ledger');
+
+const partialBackupStateResult = invokeBackupReleaseState(CASES.partialReceipt026);
+assert.equal(partialBackupStateResult.status, 0, partialBackupStateResult.stderr);
+assert.equal(parseBackupReleaseState(partialBackupStateResult).readiness, 'UNVERIFIED');
+recordScenario('partial receipt objects remain recoverable but release readiness is unverified');
+
+const orphanConstraint = psql(CASES.preMigration026, 'postgres',
+  'ALTER TABLE public.activity_logs ADD CONSTRAINT game_progress_save_commits_pkey CHECK (true);');
+assert.equal(orphanConstraint.status, 0, orphanConstraint.stderr);
+const orphanConstraintState = parseBackupReleaseState(invokeBackupReleaseState(CASES.preMigration026));
+assert.equal(orphanConstraintState.readiness, 'UNVERIFIED');
+const dropOrphanConstraint = psql(CASES.preMigration026, 'postgres',
+  'ALTER TABLE public.activity_logs DROP CONSTRAINT game_progress_save_commits_pkey;');
+assert.equal(dropOrphanConstraint.status, 0, dropOrphanConstraint.stderr);
+recordScenario('orphaned migration-026 constraint prevents pre-migration readiness classification');
+
+const orphanTrigger = psql(CASES.preMigration026, 'postgres', `
+  CREATE FUNCTION public.tq_orphan_receipt_probe() RETURNS trigger
+    LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+  CREATE TRIGGER game_progress_save_commits_orphan_trigger
+    BEFORE INSERT ON public.activity_logs FOR EACH ROW
+    EXECUTE FUNCTION public.tq_orphan_receipt_probe();
+`);
+assert.equal(orphanTrigger.status, 0, orphanTrigger.stderr);
+const orphanTriggerState = parseBackupReleaseState(invokeBackupReleaseState(CASES.preMigration026));
+assert.equal(orphanTriggerState.readiness, 'UNVERIFIED');
+const dropOrphanTrigger = psql(CASES.preMigration026, 'postgres', `
+  DROP TRIGGER game_progress_save_commits_orphan_trigger ON public.activity_logs;
+  DROP FUNCTION public.tq_orphan_receipt_probe();
+`);
+assert.equal(dropOrphanTrigger.status, 0, dropOrphanTrigger.stderr);
+recordScenario('orphaned migration-026 trigger prevents pre-migration readiness classification');
+
+const orphanType = psql(CASES.preMigration026, 'postgres',
+  "CREATE TYPE public.game_progress_save_commits AS ENUM ('probe');");
+assert.equal(orphanType.status, 0, orphanType.stderr);
+const orphanTypeState = parseBackupReleaseState(invokeBackupReleaseState(CASES.preMigration026));
+assert.equal(orphanTypeState.readiness, 'UNVERIFIED');
+const dropOrphanType = psql(CASES.preMigration026, 'postgres', 'DROP TYPE public.game_progress_save_commits;');
+assert.equal(dropOrphanType.status, 0, dropOrphanType.stderr);
+recordScenario('orphaned migration-026 type prevents pre-migration readiness classification');
+
+const pending024BackupStateResult = invokeBackupReleaseState(CASES.preMigration024Pending);
+assert.equal(pending024BackupStateResult.status, 0, pending024BackupStateResult.stderr);
+assert.equal(parseBackupReleaseState(pending024BackupStateResult).readiness, 'UNVERIFIED');
+recordScenario('pending migration 024 is classified unverified without blocking archive recovery');
+
+const malformedBackupStateResult = invokeBackupReleaseState(CASES.malformedLedger);
+assert.equal(malformedBackupStateResult.status, 0, malformedBackupStateResult.stderr);
+assert.equal(parseBackupReleaseState(malformedBackupStateResult).readiness, 'UNVERIFIED');
+recordScenario('altered historical checksum is classified unverified without changing the ledger');
+
+const missingLedgerBackupStateResult = invokeBackupReleaseState(CASES.missingLedger);
+assert.equal(missingLedgerBackupStateResult.status, 0, missingLedgerBackupStateResult.stderr);
+assert.equal(parseBackupReleaseState(missingLedgerBackupStateResult).readiness, 'UNVERIFIED');
+recordScenario('missing migration ledger is unverified but returns only aggregate size metadata');
+
+const wrongIdentityStateResult = invokeBackupReleaseState(CASES.preMigration026, 'postgres', { expected_database: 'tq_wrong_identity_test_ci' });
+assert.equal(wrongIdentityStateResult.status, 3, `${wrongIdentityStateResult.stderr}\n${wrongIdentityStateResult.stdout}`);
+assert.equal(parseBackupReleaseState(wrongIdentityStateResult), 'IDENTITY_FAIL');
+const wrongRoleStateResult = invokeBackupReleaseState(CASES.preMigration026, ROLE, { expected_role: 'tq_wrong_role_test_ci' });
+assert.equal(wrongRoleStateResult.status, 3, `${wrongRoleStateResult.stderr}\n${wrongRoleStateResult.stdout}`);
+assert.equal(parseBackupReleaseState(wrongRoleStateResult), 'IDENTITY_FAIL');
+recordScenario('backup-state classifier exits nonzero for database or role identity mismatches');
+
+const preRestoreDatabase = 'tq_restore_backup_pre026_test_ci';
+assert.match(preRestoreDatabase, /^tq_restore_[a-z0-9_]+_test_ci$/);
+const createRestoreRole = psql('postgres', 'postgres',
+  'CREATE ROLE tq_restore_operator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;');
+assert.equal(createRestoreRole.status, 0, createRestoreRole.stderr);
+const createPreRestoreDatabase = docker([
+  'exec', CONTAINER, 'createdb', '--host=127.0.0.1', '--port=5432', '--username=postgres',
+  '--owner=tq_restore_operator', preRestoreDatabase,
+]);
+assert.equal(createPreRestoreDatabase.status, 0, createPreRestoreDatabase.stderr);
+const stampPreRestoreDatabase = psql('postgres', 'postgres',
+  `COMMENT ON DATABASE ${preRestoreDatabase} IS '${SENTINEL_PREFIX}${process.env.TQ_DISPOSABLE_DB_SENTINEL}';`);
+assert.equal(stampPreRestoreDatabase.status, 0, stampPreRestoreDatabase.stderr);
+const verifyPreRestoreSentinel = docker([
+  'exec', CONTAINER, 'psql', '--host=127.0.0.1', '--port=5432', '--username=postgres', `--dbname=${preRestoreDatabase}`,
+  '--no-psqlrc', '--tuples-only', '--no-align',
+  '--command=SELECT shobj_description(oid, \'pg_database\') FROM pg_database WHERE datname = current_database();',
+]);
+assert.equal(verifyPreRestoreSentinel.status, 0, verifyPreRestoreSentinel.stderr);
+assert.equal(verifyPreRestoreSentinel.stdout.trim(), `${SENTINEL_PREFIX}${process.env.TQ_DISPOSABLE_DB_SENTINEL}`,
+  'the new pre-026 restore database must be marked with this run’s disposable-database sentinel');
+const preRestoreTarget = psql(preRestoreDatabase, 'tq_restore_operator', `
+  SELECT current_database() = '${preRestoreDatabase}'
+     AND current_user = 'tq_restore_operator'
+     AND host(inet_server_addr()) = '127.0.0.1'
+     AND inet_server_port() = 5432
+     AND NOT COALESCE((SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolinherit
+                       FROM pg_catalog.pg_roles WHERE rolname=current_user), true)
+     AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+                     WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f','S'));
+`);
+assert.equal(preRestoreTarget.status, 0, preRestoreTarget.stderr);
+assert.equal(preRestoreTarget.stdout.trim(), 't', 'pre-026 archive target must be empty and loopback-only');
+const preSourceState = parseBackupReleaseState(invokeBackupReleaseState(CASES.preMigration026));
+const preDump = dockerBinary([
+  'exec', CONTAINER, 'pg_dump', '--host=127.0.0.1', '--port=5432', '--username=postgres',
+  `--dbname=${CASES.preMigration026}`, '--no-password', '--format=custom', '--compress=6', '--no-owner',
+  '--no-privileges', '--no-tablespaces', '--lock-wait-timeout=5s',
+]);
+assert.equal(preDump.status, 0, `synthetic pre-026 pg_dump failed: ${String(preDump.stderr || '')}`);
+assert.ok(Buffer.isBuffer(preDump.stdout) && preDump.stdout.length > 0);
+const preArchiveDigest = crypto.createHash('sha256').update(preDump.stdout).digest('hex');
+assert.match(preArchiveDigest, /^[a-f0-9]{64}$/);
+const preRestore = dockerBinary([
+  'exec', '-i', CONTAINER, 'pg_restore', '--host=127.0.0.1', '--port=5432',
+  '--username=tq_restore_operator', `--dbname=${preRestoreDatabase}`, '--no-password', '--format=custom',
+  '--exit-on-error', '--single-transaction', '--no-owner', '--no-privileges', '--no-tablespaces', '-',
+], preDump.stdout);
+assert.equal(preRestore.status, 0, `synthetic pre-026 archive restore failed: ${String(preRestore.stderr || '')}`);
+const preRestoredState = parseBackupReleaseState(invokeBackupReleaseState(preRestoreDatabase, 'tq_restore_operator'));
+assert.equal(preRestoredState.readiness, 'PRE_MIGRATION_026', 'pre-026 restore must not fail for absent migration 026');
+assert.equal(preRestoredState.fingerprint, preSourceState.fingerprint, 'pre-026 source and restored metadata fingerprints must match');
+recordScenario('synthetic PostgreSQL archive restores pre-026 into a fresh loopback target with matching catalog fingerprint');
+
+const unexpectedMigration = psql(CASES.preMigration026, 'postgres',
+  "INSERT INTO public.schema_migrations(version, filename, checksum) VALUES (27, '027_unexpected.sql', repeat('0', 64));");
+assert.equal(unexpectedMigration.status, 0, unexpectedMigration.stderr);
+const unexpectedBackupStateResult = invokeBackupReleaseState(CASES.preMigration026);
+assert.equal(unexpectedBackupStateResult.status, 0, unexpectedBackupStateResult.stderr);
+assert.equal(parseBackupReleaseState(unexpectedBackupStateResult).readiness, 'UNVERIFIED');
+recordScenario('unexpected migration version is preserved and classified unverified');
+
+assert.equal(passedScenarioCount, 53,
+  'all expected disposable backup-state classification and pre-026 restore scenarios must execute');
+
+const missingBackupRoleAudit = invokeBackupRoleAudit(CASES.valid);
+assert.ok(Number.isInteger(missingBackupRoleAudit.status) && missingBackupRoleAudit.status !== 0,
+  'a missing dedicated backup role must fail before the backup procedure can connect');
+assert.match(missingBackupRoleAudit.stderr, /role .*tq_prod_backup_reader.* does not exist/i);
+recordScenario('missing dedicated backup role fails closed before any archive attempt');
+
 const createSyntheticBackupProbe = psql(CASES.valid, 'postgres', `
   CREATE TABLE public.release_backup_synthetic_probe (marker text PRIMARY KEY);
   INSERT INTO public.release_backup_synthetic_probe(marker) VALUES ('synthetic-only-backup-probe');
@@ -805,35 +978,502 @@ const createBackupRole = psql('postgres', 'postgres', `
   GRANT CONNECT ON DATABASE ${CASES.valid} TO tq_prod_backup_reader;
 `);
 assert.equal(createBackupRole.status, 0, createBackupRole.stderr);
+const adminRoleSubstitution = psql(CASES.valid, 'postgres', fs.readFileSync(
+  require('node:path').join(__dirname, 'backup-role-preflight.sql'), 'utf8'), {
+  expected_database: CASES.valid,
+  expected_role: 'tq_prod_backup_reader',
+  expected_server_address: '127.0.0.1',
+  expected_server_port: '5432',
+});
+assert.equal(adminRoleSubstitution.status, 3,
+  `an administrator connection must not satisfy the dedicated backup-role identity gate: ${adminRoleSubstitution.stderr}\n${adminRoleSubstitution.stdout}`);
+assert.match(adminRoleSubstitution.stdout, /STOP: backup role, data-read coverage, target, or dump completeness prerequisites failed/i);
+recordScenario('administrator credential substitution is rejected by the backup-role identity gate');
 const grantBackupRole = psql(CASES.valid, 'postgres', `
   GRANT USAGE ON SCHEMA public TO tq_prod_backup_reader;
   GRANT SELECT ON ALL TABLES IN SCHEMA public TO tq_prod_backup_reader;
   GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO tq_prod_backup_reader;
 `);
 assert.equal(grantBackupRole.status, 0, grantBackupRole.stderr);
+const publicLargeObjectCreatorAccess = psql(CASES.valid, 'postgres', `
+  SELECT has_function_privilege('tq_prod_backup_reader', 'pg_catalog.lo_creat(integer)', 'EXECUTE')
+     AND has_function_privilege('tq_prod_backup_reader', 'pg_catalog.lo_create(oid)', 'EXECUTE')
+     AND has_function_privilege('tq_prod_backup_reader', 'pg_catalog.lo_from_bytea(oid,bytea)', 'EXECUTE');
+`);
+assert.equal(publicLargeObjectCreatorAccess.status, 0, publicLargeObjectCreatorAccess.stderr);
+assert.equal(publicLargeObjectCreatorAccess.stdout.trim(), 't',
+  'the synthetic baseline must expose the default effective PUBLIC EXECUTE grants');
+const publicLargeObjectCreation = psql(CASES.valid, 'tq_prod_backup_reader', 'SELECT lo_create(0);');
+assert.equal(publicLargeObjectCreation.status, 0,
+  `a NOINHERIT table-reader can create its own LO through PUBLIC EXECUTE on the primary fixture: ${publicLargeObjectCreation.stderr}`);
+const publicCreatedLargeObjectOid = publicLargeObjectCreation.stdout.trim();
+assert.match(publicCreatedLargeObjectOid, /^\d+$/);
+const verifyPublicLargeObjectOwner = psql(CASES.valid, 'postgres', `
+  SELECT lomowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname='tq_prod_backup_reader')
+  FROM pg_catalog.pg_largeobject_metadata WHERE oid=${publicCreatedLargeObjectOid};
+`);
+assert.equal(verifyPublicLargeObjectOwner.status, 0, verifyPublicLargeObjectOwner.stderr);
+assert.equal(verifyPublicLargeObjectOwner.stdout.trim(), 't', 'the callable creator assigns ownership to the backup role');
+const cleanupPublicLargeObject = psql(CASES.valid, 'postgres', `SELECT lo_unlink(${publicCreatedLargeObjectOid});`);
+assert.equal(cleanupPublicLargeObject.status, 0, cleanupPublicLargeObject.stderr);
+const publicCreatorRoleAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(publicCreatorRoleAudit.status, 3,
+  `effective PUBLIC creator execution must fail the backup-role audit: ${publicCreatorRoleAudit.stderr}\n${publicCreatorRoleAudit.stdout}`);
+assert.match(publicCreatorRoleAudit.stdout, /executable_large_object_creation_function_count=3/);
+recordScenario('public EXECUTE on large-object creation functions is rejected after proving actual LO creation');
+
+const enableReadOnlyRoleDefault = psql(CASES.valid, 'postgres',
+  'ALTER ROLE tq_prod_backup_reader SET default_transaction_read_only = on;');
+assert.equal(enableReadOnlyRoleDefault.status, 0, enableReadOnlyRoleDefault.stderr);
+const overrideReadOnlyRoleDefault = psql(CASES.valid, 'tq_prod_backup_reader', `
+  SET default_transaction_read_only = off;
+  SELECT lo_create(0);
+`);
+assert.equal(overrideReadOnlyRoleDefault.status, 0,
+  `a role-level read-only default must not be mistaken for an enforced no-write control: ${overrideReadOnlyRoleDefault.stderr}`);
+const overriddenLargeObjectOid = overrideReadOnlyRoleDefault.stdout.trim();
+assert.match(overriddenLargeObjectOid, /^\d+$/);
+const cleanupOverriddenLargeObject = psql(CASES.valid, 'postgres', `SELECT lo_unlink(${overriddenLargeObjectOid});`);
+assert.equal(cleanupOverriddenLargeObject.status, 0, cleanupOverriddenLargeObject.stderr);
+const resetReadOnlyRoleDefault = psql(CASES.valid, 'postgres',
+  'ALTER ROLE tq_prod_backup_reader RESET default_transaction_read_only;');
+assert.equal(resetReadOnlyRoleDefault.status, 0, resetReadOnlyRoleDefault.stderr);
+recordScenario('role-level default_transaction_read_only can be overridden and is not a role write prohibition');
+
+const revokePublicLargeObjectCreators = psql(CASES.valid, 'postgres', `
+  REVOKE EXECUTE ON FUNCTION pg_catalog.lo_creat(integer), pg_catalog.lo_create(oid),
+    pg_catalog.lo_from_bytea(oid,bytea) FROM PUBLIC;
+`);
+assert.equal(revokePublicLargeObjectCreators.status, 0, revokePublicLargeObjectCreators.stderr);
+for (const creatorSql of [
+  'SELECT lo_creat(-1);',
+  'SELECT lo_create(0);',
+  "SELECT lo_from_bytea(0, decode('73796e746865746963', 'hex'));",
+]) {
+  const deniedCreator = psql(CASES.valid, 'tq_prod_backup_reader', creatorSql);
+  assert.equal(deniedCreator.status, 3,
+    `backup role must not execute revoked LO creator ${creatorSql}: ${deniedCreator.stderr}\n${deniedCreator.stdout}`);
+}
 const backupRoleAudit = invokeBackupRoleAudit(CASES.valid);
 assert.equal(backupRoleAudit.status, 0,
-  `dedicated disposable backup role must pass its read-only catalog audit: ${backupRoleAudit.stderr}\n${backupRoleAudit.stdout}`);
+  `disposable role with audited read grants and LO creators revoked must pass: ${backupRoleAudit.stderr}\n${backupRoleAudit.stdout}`);
 assert.match(backupRoleAudit.stdout, /unreadable_relation_count=0/);
 assert.match(backupRoleAudit.stdout, /unreadable_sequence_count=0/);
+assert.match(backupRoleAudit.stdout, /unreadable_large_object_count=0/);
 assert.match(backupRoleAudit.stdout, /relation_write_privilege_count=0/);
-recordScenario('synthetic backup role has read-only access to every fixture relation and sequence');
+assert.match(backupRoleAudit.stdout, /relation_maintenance_privilege_count=0/);
+assert.match(backupRoleAudit.stdout, /parameter_set_privilege_count=0/);
+assert.match(backupRoleAudit.stdout, /parameter_alter_system_privilege_count=0/);
+assert.match(backupRoleAudit.stdout, /executable_large_object_creation_function_count=0/);
+assert.match(backupRoleAudit.stdout, /executable_large_object_server_file_function_count=0/);
+assert.match(backupRoleAudit.stdout, /executable_security_definer_function_count=0/);
+assert.match(backupRoleAudit.stdout, /executable_untrusted_function_count=0/);
+assert.match(backupRoleAudit.stdout,
+  /OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:/,
+  'the catalog audit must preserve its explicit unknown-function-side-effect gate');
+recordScenario('synthetic role has clean catalog counts while overall nonwriting status remains unverified');
+recordScenario('backup role cannot create large objects after mutator EXECUTE is revoked');
+
+const grantSystemSchemaCreate = psql(CASES.valid, 'postgres',
+  'GRANT CREATE ON SCHEMA pg_catalog TO tq_prod_backup_reader;');
+assert.equal(grantSystemSchemaCreate.status, 0, grantSystemSchemaCreate.stderr);
+const systemSchemaCreateAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(systemSchemaCreateAudit.status, 3,
+  `CREATE on a system schema must fail the backup-role audit: ${systemSchemaCreateAudit.stderr}\n${systemSchemaCreateAudit.stdout}`);
+assert.match(systemSchemaCreateAudit.stdout, /schema_create_privilege_count=1/);
+const revokeSystemSchemaCreate = psql(CASES.valid, 'postgres',
+  'REVOKE CREATE ON SCHEMA pg_catalog FROM tq_prod_backup_reader;');
+assert.equal(revokeSystemSchemaCreate.status, 0, revokeSystemSchemaCreate.stderr);
+const postSystemSchemaCreateAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(postSystemSchemaCreateAudit.status, 0,
+  `revoking synthetic system-schema CREATE should restore audit readiness: ${postSystemSchemaCreate.stderr}\n${postSystemSchemaCreate.stdout}`);
+recordScenario('CREATE privilege on pg_catalog is rejected by backup-role audit');
+
+const backupRoleServerVersion = psql(CASES.valid, 'postgres', "SELECT current_setting('server_version_num');");
+assert.equal(backupRoleServerVersion.status, 0, backupRoleServerVersion.stderr);
+const serverVersionNumber = Number(backupRoleServerVersion.stdout.trim());
+assert.ok(Number.isInteger(serverVersionNumber) && serverVersionNumber >= 160000,
+  `backup-role privilege harness requires PostgreSQL 16 or newer, got ${backupRoleServerVersion.stdout.trim()}`);
+if (serverVersionNumber >= 170000) {
+  const createMaintenanceMaterializedView = psql(CASES.valid, 'postgres', `
+    CREATE MATERIALIZED VIEW public.fixture_backup_maintain AS
+      SELECT 'synthetic-maintenance-proof'::text AS marker WITH NO DATA;
+    GRANT SELECT, MAINTAIN ON TABLE public.fixture_backup_maintain TO tq_prod_backup_reader;
+  `);
+  assert.equal(createMaintenanceMaterializedView.status, 0, createMaintenanceMaterializedView.stderr);
+  const maintainRoleAudit = invokeBackupRoleAudit(CASES.valid);
+  assert.equal(maintainRoleAudit.status, 3,
+    `effective MAINTAIN must fail the backup-role audit: ${maintainRoleAudit.stderr}\n${maintainRoleAudit.stdout}`);
+  assert.match(maintainRoleAudit.stdout, /relation_maintenance_privilege_count=1/);
+  const refreshWithMaintain = psql(CASES.valid, 'tq_prod_backup_reader',
+    'REFRESH MATERIALIZED VIEW public.fixture_backup_maintain;');
+  assert.equal(refreshWithMaintain.status, 0,
+    `the synthetic MAINTAIN grant should permit materialized-view refresh: ${refreshWithMaintain.stderr}`);
+  const verifyRefreshedMaterializedView = psql(CASES.valid, 'postgres',
+    "SELECT marker FROM public.fixture_backup_maintain;");
+  assert.equal(verifyRefreshedMaterializedView.status, 0, verifyRefreshedMaterializedView.stderr);
+  assert.equal(verifyRefreshedMaterializedView.stdout.trim(), 'synthetic-maintenance-proof');
+  const removeMaintenanceMaterializedView = psql(CASES.valid, 'postgres',
+    'DROP MATERIALIZED VIEW public.fixture_backup_maintain;');
+  assert.equal(removeMaintenanceMaterializedView.status, 0, removeMaintenanceMaterializedView.stderr);
+  const postMaintainRoleAudit = invokeBackupRoleAudit(CASES.valid);
+  assert.equal(postMaintainRoleAudit.status, 0,
+    `removing synthetic MAINTAIN permission should restore audit readiness: ${postMaintainRoleAudit.stderr}\n${postMaintainRoleAudit.stdout}`);
+  recordScenario('MAINTAIN privilege is rejected on supported PostgreSQL versions');
+} else {
+  assert.match(backupRoleAudit.stdout, /relation_maintenance_privilege_count=0/,
+    'PostgreSQL 16 should keep the version-gated MAINTAIN check harmless');
+  recordScenario('MAINTAIN privilege check is version-safe on PostgreSQL 16');
+}
+
+const createLoCompatProbe = psql(CASES.valid, 'postgres', 'SELECT lo_create(0);');
+assert.equal(createLoCompatProbe.status, 0, createLoCompatProbe.stderr);
+const loCompatProbeOid = createLoCompatProbe.stdout.trim();
+assert.match(loCompatProbeOid, /^\d+$/);
+const populateLoCompatProbe = psql(CASES.valid, 'postgres',
+  `SELECT lo_put(${loCompatProbeOid}, 0, decode('7374617274', 'hex'));`);
+assert.equal(populateLoCompatProbe.status, 0, populateLoCompatProbe.stderr);
+const grantLoCompatRead = psql(CASES.valid, 'postgres',
+  `GRANT SELECT ON LARGE OBJECT ${loCompatProbeOid} TO tq_prod_backup_reader;`);
+assert.equal(grantLoCompatRead.status, 0, grantLoCompatRead.stderr);
+const grantLoCompatSetDirect = psql(CASES.valid, 'postgres',
+  'GRANT SET ON PARAMETER lo_compat_privileges TO tq_prod_backup_reader;');
+assert.equal(grantLoCompatSetDirect.status, 0, grantLoCompatSetDirect.stderr);
+const directLoCompatAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(directLoCompatAudit.status, 3,
+  `a direct lo_compat_privileges SET grant must fail the backup-role audit: ${directLoCompatAudit.stderr}\n${directLoCompatAudit.stdout}`);
+assert.match(directLoCompatAudit.stdout, /parameter_set_privilege_count=1/);
+const directLoCompatWrite = psql(CASES.valid, 'tq_prod_backup_reader', `
+  SET lo_compat_privileges = on;
+  SELECT lo_put(${loCompatProbeOid}, 0, decode('646972656374', 'hex'));
+`);
+assert.equal(directLoCompatWrite.status, 0,
+  `direct SET on the large-object compatibility GUC should demonstrate the synthetic ACL bypass: ${directLoCompatWrite.stderr}`);
+const revokeLoCompatSetDirect = psql(CASES.valid, 'postgres',
+  'REVOKE SET ON PARAMETER lo_compat_privileges FROM tq_prod_backup_reader;');
+assert.equal(revokeLoCompatSetDirect.status, 0, revokeLoCompatSetDirect.stderr);
+const grantLoCompatSetPublic = psql(CASES.valid, 'postgres',
+  'GRANT SET ON PARAMETER lo_compat_privileges TO PUBLIC;');
+assert.equal(grantLoCompatSetPublic.status, 0, grantLoCompatSetPublic.stderr);
+const publicLoCompatAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(publicLoCompatAudit.status, 3,
+  `a PUBLIC lo_compat_privileges SET grant must fail the backup-role audit: ${publicLoCompatAudit.stderr}\n${publicLoCompatAudit.stdout}`);
+assert.match(publicLoCompatAudit.stdout, /parameter_set_privilege_count=1/);
+const publicLoCompatWrite = psql(CASES.valid, 'tq_prod_backup_reader', `
+  SET lo_compat_privileges = on;
+  SELECT lo_put(${loCompatProbeOid}, 0, decode('7075626c6963', 'hex'));
+`);
+assert.equal(publicLoCompatWrite.status, 0,
+  `PUBLIC SET on the large-object compatibility GUC should demonstrate the synthetic ACL bypass: ${publicLoCompatWrite.stderr}`);
+const revokeLoCompatSetPublic = psql(CASES.valid, 'postgres',
+  'REVOKE SET ON PARAMETER lo_compat_privileges FROM PUBLIC;');
+assert.equal(revokeLoCompatSetPublic.status, 0, revokeLoCompatSetPublic.stderr);
+const removeLoCompatProbe = psql(CASES.valid, 'postgres', `SELECT lo_unlink(${loCompatProbeOid});`);
+assert.equal(removeLoCompatProbe.status, 0, removeLoCompatProbe.stderr);
+assert.equal(removeLoCompatProbe.stdout.trim(), '1');
+const postLoCompatAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(postLoCompatAudit.status, 0,
+  `revoking synthetic compatibility grants should restore audit readiness: ${postLoCompatAudit.stderr}\n${postLoCompatAudit.stdout}`);
+recordScenario('lo_compat_privileges SET grant bypass is rejected after a synthetic large-object write');
+
+const publicAlterSystemGrant = psql(CASES.valid, 'postgres',
+  'GRANT ALTER SYSTEM ON PARAMETER work_mem TO PUBLIC;');
+assert.equal(publicAlterSystemGrant.status, 0, publicAlterSystemGrant.stderr);
+const publicAlterSystemAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(publicAlterSystemAudit.status, 3,
+  `PUBLIC ALTER SYSTEM must fail the backup-role audit: ${publicAlterSystemAudit.stderr}\n${publicAlterSystemAudit.stdout}`);
+assert.match(publicAlterSystemAudit.stdout, /parameter_alter_system_privilege_count=1/);
+const publicAlterSystemWrite = psql(CASES.valid, 'tq_prod_backup_reader',
+  "ALTER SYSTEM SET work_mem = '64MB';");
+assert.equal(publicAlterSystemWrite.status, 0,
+  `PUBLIC ALTER SYSTEM grant should permit the synthetic config write: ${publicAlterSystemWrite.stderr}`);
+const resetPublicAlterSystem = psql(CASES.valid, 'postgres',
+  'ALTER SYSTEM RESET work_mem; SELECT pg_reload_conf();');
+assert.equal(resetPublicAlterSystem.status, 0, resetPublicAlterSystem.stderr);
+const revokePublicAlterSystem = psql(CASES.valid, 'postgres',
+  'REVOKE ALTER SYSTEM ON PARAMETER work_mem FROM PUBLIC;');
+assert.equal(revokePublicAlterSystem.status, 0, revokePublicAlterSystem.stderr);
+const postPublicAlterSystemAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(postPublicAlterSystemAudit.status, 0,
+  `revoking synthetic PUBLIC ALTER SYSTEM should restore audit readiness: ${postPublicAlterSystemAudit.stderr}\n${postPublicAlterSystemAudit.stdout}`);
+recordScenario('PUBLIC ALTER SYSTEM parameter grant is rejected after a synthetic configuration write');
+
+const directAlterSystemGrant = psql(CASES.valid, 'postgres',
+  'GRANT ALTER SYSTEM ON PARAMETER work_mem TO tq_prod_backup_reader;');
+assert.equal(directAlterSystemGrant.status, 0, directAlterSystemGrant.stderr);
+const directAlterSystemAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(directAlterSystemAudit.status, 3,
+  `direct ALTER SYSTEM must fail the backup-role audit: ${directAlterSystemAudit.stderr}\n${directAlterSystemAudit.stdout}`);
+assert.match(directAlterSystemAudit.stdout, /parameter_alter_system_privilege_count=1/);
+const directAlterSystemWrite = psql(CASES.valid, 'tq_prod_backup_reader',
+  "ALTER SYSTEM SET work_mem = '64MB';");
+assert.equal(directAlterSystemWrite.status, 0,
+  `direct ALTER SYSTEM grant should permit the synthetic config write: ${directAlterSystemWrite.stderr}`);
+const resetDirectAlterSystem = psql(CASES.valid, 'postgres',
+  'ALTER SYSTEM RESET work_mem; SELECT pg_reload_conf();');
+assert.equal(resetDirectAlterSystem.status, 0, resetDirectAlterSystem.stderr);
+const revokeDirectAlterSystem = psql(CASES.valid, 'postgres',
+  'REVOKE ALTER SYSTEM ON PARAMETER work_mem FROM tq_prod_backup_reader;');
+assert.equal(revokeDirectAlterSystem.status, 0, revokeDirectAlterSystem.stderr);
+const postDirectAlterSystemAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(postDirectAlterSystemAudit.status, 0,
+  `revoking synthetic direct ALTER SYSTEM should restore audit readiness: ${postDirectAlterSystemAudit.stderr}\n${postDirectAlterSystemAudit.stdout}`);
+recordScenario('direct ALTER SYSTEM parameter grant is rejected after a synthetic configuration write');
+
+const grantDirectLargeObjectCreator = psql(CASES.valid, 'postgres',
+  'GRANT EXECUTE ON FUNCTION pg_catalog.lo_create(oid) TO tq_prod_backup_reader;');
+assert.equal(grantDirectLargeObjectCreator.status, 0, grantDirectLargeObjectCreator.stderr);
+const directLargeObjectCreation = psql(CASES.valid, 'tq_prod_backup_reader', 'SELECT lo_create(0);');
+assert.equal(directLargeObjectCreation.status, 0,
+  `an explicit creator EXECUTE grant must create an LO owned by the backup role: ${directLargeObjectCreation.stderr}`);
+const directCreatedLargeObjectOid = directLargeObjectCreation.stdout.trim();
+assert.match(directCreatedLargeObjectOid, /^\d+$/);
+const directCreatorRoleAudit = invokeBackupRoleAudit(CASES.valid);
+const cleanupDirectLargeObject = psql(CASES.valid, 'postgres',
+  `SELECT lo_unlink(${directCreatedLargeObjectOid});`);
+assert.equal(cleanupDirectLargeObject.status, 0, cleanupDirectLargeObject.stderr);
+const revokeDirectLargeObjectCreator = psql(CASES.valid, 'postgres',
+  'REVOKE EXECUTE ON FUNCTION pg_catalog.lo_create(oid) FROM tq_prod_backup_reader;');
+assert.equal(revokeDirectLargeObjectCreator.status, 0, revokeDirectLargeObjectCreator.stderr);
+assert.equal(directCreatorRoleAudit.status, 3,
+  `direct creator EXECUTE must fail the backup-role audit: ${directCreatorRoleAudit.stderr}\n${directCreatorRoleAudit.stdout}`);
+assert.match(directCreatorRoleAudit.stdout, /executable_large_object_creation_function_count=1/);
+const postDirectCreatorRoleAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(postDirectCreatorRoleAudit.status, 0,
+  `removing the direct creator grant should restore the synthetic read-only role: ${postDirectCreatorRoleAudit.stderr}\n${postDirectCreatorRoleAudit.stdout}`);
+recordScenario('direct EXECUTE on a large-object creator is rejected after proving actual LO creation');
+
+const serverLargeObjectFileFunctions = `
+  pg_catalog.lo_import(text), pg_catalog.lo_import(text, oid),
+  pg_catalog.lo_export(oid, text)
+`;
+const grantPublicLargeObjectFileFunctions = psql(CASES.valid, 'postgres',
+  `GRANT EXECUTE ON FUNCTION ${serverLargeObjectFileFunctions} TO PUBLIC;`);
+assert.equal(grantPublicLargeObjectFileFunctions.status, 0, grantPublicLargeObjectFileFunctions.stderr);
+const publicLargeObjectFileFunctionAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(publicLargeObjectFileFunctionAudit.status, 3,
+  `PUBLIC server-side LO file access must fail closed: ${publicLargeObjectFileFunctionAudit.stderr}\n${publicLargeObjectFileFunctionAudit.stdout}`);
+assert.match(publicLargeObjectFileFunctionAudit.stdout, /executable_large_object_server_file_function_count=3/);
+const revokePublicLargeObjectFileFunctions = psql(CASES.valid, 'postgres',
+  `REVOKE EXECUTE ON FUNCTION ${serverLargeObjectFileFunctions} FROM PUBLIC;`);
+assert.equal(revokePublicLargeObjectFileFunctions.status, 0, revokePublicLargeObjectFileFunctions.stderr);
+recordScenario('PUBLIC EXECUTE on server-side large-object file functions is rejected');
+
+const grantDirectLargeObjectFileFunctions = psql(CASES.valid, 'postgres',
+  `GRANT EXECUTE ON FUNCTION ${serverLargeObjectFileFunctions} TO tq_prod_backup_reader;`);
+assert.equal(grantDirectLargeObjectFileFunctions.status, 0, grantDirectLargeObjectFileFunctions.stderr);
+const directLargeObjectFileFunctionAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(directLargeObjectFileFunctionAudit.status, 3,
+  `direct server-side LO file access must fail closed: ${directLargeObjectFileFunctionAudit.stderr}\n${directLargeObjectFileFunctionAudit.stdout}`);
+assert.match(directLargeObjectFileFunctionAudit.stdout, /executable_large_object_server_file_function_count=3/);
+const revokeDirectLargeObjectFileFunctions = psql(CASES.valid, 'postgres',
+  `REVOKE EXECUTE ON FUNCTION ${serverLargeObjectFileFunctions} FROM tq_prod_backup_reader;`);
+assert.equal(revokeDirectLargeObjectFileFunctions.status, 0, revokeDirectLargeObjectFileFunctions.stderr);
+recordScenario('direct EXECUTE on server-side large-object file functions is rejected');
+
+const enableBackupProbeRls = psql(CASES.valid, 'postgres',
+  'ALTER TABLE public.accounts ENABLE ROW LEVEL SECURITY;');
+assert.equal(enableBackupProbeRls.status, 0, enableBackupProbeRls.stderr);
+const rlsRoleAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(rlsRoleAudit.status, 3,
+  `an RLS-enabled relation must fail the full-backup role audit: ${rlsRoleAudit.stderr}\n${rlsRoleAudit.stdout}`);
+assert.match(rlsRoleAudit.stdout, /row_security_relation_count=1/);
+const disableBackupProbeRls = psql(CASES.valid, 'postgres',
+  'ALTER TABLE public.accounts DISABLE ROW LEVEL SECURITY;');
+assert.equal(disableBackupProbeRls.status, 0, disableBackupProbeRls.stderr);
+const postRlsRoleAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(postRlsRoleAudit.status, 0,
+  `the full-backup role audit should pass after removing synthetic RLS: ${postRlsRoleAudit.stderr}\n${postRlsRoleAudit.stdout}`);
+recordScenario('RLS-enabled relation is rejected by backup-role audit');
+
+const createPublicSecurityDefiner = psql(CASES.valid, 'postgres', `
+  CREATE FUNCTION public.fixture_backup_security_definer() RETURNS integer
+  LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
+`);
+assert.equal(createPublicSecurityDefiner.status, 0, createPublicSecurityDefiner.stderr);
+const publicSecurityDefinerAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(publicSecurityDefinerAudit.status, 3,
+  `publicly executable SECURITY DEFINER function must fail the backup-role audit: ${publicSecurityDefinerAudit.stderr}\n${publicSecurityDefinerAudit.stdout}`);
+assert.match(publicSecurityDefinerAudit.stdout, /executable_security_definer_function_count=1/);
+recordScenario('executable SECURITY DEFINER function is rejected by backup-role audit');
+
+const revokePublicSecurityDefiner = psql(CASES.valid, 'postgres',
+  'REVOKE EXECUTE ON FUNCTION public.fixture_backup_security_definer() FROM PUBLIC;');
+assert.equal(revokePublicSecurityDefiner.status, 0, revokePublicSecurityDefiner.stderr);
+const grantDirectSecurityDefiner = psql(CASES.valid, 'postgres',
+  'GRANT EXECUTE ON FUNCTION public.fixture_backup_security_definer() TO tq_prod_backup_reader;');
+assert.equal(grantDirectSecurityDefiner.status, 0, grantDirectSecurityDefiner.stderr);
+const directSecurityDefinerAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(directSecurityDefinerAudit.status, 3,
+  `explicit EXECUTE to the backup role must fail even without PUBLIC access: ${directSecurityDefinerAudit.stderr}\n${directSecurityDefinerAudit.stdout}`);
+assert.match(directSecurityDefinerAudit.stdout, /executable_security_definer_function_count=1/);
+const revokeDirectSecurityDefiner = psql(CASES.valid, 'postgres',
+  'REVOKE EXECUTE ON FUNCTION public.fixture_backup_security_definer() FROM tq_prod_backup_reader;');
+assert.equal(revokeDirectSecurityDefiner.status, 0, revokeDirectSecurityDefiner.stderr);
+const dropPublicSecurityDefiner = psql(CASES.valid, 'postgres',
+  'DROP FUNCTION public.fixture_backup_security_definer();');
+assert.equal(dropPublicSecurityDefiner.status, 0, dropPublicSecurityDefiner.stderr);
+recordScenario('explicit SECURITY DEFINER grant to backup role is rejected');
+
+const createUntrustedFunction = psql(CASES.valid, 'postgres', `
+  CREATE FUNCTION public.fixture_backup_untrusted() RETURNS integer
+  AS 'intentionally_missing_test_library', 'intentionally_missing_test_symbol' LANGUAGE C;
+`);
+assert.equal(createUntrustedFunction.status, 0, createUntrustedFunction.stderr);
+const untrustedFunctionAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(untrustedFunctionAudit.status, 3,
+  `callable untrusted-language functions must fail the backup-role audit: ${untrustedFunctionAudit.stderr}\n${untrustedFunctionAudit.stdout}`);
+assert.match(untrustedFunctionAudit.stdout, /executable_untrusted_function_count=1/);
+const dropUntrustedFunction = psql(CASES.valid, 'postgres',
+  'DROP FUNCTION public.fixture_backup_untrusted();');
+assert.equal(dropUntrustedFunction.status, 0, dropUntrustedFunction.stderr);
+recordScenario('callable untrusted-language function is rejected by backup-role audit');
+
+const createOwnedUserRoutine = psql(CASES.valid, 'postgres', `
+  CREATE FUNCTION public.fixture_backup_owned_routine() RETURNS integer
+  LANGUAGE sql IMMUTABLE AS $$ SELECT 1 $$;
+  GRANT CREATE ON SCHEMA public TO tq_prod_backup_reader;
+  ALTER FUNCTION public.fixture_backup_owned_routine() OWNER TO tq_prod_backup_reader;
+  REVOKE CREATE ON SCHEMA public FROM tq_prod_backup_reader;
+`);
+assert.equal(createOwnedUserRoutine.status, 0, createOwnedUserRoutine.stderr);
+const ownedUserRoutineAudit = invokeBackupRoleAudit(CASES.valid);
+const removeOwnedUserRoutine = psql(CASES.valid, 'postgres',
+  'DROP FUNCTION public.fixture_backup_owned_routine();');
+assert.equal(removeOwnedUserRoutine.status, 0, removeOwnedUserRoutine.stderr);
+assert.equal(ownedUserRoutineAudit.status, 3,
+  `backup role ownership of a user routine must fail closed: ${ownedUserRoutineAudit.stderr}\n${ownedUserRoutineAudit.stdout}`);
+assert.match(ownedUserRoutineAudit.stdout, /owned_user_routine_count=1/);
+recordScenario('backup role ownership of a user routine is rejected');
+
+const createWriteBypassRole = psql(CASES.valid, 'postgres', `
+  CREATE ROLE tq_backup_write_bypass_ci NOLOGIN;
+  GRANT INSERT ON public.accounts TO tq_backup_write_bypass_ci;
+  GRANT tq_backup_write_bypass_ci TO tq_prod_backup_reader;
+`);
+assert.equal(createWriteBypassRole.status, 0, createWriteBypassRole.stderr);
+const setWriteBypassRole = psql(CASES.valid, 'tq_prod_backup_reader', `
+  SET ROLE tq_backup_write_bypass_ci;
+  SELECT has_table_privilege(current_user, 'public.accounts', 'INSERT');
+`);
+assert.equal(setWriteBypassRole.status, 0, setWriteBypassRole.stderr);
+assert.equal(setWriteBypassRole.stdout.trim(), 't');
+const membershipRoleAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(membershipRoleAudit.status, 3,
+  `NOINHERIT membership that can be activated by SET ROLE must fail: ${membershipRoleAudit.stderr}\n${membershipRoleAudit.stdout}`);
+assert.match(membershipRoleAudit.stdout, /role_membership_count=1/);
+const revokeWriteBypassRole = psql(CASES.valid, 'postgres', `
+  REVOKE tq_backup_write_bypass_ci FROM tq_prod_backup_reader;
+  REVOKE INSERT ON public.accounts FROM tq_backup_write_bypass_ci;
+  DROP ROLE tq_backup_write_bypass_ci;
+`);
+assert.equal(revokeWriteBypassRole.status, 0, revokeWriteBypassRole.stderr);
+recordScenario('NOINHERIT backup role membership bypass is rejected');
+
+const createBackupOwnedLargeObject = psql(CASES.valid, 'postgres', 'SELECT lo_create(0);');
+assert.equal(createBackupOwnedLargeObject.status, 0, createBackupOwnedLargeObject.stderr);
+const backupOwnedLargeObjectOid = createBackupOwnedLargeObject.stdout.trim();
+assert.match(backupOwnedLargeObjectOid, /^\d+$/);
+const transferLargeObjectOwnership = psql(CASES.valid, 'postgres',
+  `ALTER LARGE OBJECT ${backupOwnedLargeObjectOid} OWNER TO tq_prod_backup_reader;`);
+assert.equal(transferLargeObjectOwnership.status, 0, transferLargeObjectOwnership.stderr);
+const ownedLargeObjectRoleAudit = invokeBackupRoleAudit(CASES.valid);
+const removeBackupOwnedLargeObject = psql(CASES.valid, 'tq_prod_backup_reader',
+  `SELECT lo_unlink(${backupOwnedLargeObjectOid});`);
+assert.equal(removeBackupOwnedLargeObject.status, 0, removeBackupOwnedLargeObject.stderr);
+assert.equal(removeBackupOwnedLargeObject.stdout.trim(), '1', 'the synthetic owner can unlink its own large object');
+assert.equal(ownedLargeObjectRoleAudit.status, 3,
+  `backup role ownership of a large object must fail closed: ${ownedLargeObjectRoleAudit.stderr}\n${ownedLargeObjectRoleAudit.stdout}`);
+assert.match(ownedLargeObjectRoleAudit.stdout, /large_object_write_privilege_count=1/);
+recordScenario('backup role ownership of a synthetic large object is rejected');
+
+const createLargeObject = psql(CASES.valid, 'postgres', 'SELECT lo_create(0);');
+assert.equal(createLargeObject.status, 0, createLargeObject.stderr);
+const largeObjectOid = createLargeObject.stdout.trim();
+assert.match(largeObjectOid, /^\d+$/, 'synthetic large object creation must return one OID');
+const populateSyntheticLargeObject = psql(CASES.valid, 'postgres',
+  `SELECT lo_put(${largeObjectOid}, 0, decode('73796e746865746963', 'hex'));`);
+assert.equal(populateSyntheticLargeObject.status, 0, populateSyntheticLargeObject.stderr);
+const missingLargeObjectRead = invokeBackupRoleAudit(CASES.valid);
+assert.equal(missingLargeObjectRead.status, 3,
+  `backup role without large-object SELECT must fail closed: ${missingLargeObjectRead.stderr}\n${missingLargeObjectRead.stdout}`);
+assert.match(missingLargeObjectRead.stdout, /unreadable_large_object_count=1/);
+recordScenario('backup role is rejected when one synthetic large object is unreadable');
+
+const grantLargeObjectRead = psql(CASES.valid, 'postgres',
+  `GRANT SELECT ON LARGE OBJECT ${largeObjectOid} TO tq_prod_backup_reader;`);
+assert.equal(grantLargeObjectRead.status, 0, grantLargeObjectRead.stderr);
+const readableLargeObject = invokeBackupRoleAudit(CASES.valid);
+assert.equal(readableLargeObject.status, 0,
+  `backup role with read-only large-object SELECT must pass: ${readableLargeObject.stderr}\n${readableLargeObject.stdout}`);
+assert.match(readableLargeObject.stdout, /unreadable_large_object_count=0/);
+assert.match(readableLargeObject.stdout, /large_object_write_privilege_count=0/);
+const readSyntheticLargeObject = psql(CASES.valid, 'tq_prod_backup_reader',
+  `SELECT encode(lo_get(${largeObjectOid}), 'hex');`);
+assert.equal(readSyntheticLargeObject.status, 0, readSyntheticLargeObject.stderr);
+assert.equal(readSyntheticLargeObject.stdout.trim(), '73796e746865746963', 'SELECT-only LO retrieval must work');
+const deniedLargeObjectUpdate = psql(CASES.valid, 'tq_prod_backup_reader',
+  `SELECT lo_put(${largeObjectOid}, 0, decode('78', 'hex'));`);
+assert.equal(deniedLargeObjectUpdate.status, 3,
+  `SELECT-only role cannot update an LO: ${deniedLargeObjectUpdate.stderr}\n${deniedLargeObjectUpdate.stdout}`);
+const deniedLargeObjectWriteOpen = psql(CASES.valid, 'tq_prod_backup_reader', `
+  BEGIN;
+  SELECT lo_open(${largeObjectOid}, 131072);
+  ROLLBACK;
+`);
+assert.equal(deniedLargeObjectWriteOpen.status, 3,
+  `SELECT-only role cannot open an LO with INV_WRITE: ${deniedLargeObjectWriteOpen.stderr}\n${deniedLargeObjectWriteOpen.stdout}`);
+recordScenario('large-object write descriptor requires UPDATE privilege');
+const deniedLargeObjectUnlink = psql(CASES.valid, 'tq_prod_backup_reader',
+  `SELECT lo_unlink(${largeObjectOid});`);
+assert.equal(deniedLargeObjectUnlink.status, 3,
+  `non-owner cannot unlink another role's LO: ${deniedLargeObjectUnlink.stderr}\n${deniedLargeObjectUnlink.stdout}`);
+recordScenario('large-object reads remain available after creator restrictions');
+
+const grantLargeObjectUpdate = psql(CASES.valid, 'postgres',
+  `GRANT UPDATE ON LARGE OBJECT ${largeObjectOid} TO tq_prod_backup_reader;`);
+assert.equal(grantLargeObjectUpdate.status, 0, grantLargeObjectUpdate.stderr);
+const writableLargeObject = invokeBackupRoleAudit(CASES.valid);
+assert.equal(writableLargeObject.status, 3,
+  `backup role with large-object UPDATE must fail closed: ${writableLargeObject.stderr}\n${writableLargeObject.stdout}`);
+assert.match(writableLargeObject.stdout, /large_object_write_privilege_count=1/);
+const writableLargeObjectApis = psql(CASES.valid, 'tq_prod_backup_reader', `
+  BEGIN;
+  SELECT lo_open(${largeObjectOid}, 131072) AS fixture_lo_fd \gset
+  SELECT lowrite(:fixture_lo_fd, decode('78', 'hex'));
+  SELECT lo_truncate(:fixture_lo_fd, 8);
+  SELECT lo_truncate64(:fixture_lo_fd, 9);
+  ROLLBACK;
+`);
+assert.equal(writableLargeObjectApis.status, 0,
+  `UPDATE on the synthetic LO should permit the write and truncation interfaces inside a rollback-only transaction: ${writableLargeObjectApis.stderr}\n${writableLargeObjectApis.stdout}`);
+const largeObjectAfterRollback = psql(CASES.valid, 'tq_prod_backup_reader',
+  `SELECT encode(lo_get(${largeObjectOid}), 'hex');`);
+assert.equal(largeObjectAfterRollback.status, 0, largeObjectAfterRollback.stderr);
+assert.equal(largeObjectAfterRollback.stdout.trim(), '73796e746865746963',
+  'large-object write/truncate capability probe must leave the synthetic object unchanged after rollback');
+recordScenario('lowrite and both truncate APIs are transactionally rolled back');
+const revokeLargeObjectUpdate = psql(CASES.valid, 'postgres',
+  `REVOKE UPDATE ON LARGE OBJECT ${largeObjectOid} FROM tq_prod_backup_reader;`);
+assert.equal(revokeLargeObjectUpdate.status, 0, revokeLargeObjectUpdate.stderr);
+recordScenario('backup role is rejected when it can update a synthetic large object');
 
 const dump = dockerBinary([
   'exec', CONTAINER, 'pg_dump', '--host=127.0.0.1', '--port=5432',
   '--username=tq_prod_backup_reader', `--dbname=${CASES.valid}`,
   '--no-password', '--format=custom', '--compress=6', '--no-owner', '--no-privileges',
-  '--lock-wait-timeout=5s',
+  '--no-tablespaces', '--lock-wait-timeout=5s',
 ]);
 assert.equal(dump.status, 0, `synthetic pg_dump must succeed without external networking: ${String(dump.stderr || '')}`);
 assert.ok(Buffer.isBuffer(dump.stdout) && dump.stdout.length > 0, 'custom-format synthetic archive must be nonempty');
 const archiveSha256 = crypto.createHash('sha256').update(dump.stdout).digest('hex');
 assert.match(archiveSha256, /^[a-f0-9]{64}$/);
+const sourceLargeObjectCount = psql(CASES.valid, 'postgres',
+  'SELECT COUNT(*)::text FROM pg_catalog.pg_largeobject_metadata;');
+assert.equal(sourceLargeObjectCount.status, 0, sourceLargeObjectCount.stderr);
+assert.equal(sourceLargeObjectCount.stdout.trim(), '1', 'synthetic source must contain the approved large object');
 
 const restoreDatabase = 'tq_restore_backup_test_ci';
-const createRestoreRole = psql('postgres', 'postgres',
-  'CREATE ROLE tq_restore_operator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;');
-assert.equal(createRestoreRole.status, 0, createRestoreRole.stderr);
 const createRestoreDatabase = docker([
   'exec', CONTAINER, 'createdb', '--host=127.0.0.1', '--port=5432', '--username=postgres',
   '--owner=tq_restore_operator', restoreDatabase,
@@ -842,7 +1482,7 @@ assert.equal(createRestoreDatabase.status, 0, createRestoreDatabase.stderr);
 const stampRestoreDatabase = psql('postgres', 'postgres',
   `COMMENT ON DATABASE ${restoreDatabase} IS '${SENTINEL_PREFIX}${process.env.TQ_DISPOSABLE_DB_SENTINEL}';`);
 assert.equal(stampRestoreDatabase.status, 0, stampRestoreDatabase.stderr);
-const restoreTarget = psql(restoreDatabase, 'tq_restore_operator', `
+const restoreTargetSql = `
   SELECT current_database() = '${restoreDatabase}'
      AND current_user = 'tq_restore_operator'
      AND host(inet_server_addr()) = '127.0.0.1'
@@ -850,29 +1490,66 @@ const restoreTarget = psql(restoreDatabase, 'tq_restore_operator', `
      AND NOT COALESCE((SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolinherit
                        FROM pg_catalog.pg_roles WHERE rolname=current_user), true)
      AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-                     WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f','S'));
-`);
+                     WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f','S'))
+     AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_largeobject_metadata);
+`;
+const restoreTarget = psql(restoreDatabase, 'tq_restore_operator', restoreTargetSql);
 assert.equal(restoreTarget.status, 0, restoreTarget.stderr);
 assert.equal(restoreTarget.stdout.trim(), 't', 'restore target must be an empty loopback DB owned by a non-admin NOINHERIT role');
-const restore = dockerBinary([
+const truncatedArchive = Buffer.from(dump.stdout.subarray(0, Math.floor(dump.stdout.length / 2)));
+assert.ok(truncatedArchive.length > 0 && truncatedArchive.length < dump.stdout.length,
+  'the truncated archive fixture must be a nonempty strict prefix of the real custom-format archive');
+const truncatedRestore = dockerBinary([
   'exec', '-i', CONTAINER, 'pg_restore', '--host=127.0.0.1', '--port=5432',
   '--username=tq_restore_operator', `--dbname=${restoreDatabase}`,
   '--no-password', '--format=custom', '--exit-on-error', '--single-transaction',
-  '--no-owner', '--no-privileges',
+  '--no-owner', '--no-privileges', '--no-tablespaces', '-',
+], truncatedArchive);
+assert.ok(Number.isInteger(truncatedRestore.status) && truncatedRestore.status !== 0,
+  `truncated custom-format archive must be rejected with a nonzero process exit: ${String(truncatedRestore.stderr || '')}`);
+const targetAfterTruncatedRestore = psql(restoreDatabase, 'tq_restore_operator', restoreTargetSql);
+assert.equal(targetAfterTruncatedRestore.status, 0, targetAfterTruncatedRestore.stderr);
+assert.equal(targetAfterTruncatedRestore.stdout.trim(), 't',
+  'transactional rejection of a truncated archive must leave no restored schema, rows, or large objects');
+recordScenario('truncated custom-format archive must be rejected transactionally without leaving restore objects');
+const targetLargeObject = psql(restoreDatabase, 'postgres', 'SELECT lo_create(0);');
+assert.equal(targetLargeObject.status, 0, targetLargeObject.stderr);
+const targetLargeObjectOid = targetLargeObject.stdout.trim();
+assert.match(targetLargeObjectOid, /^\d+$/, 'target large object creation must return one OID');
+const nonemptyLargeObjectTarget = psql(restoreDatabase, 'tq_restore_operator', restoreTargetSql);
+assert.equal(nonemptyLargeObjectTarget.status, 0, nonemptyLargeObjectTarget.stderr);
+assert.equal(nonemptyLargeObjectTarget.stdout.trim(), 'f',
+  'restore target with a pre-existing large object must be rejected as nonempty');
+const removeTargetLargeObject = psql(restoreDatabase, 'postgres',
+  `SELECT lo_unlink(${targetLargeObjectOid});`);
+assert.equal(removeTargetLargeObject.status, 0, removeTargetLargeObject.stderr);
+recordScenario('isolated restore target rejects a pre-existing synthetic large object');
+const restoreBackupArchive = dockerBinary([
+  'exec', '-i', CONTAINER, 'pg_restore', '--host=127.0.0.1', '--port=5432',
+  '--username=tq_restore_operator', `--dbname=${restoreDatabase}`,
+  '--no-password', '--format=custom', '--exit-on-error', '--single-transaction',
+  '--no-owner', '--no-privileges', '--no-tablespaces',
 ], dump.stdout);
-assert.equal(restore.status, 0, `synthetic pg_restore to empty loopback target must succeed: ${String(restore.stderr || '')}`);
+assert.equal(restoreBackupArchive.status, 0, `synthetic pg_restore to empty loopback target must succeed: ${String(restoreBackupArchive.stderr || '')}`);
 const restoredProbe = psql(restoreDatabase, 'tq_restore_operator', `
   BEGIN READ ONLY;
   SELECT current_database() = '${restoreDatabase}'
      AND current_user = 'tq_restore_operator'
      AND (SELECT COUNT(*) FROM public.release_backup_synthetic_probe WHERE marker='synthetic-only-backup-probe') = 1
      AND (SELECT COUNT(*) FROM public.schema_migrations WHERE version BETWEEN 18 AND 26) = 9
+     AND (SELECT COUNT(*) FROM pg_catalog.pg_largeobject_metadata) = 1
      AND to_regclass('public.game_progress_save_commits') IS NOT NULL;
   ROLLBACK;
 `);
 assert.equal(restoredProbe.status, 0, restoredProbe.stderr);
 assert.equal(restoredProbe.stdout.trim(), 't', 'restored synthetic data and migration metadata must be present');
-recordScenario('custom archive restores transactionally into an empty isolated loopback database and retains synthetic data');
+const postSourceState = parseBackupReleaseState(invokeBackupReleaseState(CASES.valid, 'tq_prod_backup_reader'));
+const postRestoredState = parseBackupReleaseState(invokeBackupReleaseState(restoreDatabase, 'tq_restore_operator'));
+assert.equal(postSourceState.readiness, 'POST_MIGRATION_026');
+assert.equal(postRestoredState.readiness, postSourceState.readiness);
+assert.equal(postRestoredState.fingerprint, postSourceState.fingerprint,
+  'post-026 source and restored database catalog fingerprints must match without comparing application rows');
+recordScenario('custom archive restores transactionally into an empty isolated loopback database with matching metadata');
 
-assert.equal(passedScenarioCount, 43, 'all expected PostgreSQL version, release-preflight, and backup scenarios must execute');
+assert.equal(passedScenarioCount, 83, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
 console.log(`Preflight integration result: ${passedScenarioCount}/${passedScenarioCount} disposable PostgreSQL scenarios passed.`);

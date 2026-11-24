@@ -45,6 +45,13 @@ WITH target_role AS (
          OR has_table_privilege(current_user, relation.oid, 'REFERENCES')
          OR has_table_privilege(current_user, relation.oid, 'TRIGGER')
     )::integer AS relation_write_privilege_count,
+    COUNT(*) FILTER (
+      WHERE CASE
+        WHEN current_setting('server_version_num')::integer >= 170000
+          THEN has_table_privilege(current_user, relation.oid, 'MAINTAIN')
+        ELSE false
+      END
+    )::integer AS relation_maintenance_privilege_count,
     COUNT(*) FILTER (WHERE relation.relrowsecurity)::integer AS row_security_relation_count,
     COUNT(*) FILTER (WHERE relation.relkind = 'f')::integer AS foreign_table_count
   FROM pg_catalog.pg_class AS relation
@@ -68,16 +75,112 @@ WITH target_role AS (
   WHERE sequence_relation.relkind = 'S'
     AND sequence_namespace.nspname <> 'information_schema'
     AND sequence_namespace.nspname !~ '^pg_'
+), large_object_audit AS (
+  -- Decode the ACL directly so this audit also runs on PostgreSQL 16, where
+  -- has_largeobject_privilege() is not available.
+  SELECT
+    COUNT(*) FILTER (
+      WHERE large_object.lomowner <> target_role.oid
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_catalog.aclexplode(
+            COALESCE(large_object.lomacl, pg_catalog.acldefault('L', large_object.lomowner))
+          ) AS large_object_privilege
+          WHERE (large_object_privilege.grantee = target_role.oid OR large_object_privilege.grantee = 0::oid)
+            AND large_object_privilege.privilege_type = 'SELECT'
+        )
+    )::integer AS unreadable_large_object_count,
+    COUNT(*) FILTER (
+      WHERE large_object.lomowner = target_role.oid
+        OR EXISTS (
+          SELECT 1 FROM pg_catalog.aclexplode(
+            COALESCE(large_object.lomacl, pg_catalog.acldefault('L', large_object.lomowner))
+          ) AS large_object_privilege
+          WHERE (large_object_privilege.grantee = target_role.oid OR large_object_privilege.grantee = 0::oid)
+            AND large_object_privilege.privilege_type = 'UPDATE'
+        )
+    )::integer AS large_object_write_privilege_count
+  FROM pg_catalog.pg_largeobject_metadata AS large_object
+  CROSS JOIN target_role
+), large_object_creation_function_audit AS (
+  -- These server-side functions can create an LO owned by the caller. Since
+  -- the owner can then write or unlink it, effective EXECUTE (including a
+  -- grant to PUBLIC) is a database-write capability even with no table grants.
+  SELECT COUNT(*) FILTER (
+    WHERE has_function_privilege(current_user, creator.function_oid::oid, 'EXECUTE')
+  )::integer AS executable_large_object_creation_function_count
+  FROM (VALUES
+    ('pg_catalog.lo_creat(integer)'::regprocedure),
+    ('pg_catalog.lo_create(oid)'::regprocedure),
+    ('pg_catalog.lo_from_bytea(oid,bytea)'::regprocedure)
+  ) AS creator(function_oid)
+), large_object_server_file_function_audit AS (
+  -- Server-side LO import/export can read or write files using server OS
+  -- privileges. PostgreSQL permits these routines to be granted to a
+  -- non-superuser, so any effective EXECUTE must block this backup role.
+  SELECT COUNT(*) FILTER (
+    WHERE has_function_privilege(current_user, server_file.function_oid::oid, 'EXECUTE')
+  )::integer AS executable_large_object_server_file_function_count
+  FROM (VALUES
+    ('pg_catalog.lo_import(text)'::regprocedure),
+    ('pg_catalog.lo_import(text,oid)'::regprocedure),
+    ('pg_catalog.lo_export(oid,text)'::regprocedure)
+  ) AS server_file(function_oid)
+), owned_user_routine_audit AS (
+  -- Owning a user routine gives the backup role authority to alter or drop
+  -- executable code after this audit. Reject that mutable audit surface.
+  SELECT COUNT(*)::integer AS owned_user_routine_count
+  FROM pg_catalog.pg_proc AS function_record
+  JOIN pg_catalog.pg_namespace AS function_namespace
+    ON function_namespace.oid = function_record.pronamespace
+  CROSS JOIN target_role
+  WHERE function_namespace.nspname <> 'information_schema'
+    AND function_namespace.nspname !~ '^pg_'
+    AND function_record.proowner = target_role.oid
+), parameter_privilege_audit AS (
+  -- SET on lo_compat_privileges disables large-object ACL checks. ALTER SYSTEM
+  -- writes server configuration outside transaction rollback, so reject any
+  -- effective grant to this role, including grants inherited through PUBLIC.
+  SELECT
+    COUNT(*) FILTER (
+      WHERE parameter_record.parname = 'lo_compat_privileges'
+        AND has_parameter_privilege(current_user, parameter_record.parname, 'SET')
+    )::integer AS parameter_set_privilege_count,
+    COUNT(*) FILTER (
+      WHERE has_parameter_privilege(current_user, parameter_record.parname, 'ALTER SYSTEM')
+    )::integer AS parameter_alter_system_privilege_count
+  FROM pg_catalog.pg_parameter_acl AS parameter_record
+), security_definer_function_audit AS (
+  SELECT COUNT(*)::integer AS executable_security_definer_function_count
+  FROM pg_catalog.pg_proc AS function_record
+  JOIN pg_catalog.pg_namespace AS function_namespace
+    ON function_namespace.oid = function_record.pronamespace
+  WHERE function_namespace.nspname <> 'information_schema'
+    AND function_namespace.nspname !~ '^pg_'
+    AND function_record.prosecdef
+    AND has_function_privilege(current_user, function_record.oid, 'EXECUTE')
+), untrusted_function_audit AS (
+  -- Catalog metadata can flag callable C/untrusted-language routines, but
+  -- cannot prove that arbitrary trusted-language function bodies are benign.
+  SELECT COUNT(*)::integer AS executable_untrusted_function_count
+  FROM pg_catalog.pg_proc AS function_record
+  JOIN pg_catalog.pg_namespace AS function_namespace
+    ON function_namespace.oid = function_record.pronamespace
+  JOIN pg_catalog.pg_language AS function_language
+    ON function_language.oid = function_record.prolang
+  WHERE function_namespace.nspname <> 'information_schema'
+    AND function_namespace.nspname !~ '^pg_'
+    AND NOT function_language.lanpltrusted
+    AND has_function_privilege(current_user, function_record.oid, 'EXECUTE')
 ), schema_audit AS (
   SELECT COUNT(*) FILTER (
-    WHERE NOT has_schema_privilege(current_user, namespace_record.oid, 'USAGE')
+    WHERE namespace_record.nspname <> 'information_schema'
+      AND namespace_record.nspname !~ '^pg_'
+      AND NOT has_schema_privilege(current_user, namespace_record.oid, 'USAGE')
   )::integer AS unusable_schema_count,
   COUNT(*) FILTER (
     WHERE has_schema_privilege(current_user, namespace_record.oid, 'CREATE')
   )::integer AS schema_create_privilege_count
   FROM pg_catalog.pg_namespace AS namespace_record
-  WHERE namespace_record.nspname <> 'information_schema'
-    AND namespace_record.nspname !~ '^pg_'
 ), role_membership_audit AS (
   SELECT COUNT(*)::integer AS role_membership_count
   FROM pg_catalog.pg_auth_members AS membership
@@ -102,8 +205,25 @@ SELECT
     AS database_privileges_ok,
   (SELECT unreadable_relation_count FROM relation_audit) AS unreadable_relation_count,
   (SELECT unreadable_sequence_count FROM sequence_audit) AS unreadable_sequence_count,
+  (SELECT unreadable_large_object_count FROM large_object_audit) AS unreadable_large_object_count,
   (SELECT relation_write_privilege_count FROM relation_audit) AS relation_write_privilege_count,
+  (SELECT relation_maintenance_privilege_count FROM relation_audit) AS relation_maintenance_privilege_count,
   (SELECT sequence_write_privilege_count FROM sequence_audit) AS sequence_write_privilege_count,
+  (SELECT large_object_write_privilege_count FROM large_object_audit) AS large_object_write_privilege_count,
+  (SELECT executable_large_object_creation_function_count FROM large_object_creation_function_audit)
+    AS executable_large_object_creation_function_count,
+  (SELECT executable_large_object_server_file_function_count FROM large_object_server_file_function_audit)
+    AS executable_large_object_server_file_function_count,
+  (SELECT owned_user_routine_count FROM owned_user_routine_audit)
+    AS owned_user_routine_count,
+  (SELECT parameter_set_privilege_count FROM parameter_privilege_audit)
+    AS parameter_set_privilege_count,
+  (SELECT parameter_alter_system_privilege_count FROM parameter_privilege_audit)
+    AS parameter_alter_system_privilege_count,
+  (SELECT executable_security_definer_function_count FROM security_definer_function_audit)
+    AS executable_security_definer_function_count,
+  (SELECT executable_untrusted_function_count FROM untrusted_function_audit)
+    AS executable_untrusted_function_count,
   (SELECT schema_create_privilege_count FROM schema_audit) AS schema_create_privilege_count,
   (SELECT unusable_schema_count FROM schema_audit) AS unusable_schema_count,
   (SELECT row_security_relation_count FROM relation_audit) AS row_security_relation_count,
@@ -124,8 +244,18 @@ SELECT
     AND NOT COALESCE(has_database_privilege(current_user, current_database(), 'TEMP'), true)
     AND (SELECT unreadable_relation_count = 0 FROM relation_audit)
     AND (SELECT unreadable_sequence_count = 0 FROM sequence_audit)
+    AND (SELECT unreadable_large_object_count = 0 FROM large_object_audit)
     AND (SELECT relation_write_privilege_count = 0 FROM relation_audit)
+    AND (SELECT relation_maintenance_privilege_count = 0 FROM relation_audit)
     AND (SELECT sequence_write_privilege_count = 0 FROM sequence_audit)
+    AND (SELECT large_object_write_privilege_count = 0 FROM large_object_audit)
+    AND (SELECT executable_large_object_creation_function_count = 0 FROM large_object_creation_function_audit)
+    AND (SELECT executable_large_object_server_file_function_count = 0 FROM large_object_server_file_function_audit)
+    AND (SELECT owned_user_routine_count = 0 FROM owned_user_routine_audit)
+    AND (SELECT parameter_set_privilege_count = 0 FROM parameter_privilege_audit)
+    AND (SELECT parameter_alter_system_privilege_count = 0 FROM parameter_privilege_audit)
+    AND (SELECT executable_security_definer_function_count = 0 FROM security_definer_function_audit)
+    AND (SELECT executable_untrusted_function_count = 0 FROM untrusted_function_audit)
     AND (SELECT schema_create_privilege_count = 0 FROM schema_audit)
     AND (SELECT unusable_schema_count = 0 FROM schema_audit)
     AND (SELECT row_security_relation_count = 0 FROM relation_audit)
@@ -133,9 +263,10 @@ SELECT
   ) AS backup_role_ok
 \gset
 
-\echo Backup-role catalog counts: unreadable_relation_count=:unreadable_relation_count unreadable_sequence_count=:unreadable_sequence_count relation_write_privilege_count=:relation_write_privilege_count sequence_write_privilege_count=:sequence_write_privilege_count schema_create_privilege_count=:schema_create_privilege_count unusable_schema_count=:unusable_schema_count row_security_relation_count=:row_security_relation_count foreign_table_count=:foreign_table_count
+\echo Backup-role catalog counts: unreadable_relation_count=:unreadable_relation_count unreadable_sequence_count=:unreadable_sequence_count unreadable_large_object_count=:unreadable_large_object_count relation_write_privilege_count=:relation_write_privilege_count relation_maintenance_privilege_count=:relation_maintenance_privilege_count sequence_write_privilege_count=:sequence_write_privilege_count large_object_write_privilege_count=:large_object_write_privilege_count executable_large_object_creation_function_count=:executable_large_object_creation_function_count executable_large_object_server_file_function_count=:executable_large_object_server_file_function_count owned_user_routine_count=:owned_user_routine_count parameter_set_privilege_count=:parameter_set_privilege_count parameter_alter_system_privilege_count=:parameter_alter_system_privilege_count executable_security_definer_function_count=:executable_security_definer_function_count executable_untrusted_function_count=:executable_untrusted_function_count schema_create_privilege_count=:schema_create_privilege_count unusable_schema_count=:unusable_schema_count row_security_relation_count=:row_security_relation_count foreign_table_count=:foreign_table_count
 \if :backup_role_ok
-  \echo 'PASS: approved full-backup role and catalog scope verified.'
+  \echo 'CATALOG_PRIVILEGE_CHECKS=PASS'
+  \echo 'OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED: arbitrary trusted function bodies and external side effects are not proven harmless; review this limitation before calling the role non-writing.'
   ROLLBACK;
 \else
   \echo 'STOP: backup role, data-read coverage, target, or dump completeness prerequisites failed.'

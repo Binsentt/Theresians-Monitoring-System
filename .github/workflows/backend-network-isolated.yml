@@ -1254,6 +1254,7 @@ jobs:
             'capstone/backend/scripts/run-release-preflight.ps1',
             'capstone/backend/scripts/releasePreflightConnection.validation.psm1',
             'capstone/backend/scripts/releasePreflightConnection.validation.test.ps1'
+            'capstone/backend/scripts/backup-restore-rehearsal.ps1'
           )) {
             $tokens = $null
             $parseErrors = $null
