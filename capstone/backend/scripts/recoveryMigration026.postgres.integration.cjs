@@ -285,8 +285,18 @@ function appDatabaseConfig(database) {
   };
 }
 
+function safeRecoveryQueryLabel(sql) {
+  const normalized = String(sql).replace(/\s+/g, ' ').trim();
+  if (normalized.includes("to_regclass('public.schema_migrations') IS NOT NULL AS ledger_present")) return 'ledger-presence';
+  if (normalized.includes('server_version_num') && normalized.includes('runtime_role_non_admin')) return 'identity-and-role';
+  if (normalized.includes('pg_catalog.pg_attribute') && normalized.includes('ledger_shape_ok')) return 'ledger-shape';
+  if (normalized.includes('SELECT version, filename, checksum FROM public.schema_migrations WHERE version >= 18')) return 'ledger-rows';
+  if (normalized.includes('receipt_objects_absent')) return 'receipt-absence';
+  return 'other';
+}
+
 async function executeRecovery(database, sourceState, artifactSha256, hooks = {}) {
-  const state = { factoryCalls: 0, queries: [] };
+  const state = { factoryCalls: 0, queries: [], lastQueryLabel: null, lastQueryStatus: null };
   try {
     const result = await runRecoveryMigration026({
       env: syntheticApprovalEnv(database, sourceState.sourceRevision, artifactSha256),
@@ -307,7 +317,10 @@ async function executeRecovery(database, sourceState, artifactSha256, hooks = {}
         client.query = async (sql, params = []) => {
           const text = String(sql);
           state.queries.push(text);
+          state.lastQueryLabel = safeRecoveryQueryLabel(text);
+          state.lastQueryStatus = 'started';
           const result = await originalQuery(sql, params);
+          state.lastQueryStatus = 'completed';
           if (hooks.afterQuery) await hooks.afterQuery(text, client, result);
           return result;
         };
@@ -674,6 +687,10 @@ async function main() {
   }
   for (const event of clientErrorDiagnostics) {
     console.error(`CLIENT_EVENT: phase=${event.phase} database=${event.database} sqlstate=${event.code}`);
+  }
+  if (primaryFailure?.category === 'preflight') {
+    const state = primaryFailure.integrationState || {};
+    console.error(`PREFLIGHT_STAGE: query=${state.lastQueryLabel || 'unknown'} status=${state.lastQueryStatus || 'unknown'}`);
   }
   if (primaryFailure) {
     console.error(`FAIL: recovery PostgreSQL ${process.env.TQ_EXPECTED_POSTGRES_MAJOR} integration (${primaryFailure.safeCode || primaryFailure.category || primaryFailure.name || 'scenario-failed'}).`);

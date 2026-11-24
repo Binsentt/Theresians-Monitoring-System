@@ -423,6 +423,11 @@ test('recovery PostgreSQL harness preserves scenario failures during synthetic d
   assert.match(harness, /residual-client-connections-terminated/);
   assert.match(harness, /scenario-client-error-event/);
   assert.match(harness, /CLIENT_EVENT: phase=.*database=.*sqlstate=/);
+  assert.match(harness, /function safeRecoveryQueryLabel/);
+  for (const label of ['ledger-presence', 'identity-and-role', 'ledger-shape', 'ledger-rows', 'receipt-absence']) {
+    assert.ok(harness.includes("return '" + label + "'"));
+  }
+  assert.match(harness, /PREFLIGHT_STAGE: query=.* status=/);
 });
 
 test('role audits expose membership counts and disposable harness restores valid audit after PUBLIC TEMP revoke', () => {
