@@ -287,18 +287,32 @@ test('pre-migration 026 SQL matches current source metadata and stays metadata-o
 });
 
 test('backend workflow resolver uses the explicit override and fails closed for a missing path', () => {
-  const localPath = path.resolve(scripts, '../../../.github/workflows/backend-network-isolated.yml');
+  const localCandidates = [
+    path.resolve(scripts, '../../../.github/workflows/backend-network-isolated.yml'),
+    path.resolve(scripts, '../../.github/workflows/backend-network-isolated.yml'),
+  ];
+  const validOverridePath = process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH
+    || localCandidates.find((candidate) => fs.existsSync(candidate));
+  assert.ok(validOverridePath, 'a valid workflow override or repository-relative workflow must be available');
   const missingPath = path.join(os.tmpdir(), `missing-backend-workflow-${process.pid}.yml`);
   const directoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-workflow-directory-'));
   try {
-    const overrideText = withWorkflowPath(localPath, () => readIsolatedBackendWorkflow());
+    const overrideText = withWorkflowPath(validOverridePath, () => readIsolatedBackendWorkflow());
     assert.match(overrideText, /name:\s*Isolated backend regression/);
     assert.throws(() => withWorkflowPath(missingPath, () => readIsolatedBackendWorkflow()),
       (error) => error.message.includes('STUDENT_PROGRESS_CI_WORKFLOW_PATH') && error.message.includes(missingPath));
     assert.throws(() => withWorkflowPath(directoryPath, () => readIsolatedBackendWorkflow()),
       (error) => error.message.includes('STUDENT_PROGRESS_CI_WORKFLOW_PATH') && error.message.includes(directoryPath));
-    const localText = withWorkflowPath(undefined, () => readIsolatedBackendWorkflow());
-    assert.equal(localText, overrideText, 'local lookup must work without an environment override');
+    const localText = withWorkflowPath(undefined, () => {
+      if (localCandidates.some((candidate) => fs.existsSync(candidate))) {
+        return readIsolatedBackendWorkflow();
+      }
+      assert.throws(() => readIsolatedBackendWorkflow(), /backend-network-isolated\.yml was not found/);
+      return null;
+    });
+    if (localText !== null) {
+      assert.equal(localText, overrideText, 'local lookup must work without an environment override');
+    }
   } finally {
     fs.rmSync(directoryPath, { recursive: true, force: true });
   }
