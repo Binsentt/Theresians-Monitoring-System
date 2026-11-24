@@ -15,6 +15,7 @@ const {
   assertReceiptConstraintCount,
   assertExactReceiptNotNullColumns,
   sanitizedReceiptCatalogFailure,
+  summarizeReceiptAbsenceResult,
   RECEIPT_INDEX_SQL,
 } = require('./recoveryMigration026.postgres.integration.cjs');
 
@@ -439,6 +440,23 @@ test('receipt catalog query diagnostics retain only a fixed stage and SQLSTATE',
     'receipt-ledger-query-failed-unknown');
 });
 
+test('receipt absence diagnostic distinguishes a boolean result from missing or malformed query output', () => {
+  const sql = 'SELECT TRUE AS receipt_objects_absent';
+  assert.deepEqual(summarizeReceiptAbsenceResult(sql, { rows: [{ receipt_objects_absent: true }] }), {
+    sqlAliasPresent: true, rowCount: 1, aliasPresent: true, valueType: 'boolean', value: 'true',
+  });
+  assert.deepEqual(summarizeReceiptAbsenceResult(sql, { rows: [{ receipt_objects_absent: false }] }), {
+    sqlAliasPresent: true, rowCount: 1, aliasPresent: true, valueType: 'boolean', value: 'false',
+  });
+  assert.deepEqual(summarizeReceiptAbsenceResult(sql, { rows: [{ unexpected: true }] }), {
+    sqlAliasPresent: true, rowCount: 1, aliasPresent: false, valueType: 'missing', value: 'unknown',
+  });
+  assert.deepEqual(summarizeReceiptAbsenceResult(sql, { rows: [] }), {
+    sqlAliasPresent: true, rowCount: 0, aliasPresent: false, valueType: 'missing', value: 'unknown',
+  });
+  assert.equal(summarizeReceiptAbsenceResult('SELECT TRUE', { rows: [{ receipt_objects_absent: true }] }).sqlAliasPresent, false);
+});
+
 test('receipt index catalog query selects indexrelid from pg_index alias', () => {
   assert.match(RECEIPT_INDEX_SQL, /SELECT\s+x\.indexrelid::regclass::text\s+AS index_name/i);
   assert.match(RECEIPT_INDEX_SQL, /JOIN pg_catalog\.pg_class i ON i\.oid = x\.indexrelid/i);
@@ -519,6 +537,9 @@ test('receipt absence diagnostics inspect the synthetic database before cleanup'
     diagnosticCall < cleanupStart,
     'receipt-component diagnostic must run before cleanup removes the failed synthetic database',
   );
+  assert.match(integration, /preflightQueryLabel\(state\.queries\.length\) === 'receipt-absence'/);
+  assert.match(integration, /originalQuery\(RECEIPT_ABSENCE_COMPONENTS_SQL\)/);
+  assert.match(integration, /PREFLIGHT_RECEIPT_RESULT: objects_absent=.*sql_alias_present=.*row_count=.*alias_present=.*value_type=/);
 });
 
 test('recovery artifact hash covers the approved scripts and migration sources', () => {

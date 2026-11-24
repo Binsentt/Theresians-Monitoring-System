@@ -330,7 +330,7 @@ function summarizeIdentityFailures(row, config, expectedPostgresMajor) {
 }
 
 async function executeRecovery(database, sourceState, artifactSha256, hooks = {}) {
-  const state = { database, factoryCalls: 0, queries: [], lastQueryStatus: null, identityFailures: null, receiptObjectsAbsent: null };
+  const state = { database, factoryCalls: 0, queries: [], lastQueryStatus: null, identityFailures: null, receiptObjectsAbsent: null, receiptQueryDiagnostic: null, receiptComponentsSameClient: null };
   try {
     const result = await runRecoveryMigration026({
       env: syntheticApprovalEnv(database, sourceState.sourceRevision, artifactSha256),
@@ -361,8 +361,21 @@ async function executeRecovery(database, sourceState, artifactSha256, hooks = {}
               Number(process.env.TQ_EXPECTED_POSTGRES_MAJOR),
             );
           }
-          if (text.includes('receipt_objects_absent')) {
-            state.receiptObjectsAbsent = result.rows?.[0]?.receipt_objects_absent === true;
+          const receiptQueryObserved = text.toLowerCase().includes('receipt_objects_absent')
+            || preflightQueryLabel(state.queries.length) === 'receipt-absence';
+          if (receiptQueryObserved) {
+            const receiptDiagnostic = summarizeReceiptAbsenceResult(text, result);
+            state.receiptQueryDiagnostic = receiptDiagnostic;
+            state.receiptObjectsAbsent = receiptDiagnostic.value === 'true' ? true
+              : receiptDiagnostic.value === 'false' ? false : null;
+            if (state.receiptObjectsAbsent !== true) {
+              try {
+                const components = await originalQuery(RECEIPT_ABSENCE_COMPONENTS_SQL);
+                state.receiptComponentsSameClient = components.rows?.[0] || null;
+              } catch (_error) {
+                state.receiptComponentsSameClient = 'failed';
+              }
+            }
           }
           if (hooks.afterQuery) await hooks.afterQuery(text, client, result);
           return result;
@@ -381,9 +394,7 @@ async function queryAdmin(database, sql, params = []) {
   return withClient(connectionConfig(database), (client) => client.query(sql, params));
 }
 
-async function inspectReceiptAbsenceComponents(database) {
-  check(DATABASES.includes(database), 'receipt-diagnostic-database-not-allowlisted');
-  const result = await queryAdmin(database, `
+const RECEIPT_ABSENCE_COMPONENTS_SQL = `
     SELECT to_regclass('public.game_progress_save_commits') IS NULL AS table_absent,
            NOT EXISTS (
              SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -404,7 +415,26 @@ async function inspectReceiptAbsenceComponents(database) {
              SELECT 1 FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
              WHERE n.nspname = 'public' AND t.typname = 'game_progress_save_commits'
            ) AS type_absent
-  `);
+  `;
+
+function summarizeReceiptAbsenceResult(sql, result) {
+  const rows = Array.isArray(result?.rows) ? result.rows : [];
+  const row = rows[0];
+  const aliasPresent = Boolean(row && Object.prototype.hasOwnProperty.call(row, 'receipt_objects_absent'));
+  const rawValue = aliasPresent ? row.receipt_objects_absent : undefined;
+  return {
+    sqlAliasPresent: typeof sql === 'string' && /\breceipt_objects_absent\b/i.test(sql),
+    rowCount: rows.length,
+    aliasPresent,
+    valueType: rawValue === undefined ? 'missing' : rawValue === null ? 'null'
+      : typeof rawValue === 'boolean' ? 'boolean' : 'other',
+    value: rawValue === true ? 'true' : rawValue === false ? 'false' : 'unknown',
+  };
+}
+
+async function inspectReceiptAbsenceComponents(database) {
+  check(DATABASES.includes(database), 'receipt-diagnostic-database-not-allowlisted');
+  const result = await queryAdmin(database, RECEIPT_ABSENCE_COMPONENTS_SQL);
   return result.rows?.[0] || null;
 }
 
@@ -752,16 +782,23 @@ async function main() {
       console.error(`PREFLIGHT_IDENTITY: failed=${Array.isArray(failed) ? (failed.join(',') || 'none') : 'not-captured'}`);
     }
     if (query === 'receipt-absence' && state.lastQueryStatus === 'completed') {
+      const diagnostic = state.receiptQueryDiagnostic || {};
+      const flag = (value) => value === true ? 'true' : value === false ? 'false' : 'unknown';
       const receiptFlag = state.receiptObjectsAbsent === true ? 'true'
         : state.receiptObjectsAbsent === false ? 'false' : 'unknown';
-      console.error(`PREFLIGHT_RECEIPT_RESULT: objects_absent=${receiptFlag}`);
+      console.error(`PREFLIGHT_RECEIPT_RESULT: objects_absent=${receiptFlag} sql_alias_present=${diagnostic.sqlAliasPresent === true} row_count=${Number.isInteger(diagnostic.rowCount) ? diagnostic.rowCount : 'unknown'} alias_present=${diagnostic.aliasPresent === true} value_type=${diagnostic.valueType || 'missing'}`);
+      if (state.receiptComponentsSameClient === 'failed') {
+        console.error('PREFLIGHT_RECEIPT_CLIENT: inspection=failed');
+      } else if (state.receiptComponentsSameClient) {
+        const clientComponents = state.receiptComponentsSameClient;
+        console.error(`PREFLIGHT_RECEIPT_CLIENT: table_absent=${flag(clientComponents.table_absent)} relations_absent=${flag(clientComponents.relations_absent)} constraints_absent=${flag(clientComponents.constraints_absent)} triggers_absent=${flag(clientComponents.triggers_absent)} type_absent=${flag(clientComponents.type_absent)}`);
+      }
       if (state.receiptObjectsAbsent !== true) {
         try {
           const components = await inspectReceiptAbsenceComponents(state.database);
-          const flag = (value) => value === true ? 'true' : value === false ? 'false' : 'unknown';
-          console.error(`PREFLIGHT_RECEIPT: table_absent=${flag(components?.table_absent)} relations_absent=${flag(components?.relations_absent)} constraints_absent=${flag(components?.constraints_absent)} triggers_absent=${flag(components?.triggers_absent)} type_absent=${flag(components?.type_absent)}`);
+          console.error(`PREFLIGHT_RECEIPT_ADMIN: table_absent=${flag(components?.table_absent)} relations_absent=${flag(components?.relations_absent)} constraints_absent=${flag(components?.constraints_absent)} triggers_absent=${flag(components?.triggers_absent)} type_absent=${flag(components?.type_absent)}`);
         } catch (_error) {
-          console.error('PREFLIGHT_RECEIPT: inspection=failed');
+          console.error('PREFLIGHT_RECEIPT_ADMIN: inspection=failed');
         }
       }
     }
@@ -812,6 +849,7 @@ module.exports = {
   assertReceiptConstraintCount,
   assertExactReceiptNotNullColumns,
   sanitizedReceiptCatalogFailure,
+  summarizeReceiptAbsenceResult,
   RECEIPT_INDEX_SQL,
   preflightQueryLabel,
   summarizeIdentityFailures,
