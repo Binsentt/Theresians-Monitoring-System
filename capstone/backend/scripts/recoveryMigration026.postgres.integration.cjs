@@ -285,18 +285,52 @@ function appDatabaseConfig(database) {
   };
 }
 
-function safeRecoveryQueryLabel(sql) {
-  const normalized = String(sql).replace(/\s+/g, ' ').trim();
-  if (normalized.includes("to_regclass('public.schema_migrations') IS NOT NULL AS ledger_present")) return 'ledger-presence';
-  if (normalized.includes('server_version_num') && normalized.includes('runtime_role_non_admin')) return 'identity-and-role';
-  if (normalized.includes('pg_catalog.pg_attribute') && normalized.includes('ledger_shape_ok')) return 'ledger-shape';
-  if (normalized.includes('SELECT version, filename, checksum FROM public.schema_migrations WHERE version >= 18')) return 'ledger-rows';
-  if (normalized.includes('receipt_objects_absent')) return 'receipt-absence';
-  return 'other';
+const RECOVERY_PREFLIGHT_QUERY_LABELS = Object.freeze([
+  'ledger-presence',
+  'identity-and-role',
+  'ledger-shape',
+  'ledger-rows',
+  'receipt-absence',
+]);
+
+function preflightQueryLabel(queryCount) {
+  // Three executor queries (timeouts and advisory lock) precede readPreflight.
+  return RECOVERY_PREFLIGHT_QUERY_LABELS[Number(queryCount) - 4] || 'unknown';
+}
+
+function summarizeIdentityFailures(row, config, expectedPostgresMajor) {
+  const checks = {
+    database_name: row?.database_name === config.database,
+    database_user: row?.database_user === config.user,
+    session_user: row?.session_user === config.user,
+    server_address: String(row?.server_address) === '127.0.0.1',
+    server_port: Number(row?.server_port) === Number(config.port),
+    server_version_major: Math.floor(Number(row?.server_version_num) / 10000) === Number(expectedPostgresMajor),
+    transaction_read_only: row?.transaction_read_only === 'off',
+    runtime_role_present: row?.runtime_role_present === true,
+    runtime_role_non_admin: row?.runtime_role_non_admin === true,
+    runtime_role_has_no_memberships: row?.runtime_role_has_no_memberships === true,
+    runtime_role_is_distinct: row?.runtime_role_is_distinct === true,
+    migrator_non_admin: row?.migrator_non_admin === true,
+    migrator_has_no_memberships: row?.migrator_has_no_memberships === true,
+    migrator_cannot_create_database: row?.migrator_cannot_create_database === true,
+    migrator_cannot_create_temp: row?.migrator_cannot_create_temp === true,
+    migrator_public_usage: row?.migrator_public_usage === true,
+    migrator_public_create: row?.migrator_public_create === true,
+    migrator_no_other_schema_create: row?.migrator_no_other_schema_create === true,
+    migrator_ledger_select: row?.migrator_ledger_select === true,
+    migrator_ledger_insert: row?.migrator_ledger_insert === true,
+    migrator_ledger_no_update: row?.migrator_ledger_no_update === true,
+    migrator_ledger_no_delete: row?.migrator_ledger_no_delete === true,
+    migrator_accounts_id_references: row?.migrator_accounts_id_references === true,
+    migrator_no_unapproved_table_writes: row?.migrator_no_unapproved_table_writes === true,
+    migrator_no_sequence_writes: row?.migrator_no_sequence_writes === true,
+  };
+  return Object.entries(checks).filter(([, passed]) => passed !== true).map(([name]) => name);
 }
 
 async function executeRecovery(database, sourceState, artifactSha256, hooks = {}) {
-  const state = { factoryCalls: 0, queries: [], lastQueryLabel: null, lastQueryStatus: null };
+  const state = { factoryCalls: 0, queries: [], lastQueryStatus: null, identityFailures: null };
   try {
     const result = await runRecoveryMigration026({
       env: syntheticApprovalEnv(database, sourceState.sourceRevision, artifactSha256),
@@ -317,10 +351,16 @@ async function executeRecovery(database, sourceState, artifactSha256, hooks = {}
         client.query = async (sql, params = []) => {
           const text = String(sql);
           state.queries.push(text);
-          state.lastQueryLabel = safeRecoveryQueryLabel(text);
           state.lastQueryStatus = 'started';
           const result = await originalQuery(sql, params);
           state.lastQueryStatus = 'completed';
+          if (text.includes('server_version_num') && text.includes('runtime_role_non_admin')) {
+            state.identityFailures = summarizeIdentityFailures(
+              result.rows?.[0],
+              config,
+              Number(process.env.TQ_EXPECTED_POSTGRES_MAJOR),
+            );
+          }
           if (hooks.afterQuery) await hooks.afterQuery(text, client, result);
           return result;
         };
@@ -690,7 +730,12 @@ async function main() {
   }
   if (primaryFailure?.category === 'preflight') {
     const state = primaryFailure.integrationState || {};
-    console.error(`PREFLIGHT_STAGE: query=${state.lastQueryLabel || 'unknown'} status=${state.lastQueryStatus || 'unknown'}`);
+    const query = preflightQueryLabel(state.queries?.length || 0);
+    console.error(`PREFLIGHT_STAGE: query=${query} status=${state.lastQueryStatus || 'unknown'}`);
+    if (query === 'identity-and-role' && state.lastQueryStatus === 'completed') {
+      const failed = state.identityFailures;
+      console.error(`PREFLIGHT_IDENTITY: failed=${Array.isArray(failed) ? (failed.join(',') || 'none') : 'not-captured'}`);
+    }
   }
   if (primaryFailure) {
     console.error(`FAIL: recovery PostgreSQL ${process.env.TQ_EXPECTED_POSTGRES_MAJOR} integration (${primaryFailure.safeCode || primaryFailure.category || primaryFailure.name || 'scenario-failed'}).`);
@@ -724,4 +769,6 @@ module.exports = {
   assertExactReceiptNotNullColumns,
   sanitizedReceiptCatalogFailure,
   RECEIPT_INDEX_SQL,
+  preflightQueryLabel,
+  summarizeIdentityFailures,
 };

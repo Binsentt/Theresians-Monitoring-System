@@ -416,18 +416,54 @@ test('large-object fixture uses an escaped psql gset command on its own line', (
 });
 
 
-test('recovery PostgreSQL harness preserves scenario failures during synthetic database cleanup', () => {
+test('recovery PostgreSQL harness reports the failed preflight gate without exposing identity values', () => {
   const harness = read('recoveryMigration026.postgres.integration.cjs');
   assert.match(harness, /client\.on\('error'/);
   assert.match(harness, /cleanupInProgress/);
   assert.match(harness, /residual-client-connections-terminated/);
   assert.match(harness, /scenario-client-error-event/);
   assert.match(harness, /CLIENT_EVENT: phase=.*database=.*sqlstate=/);
-  assert.match(harness, /function safeRecoveryQueryLabel/);
-  for (const label of ['ledger-presence', 'identity-and-role', 'ledger-shape', 'ledger-rows', 'receipt-absence']) {
-    assert.ok(harness.includes("return '" + label + "'"));
-  }
   assert.match(harness, /PREFLIGHT_STAGE: query=.* status=/);
+  assert.match(harness, /PREFLIGHT_IDENTITY: failed=/);
+  const { preflightQueryLabel, summarizeIdentityFailures } = require('./recoveryMigration026.postgres.integration.cjs');
+  assert.deepEqual(
+    ['ledger-presence', 'identity-and-role', 'ledger-shape', 'ledger-rows', 'receipt-absence']
+      .map((_, index) => preflightQueryLabel(index + 4)),
+    ['ledger-presence', 'identity-and-role', 'ledger-shape', 'ledger-rows', 'receipt-absence'],
+  );
+  const config = { database: 'tq_identity_synthetic', user: 'tq_migrator_synthetic', port: 5432 };
+  const row = {
+    database_name: config.database,
+    database_user: config.user,
+    session_user: config.user,
+    server_address: '127.0.0.1',
+    server_port: 5432,
+    server_version_num: 180001,
+    transaction_read_only: 'off',
+    runtime_role_present: true,
+    runtime_role_non_admin: true,
+    runtime_role_has_no_memberships: true,
+    runtime_role_is_distinct: true,
+    migrator_non_admin: true,
+    migrator_has_no_memberships: true,
+    migrator_cannot_create_database: true,
+    migrator_cannot_create_temp: true,
+    migrator_public_usage: true,
+    migrator_public_create: true,
+    migrator_no_other_schema_create: true,
+    migrator_ledger_select: true,
+    migrator_ledger_insert: true,
+    migrator_ledger_no_update: true,
+    migrator_ledger_no_delete: true,
+    migrator_accounts_id_references: true,
+    migrator_no_unapproved_table_writes: true,
+    migrator_no_sequence_writes: true,
+  };
+  assert.deepEqual(summarizeIdentityFailures(row, config, 18), []);
+  for (const key of Object.keys(row)) {
+    const invalid = { ...row, [key]: typeof row[key] === 'boolean' ? false : 'unexpected' };
+    assert.ok(summarizeIdentityFailures(invalid, config, 18).includes(key === 'server_version_num' ? 'server_version_major' : key));
+  }
 });
 
 test('role audits expose membership counts and disposable harness restores valid audit after PUBLIC TEMP revoke', () => {
