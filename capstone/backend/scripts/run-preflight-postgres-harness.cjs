@@ -1633,13 +1633,14 @@ const restoredProbe = psql(restoreDatabase, 'tq_restore_operator', `
 `);
 assert.equal(restoredProbe.status, 0, restoredProbe.stderr);
 assert.equal(restoredProbe.stdout.trim(), 't', 'restored synthetic data and migration metadata must be present');
+recordScenario('restored archive preserves synthetic content and ledger counts using aggregate-only checks');
 const postSourceState = parseBackupReleaseState(invokeBackupReleaseState(CASES.valid, 'tq_prod_backup_reader'));
 const postRestoredState = parseBackupReleaseState(invokeBackupReleaseState(restoreDatabase, 'tq_restore_operator'));
 assert.equal(postSourceState.readiness, 'POST_MIGRATION_026');
 assert.equal(postRestoredState.readiness, postSourceState.readiness);
 assert.equal(postRestoredState.fingerprint, postSourceState.fingerprint,
   'post-026 source and restored database catalog fingerprints must match without comparing application rows');
-recordScenario('custom archive restores transactionally into an empty isolated loopback database with matching metadata');
+recordScenario('restored archive matches source release readiness and catalog metadata fingerprint without comparing application rows');
 
 assert.equal(passedScenarioCount, 83, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
 console.log(`Preflight integration result: ${passedScenarioCount}/${passedScenarioCount} disposable PostgreSQL scenarios passed.`);

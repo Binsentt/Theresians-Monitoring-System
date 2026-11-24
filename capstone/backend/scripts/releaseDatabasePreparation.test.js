@@ -395,6 +395,17 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
   assert.match(harness, /truncated custom-format archive must be rejected/);
   assert.match(harness, /OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:/);
   assert.match(harness, /passedScenarioCount, 83/);
+  const restoredProbeAssertion = harness.indexOf("assert.equal(restoredProbe.stdout.trim(), 't'");
+  const aggregateRestoreRecord = harness.indexOf("recordScenario('restored archive preserves synthetic content and ledger counts using aggregate-only checks')");
+  const sourceStateProbe = harness.indexOf('const postSourceState', restoredProbeAssertion);
+  const metadataFingerprintAssertion = harness.indexOf('assert.equal(postRestoredState.fingerprint, postSourceState.fingerprint', sourceStateProbe);
+  const metadataRestoreRecord = harness.indexOf("recordScenario('restored archive matches source release readiness and catalog metadata fingerprint without comparing application rows')");
+  assert.ok(
+    restoredProbeAssertion >= 0 && aggregateRestoreRecord > restoredProbeAssertion &&
+    sourceStateProbe > aggregateRestoreRecord && metadataFingerprintAssertion > sourceStateProbe &&
+    metadataRestoreRecord > metadataFingerprintAssertion,
+    'restored synthetic content and source-metadata equality must be separately recorded only after their aggregate assertions pass',
+  );
   assert.match(harness, /assertCiContainer\(\)/);
 });
 
