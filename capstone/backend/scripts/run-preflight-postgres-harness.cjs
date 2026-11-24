@@ -89,6 +89,84 @@ function invokeBackupReleaseState(database, role = 'postgres', overrides = {}) {
   });
 }
 
+function backupLedgerShapeDiagnostics(database) {
+  const result = psql(database, 'postgres', `
+    BEGIN READ ONLY;
+    SET LOCAL statement_timeout = '10s';
+    SET LOCAL lock_timeout = '2s';
+    SET LOCAL search_path = pg_catalog;
+    SELECT jsonb_build_object(
+      'relation', (
+        SELECT jsonb_build_object('kind', relation.relkind::text, 'persistence', relation.relpersistence::text)
+        FROM pg_catalog.pg_class AS relation
+        JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'public' AND relation.relname = 'schema_migrations'
+      ),
+      'columns', (
+        SELECT jsonb_agg(jsonb_build_object(
+          'name', attribute.attname,
+          'type', pg_catalog.format_type(attribute.atttypid, attribute.atttypmod),
+          'notNull', attribute.attnotnull
+        ) ORDER BY attribute.attnum)
+        FROM pg_catalog.pg_attribute AS attribute
+        WHERE attribute.attrelid = 'public.schema_migrations'::regclass
+          AND attribute.attnum > 0 AND NOT attribute.attisdropped
+      ),
+      'appliedAtDefault', (
+        SELECT pg_catalog.pg_get_expr(default_record.adbin, default_record.adrelid)
+        FROM pg_catalog.pg_attribute AS attribute
+        JOIN pg_catalog.pg_attrdef AS default_record
+          ON default_record.adrelid = attribute.attrelid AND default_record.adnum = attribute.attnum
+        WHERE attribute.attrelid = 'public.schema_migrations'::regclass
+          AND attribute.attname = 'applied_at'
+      ),
+      'constraints', (
+        SELECT jsonb_agg(jsonb_build_object(
+          'name', constraint_record.conname,
+          'type', constraint_record.contype::text,
+          'columns', constraint_record.conkey::text,
+          'deferrable', constraint_record.condeferrable,
+          'deferred', constraint_record.condeferred,
+          'validated', constraint_record.convalidated
+        ) ORDER BY constraint_record.conname)
+        FROM pg_catalog.pg_constraint AS constraint_record
+        WHERE constraint_record.conrelid = 'public.schema_migrations'::regclass
+      ),
+      'indexes', (
+        SELECT jsonb_agg(jsonb_build_object(
+          'name', index_relation.relname,
+          'unique', index_record.indisunique,
+          'primary', index_record.indisprimary,
+          'immediate', index_record.indimmediate,
+          'valid', index_record.indisvalid,
+          'ready', index_record.indisready,
+          'live', index_record.indislive,
+          'keyCount', index_record.indnkeyatts,
+          'attributeCount', index_record.indnatts,
+          'accessMethod', access_method.amname,
+          'keyColumns', (
+            SELECT jsonb_agg(attribute_record.attname::text ORDER BY key_record.ordinality)
+            FROM unnest(index_record.indkey) WITH ORDINALITY AS key_record(attnum, ordinality)
+            JOIN pg_catalog.pg_attribute AS attribute_record
+              ON attribute_record.attrelid = index_record.indrelid
+             AND attribute_record.attnum = key_record.attnum
+            WHERE key_record.ordinality <= index_record.indnkeyatts
+          )
+        ) ORDER BY index_relation.relname)
+        FROM pg_catalog.pg_index AS index_record
+        JOIN pg_catalog.pg_class AS index_relation ON index_relation.oid = index_record.indexrelid
+        JOIN pg_catalog.pg_am AS access_method ON access_method.oid = index_relation.relam
+        WHERE index_record.indrelid = 'public.schema_migrations'::regclass
+      )
+    )::text;
+    ROLLBACK;
+  `);
+  const detail = result.status === 0
+    ? String(result.stdout || '').trim()
+    : `queryStatus=${result.status} queryError=${String(result.stderr || '').trim().replaceAll('\n', ' ').replaceAll('\r', ' ')}`;
+  console.error(`BACKUP_LEDGER_SHAPE_DIAGNOSTICS ${detail}`);
+}
+
 function parseBackupReleaseState(result) {
   const output = `${result.stdout}\n${result.stderr}`;
   if (result.status !== 0 && /BACKUP_TARGET_IDENTITY=FAIL/.test(output)) return 'IDENTITY_FAIL';
@@ -826,6 +904,9 @@ assert.equal(passedScenarioCount, 41, 'all expected PostgreSQL major-version and
 
 const preBackupStateResult = invokeBackupReleaseState(CASES.preMigration026);
 assert.equal(preBackupStateResult.status, 0, preBackupStateResult.stderr);
+if (/^BACKUP_LEDGER_SHAPE=UNVERIFIED$/m.test(`${preBackupStateResult.stdout}\n${preBackupStateResult.stderr}`)) {
+  backupLedgerShapeDiagnostics(CASES.preMigration026);
+}
 const preBackupState = parseBackupReleaseState(preBackupStateResult);
 assert.equal(preBackupState.readiness, 'PRE_MIGRATION_026',
   `valid synthetic pre-026 fixture must be classified as ready: ${preBackupStateResult.stdout}\n${preBackupStateResult.stderr}`);
@@ -951,7 +1032,7 @@ assert.match(preArchiveDigest, /^[a-f0-9]{64}$/);
 const preRestore = dockerBinary([
   'exec', '-i', CONTAINER, 'pg_restore', '--host=127.0.0.1', '--port=5432',
   '--username=tq_restore_operator', `--dbname=${preRestoreDatabase}`, '--no-password', '--format=custom',
-  '--exit-on-error', '--single-transaction', '--no-owner', '--no-privileges', '--no-tablespaces', '-',
+  '--exit-on-error', '--single-transaction', '--no-owner', '--no-privileges', '--no-tablespaces',
 ], preDump.stdout);
 assert.equal(preRestore.status, 0, `synthetic pre-026 archive restore failed: ${String(preRestore.stderr || '')}`);
 const preRestoredState = parseBackupReleaseState(invokeBackupReleaseState(preRestoreDatabase, 'tq_restore_operator'));
@@ -1511,7 +1592,7 @@ const truncatedRestore = dockerBinary([
   'exec', '-i', CONTAINER, 'pg_restore', '--host=127.0.0.1', '--port=5432',
   '--username=tq_restore_operator', `--dbname=${restoreDatabase}`,
   '--no-password', '--format=custom', '--exit-on-error', '--single-transaction',
-  '--no-owner', '--no-privileges', '--no-tablespaces', '-',
+  '--no-owner', '--no-privileges', '--no-tablespaces',
 ], truncatedArchive);
 assert.ok(Number.isInteger(truncatedRestore.status) && truncatedRestore.status !== 0,
   `truncated custom-format archive must be rejected with a nonzero process exit: ${String(truncatedRestore.stderr || '')}`);

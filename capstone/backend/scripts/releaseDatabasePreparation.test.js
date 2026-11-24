@@ -378,6 +378,10 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
   assert.match(harness, /pg_restore/);
   assert.match(harness, /--single-transaction/);
   assert.match(harness, /--no-owner/);
+  assert.doesNotMatch(harness, /--no-tablespaces',\s*'-'/,
+    'pg_restore must read custom archives from stdin without treating a dash as a filename');
+  assert.match(harness, /backupLedgerShapeDiagnostics/);
+  assert.match(harness, /BACKUP_LEDGER_SHAPE_DIAGNOSTICS/);
   assert.match(harness, /synthetic-only-backup-probe/);
   assert.match(harness, /tq_restore_backup_test_ci/);
   assert.match(harness, /SCHEMA_READINESS_SQL/);
