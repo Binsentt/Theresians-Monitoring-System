@@ -10,6 +10,25 @@ const { RELEASE_MIGRATIONS, migrationChecksum } = require('../releaseMigrations'
 const scripts = __dirname;
 const read = (name) => fs.readFileSync(path.join(scripts, name), 'utf8');
 
+function createRestrictedWindowsPowerShellEnvironment(powershellPath, sourceEnv = process.env) {
+  const allowedNames = [
+    'PATH', 'PATHEXT', 'SystemRoot', 'ProgramFiles', 'ProgramFiles(x86)', 'COMSPEC', 'TEMP', 'TMP',
+  ];
+  const childEnv = Object.fromEntries(
+    allowedNames.filter((name) => sourceEnv[name]).map((name) => [name, sourceEnv[name]]),
+  );
+  const systemModuleRoots = [
+    path.win32.join(path.win32.dirname(powershellPath), 'Modules'),
+    path.win32.join(sourceEnv.ProgramFiles || String.raw`C:\Program Files`, 'WindowsPowerShell', 'Modules'),
+  ];
+  childEnv.PSModulePath = systemModuleRoots.join(path.win32.delimiter);
+  return childEnv;
+}
+
+function describePowerShellResult(result, elapsedMs) {
+  return `status=${result.status} signal=${result.signal || 'none'} errorCode=${result.error?.code || 'none'} elapsedMs=${elapsedMs}`;
+}
+
 function readIsolatedBackendWorkflow() {
   if (Object.prototype.hasOwnProperty.call(process.env, 'STUDENT_PROGRESS_CI_WORKFLOW_PATH')) {
     const configuredPath = process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH;
@@ -101,6 +120,31 @@ test('Windows preflight utility uses a service alias, rejects inline passwords, 
   assert.doesNotMatch(connectionValidation, /PGPASSWORD\s*=/i);
 });
 
+test('restricted Windows PowerShell child environment exposes only trusted system module roots', () => {
+  const powershellPath = String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`;
+  const sourceEnv = {
+    PATH: String.raw`C:\Windows\System32`,
+    PATHEXT: '.COM;.EXE;.BAT;.CMD',
+    SystemRoot: String.raw`C:\Windows`,
+    ProgramFiles: String.raw`C:\Program Files`,
+    'ProgramFiles(x86)': String.raw`C:\Program Files (x86)`,
+    COMSPEC: String.raw`C:\Windows\System32\cmd.exe`,
+    TEMP: String.raw`C:\Temp`,
+    TMP: String.raw`C:\Temp`,
+    PSModulePath: 'untrusted-user-module-path',
+    PGPASSWORD: 'synthetic-only',
+  };
+  const childEnv = createRestrictedWindowsPowerShellEnvironment(powershellPath, sourceEnv);
+  assert.equal(childEnv.PSModulePath, [
+    String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\Modules`,
+    String.raw`C:\Program Files\WindowsPowerShell\Modules`,
+  ].join(';'));
+  assert.deepEqual(Object.keys(childEnv).sort(), [
+    'COMSPEC', 'PATH', 'PATHEXT', 'PSModulePath', 'ProgramFiles', 'ProgramFiles(x86)', 'SystemRoot', 'TEMP', 'TMP',
+  ]);
+  assert.doesNotMatch(childEnv.PSModulePath, /untrusted-user|PGPASSWORD|synthetic-only/i);
+});
+
 test('PowerShell service-file, TLS, environment, and ACL-record validators pass synthetic regressions', {
   skip: process.platform !== 'win32',
 }, () => {
@@ -109,19 +153,17 @@ test('PowerShell service-file, TLS, environment, and ACL-record validators pass 
     process.env.SystemRoot || 'C:\\Windows',
     'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
   );
+  const startedAt = Date.now();
   const result = spawnSync(powershellPath, [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-File', validationTestPath,
   ], {
     encoding: 'utf8',
     windowsHide: true,
     timeout: 15000,
-    env: Object.fromEntries(
-      ['PATH', 'PATHEXT', 'SystemRoot', 'ProgramFiles', 'ProgramFiles(x86)', 'COMSPEC', 'TEMP', 'TMP']
-        .filter((name) => process.env[name])
-        .map((name) => [name, process.env[name]]),
-    ),
+    env: createRestrictedWindowsPowerShellEnvironment(powershellPath),
   });
-  assert.equal(result.status, 0, `${result.stdout || ''} ${result.stderr || ''}`);
+  const elapsedMs = Date.now() - startedAt;
+  assert.equal(result.status, 0, `${describePowerShellResult(result, elapsedMs)} ${result.stdout || ''} ${result.stderr || ''}`);
   assert.match(`${result.stdout}\n${result.stderr}`, /PASS: 20 synthetic/);
 });
 
@@ -162,17 +204,17 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
     '-VerifiedCaPath', caFile,
     '-PsqlPath', psqlStub,
   ];
-  const childEnv = Object.fromEntries(
-    ['PATH', 'PATHEXT', 'SystemRoot', 'ProgramFiles', 'ProgramFiles(x86)', 'COMSPEC', 'TEMP', 'TMP']
-      .filter((name) => process.env[name])
-      .map((name) => [name, process.env[name]]),
-  );
+  const childEnv = createRestrictedWindowsPowerShellEnvironment(powershellPath);
 
-  const invoke = (sha) => spawnSync(
-    powershellPath,
-    sha === undefined ? baseArguments : [...baseArguments, '-ExpectedSourceCommit', sha],
-    { encoding: 'utf8', env: childEnv, timeout: 15000 },
-  );
+  const invoke = (sha) => {
+    const startedAt = Date.now();
+    const result = spawnSync(
+      powershellPath,
+      sha === undefined ? baseArguments : [...baseArguments, '-ExpectedSourceCommit', sha],
+      { encoding: 'utf8', env: childEnv, timeout: 15000 },
+    );
+    return { ...result, elapsedMs: Date.now() - startedAt };
+  };
   const outputOf = (result) => `${result.stdout || ''}\n${result.stderr || ''}`;
 
   const missingSha = invoke(undefined);
@@ -185,7 +227,8 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
 
   const mismatchedSha = invoke('0000000000000000000000000000000000000000');
   assert.notEqual(mismatchedSha.status, 0);
-  assert.match(outputOf(mismatchedSha), /HEAD does not match the approved commit/i);
+  assert.match(outputOf(mismatchedSha), /HEAD does not match the approved commit/i,
+    describePowerShellResult(mismatchedSha, mismatchedSha.elapsedMs));
   assert.equal(fs.existsSync(callMarker), false, 'a SHA mismatch must stop before invoking psql');
 
   const matchingSha = invoke(currentSourceSha);
