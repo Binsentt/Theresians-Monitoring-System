@@ -445,6 +445,16 @@ test('receipt index catalog query selects indexrelid from pg_index alias', () =>
   assert.doesNotMatch(RECEIPT_INDEX_SQL, /SELECT\s+i\.indexrelid/i);
 });
 
+test('successful real PostgreSQL migration checks preserve-data separately from rollback state', () => {
+  const harness = fs.readFileSync(path.join(__dirname, 'recoveryMigration026.postgres.integration.cjs'), 'utf8');
+  const successStart = harness.indexOf('const successfulDb = names.success;');
+  const successEnd = harness.indexOf('const sqlFailureDb = names.sql_failure;', successStart);
+  assert.ok(successStart >= 0 && successEnd > successStart, 'successful scenario must remain explicit');
+  const successScenario = harness.slice(successStart, successEnd);
+  assert.match(successScenario, /await verifySyntheticAccountUnmodified\(successfulDb\)/);
+  assert.doesNotMatch(successScenario, /verifyNoMigrationOrLedger\(successfulDb\)/);
+});
+
 test('recovery real-client path rejects the process-wide TLS verification bypass before loading pg', async () => {
   const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';

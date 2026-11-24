@@ -463,11 +463,15 @@ async function expectPreflightRejection(database, sourceState, artifactSha256, e
     `${expectedCode}-executed-migration-before-preflight`);
 }
 
-async function verifyNoMigrationOrLedger(database) {
-  await assertNoApplied026(database);
+async function verifySyntheticAccountUnmodified(database) {
   const oldMigrationRow = await queryAdmin(database,
     "SELECT count(*)::integer AS count FROM public.accounts WHERE id = 910026 AND role = 'student' AND game_student_id = '123456'");
   check(oldMigrationRow.rows[0].count === 1, 'synthetic-six-digit-account-was-modified');
+}
+
+async function verifyNoMigrationOrLedger(database) {
+  await assertNoApplied026(database);
+  await verifySyntheticAccountUnmodified(database);
 }
 
 async function runScenarios(admin, sourceState, artifactSha256) {
@@ -505,7 +509,7 @@ async function runScenarios(admin, sourceState, artifactSha256) {
   record('receipt schema, all eight constraints, exact indexes, and ledger checksum verified');
   await assertRuntimeGrantPlan(successfulDb);
   record('runtime role has exactly SELECT, INSERT, UPDATE and no other receipt-table grants');
-  await verifyNoMigrationOrLedger(successfulDb);
+  await verifySyntheticAccountUnmodified(successfulDb);
   record('synthetic six-digit account survived; migration 024 was not executed');
 
   const sqlFailureDb = names.sql_failure;
