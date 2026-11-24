@@ -398,6 +398,12 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
   assert.match(harness, /assertCiContainer\(\)/);
 });
 
+test('large-object fixture uses an escaped psql gset command on its own line', () => {
+  const harness = read('run-preflight-postgres-harness.cjs');
+  assert.match(harness, /AS fixture_lo_fd\r?\n\s+\\\\gset\r?\n\s+SELECT lowrite/);
+  assert.doesNotMatch(harness, /AS fixture_lo_fd[ \t]+\\gset/);
+});
+
 
 test('role audits expose membership counts and disposable harness restores valid audit after PUBLIC TEMP revoke', () => {
   const audit = read('release-preflight-role-audit.sql');

@@ -1528,7 +1528,8 @@ assert.equal(writableLargeObject.status, 3,
 assert.match(writableLargeObject.stdout, /large_object_write_privilege_count=1/);
 const writableLargeObjectApis = psql(CASES.valid, 'tq_prod_backup_reader', `
   BEGIN;
-  SELECT lo_open(${largeObjectOid}, 131072) AS fixture_lo_fd \gset
+  SELECT lo_open(${largeObjectOid}, 131072) AS fixture_lo_fd
+  \\gset
   SELECT lowrite(:fixture_lo_fd, decode('78', 'hex'));
   SELECT lo_truncate(:fixture_lo_fd, 8);
   SELECT lo_truncate64(:fixture_lo_fd, 9);
