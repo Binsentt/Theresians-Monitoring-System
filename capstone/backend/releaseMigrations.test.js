@@ -196,7 +196,7 @@ test('release configuration refuses an unpinned synthetic CA even with otherwise
   }), (error) => !error.message.includes('synthetic-password-sentinel') && /fingerprint/i.test(error.message));
 });
 
-test('migration checksums normalize CRLF and lone CR while preserving canonical migration hashes 018-026', () => {
+test('migration checksums normalize LF variants and match canonical manifests for migrations 018-026', () => {
   const lfSql = 'SELECT 1;\nSELECT 2;\n';
   assert.equal(migrationChecksum(lfSql.replace(/\n/g, '\r\n')), migrationChecksum(lfSql));
   assert.equal(migrationChecksum(lfSql.replace(/\n/g, '\r')), migrationChecksum(lfSql));
@@ -214,11 +214,32 @@ test('migration checksums normalize CRLF and lone CR while preserving canonical 
   ]);
   const migrations = RELEASE_MIGRATIONS.filter(({ version }) => version >= 18 && version <= 26);
   assert.equal(migrations.length, expectedChecksums.size);
+  const preflightSql = fs.readFileSync(path.join(__dirname, 'scripts/release-migration-026-prerequisite-preflight.sql'), 'utf8');
+  const postflightSql = fs.readFileSync(path.join(__dirname, 'scripts/release-migration-preflight.sql'), 'utf8');
+  const manifestRows = (sql) => [...sql.matchAll(/\((\d+),\s*'([^']+)',\s*'([a-f0-9]{64})'\)/g)]
+    .map(([, version, file, checksum]) => ({ version: Number(version), file, checksum }));
+  const preflightManifest = manifestRows(preflightSql);
+  const postflightManifest = manifestRows(postflightSql);
   for (const migration of migrations) {
-    const sql = fs.readFileSync(path.join(__dirname, 'migrations', migration.file), 'utf8');
-    assert.equal(migrationChecksum(sql), expectedChecksums.get(migration.version),
+    const sourceSql = fs.readFileSync(path.join(__dirname, 'migrations', migration.file), 'utf8');
+    const sql = sourceSql.replace(/\r\n?/g, '\n');
+    const expected = expectedChecksums.get(migration.version);
+    assert.equal(migrationChecksum(sql), expected,
       `migration ${migration.version} must retain its canonical LF checksum`);
+    assert.equal(migrationChecksum(sql.replace(/\n/g, '\r\n')), expected,
+      `migration ${migration.version} CRLF checkout must retain its canonical checksum`);
+    assert.equal(migrationChecksum(sql.replace(/\n/g, '\r')), expected,
+      `migration ${migration.version} CR checkout must retain its canonical checksum`);
+    assert.notEqual(migrationChecksum(`${sql}\n-- synthetic modification`), expected,
+      `migration ${migration.version} modified SQL must change its checksum`);
+    assert.ok(preflightManifest.some((row) => row.version === migration.version
+      && row.file === migration.file && row.checksum === expected),
+    `pre-026 manifest must match migration ${migration.version}`);
+    assert.ok(postflightManifest.some((row) => row.version === migration.version
+      && row.file === migration.file && row.checksum === expected),
+    `post-migration manifest must match migration ${migration.version}`);
   }
+  assert.equal(preflightManifest.length, 9, 'pre-026 manifest must list exactly migrations 018-026');
 });
 
 test('release manifest includes migration 026 for game progress save commit idempotency', () => {
@@ -289,8 +310,11 @@ test('release migrations apply in order under an advisory lock and record checks
 });
 
 test('release migrations reject a checksum mismatch instead of silently reapplying a changed file', async () => {
+  const calls = [];
+  const migrationSql = fs.readFileSync(path.join(__dirname, 'migrations', '018_website_sessions_and_audit_metadata.sql'), 'utf8');
   const client = {
-    async query(sql) {
+    async query(sql, params) {
+      calls.push({ sql: String(sql), params });
       if (String(sql).includes('SELECT version, checksum')) return { rows: [{ version: 18, checksum: 'unexpected' }] };
       return { rows: [] };
     },
@@ -304,6 +328,13 @@ test('release migrations reject a checksum mismatch instead of silently reapplyi
     }),
     /checksum mismatch/i,
   );
+  assert.ok(calls.some(({ sql }) => sql.includes('pg_advisory_lock')), 'checksum validation must happen under the advisory lock');
+  assert.ok(calls.some(({ sql }) => sql.includes('pg_advisory_unlock')), 'the advisory lock must be released after mismatch');
+  assert.ok(calls.some(({ sql }) => sql.includes('SELECT version, checksum')), 'the stored checksum must be inspected');
+  assert.equal(calls.some(({ sql }) => sql.includes('INSERT INTO public.schema_migrations')), false,
+    'a mismatch must not append a ledger row');
+  assert.equal(calls.some(({ sql }) => sql === migrationSql), false,
+    'a mismatch must reject before the specific migration SQL executes');
 });
 
 test('release migration failure propagates and always releases the advisory lock', async () => {

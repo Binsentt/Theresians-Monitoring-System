@@ -10,6 +10,48 @@ const { RELEASE_MIGRATIONS, migrationChecksum } = require('../releaseMigrations'
 const scripts = __dirname;
 const read = (name) => fs.readFileSync(path.join(scripts, name), 'utf8');
 
+function readIsolatedBackendWorkflow() {
+  if (Object.prototype.hasOwnProperty.call(process.env, 'STUDENT_PROGRESS_CI_WORKFLOW_PATH')) {
+    const configuredPath = process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH;
+    if (!configuredPath) {
+      throw new Error('STUDENT_PROGRESS_CI_WORKFLOW_PATH is explicitly configured but empty');
+    }
+    try {
+      return fs.readFileSync(configuredPath, 'utf8');
+    } catch (error) {
+      throw new Error(`STUDENT_PROGRESS_CI_WORKFLOW_PATH is missing or unreadable: ${configuredPath}`, { cause: error });
+    }
+  }
+
+  const localCandidates = [
+    path.resolve(scripts, '../../../.github/workflows/backend-network-isolated.yml'),
+    path.resolve(scripts, '../../.github/workflows/backend-network-isolated.yml'),
+  ];
+  for (const candidate of localCandidates) {
+    if (fs.existsSync(candidate)) {
+      try {
+        return fs.readFileSync(candidate, 'utf8');
+      } catch (error) {
+        throw new Error(`repository-relative backend workflow is unreadable: ${candidate}`, { cause: error });
+      }
+    }
+  }
+  throw new Error(`backend-network-isolated.yml was not found at repository-relative paths: ${localCandidates.join(', ')}`);
+}
+
+function withWorkflowPath(value, callback) {
+  const hadPrevious = Object.prototype.hasOwnProperty.call(process.env, 'STUDENT_PROGRESS_CI_WORKFLOW_PATH');
+  const previous = process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH;
+  try {
+    if (value === undefined) delete process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH;
+    else process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH = value;
+    return callback();
+  } finally {
+    if (hadPrevious) process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH = previous;
+    else delete process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH;
+  }
+}
+
 test('read-only preflight audit is fixed to catalog and migration-ledger metadata', () => {
   const sql = read('release-preflight-role-audit.sql');
   assert.match(sql, /BEGIN READ ONLY/i);
@@ -28,8 +70,9 @@ test('read-only preflight audit is fixed to catalog and migration-ledger metadat
 
 test('Windows preflight utility uses a service alias, rejects inline passwords, and gates source/identity', () => {
   const script = read('run-release-preflight.ps1');
+  const connectionValidation = read('releasePreflightConnection.validation.psm1');
   assert.match(script, /tq_release_preflight_reader/);
-  assert.match(script, /PGPASSWORD/);
+  assert.match(script, /Assert-TqNoAmbientPgOverrides/);
   assert.match(script, /-w/);
   assert.match(script, /service=/);
   assert.match(script, /ExpectedSourceCommit/);
@@ -37,11 +80,49 @@ test('Windows preflight utility uses a service alias, rejects inline passwords, 
   assert.doesNotMatch(script, /\$ExpectedSourceCommit\s*=\s*['"]/);
   assert.match(script, /sourceHead\s+-ne\s+\$ExpectedSourceCommit/);
   assert.match(script, /reviewed preflight files or migrations are modified\/untracked/);
+  assert.match(script, /releasePreflightConnection\.validation\.psm1/);
+  assert.match(script, /Assert-TqNoAmbientPgOverrides/);
+  assert.match(script, /Assert-TqPreflightConnectionFiles/);
+  assert.match(script, /ExpectedTunnelPort/);
+  assert.match(script, /VerifiedCaPath/);
   assert.match(script, /release-preflight-role-audit\.sql/);
   assert.match(script, /release-migration-026-prerequisite-preflight\.sql/);
   assert.match(script, /release-migration-preflight\.sql/);
   assert.match(script, /PreMigration026/);
   assert.match(script, /PostMigration026/);
+  assert.match(connectionValidation, /sslmode/);
+  assert.match(connectionValidation, /verify-full/);
+  assert.match(connectionValidation, /hostaddr/);
+  assert.match(connectionValidation, /9A84D18ED0BB44450D38DA6F35A3C4E22AD68192A0C91A2C96DD16E5C17C04DF/);
+  assert.match(connectionValidation, /Assert-TqRestrictedAclRecord/);
+  assert.match(connectionValidation, /AreAccessRulesProtected/);
+  assert.match(connectionValidation, /ReparsePoint/);
+  assert.match(connectionValidation, /Get-TqAmbientPgOverrideNames/);
+  assert.doesNotMatch(connectionValidation, /PGPASSWORD\s*=/i);
+});
+
+test('PowerShell service-file, TLS, environment, and ACL-record validators pass synthetic regressions', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const validationTestPath = path.join(scripts, 'releasePreflightConnection.validation.test.ps1');
+  const powershellPath = path.join(
+    process.env.SystemRoot || 'C:\\Windows',
+    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+  );
+  const result = spawnSync(powershellPath, [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-File', validationTestPath,
+  ], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 15000,
+    env: Object.fromEntries(
+      ['PATH', 'PATHEXT', 'SystemRoot', 'ProgramFiles', 'ProgramFiles(x86)', 'COMSPEC', 'TEMP', 'TMP']
+        .filter((name) => process.env[name])
+        .map((name) => [name, process.env[name]]),
+    ),
+  });
+  assert.equal(result.status, 0, `${result.stdout || ''} ${result.stderr || ''}`);
+  assert.match(`${result.stdout}\n${result.stderr}`, /PASS: 20 synthetic/);
 });
 
 test('PowerShell preflight accepts only an explicit matching source SHA before the psql stub', {
@@ -58,10 +139,12 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
 
   const passfile = path.join(tempDirectory, 'pgpass.conf');
   const serviceFile = path.join(tempDirectory, 'pg_service.conf');
+  const caFile = path.join(tempDirectory, 'root.crt');
   const callMarker = path.join(tempDirectory, 'psql-stub-calls.txt');
   const psqlStub = path.join(tempDirectory, 'psql-stub.cmd');
-  fs.writeFileSync(passfile, '', 'utf8');
-  fs.writeFileSync(serviceFile, '[tq_release_preflight]\nhost=127.0.0.1\nport=5432\ndbname=fixture\nuser=tq_release_preflight_reader\n', 'utf8');
+  fs.writeFileSync(passfile, 'synthetic-only-not-a-production-credential\n', 'utf8');
+  fs.writeFileSync(caFile, 'synthetic certificate fixture; no real key or credential\n', 'utf8');
+  fs.writeFileSync(serviceFile, `[tq_release_preflight]\nhost=localhost\nhostaddr=127.0.0.1\nport=55432\ndbname=fixture\nuser=tq_release_preflight_reader\nsslmode=verify-full\nsslrootcert=${caFile}\n`, 'utf8');
   fs.writeFileSync(psqlStub, `@echo invoked>>"${callMarker}"\r\n@exit /b 0\r\n`, 'utf8');
 
   const sourceResult = spawnSync('git', ['-C', repositoryRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
@@ -73,8 +156,10 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
     '-ExpectedDatabase', 'fixture',
     '-ExpectedServerAddress', '127.0.0.1',
     '-ExpectedServerPort', '5432',
+    '-ExpectedTunnelPort', '55432',
     '-PassfilePath', passfile,
     '-ServiceFilePath', serviceFile,
+    '-VerifiedCaPath', caFile,
     '-PsqlPath', psqlStub,
   ];
   const childEnv = Object.fromEntries(
@@ -110,9 +195,10 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
     assert.notEqual(matchingSha.status, 0, 'dirty reviewed inputs must still fail closed');
     assert.equal(fs.existsSync(callMarker), false);
   } else {
-    assert.equal(matchingSha.status, 0, matchingOutput);
-    assert.equal(fs.readFileSync(callMarker, 'utf8').trim().split(/\r?\n/).length, 2,
-      'the matching SHA path should invoke only the harmless psql stub twice');
+    assert.notEqual(matchingSha.status, 0, 'synthetic inherited ACLs and an unpinned synthetic CA must stop before psql');
+    assert.match(matchingOutput, /ACL|fingerprint|certificate|modified\/untracked/i);
+    assert.equal(fs.existsSync(callMarker), false,
+      'a matching source SHA cannot override protected-file, certificate-pin, or source-cleanliness gates');
   }
 });
 
@@ -157,15 +243,39 @@ test('pre-migration 026 SQL matches current source metadata and stays metadata-o
   assert.deepEqual(requiredColumns, expectedColumns);
 });
 
+test('backend workflow resolver uses the explicit override and fails closed for a missing path', () => {
+  const localPath = path.resolve(scripts, '../../../.github/workflows/backend-network-isolated.yml');
+  const missingPath = path.join(os.tmpdir(), `missing-backend-workflow-${process.pid}.yml`);
+  const directoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-workflow-directory-'));
+  try {
+    const overrideText = withWorkflowPath(localPath, () => readIsolatedBackendWorkflow());
+    assert.match(overrideText, /name:\s*Isolated backend regression/);
+    assert.throws(() => withWorkflowPath(missingPath, () => readIsolatedBackendWorkflow()),
+      (error) => error.message.includes('STUDENT_PROGRESS_CI_WORKFLOW_PATH') && error.message.includes(missingPath));
+    assert.throws(() => withWorkflowPath(directoryPath, () => readIsolatedBackendWorkflow()),
+      (error) => error.message.includes('STUDENT_PROGRESS_CI_WORKFLOW_PATH') && error.message.includes(directoryPath));
+    const localText = withWorkflowPath(undefined, () => readIsolatedBackendWorkflow());
+    assert.equal(localText, overrideText, 'local lookup must work without an environment override');
+  } finally {
+    fs.rmSync(directoryPath, { recursive: true, force: true });
+  }
+});
+
+test('Windows preflight connection validators run on Node 20 under both PowerShell editions in isolated CI', () => {
+  const workflow = readIsolatedBackendWorkflow().replace(/\r\n?/g, '\n');
+  const job = workflow.match(/  windows-preflight-connection-validation:\n([\s\S]*?)(?=\n  [a-z0-9_-]+:\n|\n[^ \n]|$)/)?.[1];
+  assert.ok(job, 'the Windows validation job must be defined as a top-level job');
+  assert.match(job, /runs-on:\s*windows-2022/);
+  assert.match(job, /node-version:\s*['"]20['"]/);
+  assert.match(job, /powershell\.exe[\s\S]*releasePreflightConnection\.validation\.test\.ps1/i);
+  assert.match(job, /pwsh[\s\S]*releasePreflightConnection\.validation\.test\.ps1/i);
+  assert.match(job, /releaseDatabasePreparation\.test\.js/);
+  assert.doesNotMatch(job, /\$\{\{\s*secrets\./i);
+  assert.doesNotMatch(job, /\brailway\s+(?:ssh|up|deploy|restart)\b/i);
+});
+
 test('isolated backend workflow provisions and sentinel-marks every new synthetic preflight database', () => {
-  const workflowPathCandidates = [
-    process.env.STUDENT_PROGRESS_CI_WORKFLOW_PATH,
-    path.resolve(scripts, '../../../.github/workflows/backend-network-isolated.yml'),
-    path.resolve(scripts, '../../.github/workflows/backend-network-isolated.yml'),
-  ].filter(Boolean);
-  const workflowPath = workflowPathCandidates.find((candidate) => fs.existsSync(candidate));
-  assert.ok(workflowPath, `backend workflow must exist at one of: ${workflowPathCandidates.join(', ')}`);
-  const workflow = fs.readFileSync(workflowPath, 'utf8');
+  const workflow = readIsolatedBackendWorkflow();
   for (const database of [
     'tq_preflight_valid_test_ci',
     'tq_preflight_missing_ledger_test_ci',
@@ -215,6 +325,37 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
   assert.match(harness, /passedScenarioCount, 41/);
   assert.match(harness, /passedScenarioCount, 43/);
   assert.match(harness, /assertCiContainer\(\)/);
+});
+
+test('role audit exposes membership count and disposable harness restores valid audit after PUBLIC TEMP revoke', () => {
+  const audit = read('release-preflight-role-audit.sql');
+  const harness = read('run-preflight-postgres-harness.cjs');
+  assert.match(audit, /role_membership_count=:role_membership_count/);
+
+  const grantAt = harness.indexOf('const grantPublicTemp');
+  const negativeAuditAt = harness.indexOf('const publicTempRoleAudit', grantAt);
+  const revokeAt = harness.indexOf('const revokePublicTemp', negativeAuditAt);
+  const restoredAuditAt = harness.indexOf('const restoredPublicTempAudit', revokeAt);
+  assert.ok(grantAt >= 0 && negativeAuditAt > grantAt && revokeAt > negativeAuditAt && restoredAuditAt > revokeAt,
+    'PUBLIC TEMP must be removed before a separate valid-role audit');
+  assert.match(harness.slice(revokeAt, restoredAuditAt), /REVOKE TEMP ON DATABASE .* FROM PUBLIC/);
+  assert.match(harness.slice(restoredAuditAt, restoredAuditAt + 500), /status, 0/);
+  assert.match(harness.slice(restoredAuditAt, restoredAuditAt + 700), /PASS: target identity, read-only limits, and preflight-only privileges verified/);
+});
+
+test('synthetic backup role schema and sequence grants occur only in the disposable target database', () => {
+  const harness = read('run-preflight-postgres-harness.cjs');
+  const roleCreateAt = harness.indexOf('const createBackupRole');
+  const grantsAt = harness.indexOf('const grantBackupRole', roleCreateAt);
+  const auditAt = harness.indexOf('const backupRoleAudit', grantsAt);
+  assert.ok(roleCreateAt >= 0 && grantsAt > roleCreateAt && auditAt > grantsAt);
+  assert.match(harness.slice(roleCreateAt, grantsAt), /GRANT CONNECT ON DATABASE/);
+  const targetGrants = harness.slice(grantsAt, auditAt);
+  assert.match(targetGrants, /psql\(CASES\.valid, 'postgres'/);
+  assert.match(targetGrants, /GRANT USAGE ON SCHEMA public TO tq_prod_backup_reader/);
+  assert.match(targetGrants, /GRANT SELECT ON ALL TABLES IN SCHEMA public TO tq_prod_backup_reader/);
+  assert.match(targetGrants, /GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO tq_prod_backup_reader/);
+  assert.doesNotMatch(harness.slice(roleCreateAt, grantsAt), /GRANT (?:USAGE ON SCHEMA|SELECT ON ALL)/);
 });
 
 test('backup utility has separate explicit backup and isolated-restore gates', () => {
