@@ -1065,7 +1065,7 @@ assert.equal(unexpectedBackupStateResult.status, 0, unexpectedBackupStateResult.
 assert.equal(parseBackupReleaseState(unexpectedBackupStateResult).readiness, 'UNVERIFIED');
 recordScenario('unexpected migration version is preserved and classified unverified');
 
-assert.equal(passedScenarioCount, 53,
+assert.equal(passedScenarioCount, 54,
   'all expected disposable backup-state classification and pre-026 restore scenarios must execute');
 
 const missingBackupRoleAudit = invokeBackupRoleAudit(CASES.valid);
