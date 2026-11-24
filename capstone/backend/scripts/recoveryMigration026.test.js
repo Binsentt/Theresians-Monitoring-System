@@ -506,6 +506,21 @@ test('runner diagnostics do not emit or embed credentials and CLI never logs sup
   assert.doesNotMatch(runner, /rejectUnauthorized\s*:\s*false/i);
 });
 
+test('receipt absence diagnostics inspect the synthetic database before cleanup', () => {
+  const integration = fs.readFileSync(
+    path.join(__dirname, 'recoveryMigration026.postgres.integration.cjs'),
+    'utf8',
+  );
+  const diagnosticCall = integration.indexOf('await inspectReceiptAbsenceComponents(state.database)');
+  const cleanupStart = integration.indexOf('cleanupInProgress = true;');
+  assert.ok(diagnosticCall >= 0, 'receipt-component diagnostic must remain available');
+  assert.ok(cleanupStart >= 0, 'synthetic teardown boundary must remain explicit');
+  assert.ok(
+    diagnosticCall < cleanupStart,
+    'receipt-component diagnostic must run before cleanup removes the failed synthetic database',
+  );
+});
+
 test('recovery artifact hash covers the approved scripts and migration sources', () => {
   const { computeRecoveryArtifactSha256 } = require('./recoveryMigration026');
   const first = computeRecoveryArtifactSha256(path.resolve(__dirname, '..'));

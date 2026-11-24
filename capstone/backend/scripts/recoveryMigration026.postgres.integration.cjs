@@ -743,21 +743,6 @@ async function main() {
   if (!primaryFailure && clientErrorDiagnostics.some((event) => event.phase === 'scenario')) {
     primaryFailure = { safeCode: 'scenario-client-error-event' };
   }
-  cleanupInProgress = true;
-  let cleanupFailures = [];
-  try {
-    cleanupFailures = await cleanup(admin);
-  } catch (_error) {
-    cleanupFailures.push('synthetic-cleanup-failed');
-  }
-  try {
-    await admin.end();
-  } catch (_error) {
-    cleanupFailures.push('admin-client-close-failed');
-  }
-  for (const event of clientErrorDiagnostics) {
-    console.error(`CLIENT_EVENT: phase=${event.phase} database=${event.database} sqlstate=${event.code}`);
-  }
   if (primaryFailure?.category === 'preflight') {
     const state = primaryFailure.integrationState || {};
     const query = preflightQueryLabel(state.queries?.length || 0);
@@ -775,6 +760,21 @@ async function main() {
         console.error('PREFLIGHT_RECEIPT: inspection=failed');
       }
     }
+  }
+  cleanupInProgress = true;
+  let cleanupFailures = [];
+  try {
+    cleanupFailures = await cleanup(admin);
+  } catch (_error) {
+    cleanupFailures.push('synthetic-cleanup-failed');
+  }
+  try {
+    await admin.end();
+  } catch (_error) {
+    cleanupFailures.push('admin-client-close-failed');
+  }
+  for (const event of clientErrorDiagnostics) {
+    console.error(`CLIENT_EVENT: phase=${event.phase} database=${event.database} sqlstate=${event.code}`);
   }
   if (primaryFailure) {
     console.error(`FAIL: recovery PostgreSQL ${process.env.TQ_EXPECTED_POSTGRES_MAJOR} integration (${primaryFailure.safeCode || primaryFailure.category || primaryFailure.name || 'scenario-failed'}).`);
