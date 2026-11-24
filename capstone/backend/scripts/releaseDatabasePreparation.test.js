@@ -425,6 +425,17 @@ test('recovery PostgreSQL harness reports the failed preflight gate without expo
   assert.match(harness, /CLIENT_EVENT: phase=.*database=.*sqlstate=/);
   assert.match(harness, /PREFLIGHT_STAGE: query=.* status=/);
   assert.match(harness, /PREFLIGHT_IDENTITY: failed=/);
+  assert.match(harness, /PREFLIGHT_RECEIPT: table_absent=.*relations_absent=.*constraints_absent=.*triggers_absent=.*type_absent=/);
+  assert.match(harness, /function inspectReceiptAbsenceComponents/);
+  const receiptInspector = harness.slice(
+    harness.indexOf('async function inspectReceiptAbsenceComponents'),
+    harness.indexOf('async function queryReceiptCatalog'),
+  );
+  assert.match(receiptInspector, /FROM pg_catalog\.pg_class/);
+  assert.match(receiptInspector, /FROM pg_catalog\.pg_constraint/);
+  assert.match(receiptInspector, /FROM pg_catalog\.pg_trigger/);
+  assert.match(receiptInspector, /FROM pg_catalog\.pg_type/);
+  assert.doesNotMatch(receiptInspector, /FROM public\.(accounts|schema_migrations)/);
   const { preflightQueryLabel, summarizeIdentityFailures } = require('./recoveryMigration026.postgres.integration.cjs');
   assert.deepEqual(
     ['ledger-presence', 'identity-and-role', 'ledger-shape', 'ledger-rows', 'receipt-absence']

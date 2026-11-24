@@ -330,7 +330,7 @@ function summarizeIdentityFailures(row, config, expectedPostgresMajor) {
 }
 
 async function executeRecovery(database, sourceState, artifactSha256, hooks = {}) {
-  const state = { factoryCalls: 0, queries: [], lastQueryStatus: null, identityFailures: null };
+  const state = { database, factoryCalls: 0, queries: [], lastQueryStatus: null, identityFailures: null, receiptObjectsAbsent: null };
   try {
     const result = await runRecoveryMigration026({
       env: syntheticApprovalEnv(database, sourceState.sourceRevision, artifactSha256),
@@ -361,6 +361,9 @@ async function executeRecovery(database, sourceState, artifactSha256, hooks = {}
               Number(process.env.TQ_EXPECTED_POSTGRES_MAJOR),
             );
           }
+          if (text.includes('receipt_objects_absent')) {
+            state.receiptObjectsAbsent = result.rows?.[0]?.receipt_objects_absent === true;
+          }
           if (hooks.afterQuery) await hooks.afterQuery(text, client, result);
           return result;
         };
@@ -376,6 +379,33 @@ async function executeRecovery(database, sourceState, artifactSha256, hooks = {}
 
 async function queryAdmin(database, sql, params = []) {
   return withClient(connectionConfig(database), (client) => client.query(sql, params));
+}
+
+async function inspectReceiptAbsenceComponents(database) {
+  check(DATABASES.includes(database), 'receipt-diagnostic-database-not-allowlisted');
+  const result = await queryAdmin(database, `
+    SELECT to_regclass('public.game_progress_save_commits') IS NULL AS table_absent,
+           NOT EXISTS (
+             SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = 'public' AND c.relname LIKE 'game_progress_save_commits%'
+           ) AS relations_absent,
+           NOT EXISTS (
+             SELECT 1 FROM pg_catalog.pg_constraint c WHERE c.conname IN (
+               'game_progress_save_commits_pkey','game_progress_save_commits_activity_event_unique',
+               'game_progress_save_commits_student_id_fkey','game_progress_save_commits_learning_cycle_version_check',
+               'game_progress_save_commits_save_commit_id_hash_check','game_progress_save_commits_payload_sha256_check',
+               'game_progress_save_commits_response_status_check','game_progress_save_commits_completion_consistency'
+             )
+           ) AS constraints_absent,
+           NOT EXISTS (
+             SELECT 1 FROM pg_catalog.pg_trigger t WHERE t.tgname LIKE 'game_progress_save_commits%'
+           ) AS triggers_absent,
+           NOT EXISTS (
+             SELECT 1 FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+             WHERE n.nspname = 'public' AND t.typname = 'game_progress_save_commits'
+           ) AS type_absent
+  `);
+  return result.rows?.[0] || null;
 }
 
 async function queryReceiptCatalog(database, stage, sql) {
@@ -735,6 +765,15 @@ async function main() {
     if (query === 'identity-and-role' && state.lastQueryStatus === 'completed') {
       const failed = state.identityFailures;
       console.error(`PREFLIGHT_IDENTITY: failed=${Array.isArray(failed) ? (failed.join(',') || 'none') : 'not-captured'}`);
+    }
+    if (query === 'receipt-absence' && state.lastQueryStatus === 'completed' && state.receiptObjectsAbsent === false) {
+      try {
+        const components = await inspectReceiptAbsenceComponents(state.database);
+        const flag = (value) => value === true ? 'true' : value === false ? 'false' : 'unknown';
+        console.error(`PREFLIGHT_RECEIPT: table_absent=${flag(components?.table_absent)} relations_absent=${flag(components?.relations_absent)} constraints_absent=${flag(components?.constraints_absent)} triggers_absent=${flag(components?.triggers_absent)} type_absent=${flag(components?.type_absent)}`);
+      } catch (_error) {
+        console.error('PREFLIGHT_RECEIPT: inspection=failed');
+      }
     }
   }
   if (primaryFailure) {
