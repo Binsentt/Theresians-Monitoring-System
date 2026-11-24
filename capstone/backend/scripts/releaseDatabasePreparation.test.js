@@ -423,9 +423,14 @@ test('recovery PostgreSQL harness reports the failed preflight gate without expo
   assert.match(harness, /residual-client-connections-terminated/);
   assert.match(harness, /scenario-client-error-event/);
   assert.match(harness, /CLIENT_EVENT: phase=.*database=.*sqlstate=/);
-  assert.match(harness, /PREFLIGHT_STAGE: query=.* status=/);
+  assert.match(harness, /PREFLIGHT_STAGE: phase=.* query=.* status=.* validation=.* row_count=/);
   assert.match(harness, /PREFLIGHT_IDENTITY: failed=/);
-  assert.match(harness, /PREFLIGHT_RECEIPT: table_absent=.*relations_absent=.*constraints_absent=.*triggers_absent=.*type_absent=/);
+  assert.match(harness, /PREFLIGHT_RECEIPT_CLIENT: table_absent=.*relations_absent=.*constraints_absent=.*triggers_absent=.*type_absent=/);
+  assert.match(harness, /PREFLIGHT_RECEIPT_ADMIN: table_absent=.*relations_absent=.*constraints_absent=.*triggers_absent=.*type_absent=/);
+  assert.match(harness, /function preflightQueryLabel\(sql\)/);
+  assert.match(harness, /const label = preflightQueryLabel\(text\)/);
+  assert.doesNotMatch(harness, /preflightQueryLabel\(state\.queries/);
+  assert.match(harness, /preflightRecord\?\.label === 'receipt-absence'/);
   assert.match(harness, /function inspectReceiptAbsenceComponents/);
   const receiptInspector = harness.slice(
     harness.indexOf('async function inspectReceiptAbsenceComponents'),
@@ -437,11 +442,22 @@ test('recovery PostgreSQL harness reports the failed preflight gate without expo
   assert.match(receiptInspector, /FROM pg_catalog\.pg_type/);
   assert.doesNotMatch(receiptInspector, /FROM public\.(accounts|schema_migrations)/);
   const { preflightQueryLabel, summarizeIdentityFailures } = require('./recoveryMigration026.postgres.integration.cjs');
+  const preflightQueries = [
+    "SELECT to_regclass('public.schema_migrations') IS NOT NULL AS ledger_present",
+    "SELECT current_setting('server_version_num') AS server_version_num, runtime_role_non_admin",
+    'WITH cols AS (SELECT 1) SELECT count(*) = 4 AS ledger_shape_ok FROM cols',
+    'SELECT version, filename, checksum FROM public.schema_migrations WHERE version >= 18 ORDER BY version',
+    "SELECT to_regclass('public.game_progress_save_commits') IS NULL AS receipt_objects_absent",
+  ];
   assert.deepEqual(
-    ['ledger-presence', 'identity-and-role', 'ledger-shape', 'ledger-rows', 'receipt-absence']
-      .map((_, index) => preflightQueryLabel(index + 4)),
+    preflightQueries.map(preflightQueryLabel),
     ['ledger-presence', 'identity-and-role', 'ledger-shape', 'ledger-rows', 'receipt-absence'],
   );
+  assert.equal(preflightQueryLabel('BEGIN ISOLATION LEVEL SERIALIZABLE'), 'unclassified');
+  assert.equal(preflightQueryLabel(8), 'unclassified');
+  assert.match(harness, /validation = 'passed'/);
+  assert.match(harness, /status = 'query-failed'/);
+
   const config = { database: 'tq_identity_synthetic', user: 'tq_migrator_synthetic', port: 5432 };
   const row = {
     database_name: config.database,

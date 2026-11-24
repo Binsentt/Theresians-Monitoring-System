@@ -293,9 +293,74 @@ const RECOVERY_PREFLIGHT_QUERY_LABELS = Object.freeze([
   'receipt-absence',
 ]);
 
-function preflightQueryLabel(queryCount) {
-  // Three executor queries (timeouts and advisory lock) precede readPreflight.
-  return RECOVERY_PREFLIGHT_QUERY_LABELS[Number(queryCount) - 4] || 'unknown';
+function preflightQueryLabel(sql) {
+  if (typeof sql !== 'string') return 'unclassified';
+  const normalized = sql
+    .replace(/--[^\r\n]*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  if (/\breceipt_objects_absent\b/.test(normalized)
+      && /to_regclass\('public\.game_progress_save_commits'\)/.test(normalized)) {
+    return 'receipt-absence';
+  }
+  if (/\bserver_version_num\b/.test(normalized)
+      && /\bruntime_role_non_admin\b/.test(normalized)
+      && /\bcurrent_user\b/.test(normalized)) {
+    return 'identity-and-role';
+  }
+  if (/\bledger_shape_ok\b/.test(normalized) && /\bfrom cols\b/.test(normalized)) {
+    return 'ledger-shape';
+  }
+  if (/select version\s*,\s*filename\s*,\s*checksum from public\.schema_migrations where version >= 18 order by version/.test(normalized)) {
+    return 'ledger-rows';
+  }
+  if (/to_regclass\('public\.schema_migrations'\) is not null as ledger_present/.test(normalized)) {
+    return 'ledger-presence';
+  }
+  return 'unclassified';
+}
+function summarizePreflightResult(label, result) {
+  const rows = Array.isArray(result?.rows) ? result.rows : [];
+  const row = rows[0];
+  const aliases = {
+    'ledger-presence': 'ledger_present',
+    'ledger-shape': 'ledger_shape_ok',
+    'receipt-absence': 'receipt_objects_absent',
+  };
+  const alias = aliases[label];
+  if (alias) {
+    const aliasPresent = Boolean(row && Object.prototype.hasOwnProperty.call(row, alias));
+    const value = aliasPresent ? row[alias] : undefined;
+    return {
+      rowCount: rows.length,
+      aliasPresent,
+      valueType: value === null ? 'null' : typeof value,
+      booleanValue: typeof value === 'boolean' ? String(value) : 'unknown',
+    };
+  }
+  if (label === 'identity-and-role') {
+    const expected = [
+      'database_name', 'database_user', 'session_user', 'server_address', 'server_port',
+      'server_version_num', 'runtime_role_non_admin', 'migrator_non_admin',
+    ];
+    return {
+      rowCount: rows.length,
+      aliasPresent: Boolean(row && expected.every((key) => Object.prototype.hasOwnProperty.call(row, key))),
+      valueType: row ? 'identity-record' : 'missing',
+      booleanValue: 'not-applicable',
+    };
+  }
+  if (label === 'ledger-rows') {
+    const expected = ['version', 'filename', 'checksum'];
+    return {
+      rowCount: rows.length,
+      aliasPresent: rows.every((entry) => expected.every((key) => Object.prototype.hasOwnProperty.call(entry, key))),
+      valueType: rows.length ? 'migration-rows' : 'empty',
+      booleanValue: 'not-applicable',
+    };
+  }
+  return { rowCount: rows.length, aliasPresent: false, valueType: 'unknown', booleanValue: 'unknown' };
 }
 
 function summarizeIdentityFailures(row, config, expectedPostgresMajor) {
@@ -330,7 +395,7 @@ function summarizeIdentityFailures(row, config, expectedPostgresMajor) {
 }
 
 async function executeRecovery(database, sourceState, artifactSha256, hooks = {}) {
-  const state = { database, factoryCalls: 0, queries: [], lastQueryStatus: null, identityFailures: null, receiptObjectsAbsent: null, receiptQueryDiagnostic: null, receiptComponentsSameClient: null };
+  const state = { database, factoryCalls: 0, queries: [], lastQueryStatus: null, identityFailures: null, receiptObjectsAbsent: null, receiptQueryDiagnostic: null, receiptComponentsSameClient: null, lastPreflightQuery: null, preflightQueryHistory: [], transactionOpen: false };
   try {
     const result = await runRecoveryMigration026({
       env: syntheticApprovalEnv(database, sourceState.sourceRevision, artifactSha256),
@@ -351,34 +416,62 @@ async function executeRecovery(database, sourceState, artifactSha256, hooks = {}
         client.query = async (sql, params = []) => {
           const text = String(sql);
           state.queries.push(text);
-          state.lastQueryStatus = 'started';
-          const result = await originalQuery(sql, params);
-          state.lastQueryStatus = 'completed';
-          if (text.includes('server_version_num') && text.includes('runtime_role_non_admin')) {
-            state.identityFailures = summarizeIdentityFailures(
-              result.rows?.[0],
-              config,
-              Number(process.env.TQ_EXPECTED_POSTGRES_MAJOR),
-            );
+          const label = preflightQueryLabel(text);
+          let preflightRecord = null;
+          if (label !== 'unclassified') {
+            const previous = state.lastPreflightQuery;
+            if (previous?.status === 'result-observed' && previous.validation === 'unconfirmed') {
+              previous.validation = 'passed';
+            }
+            preflightRecord = {
+              label,
+              phase: state.transactionOpen ? 'transaction' : 'initial',
+              status: 'started',
+              validation: 'unconfirmed',
+              rowCount: null,
+              aliasPresent: false,
+              valueType: 'missing',
+              booleanValue: 'unknown',
+            };
+            state.preflightQueryHistory.push(preflightRecord);
+            state.lastPreflightQuery = preflightRecord;
           }
-          const receiptQueryObserved = text.toLowerCase().includes('receipt_objects_absent')
-            || preflightQueryLabel(state.queries.length) === 'receipt-absence';
-          if (receiptQueryObserved) {
-            const receiptDiagnostic = summarizeReceiptAbsenceResult(text, result);
-            state.receiptQueryDiagnostic = receiptDiagnostic;
-            state.receiptObjectsAbsent = receiptDiagnostic.value === 'true' ? true
-              : receiptDiagnostic.value === 'false' ? false : null;
-            if (state.receiptObjectsAbsent !== true) {
-              try {
-                const components = await originalQuery(RECEIPT_ABSENCE_COMPONENTS_SQL);
-                state.receiptComponentsSameClient = components.rows?.[0] || null;
-              } catch (_error) {
-                state.receiptComponentsSameClient = 'failed';
+          state.lastQueryStatus = 'started';
+          try {
+            const result = await originalQuery(sql, params);
+            state.lastQueryStatus = 'completed';
+            if (/^\s*BEGIN\b/i.test(text)) state.transactionOpen = true;
+            if (preflightRecord) {
+              Object.assign(preflightRecord, summarizePreflightResult(label, result));
+              preflightRecord.status = 'result-observed';
+            }
+            if (text.includes('server_version_num') && text.includes('runtime_role_non_admin')) {
+              state.identityFailures = summarizeIdentityFailures(
+                result.rows?.[0],
+                config,
+                Number(process.env.TQ_EXPECTED_POSTGRES_MAJOR),
+              );
+            }
+            if (preflightRecord?.label === 'receipt-absence') {
+              const receiptDiagnostic = summarizeReceiptAbsenceResult(text, result);
+              state.receiptQueryDiagnostic = receiptDiagnostic;
+              state.receiptObjectsAbsent = receiptDiagnostic.value === 'true' ? true
+                : receiptDiagnostic.value === 'false' ? false : null;
+              if (state.receiptObjectsAbsent !== true) {
+                try {
+                  const components = await originalQuery(RECEIPT_ABSENCE_COMPONENTS_SQL);
+                  state.receiptComponentsSameClient = components.rows?.[0] || null;
+                } catch (_error) {
+                  state.receiptComponentsSameClient = 'failed';
+                }
               }
             }
+            if (hooks.afterQuery) await hooks.afterQuery(text, client, result);
+            return result;
+          } catch (error) {
+            if (preflightRecord?.status === 'started') preflightRecord.status = 'query-failed';
+            throw error;
           }
-          if (hooks.afterQuery) await hooks.afterQuery(text, client, result);
-          return result;
         };
         return client;
       },
@@ -775,13 +868,22 @@ async function main() {
   }
   if (primaryFailure?.category === 'preflight') {
     const state = primaryFailure.integrationState || {};
-    const query = preflightQueryLabel(state.queries?.length || 0);
-    console.error(`PREFLIGHT_STAGE: query=${query} status=${state.lastQueryStatus || 'unknown'}`);
-    if (query === 'identity-and-role' && state.lastQueryStatus === 'completed') {
+    const failedPreflight = state.lastPreflightQuery;
+    const query = failedPreflight?.label || 'unclassified';
+    const phase = failedPreflight?.phase || 'unobserved';
+    const status = failedPreflight?.status || 'unobserved';
+    const validation = failedPreflight?.validation || 'unknown';
+    const rowCount = Number.isInteger(failedPreflight?.rowCount) ? failedPreflight.rowCount : 'unknown';
+    console.error(`PREFLIGHT_STAGE: phase=${phase} query=${query} status=${status} validation=${validation} row_count=${rowCount}`);
+    if (query === 'identity-and-role' && status === 'result-observed') {
       const failed = state.identityFailures;
       console.error(`PREFLIGHT_IDENTITY: failed=${Array.isArray(failed) ? (failed.join(',') || 'none') : 'not-captured'}`);
+    } else if (failedPreflight && status === 'result-observed' && query !== 'ledger-rows') {
+      console.error(`PREFLIGHT_RESULT: query=${query} alias_present=${failedPreflight.aliasPresent} value_type=${failedPreflight.valueType} boolean_value=${failedPreflight.booleanValue}`);
+    } else if (query === 'ledger-rows' && status === 'result-observed') {
+      console.error(`PREFLIGHT_LEDGER_ROWS: columns_present=${failedPreflight.aliasPresent} row_count=${rowCount}`);
     }
-    if (query === 'receipt-absence' && state.lastQueryStatus === 'completed') {
+    if (query === 'receipt-absence' && status === 'result-observed') {
       const diagnostic = state.receiptQueryDiagnostic || {};
       const flag = (value) => value === true ? 'true' : value === false ? 'false' : 'unknown';
       const receiptFlag = state.receiptObjectsAbsent === true ? 'true'
