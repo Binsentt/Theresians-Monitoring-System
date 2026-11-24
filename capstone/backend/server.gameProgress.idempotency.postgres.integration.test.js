@@ -8,6 +8,23 @@ const { buildProgressActivityEventKey, hashSaveCommitId } = require('./gameProgr
 const { assertDisposablePostgresUrl, assertDisposablePostgresDatabase } = require('./testSafety/disposablePostgres');
 
 const databaseUrl = process.env.DATABASE_URL || '';
+async function runSyntheticReleaseMigrations() {
+  assertDisposablePostgresUrl({ connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
+  const target = new URL(databaseUrl);
+  const databaseConfig = {
+    host: target.hostname,
+    port: Number(target.port || 5432),
+    user: decodeURIComponent(target.username),
+    password: decodeURIComponent(target.password),
+    database: decodeURIComponent(target.pathname.replace(/^\/+/, '')),
+    ssl: false,
+  };
+  return runReleaseMigrations({
+    databaseConfig,
+    clientFactory: async (config) => new Client(config),
+  });
+}
+
 if (!databaseUrl) {
   test('game progress idempotency PostgreSQL integration', {
     skip: 'DATABASE_URL is required for the run-marked disposable PostgreSQL integration test',
@@ -219,7 +236,7 @@ if (!databaseUrl) {
 
     process.env.RELEASE_MIGRATIONS_APPROVED = 'true';
     await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
-    await runReleaseMigrations();
+    await runSyntheticReleaseMigrations();
     appServer = await new Promise((resolve) => {
       const listening = serverExports.app.listen(0, '127.0.0.1', () => resolve(listening));
     });
@@ -275,7 +292,7 @@ if (!databaseUrl) {
 
     await assertDisposablePostgresDatabase({ client: pool, connectionString: databaseUrl, expectedDatabaseName: 'tq_backend_test_ci' });
     process.env.RELEASE_EXPECTED_PENDING_MIGRATIONS = 'none';
-    await runReleaseMigrations();
+    await runSyntheticReleaseMigrations();
     const after = await pool.query(`
       SELECT version, filename, checksum FROM public.schema_migrations WHERE version = 26`);
     assert.deepEqual(after.rows, before.rows, 'a second real runner execution is a checksum-verified no-op');
