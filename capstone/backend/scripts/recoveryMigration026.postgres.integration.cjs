@@ -751,13 +751,18 @@ async function main() {
       const failed = state.identityFailures;
       console.error(`PREFLIGHT_IDENTITY: failed=${Array.isArray(failed) ? (failed.join(',') || 'none') : 'not-captured'}`);
     }
-    if (query === 'receipt-absence' && state.lastQueryStatus === 'completed' && state.receiptObjectsAbsent === false) {
-      try {
-        const components = await inspectReceiptAbsenceComponents(state.database);
-        const flag = (value) => value === true ? 'true' : value === false ? 'false' : 'unknown';
-        console.error(`PREFLIGHT_RECEIPT: table_absent=${flag(components?.table_absent)} relations_absent=${flag(components?.relations_absent)} constraints_absent=${flag(components?.constraints_absent)} triggers_absent=${flag(components?.triggers_absent)} type_absent=${flag(components?.type_absent)}`);
-      } catch (_error) {
-        console.error('PREFLIGHT_RECEIPT: inspection=failed');
+    if (query === 'receipt-absence' && state.lastQueryStatus === 'completed') {
+      const receiptFlag = state.receiptObjectsAbsent === true ? 'true'
+        : state.receiptObjectsAbsent === false ? 'false' : 'unknown';
+      console.error(`PREFLIGHT_RECEIPT_RESULT: objects_absent=${receiptFlag}`);
+      if (state.receiptObjectsAbsent !== true) {
+        try {
+          const components = await inspectReceiptAbsenceComponents(state.database);
+          const flag = (value) => value === true ? 'true' : value === false ? 'false' : 'unknown';
+          console.error(`PREFLIGHT_RECEIPT: table_absent=${flag(components?.table_absent)} relations_absent=${flag(components?.relations_absent)} constraints_absent=${flag(components?.constraints_absent)} triggers_absent=${flag(components?.triggers_absent)} type_absent=${flag(components?.type_absent)}`);
+        } catch (_error) {
+          console.error('PREFLIGHT_RECEIPT: inspection=failed');
+        }
       }
     }
   }

@@ -763,6 +763,7 @@ SELECT 'BACKUP_RELEASE_READINESS=' || CASE
           AND (SELECT ok FROM receipt_columns_ok)
 
           AND (SELECT ok FROM receipt_constraints_ok)
+          AND (SELECT ok FROM receipt_indexes_ok)
          
           THEN 'POST_MIGRATION_026'
          ELSE 'UNVERIFIED'

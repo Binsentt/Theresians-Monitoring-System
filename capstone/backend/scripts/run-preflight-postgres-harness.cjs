@@ -922,6 +922,23 @@ const postBackupState = parseBackupReleaseState(postBackupStateResult);
 assert.equal(postBackupState.readiness, 'POST_MIGRATION_026');
 recordScenario('read-only backup classifier recognizes complete post-026 receipt schema and ledger');
 
+const unexpectedReceiptIndex = psql(CASES.migration026Applied, 'postgres',
+  'CREATE INDEX tq_backup_unexpected_receipt_index_ci ON public.game_progress_save_commits (created_at);');
+assert.equal(unexpectedReceiptIndex.status, 0, unexpectedReceiptIndex.stderr);
+try {
+  const unexpectedIndexState = parseBackupReleaseState(invokeBackupReleaseState(CASES.migration026Applied));
+  assert.equal(unexpectedIndexState.readiness, 'UNVERIFIED',
+    'post-026 backup readiness must reject indexes outside the exact receipt contract');
+} finally {
+  const dropUnexpectedReceiptIndex = psql(CASES.migration026Applied, 'postgres',
+    'DROP INDEX IF EXISTS public.tq_backup_unexpected_receipt_index_ci;');
+  assert.equal(dropUnexpectedReceiptIndex.status, 0, dropUnexpectedReceiptIndex.stderr);
+}
+const restoredReceiptIndexState = parseBackupReleaseState(invokeBackupReleaseState(CASES.migration026Applied));
+assert.equal(restoredReceiptIndexState.readiness, 'POST_MIGRATION_026');
+recordScenario('post-026 backup readiness rejects unexpected receipt indexes and recovers after synthetic cleanup');
+
+
 const partialBackupStateResult = invokeBackupReleaseState(CASES.partialReceipt026);
 assert.equal(partialBackupStateResult.status, 0, partialBackupStateResult.stderr);
 assert.equal(parseBackupReleaseState(partialBackupStateResult).readiness, 'UNVERIFIED');
@@ -1642,5 +1659,5 @@ assert.equal(postRestoredState.fingerprint, postSourceState.fingerprint,
   'post-026 source and restored database catalog fingerprints must match without comparing application rows');
 recordScenario('restored archive matches source release readiness and catalog metadata fingerprint without comparing application rows');
 
-assert.equal(passedScenarioCount, 83, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
+assert.equal(passedScenarioCount, 84, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
 console.log(`Preflight integration result: ${passedScenarioCount}/${passedScenarioCount} disposable PostgreSQL scenarios passed.`);
