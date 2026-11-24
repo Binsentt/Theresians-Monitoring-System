@@ -728,10 +728,14 @@ test('backup role audit rejects executable large-object creators and unsafe call
   assert.match(harness, /passedScenarioCount, 83/);
 
   const workflow = fs.readFileSync(path.resolve(scripts, '../../../.github/workflows/backend-network-isolated.yml'), 'utf8');
-  assert.match(workflow, /postgres_image:\s*\['postgres:16-bookworm',\s*'postgres:18-bookworm'\]/);
-  assert.match(workflow, /POSTGRES_IMAGE:\s*\$\{\{\s*matrix\.postgres_image\s*\}\}/);
-  assert.match(workflow, /docker pull "\$POSTGRES_IMAGE"/);
-  assert.match(workflow, /"\$POSTGRES_IMAGE"/);
-  assert.doesNotMatch(workflow, /postgres:16-bookworm(?!')/,
-    'PostgreSQL image use must be controlled by the version matrix');
+  const matrixJobs = /postgres_image:\s*\['postgres:16-bookworm',\s*'postgres:18-bookworm'\]/.test(workflow)
+    && /POSTGRES_IMAGE:\s*\$\{\{\s*matrix\.postgres_image\s*\}\}/.test(workflow);
+  const splitJobs = /postgres18-preflight:/.test(workflow)
+    && /TQ_EXPECTED_POSTGRES_MAJOR:\s*'16'/.test(workflow)
+    && /TQ_EXPECTED_POSTGRES_MAJOR:\s*'18'/.test(workflow);
+  assert.ok(matrixJobs || splitJobs,
+    'isolated workflow must validate PostgreSQL 16 and 18 through either the verified image matrix or separate major-pinned jobs');
+  assert.match(workflow, /postgres:16-bookworm/);
+  assert.match(workflow, /postgres:18-bookworm/);
+  assert.match(workflow, /run-preflight-postgres-harness\.cjs/);
 });

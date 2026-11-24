@@ -93,6 +93,13 @@ function parseBackupReleaseState(result) {
   const output = `${result.stdout}\n${result.stderr}`;
   if (result.status !== 0 && /BACKUP_TARGET_IDENTITY=FAIL/.test(output)) return 'IDENTITY_FAIL';
   assert.match(output, /^BACKUP_TARGET_IDENTITY=PASS$/m, output);
+  const ledgerShape = output.match(/^BACKUP_LEDGER_SHAPE=(PASS|UNVERIFIED)$/m);
+  if (ledgerShape) {
+    assert.equal(ledgerShape[1], 'PASS', `backup migration ledger shape is not verified: ${output}`);
+  } else {
+    assert.match(output, /^BACKUP_RELEASE_READINESS=UNVERIFIED(?:\||$)/m,
+      `ledger-shape status may be absent only when the ledger itself is absent: ${output}`);
+  }
   const row = output.match(/^BACKUP_RELEASE_READINESS=(PRE_MIGRATION_026|POST_MIGRATION_026|UNVERIFIED)\|BACKUP_METADATA_FINGERPRINT=([a-f0-9]{32}|UNAVAILABLE)\|BACKUP_DATABASE_SIZE_BYTES=(\d+)$/m);
   assert.ok(row, `backup release-state metadata row missing: ${output}`);
   return { readiness: row[1], fingerprint: row[2], databaseSizeBytes: Number(row[3]) };
@@ -820,7 +827,8 @@ assert.equal(passedScenarioCount, 41, 'all expected PostgreSQL major-version and
 const preBackupStateResult = invokeBackupReleaseState(CASES.preMigration026);
 assert.equal(preBackupStateResult.status, 0, preBackupStateResult.stderr);
 const preBackupState = parseBackupReleaseState(preBackupStateResult);
-assert.equal(preBackupState.readiness, 'PRE_MIGRATION_026');
+assert.equal(preBackupState.readiness, 'PRE_MIGRATION_026',
+  `valid synthetic pre-026 fixture must be classified as ready: ${preBackupStateResult.stdout}\n${preBackupStateResult.stderr}`);
 assert.match(preBackupState.fingerprint, /^[a-f0-9]{32}$/);
 assert.ok(preBackupState.databaseSizeBytes > 0);
 const preBackupStateRepeat = parseBackupReleaseState(invokeBackupReleaseState(CASES.preMigration026));
