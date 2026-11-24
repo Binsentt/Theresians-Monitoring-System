@@ -32,6 +32,12 @@ const EXPECTED_SCENARIOS = 12;
 let passedScenarios = 0;
 const createdDatabases = new Set();
 const createdRoles = new Set();
+const RECEIPT_INDEX_SQL = `
+    SELECT x.indexrelid::regclass::text AS index_name, x.indisunique, x.indisvalid
+    FROM pg_catalog.pg_index x JOIN pg_catalog.pg_class i ON i.oid = x.indexrelid
+    WHERE x.indrelid = 'public.game_progress_save_commits'::regclass
+    ORDER BY i.relname
+  `;
 
 function buildScenarioDatabaseNames(postgresMajor) {
   const major = String(postgresMajor ?? '');
@@ -379,12 +385,7 @@ async function assertReceiptContract(database) {
     && notNullRows.every((row) => row.convalidated === true),
   'receipt-not-null-catalog-representation-mismatch');
 
-  const indexes = await queryReceiptCatalog(database, 'index', `
-    SELECT i.indexrelid::regclass::text AS index_name, x.indisunique, x.indisvalid
-    FROM pg_catalog.pg_index x JOIN pg_catalog.pg_class i ON i.oid = x.indexrelid
-    WHERE x.indrelid = 'public.game_progress_save_commits'::regclass
-    ORDER BY i.relname
-  `);
+  const indexes = await queryReceiptCatalog(database, 'index', RECEIPT_INDEX_SQL);
   const indexNames = indexes.rows.map((row) => row.index_name.split('.').pop().replaceAll('"', '')).sort();
   check(indexNames.length === 2
     && indexNames.includes('game_progress_save_commits_pkey')
@@ -662,4 +663,5 @@ module.exports = {
   assertReceiptConstraintCount,
   assertExactReceiptNotNullColumns,
   sanitizedReceiptCatalogFailure,
+  RECEIPT_INDEX_SQL,
 };

@@ -15,6 +15,7 @@ const {
   assertReceiptConstraintCount,
   assertExactReceiptNotNullColumns,
   sanitizedReceiptCatalogFailure,
+  RECEIPT_INDEX_SQL,
 } = require('./recoveryMigration026.postgres.integration.cjs');
 
 const MIGRATION_DIR = path.join(__dirname, '../migrations');
@@ -436,6 +437,12 @@ test('receipt catalog query diagnostics retain only a fixed stage and SQLSTATE',
   assert.doesNotMatch(failure.message, /sensitive|query and value/);
   assert.equal(sanitizedReceiptCatalogFailure('ledger', new Error('hidden')).safeCode,
     'receipt-ledger-query-failed-unknown');
+});
+
+test('receipt index catalog query selects indexrelid from pg_index alias', () => {
+  assert.match(RECEIPT_INDEX_SQL, /SELECT\s+x\.indexrelid::regclass::text\s+AS index_name/i);
+  assert.match(RECEIPT_INDEX_SQL, /JOIN pg_catalog\.pg_class i ON i\.oid = x\.indexrelid/i);
+  assert.doesNotMatch(RECEIPT_INDEX_SQL, /SELECT\s+i\.indexrelid/i);
 });
 
 test('recovery real-client path rejects the process-wide TLS verification bypass before loading pg', async () => {
