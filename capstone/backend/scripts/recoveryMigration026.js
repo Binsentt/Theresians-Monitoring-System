@@ -321,14 +321,14 @@ const RUNTIME_PERMISSION_SQL = `
          ) AS runtime_grants_are_minimal
 `;
 
-function assertIdentityAndRoles(row, plan) {
+function assertIdentityAndRoles(row, plan, expectedPostgresMajor = 18) {
   if (!row
       || row.database_name !== plan.expectedDatabase
       || row.database_user !== plan.expectedUser
       || row.session_user !== plan.expectedUser
       || String(row.server_address) !== plan.expectedServerAddress
       || Number(row.server_port) !== plan.expectedServerPort
-      || Math.floor(Number(row.server_version_num) / 10000) !== 18
+      || Math.floor(Number(row.server_version_num) / 10000) !== expectedPostgresMajor
       || row.transaction_read_only !== 'off'
       || row.runtime_role_present !== true
       || row.runtime_role_non_admin !== true
@@ -375,11 +375,11 @@ function assertLedgerRows(rows, migrationDir) {
   }
 }
 
-async function readPreflight(client, plan, migrationDir) {
+async function readPreflight(client, plan, migrationDir, expectedPostgresMajor = 18) {
   const ledgerPresence = await client.query(LEDGER_PRESENCE_SQL);
   if (ledgerPresence.rows?.[0]?.ledger_present !== true) throw new Error('migration ledger is missing');
   const identity = await client.query(IDENTITY_AND_ROLE_SQL, [plan.runtimeRole]);
-  assertIdentityAndRoles(identity.rows?.[0], plan);
+  assertIdentityAndRoles(identity.rows?.[0], plan, expectedPostgresMajor);
   const ledgerShape = await client.query(LEDGER_SHAPE_SQL);
   if (ledgerShape.rows?.[0]?.ledger_shape_ok !== true) throw new Error('migration ledger schema is unexpected');
   const ledger = await client.query(LEDGER_ROWS_SQL);
@@ -417,6 +417,28 @@ class RecoveryMigrationError extends Error {
   }
 }
 
+function expectedPostgresMajorForRun(testExpectedPostgresMajor, env, config, plan, clientFactory) {
+  if (testExpectedPostgresMajor === undefined) return 18;
+  const scenarioDatabase = /^tq_recovery026_(?:success|sql_failure|ledger_failure|partial_receipt|missing_024|missing_025|wrong_checksum|commit_unknown)_pg16_test_ci$/;
+  if (testExpectedPostgresMajor !== 16
+      || typeof clientFactory !== 'function'
+      || env.CI !== 'true'
+      || env.GITHUB_ACTIONS !== 'true'
+      || env.NODE_ENV !== 'test'
+      || !/^[a-f0-9]{48}$/.test(String(env.TQ_DISPOSABLE_DB_SENTINEL ?? ''))
+      || config.host !== '127.0.0.1'
+      || config.port !== 5432
+      || config.user !== 'tq_recovery026_migrator_ci'
+      || !scenarioDatabase.test(config.database)
+      || plan.expectedDatabase !== config.database
+      || plan.expectedUser !== config.user
+      || plan.expectedServerAddress !== '127.0.0.1'
+      || plan.expectedServerPort !== 5432) {
+    throw new Error('PostgreSQL 16 is restricted to the sentinel-marked GitHub integration database');
+  }
+  return 16;
+}
+
 async function runRecoveryMigration026({
   env = process.env,
   sourceRevision,
@@ -425,11 +447,15 @@ async function runRecoveryMigration026({
   migrationDir = DEFAULT_MIGRATION_DIR,
   databaseConfig,
   clientFactory,
+  testExpectedPostgresMajor,
 } = {}) {
   const plan = buildRecoveryApprovalPlan({ env, sourceRevision, artifactSha256, artifactTreeClean });
   if (typeof clientFactory !== 'function') assertTlsVerificationEnvironment(env);
   const selectedConfig = databaseConfig || buildReleaseDatabaseConfig(env);
   assertDatabaseConfig(selectedConfig, plan.expectedUser, plan.expectedDatabase, typeof clientFactory !== 'function');
+  const expectedPostgresMajor = expectedPostgresMajorForRun(
+    testExpectedPostgresMajor, env, selectedConfig, plan, clientFactory,
+  );
   if (typeof clientFactory !== 'function') {
     // Only the dedicated CLI uses the real driver path; injected clients exist for isolated unit tests.
     const { Client } = require('pg');
@@ -465,7 +491,7 @@ async function runRecoveryMigration026({
     lockAcquired = true;
 
     stage = 'preflight';
-    await readPreflight(client, plan, migrationDir);
+    await readPreflight(client, plan, migrationDir, expectedPostgresMajor);
 
     stage = 'begin';
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
@@ -474,7 +500,7 @@ async function runRecoveryMigration026({
     await client.query("SET LOCAL lock_timeout = '2000ms'");
 
     stage = 'transaction-preflight';
-    await readPreflight(client, plan, migrationDir);
+    await readPreflight(client, plan, migrationDir, expectedPostgresMajor);
     stage = 'migration-sql';
     await client.query(migrationSql);
     stage = 'runtime-grant';

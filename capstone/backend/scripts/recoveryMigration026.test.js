@@ -350,6 +350,24 @@ test('unverified TLS configuration is rejected before a client can be created', 
   assert.equal(clientFactoryCalls, 0);
 });
 
+test('PostgreSQL 16 executor override is unavailable outside the isolated GitHub integration harness', async () => {
+  let clientFactoryCalls = 0;
+  await assert.rejects(runRecoveryMigration026({
+    env: approvalEnv(),
+    sourceRevision: SOURCE_SHA,
+    artifactSha256: ARTIFACT_SHA256,
+    artifactTreeClean: true,
+    migrationDir: MIGRATION_DIR,
+    databaseConfig: TEST_DATABASE_CONFIG,
+    testExpectedPostgresMajor: 16,
+    clientFactory: async () => {
+      clientFactoryCalls += 1;
+      throw new Error('client must not be created');
+    },
+  }), /PostgreSQL 16 is restricted to the sentinel-marked GitHub integration database/i);
+  assert.equal(clientFactoryCalls, 0);
+});
+
 test('recovery real-client path rejects the process-wide TLS verification bypass before loading pg', async () => {
   const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
