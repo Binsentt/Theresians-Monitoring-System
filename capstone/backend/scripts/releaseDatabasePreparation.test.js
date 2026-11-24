@@ -395,6 +395,24 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
   assert.match(harness, /truncated custom-format archive must be rejected/);
   assert.match(harness, /OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:/);
   assert.match(harness, /passedScenarioCount, 84/);
+  const unexpectedInsertAt = harness.indexOf('const unexpectedMigration = psql(CASES.preMigration026');
+  const unexpectedClassifiedAt = harness.indexOf(
+    "assert.equal(parseBackupReleaseState(unexpectedBackupStateResult).readiness, 'UNVERIFIED');",
+    unexpectedInsertAt,
+  );
+  const unexpectedCleanupAt = harness.indexOf('const removeUnexpectedMigration = psql(CASES.preMigration026', unexpectedClassifiedAt);
+  const restoredPre026StateAt = harness.indexOf('const restoredPreMigration026State = parseBackupReleaseState', unexpectedCleanupAt);
+  const backupScenarioCountAt = harness.indexOf('assert.equal(passedScenarioCount, 54', restoredPre026StateAt);
+  assert.ok(unexpectedInsertAt >= 0 && unexpectedClassifiedAt > unexpectedInsertAt &&
+    unexpectedCleanupAt > unexpectedClassifiedAt && restoredPre026StateAt > unexpectedCleanupAt &&
+    backupScenarioCountAt > restoredPre026StateAt,
+    'unexpected migration must be classified, removed from the shared synthetic template, and baseline-verified before recovery integration can reuse it');
+  const cleanupBlock = harness.slice(unexpectedCleanupAt, restoredPre026StateAt);
+  assert.match(cleanupBlock, /DELETE FROM public\.schema_migrations[\s\S]*WHERE version = 27[\s\S]*filename = '027_unexpected\.sql'[\s\S]*checksum = repeat\('0', 64\)[\s\S]*RETURNING version/);
+  assert.match(cleanupBlock, /removeUnexpectedMigration\.stdout\.trim\(\), '27'/);
+  const templateRestorationBlock = harness.slice(restoredPre026StateAt, backupScenarioCountAt);
+  assert.match(templateRestorationBlock, /readiness, preSourceState\.readiness/);
+  assert.match(templateRestorationBlock, /fingerprint, preSourceState\.fingerprint/);
   const restoredProbeAssertion = harness.indexOf("assert.equal(restoredProbe.stdout.trim(), 't'");
   const aggregateRestoreRecord = harness.indexOf("recordScenario('restored archive preserves synthetic content and ledger counts using aggregate-only checks')");
   const sourceStateProbe = harness.indexOf('const postSourceState', restoredProbeAssertion);
@@ -436,11 +454,17 @@ test('recovery PostgreSQL harness reports the failed preflight gate without expo
     harness.indexOf('async function inspectReceiptAbsenceComponents'),
     harness.indexOf('async function queryReceiptCatalog'),
   );
-  assert.match(receiptInspector, /FROM pg_catalog\.pg_class/);
-  assert.match(receiptInspector, /FROM pg_catalog\.pg_constraint/);
-  assert.match(receiptInspector, /FROM pg_catalog\.pg_trigger/);
-  assert.match(receiptInspector, /FROM pg_catalog\.pg_type/);
-  assert.doesNotMatch(receiptInspector, /FROM public\.(accounts|schema_migrations)/);
+  assert.match(receiptInspector, /queryAdmin\(database, RECEIPT_ABSENCE_COMPONENTS_SQL\)/);
+  const receiptSqlStart = harness.indexOf('const RECEIPT_ABSENCE_COMPONENTS_SQL = `');
+  const receiptSqlEnd = harness.indexOf('\n  `;', receiptSqlStart);
+  assert.ok(receiptSqlStart >= 0 && receiptSqlEnd > receiptSqlStart,
+    'the receipt-absence catalog SQL must remain a separately inspectable constant');
+  const receiptDiagnosticSql = harness.slice(receiptSqlStart, receiptSqlEnd);
+  assert.match(receiptDiagnosticSql, /FROM pg_catalog\.pg_class/);
+  assert.match(receiptDiagnosticSql, /FROM pg_catalog\.pg_constraint/);
+  assert.match(receiptDiagnosticSql, /FROM pg_catalog\.pg_trigger/);
+  assert.match(receiptDiagnosticSql, /FROM pg_catalog\.pg_type/);
+  assert.doesNotMatch(receiptDiagnosticSql, /FROM public\.(accounts|schema_migrations)/);
   const { preflightQueryLabel, summarizeIdentityFailures } = require('./recoveryMigration026.postgres.integration.cjs');
   const preflightQueries = [
     "SELECT to_regclass('public.schema_migrations') IS NOT NULL AS ledger_present",

@@ -1063,7 +1063,26 @@ assert.equal(unexpectedMigration.status, 0, unexpectedMigration.stderr);
 const unexpectedBackupStateResult = invokeBackupReleaseState(CASES.preMigration026);
 assert.equal(unexpectedBackupStateResult.status, 0, unexpectedBackupStateResult.stderr);
 assert.equal(parseBackupReleaseState(unexpectedBackupStateResult).readiness, 'UNVERIFIED');
-recordScenario('unexpected migration version is preserved and classified unverified');
+const removeUnexpectedMigration = psql(CASES.preMigration026, 'postgres', `
+  DELETE FROM public.schema_migrations
+  WHERE version = 27
+    AND filename = '027_unexpected.sql'
+    AND checksum = repeat('0', 64)
+  RETURNING version;
+`);
+assert.equal(removeUnexpectedMigration.status, 0, removeUnexpectedMigration.stderr);
+assert.equal(removeUnexpectedMigration.stdout.trim(), '27',
+  'only the exact synthetic unexpected-migration row must be removed');
+const restoredPreMigration026State = parseBackupReleaseState(invokeBackupReleaseState(CASES.preMigration026));
+assert.equal(preSourceState.readiness, 'PRE_MIGRATION_026',
+  'the synthetic recovery template must start in the approved pre-026 state');
+assert.match(preSourceState.fingerprint, /^[a-f0-9]{32}$/,
+  'the synthetic pre-026 template must have a verified catalog fingerprint');
+assert.equal(restoredPreMigration026State.readiness, preSourceState.readiness,
+  'the unexpected-version test must restore the original pre-026 readiness');
+assert.equal(restoredPreMigration026State.fingerprint, preSourceState.fingerprint,
+  'the unexpected-version test must restore the original pre-026 metadata fingerprint');
+recordScenario('unexpected migration version is classified unverified and exact synthetic row cleanup restores the pre-026 template');
 
 assert.equal(passedScenarioCount, 54,
   'all expected disposable backup-state classification and pre-026 restore scenarios must execute');
