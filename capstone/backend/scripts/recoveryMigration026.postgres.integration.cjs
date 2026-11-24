@@ -53,9 +53,23 @@ function assertScenarioDatabaseNames(databaseNames, postgresMajor) {
   'recovery-database-name-not-allowlisted');
 }
 
+const clientErrorDiagnostics = [];
+let cleanupInProgress = false;
+
 function createPgClient(config) {
   const { Client } = require('pg');
-  return new Client(config);
+  const client = new Client(config);
+  const configuredDatabase = String(config.database || '');
+  const database = /^tq_[a-z0-9_]+$/.test(configuredDatabase) ? configuredDatabase : 'other';
+  client.on('error', (error) => {
+    const code = /^[0-9A-Z]{5}$/.test(String(error?.code || '')) ? error.code : 'unknown';
+    clientErrorDiagnostics.push({
+      database,
+      code,
+      phase: cleanupInProgress ? 'cleanup' : 'scenario',
+    });
+  });
+  return client;
 }
 
 function partitionReceiptConstraintRows(rows) {
@@ -603,7 +617,13 @@ async function cleanup(admin) {
         [database],
       );
       if (result.rows[0]?.marker !== marker) throw new Error('database sentinel mismatch');
-      await admin.query('SELECT pg_terminate_backend(pid) FROM pg_catalog.pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()', [database]);
+      const termination = await admin.query(
+        'SELECT pg_terminate_backend(pid) AS terminated FROM pg_catalog.pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()',
+        [database],
+      );
+      if (termination.rows.some((row) => row.terminated === true)) {
+        failures.push('residual-client-connections-terminated');
+      }
       await admin.query(`DROP DATABASE ${quoteIdentifier(database)}`);
     } catch (_error) {
       failures.push('database-cleanup-failed');
@@ -637,8 +657,24 @@ async function main() {
   } catch (error) {
     primaryFailure = error;
   }
-  const cleanupFailures = await cleanup(admin);
-  await admin.end();
+  if (!primaryFailure && clientErrorDiagnostics.some((event) => event.phase === 'scenario')) {
+    primaryFailure = { safeCode: 'scenario-client-error-event' };
+  }
+  cleanupInProgress = true;
+  let cleanupFailures = [];
+  try {
+    cleanupFailures = await cleanup(admin);
+  } catch (_error) {
+    cleanupFailures.push('synthetic-cleanup-failed');
+  }
+  try {
+    await admin.end();
+  } catch (_error) {
+    cleanupFailures.push('admin-client-close-failed');
+  }
+  for (const event of clientErrorDiagnostics) {
+    console.error(`CLIENT_EVENT: phase=${event.phase} database=${event.database} sqlstate=${event.code}`);
+  }
   if (primaryFailure) {
     console.error(`FAIL: recovery PostgreSQL ${process.env.TQ_EXPECTED_POSTGRES_MAJOR} integration (${primaryFailure.safeCode || primaryFailure.category || primaryFailure.name || 'scenario-failed'}).`);
     if (cleanupFailures.length) console.error(`FAIL: synthetic cleanup (${cleanupFailures.join(',')}).`);
@@ -655,6 +691,9 @@ async function main() {
 
 if (require.main === module) {
   main().catch((_error) => {
+    for (const event of clientErrorDiagnostics) {
+      console.error(`CLIENT_EVENT: phase=${event.phase} database=${event.database} sqlstate=${event.code}`);
+    }
     console.error('FAIL: recovery PostgreSQL integration setup or cleanup did not complete.');
     process.exitCode = 1;
   });

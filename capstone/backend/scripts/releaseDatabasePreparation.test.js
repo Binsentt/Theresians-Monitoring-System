@@ -416,6 +416,15 @@ test('large-object fixture uses an escaped psql gset command on its own line', (
 });
 
 
+test('recovery PostgreSQL harness preserves scenario failures during synthetic database cleanup', () => {
+  const harness = read('recoveryMigration026.postgres.integration.cjs');
+  assert.match(harness, /client\.on\('error'/);
+  assert.match(harness, /cleanupInProgress/);
+  assert.match(harness, /residual-client-connections-terminated/);
+  assert.match(harness, /scenario-client-error-event/);
+  assert.match(harness, /CLIENT_EVENT: phase=.*database=.*sqlstate=/);
+});
+
 test('role audits expose membership counts and disposable harness restores valid audit after PUBLIC TEMP revoke', () => {
   const audit = read('release-preflight-role-audit.sql');
   const backupAudit = read('backup-role-preflight.sql');
