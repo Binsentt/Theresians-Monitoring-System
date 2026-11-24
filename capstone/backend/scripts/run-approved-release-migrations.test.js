@@ -450,20 +450,27 @@ test('pre-026 constraint and index listings declare their own required-table sco
 
 test('disposable PostgreSQL harness scenario counters match the executed scenario inventory', () => {
   const harness = fs.readFileSync(path.join(__dirname, 'run-preflight-postgres-harness.cjs'), 'utf8');
-  const backupScenarioBoundary = harness.indexOf('const createSyntheticBackupProbe');
-  assert.notEqual(backupScenarioBoundary, -1, 'backup scenarios must follow the preflight scenarios');
+  const preflightScenarioBoundary = harness.indexOf('const missingBackupRoleAudit');
+  assert.notEqual(preflightScenarioBoundary, -1, 'backup-role scenarios must follow the preflight scenarios');
 
-  const preflightSection = harness.slice(0, backupScenarioBoundary);
-  const dynamicModeScenario = preflightSection.match(/for\s*\(const \[mode, phrase\] of \[([\s\S]*?)\]\)\s*\{[\s\S]*?recordScenario\(/);
+  const preflightSection = harness.slice(0, preflightScenarioBoundary);
+  const dynamicModeScenario = preflightSection.match(/for\s*\(const \[mode, phrase\] of \[([\s\S]*?)\]\)\s*\{\s*[\s\S]*?recordScenario\(/);
   assert.ok(dynamicModeScenario, 'the missing-table and missing-column scenarios must remain enumerated');
   const additionalDynamicRuns = (dynamicModeScenario[1].match(/^\s*\['[^']+'\s*,/gm) || []).length - 1;
   const receiptConstraintScenarioRuns = (preflightSection.match(/\nassertReceiptConstraintMismatch\(\{/g) || []).length;
   const preflightScenarioCount = (preflightSection.match(/^\s*recordScenario\(/gm) || []).length
     + additionalDynamicRuns + receiptConstraintScenarioRuns - 1;
+  assert.match(harness, new RegExp('assert\\.equal\\(passedScenarioCount, ' + preflightScenarioCount + ','));
+
+  const maintainBranchStart = harness.indexOf('if (serverVersionNumber >= 170000)');
+  const maintainBranchEnd = harness.indexOf('const createLoCompatProbe', maintainBranchStart);
+  const maintainBranch = harness.slice(maintainBranchStart, maintainBranchEnd);
+  assert.match(maintainBranch,
+    /if \(serverVersionNumber >= 170000\)[\s\S]*recordScenario\('MAINTAIN privilege is rejected on supported PostgreSQL versions'\);[\s\S]*\} else \{[\s\S]*recordScenario\('MAINTAIN privilege check is version-safe on PostgreSQL 16'\);/,
+    'exactly one PostgreSQL-version-specific MAINTAIN scenario runs per server');
   const totalScenarioCount = (harness.match(/^\s*recordScenario\(/gm) || []).length
-    + additionalDynamicRuns + receiptConstraintScenarioRuns - 1;
-  assert.match(harness, new RegExp(`assert\\.equal\\(passedScenarioCount, ${preflightScenarioCount},`));
-  assert.match(harness, new RegExp(`assert\\.equal\\(passedScenarioCount, ${totalScenarioCount},`));
+    + additionalDynamicRuns + receiptConstraintScenarioRuns - 2;
+  assert.match(harness, new RegExp('assert\\.equal\\(passedScenarioCount, ' + totalScenarioCount + ','));
 });
 
 test('synthetic backup-role table and sequence grants target the database being audited', () => {

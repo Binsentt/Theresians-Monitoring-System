@@ -468,7 +468,7 @@ test('recovery PostgreSQL harness reports the failed preflight gate without expo
   const { preflightQueryLabel, summarizeIdentityFailures } = require('./recoveryMigration026.postgres.integration.cjs');
   const preflightQueries = [
     "SELECT to_regclass('public.schema_migrations') IS NOT NULL AS ledger_present",
-    "SELECT current_setting('server_version_num') AS server_version_num, runtime_role_non_admin",
+    "SELECT current_setting('server_version_num') AS server_version_num, current_user, runtime_role_non_admin",
     'WITH cols AS (SELECT 1) SELECT count(*) = 4 AS ledger_shape_ok FROM cols',
     'SELECT version, filename, checksum FROM public.schema_migrations WHERE version >= 18 ORDER BY version',
     "SELECT to_regclass('public.game_progress_save_commits') IS NULL AS receipt_objects_absent",
@@ -923,7 +923,7 @@ test('backup role audit rejects executable large-object creators and unsafe call
   assert.match(harness, /CREATE privilege on pg_catalog is rejected by backup-role audit/);
   assert.match(harness, /passedScenarioCount, 84/);
 
-  const workflow = fs.readFileSync(path.resolve(scripts, '../../../.github/workflows/backend-network-isolated.yml'), 'utf8');
+  const workflow = readIsolatedBackendWorkflow();
   const matrixJobs = /postgres_image:\s*\['postgres:16-bookworm',\s*'postgres:18-bookworm'\]/.test(workflow)
     && /POSTGRES_IMAGE:\s*\$\{\{\s*matrix\.postgres_image\s*\}\}/.test(workflow);
   const splitJobs = /postgres18-preflight:/.test(workflow)

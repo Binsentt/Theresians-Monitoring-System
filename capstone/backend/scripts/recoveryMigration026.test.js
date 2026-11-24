@@ -537,9 +537,13 @@ test('receipt absence diagnostics inspect the synthetic database before cleanup'
     diagnosticCall < cleanupStart,
     'receipt-component diagnostic must run before cleanup removes the failed synthetic database',
   );
-  assert.match(integration, /preflightQueryLabel\(state\.queries\.length\) === 'receipt-absence'/);
+  assert.match(integration, /preflightRecord\?\.label === 'receipt-absence'/);
+  assert.doesNotMatch(integration, /preflightQueryLabel\(state\.queries\.length\)/,
+    'receipt diagnostics must be tied to the actual SQL label, not a brittle query ordinal');
   assert.match(integration, /originalQuery\(RECEIPT_ABSENCE_COMPONENTS_SQL\)/);
   assert.match(integration, /PREFLIGHT_RECEIPT_RESULT: objects_absent=.*sql_alias_present=.*row_count=.*alias_present=.*value_type=/);
+  assert.match(integration, /PREFLIGHT_RECEIPT_CLIENT: table_absent=.*relations_absent=.*constraints_absent=.*triggers_absent=.*type_absent=/);
+  assert.match(integration, /PREFLIGHT_RECEIPT_ADMIN: table_absent=.*relations_absent=.*constraints_absent=.*triggers_absent=.*type_absent=/);
 });
 
 test('recovery artifact hash covers the approved scripts and migration sources', () => {
