@@ -724,6 +724,12 @@ test('backup harness rejects orphaned migration 026 catalog objects', () => {
 
 test('backup role audit rejects executable large-object creators and unsafe callable routines', () => {
   const sql = read('backup-role-preflight.sql');
+  const untrustedHarness = read('run-preflight-postgres-harness.cjs');
+  assert.match(untrustedHarness,
+    /CREATE FUNCTION public\.fixture_backup_untrusted\(integer, integer\) RETURNS boolean[\s\S]*?AS 'int4eq' LANGUAGE internal/,
+    'the untrusted-language fixture must use an available built-in internal routine');
+  assert.doesNotMatch(untrustedHarness, /intentionally_missing_test_(?:library|symbol)/,
+    'the fixture must not depend on a nonexistent shared library');
   assert.match(sql, /has_function_privilege\(current_user, .*EXECUTE/is,
     'effective EXECUTE including PUBLIC grants must be audited');
   assert.match(sql, /lo_create\(oid\)/);

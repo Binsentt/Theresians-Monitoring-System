@@ -1405,8 +1405,8 @@ assert.equal(dropPublicSecurityDefiner.status, 0, dropPublicSecurityDefiner.stde
 recordScenario('explicit SECURITY DEFINER grant to backup role is rejected');
 
 const createUntrustedFunction = psql(CASES.valid, 'postgres', `
-  CREATE FUNCTION public.fixture_backup_untrusted() RETURNS integer
-  AS 'intentionally_missing_test_library', 'intentionally_missing_test_symbol' LANGUAGE C;
+  CREATE FUNCTION public.fixture_backup_untrusted(integer, integer) RETURNS boolean
+  AS 'int4eq' LANGUAGE internal;
 `);
 assert.equal(createUntrustedFunction.status, 0, createUntrustedFunction.stderr);
 const untrustedFunctionAudit = invokeBackupRoleAudit(CASES.valid);
@@ -1414,7 +1414,7 @@ assert.equal(untrustedFunctionAudit.status, 3,
   `callable untrusted-language functions must fail the backup-role audit: ${untrustedFunctionAudit.stderr}\n${untrustedFunctionAudit.stdout}`);
 assert.match(untrustedFunctionAudit.stdout, /executable_untrusted_function_count=1/);
 const dropUntrustedFunction = psql(CASES.valid, 'postgres',
-  'DROP FUNCTION public.fixture_backup_untrusted();');
+  'DROP FUNCTION public.fixture_backup_untrusted(integer, integer);');
 assert.equal(dropUntrustedFunction.status, 0, dropUntrustedFunction.stderr);
 recordScenario('callable untrusted-language function is rejected by backup-role audit');
 
