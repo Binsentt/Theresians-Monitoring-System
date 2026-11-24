@@ -52,6 +52,36 @@ function createPgClient(config) {
   return new Client(config);
 }
 
+function partitionReceiptConstraintRows(rows) {
+  check(Array.isArray(rows), 'receipt-constraint-result-invalid');
+  return {
+    contractRows: rows.filter((row) => row.contype !== 'n'),
+    notNullRows: rows.filter((row) => row.contype === 'n'),
+  };
+}
+
+function assertReceiptConstraintCount(rows, expectedCount) {
+  check(Array.isArray(rows) && rows.length === expectedCount, 'receipt-constraint-count-mismatch');
+}
+
+function assertExactReceiptNotNullColumns(columnNames) {
+  const expected = [
+    'activity_event_key', 'created_at', 'learning_cycle_version', 'payload_sha256',
+    'response_status', 'save_commit_id_hash', 'student_id',
+  ];
+  const actual = Array.isArray(columnNames) ? [...columnNames].sort() : [];
+  check(JSON.stringify(actual) === JSON.stringify(expected), 'receipt-not-null-column-contract-mismatch');
+}
+
+function sanitizedReceiptCatalogFailure(stage, error) {
+  const allowedStages = ['constraint', 'nullability', 'index', 'ledger'];
+  check(allowedStages.includes(stage), 'receipt-catalog-stage-invalid');
+  const code = /^[0-9A-Z]{5}$/.test(String(error?.code || '')) ? error.code : 'unknown';
+  const failure = new Error('receipt contract catalog query failed');
+  failure.safeCode = `receipt-${stage}-query-failed-${code}`;
+  return failure;
+}
+
 function check(condition, code) {
   if (!condition) {
     const error = new Error(code);
@@ -275,6 +305,14 @@ async function queryAdmin(database, sql, params = []) {
   return withClient(connectionConfig(database), (client) => client.query(sql, params));
 }
 
+async function queryReceiptCatalog(database, stage, sql) {
+  try {
+    return await queryAdmin(database, sql);
+  } catch (error) {
+    throw sanitizedReceiptCatalogFailure(stage, error);
+  }
+}
+
 async function assertNoApplied026(database) {
   const result = await queryAdmin(database, `
     SELECT to_regclass('public.game_progress_save_commits') AS receipt_table,
@@ -285,13 +323,14 @@ async function assertNoApplied026(database) {
 }
 
 async function assertReceiptContract(database) {
-  const result = await queryAdmin(database, `
+  const result = await queryReceiptCatalog(database, 'constraint', `
     SELECT conname, contype, convalidated, pg_catalog.pg_get_constraintdef(oid) AS definition
     FROM pg_catalog.pg_constraint
     WHERE conrelid = 'public.game_progress_save_commits'::regclass
     ORDER BY conname
   `);
-  const constraints = new Map(result.rows.map((row) => [row.conname, row]));
+  const { contractRows, notNullRows } = partitionReceiptConstraintRows(result.rows);
+  const constraints = new Map(contractRows.map((row) => [row.conname, row]));
   const expected = new Map([
     ['game_progress_save_commits_pkey', 'p'],
     ['game_progress_save_commits_activity_event_unique', 'u'],
@@ -302,6 +341,7 @@ async function assertReceiptContract(database) {
     ['game_progress_save_commits_response_status_check', 'c'],
     ['game_progress_save_commits_completion_consistency', 'c'],
   ]);
+  assertReceiptConstraintCount(contractRows, expected.size);
   check(constraints.size === expected.size, 'receipt-constraint-count-mismatch');
   for (const [name, type] of expected) {
     check(constraints.has(name) && constraints.get(name).contype === type && constraints.get(name).convalidated,
@@ -326,7 +366,20 @@ async function assertReceiptContract(database) {
   check(definitions.game_progress_save_commits_completion_consistency.includes('(response_body is null) = (completed_at is null)'),
     'receipt-completion-check-definition-mismatch');
 
-  const indexes = await queryAdmin(database, `
+  const nullability = await queryReceiptCatalog(database, 'nullability', `
+    SELECT attname
+    FROM pg_catalog.pg_attribute
+    WHERE attrelid = 'public.game_progress_save_commits'::regclass
+      AND attnum > 0 AND NOT attisdropped AND attnotnull
+    ORDER BY attname
+  `);
+  assertExactReceiptNotNullColumns(nullability.rows.map((row) => row.attname));
+  const expectedNotNullCatalogRows = Number(process.env.TQ_EXPECTED_POSTGRES_MAJOR) >= 18 ? 7 : 0;
+  check(notNullRows.length === expectedNotNullCatalogRows
+    && notNullRows.every((row) => row.convalidated === true),
+  'receipt-not-null-catalog-representation-mismatch');
+
+  const indexes = await queryReceiptCatalog(database, 'index', `
     SELECT i.indexrelid::regclass::text AS index_name, x.indisunique, x.indisvalid
     FROM pg_catalog.pg_index x JOIN pg_catalog.pg_class i ON i.oid = x.indexrelid
     WHERE x.indrelid = 'public.game_progress_save_commits'::regclass
@@ -341,7 +394,7 @@ async function assertReceiptContract(database) {
 
   const migration = RELEASE_MIGRATIONS.find(({ version }) => version === 26);
   const migrationSql = fs.readFileSync(path.join(__dirname, '../migrations', migration.file), 'utf8');
-  const ledger = await queryAdmin(database,
+  const ledger = await queryReceiptCatalog(database, 'ledger',
     'SELECT version, filename, checksum FROM public.schema_migrations WHERE version = 26');
   check(ledger.rows.length === 1
     && Number(ledger.rows[0].version) === 26
@@ -605,4 +658,8 @@ if (require.main === module) {
 module.exports = {
   assertScenarioDatabaseNames,
   buildScenarioDatabaseNames,
+  partitionReceiptConstraintRows,
+  assertReceiptConstraintCount,
+  assertExactReceiptNotNullColumns,
+  sanitizedReceiptCatalogFailure,
 };

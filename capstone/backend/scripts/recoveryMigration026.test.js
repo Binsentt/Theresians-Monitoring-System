@@ -11,6 +11,10 @@ const {
 const {
   assertScenarioDatabaseNames,
   buildScenarioDatabaseNames,
+  partitionReceiptConstraintRows,
+  assertReceiptConstraintCount,
+  assertExactReceiptNotNullColumns,
+  sanitizedReceiptCatalogFailure,
 } = require('./recoveryMigration026.postgres.integration.cjs');
 
 const MIGRATION_DIR = path.join(__dirname, '../migrations');
@@ -384,6 +388,54 @@ test('recovery PostgreSQL scenario database allowlist covers every canonical PG1
     ), /recovery-database-name-not-allowlisted/);
   }
   assert.throws(() => buildScenarioDatabaseNames('17'), /explicit-postgres-major-required/);
+});
+
+test('receipt contract separates PostgreSQL 18 not-null catalog rows from the eight migration constraints', () => {
+  const expectedNames = [
+    'game_progress_save_commits_pkey',
+    'game_progress_save_commits_activity_event_unique',
+    'game_progress_save_commits_student_id_fkey',
+    'game_progress_save_commits_learning_cycle_version_check',
+    'game_progress_save_commits_save_commit_id_hash_check',
+    'game_progress_save_commits_payload_sha256_check',
+    'game_progress_save_commits_response_status_check',
+    'game_progress_save_commits_completion_consistency',
+  ];
+  const contractRows = expectedNames.map((conname, index) => ({
+    conname,
+    contype: ['p', 'u', 'f', 'c', 'c', 'c', 'c', 'c'][index],
+  }));
+  const pg18NotNullRows = [
+    'student_id', 'learning_cycle_version', 'save_commit_id_hash', 'payload_sha256',
+    'activity_event_key', 'response_status', 'created_at',
+  ].map((column) => ({ conname: `game_progress_save_commits_${column}_not_null`, contype: 'n' }));
+
+  const pg16 = partitionReceiptConstraintRows(contractRows);
+  const pg18 = partitionReceiptConstraintRows([...contractRows, ...pg18NotNullRows]);
+  assert.deepEqual(pg16.contractRows, contractRows);
+  assert.deepEqual(pg16.notNullRows, []);
+  assert.deepEqual(pg18.contractRows, contractRows);
+  assert.deepEqual(pg18.notNullRows, pg18NotNullRows);
+  assert.doesNotThrow(() => assertReceiptConstraintCount(pg16.contractRows, 8));
+  assert.doesNotThrow(() => assertReceiptConstraintCount(pg18.contractRows, 8));
+  assert.doesNotThrow(() => assertExactReceiptNotNullColumns([
+    'created_at', 'activity_event_key', 'payload_sha256', 'student_id',
+    'response_status', 'save_commit_id_hash', 'learning_cycle_version',
+  ]));
+  assert.throws(() => assertExactReceiptNotNullColumns(['student_id']), /receipt-not-null-column-contract-mismatch/);
+  const unexpected = partitionReceiptConstraintRows([...contractRows, { conname: 'unexpected', contype: 'x' }]);
+  assert.throws(() => assertReceiptConstraintCount(unexpected.contractRows, 8),
+    /receipt-constraint-count-mismatch/);
+});
+
+test('receipt catalog query diagnostics retain only a fixed stage and SQLSTATE', () => {
+  const source = Object.assign(new Error('sensitive query and value must not be included'), { code: '42703' });
+  const failure = sanitizedReceiptCatalogFailure('constraint', source);
+  assert.equal(failure.safeCode, 'receipt-constraint-query-failed-42703');
+  assert.equal(failure.message, 'receipt contract catalog query failed');
+  assert.doesNotMatch(failure.message, /sensitive|query and value/);
+  assert.equal(sanitizedReceiptCatalogFailure('ledger', new Error('hidden')).safeCode,
+    'receipt-ledger-query-failed-unknown');
 });
 
 test('recovery real-client path rejects the process-wide TLS verification bypass before loading pg', async () => {
