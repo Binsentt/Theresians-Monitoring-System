@@ -5,7 +5,6 @@
 // It clones one sentinel-marked synthetic pre-026 fixture and drops only its
 // own sentinel-marked databases and cluster-local test roles.
 const assert = require('node:assert/strict');
-const { Client } = require('pg');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
@@ -33,6 +32,25 @@ const EXPECTED_SCENARIOS = 12;
 let passedScenarios = 0;
 const createdDatabases = new Set();
 const createdRoles = new Set();
+
+function buildScenarioDatabaseNames(postgresMajor) {
+  const major = String(postgresMajor ?? '');
+  check(['16', '18'].includes(major), 'explicit-postgres-major-required');
+  return SCENARIOS.map((scenario) => `tq_recovery026_${scenario}_pg${major}_test_ci`);
+}
+
+function assertScenarioDatabaseNames(databaseNames, postgresMajor) {
+  const expected = buildScenarioDatabaseNames(postgresMajor);
+  check(Array.isArray(databaseNames)
+    && databaseNames.length === expected.length
+    && databaseNames.every((name, index) => name === expected[index]),
+  'recovery-database-name-not-allowlisted');
+}
+
+function createPgClient(config) {
+  const { Client } = require('pg');
+  return new Client(config);
+}
 
 function check(condition, code) {
   if (!condition) {
@@ -64,8 +82,7 @@ function assertIsolatedCiEnvironment() {
   ];
   check(prohibited.every((name) => !Object.prototype.hasOwnProperty.call(process.env, name)),
     'ambient-database-or-railway-credential-environment-prohibited');
-  check(DATABASES.every((name) => /^tq_recovery026_[a-z_]+_pg(?:16|18)_test_ci$/.test(name)),
-    'recovery-database-name-not-allowlisted');
+  assertScenarioDatabaseNames(DATABASES, process.env.TQ_EXPECTED_POSTGRES_MAJOR);
 }
 
 function connectionConfig(database, user = 'postgres') {
@@ -82,7 +99,7 @@ function connectionConfig(database, user = 'postgres') {
 }
 
 async function withClient(config, callback) {
-  const client = new Client(config);
+  const client = createPgClient(config);
   await client.connect();
   try {
     return await callback(client);
@@ -230,7 +247,7 @@ async function executeRecovery(database, sourceState, artifactSha256, hooks = {}
       ...(process.env.TQ_EXPECTED_POSTGRES_MAJOR === '16' ? { testExpectedPostgresMajor: 16 } : {}),
       clientFactory: async (config) => {
         state.factoryCalls += 1;
-        const client = new Client({
+        const client = createPgClient({
           ...config,
           // This client is confined to the workflow's no-network, tmpfs-backed
           // PostgreSQL container; production never takes the injected-client path.
@@ -376,7 +393,7 @@ async function expectPreflightRejection(database, sourceState, artifactSha256, e
     ...(process.env.TQ_EXPECTED_POSTGRES_MAJOR === '16' ? { testExpectedPostgresMajor: 16 } : {}),
     clientFactory: async (config) => {
       factoryCalls += 1;
-      const client = new Client({ ...config, ssl: false });
+      const client = createPgClient({ ...config, ssl: false });
       const query = client.query.bind(client);
       client.query = async (sql, params = []) => {
         queries.push(String(sql));
@@ -404,7 +421,7 @@ async function runScenarios(admin, sourceState, artifactSha256) {
   for (const scenario of SCENARIOS) await prepareScenario(admin, names[scenario], scenario);
 
   const successfulDb = names.success;
-  const lockMonitor = new Client(connectionConfig(successfulDb));
+  const lockMonitor = createPgClient(connectionConfig(successfulDb));
   await lockMonitor.connect();
   let lockObservedHeld = false;
   const success = await executeRecovery(successfulDb, sourceState, artifactSha256, {
@@ -438,7 +455,7 @@ async function runScenarios(admin, sourceState, artifactSha256) {
   record('synthetic six-digit account survived; migration 024 was not executed');
 
   const sqlFailureDb = names.sql_failure;
-  const blocker = new Client(connectionConfig(sqlFailureDb));
+  const blocker = createPgClient(connectionConfig(sqlFailureDb));
   await blocker.connect();
   await blocker.query('BEGIN');
   await blocker.query('LOCK TABLE public.accounts IN ACCESS EXCLUSIVE MODE');
@@ -551,7 +568,7 @@ async function main() {
   const sourceState = { sourceRevision: process.env.GITHUB_SHA, artifactTreeClean: true };
   const artifactSha256 = computeRecoveryArtifactSha256(path.resolve(__dirname, '..'));
   check(/^[a-f0-9]{64}$/.test(artifactSha256), 'recovery-artifact-hash-invalid');
-  const admin = new Client(connectionConfig('postgres'));
+  const admin = createPgClient(connectionConfig('postgres'));
   await admin.connect();
   let primaryFailure;
   try {
@@ -578,7 +595,14 @@ async function main() {
   console.log(`Recovery migration 026 PostgreSQL ${process.env.TQ_EXPECTED_POSTGRES_MAJOR} result: ${passedScenarios}/${EXPECTED_SCENARIOS} passed; synthetic databases and roles removed.`);
 }
 
-main().catch((_error) => {
-  console.error('FAIL: recovery PostgreSQL integration setup or cleanup did not complete.');
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((_error) => {
+    console.error('FAIL: recovery PostgreSQL integration setup or cleanup did not complete.');
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  assertScenarioDatabaseNames,
+  buildScenarioDatabaseNames,
+};

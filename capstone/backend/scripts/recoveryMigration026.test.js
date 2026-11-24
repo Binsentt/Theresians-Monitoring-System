@@ -8,6 +8,10 @@ const {
   buildRecoveryApprovalPlan,
   runRecoveryMigration026,
 } = require('./recoveryMigration026');
+const {
+  assertScenarioDatabaseNames,
+  buildScenarioDatabaseNames,
+} = require('./recoveryMigration026.postgres.integration.cjs');
 
 const MIGRATION_DIR = path.join(__dirname, '../migrations');
 const SOURCE_SHA = 'a'.repeat(40);
@@ -366,6 +370,20 @@ test('PostgreSQL 16 executor override is unavailable outside the isolated GitHub
     },
   }), /PostgreSQL 16 is restricted to the sentinel-marked GitHub integration database/i);
   assert.equal(clientFactoryCalls, 0);
+});
+
+test('recovery PostgreSQL scenario database allowlist covers every canonical PG16/PG18 name and rejects variants', () => {
+  for (const major of ['16', '18']) {
+    const names = buildScenarioDatabaseNames(major);
+    assert.equal(names.length, 8);
+    assert.doesNotThrow(() => assertScenarioDatabaseNames(names, major));
+    assert.throws(() => assertScenarioDatabaseNames(names.slice(1), major), /recovery-database-name-not-allowlisted/);
+    assert.throws(() => assertScenarioDatabaseNames(
+      names.map((name, index) => index === 0 ? `${name}_unexpected` : name),
+      major,
+    ), /recovery-database-name-not-allowlisted/);
+  }
+  assert.throws(() => buildScenarioDatabaseNames('17'), /explicit-postgres-major-required/);
 });
 
 test('recovery real-client path rejects the process-wide TLS verification bypass before loading pg', async () => {
