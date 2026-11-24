@@ -1,10 +1,225 @@
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
-const { applyReleaseMigrations } = require('./releaseMigrations');
-const { RELEASE_MIGRATIONS } = require('./releaseMigrations');
+const {
+  applyReleaseMigrations,
+  buildReleaseDatabaseConfig,
+  createVerifiedPgTlsOptions,
+  migrationChecksum,
+  RELEASE_MIGRATIONS,
+} = require('./releaseMigrations');
+const { runApprovedReleaseMigrations } = require('./scripts/run-approved-release-migrations');
+
+function findOpenSsl() {
+  const candidates = [
+    process.env.OPENSSL_BIN,
+    'openssl',
+    ...(process.platform === 'win32' ? [
+      'C:\\Program Files\\Git\\mingw64\\bin\\openssl.exe',
+      'C:\\Program Files\\Git\\usr\\bin\\openssl.exe',
+    ] : []),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    const result = spawnSync(candidate, ['version'], { encoding: 'utf8', windowsHide: true });
+    if (!result.error && result.status === 0) return candidate;
+  }
+  throw new Error('OpenSSL CLI is required for synthetic TLS fixtures');
+}
+
+function makeTlsFixtures(t) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-release-tls-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const openssl = findOpenSsl();
+  const run = (args) => {
+    const result = spawnSync(openssl, args, { cwd: directory, encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, 'synthetic OpenSSL fixture command failed');
+  };
+  const generateCa = (stem) => {
+    run(['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '2',
+      '-keyout', `${stem}.key`, '-out', `${stem}.pem`, '-subj', '/CN=root-ca',
+      '-addext', 'basicConstraints=critical,CA:TRUE',
+      '-addext', 'keyUsage=critical,keyCertSign,cRLSign']);
+    return fs.readFileSync(path.join(directory, `${stem}.pem`));
+  };
+  const caPem = generateCa('test-ca');
+  const wrongCaPem = generateCa('wrong-ca');
+  run(['req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'server.key',
+    '-out', 'server.csr', '-subj', '/CN=localhost']);
+  fs.writeFileSync(path.join(directory, 'server.ext'), [
+    'basicConstraints=critical,CA:FALSE',
+    'keyUsage=critical,digitalSignature,keyEncipherment',
+    'extendedKeyUsage=serverAuth',
+    'subjectAltName=DNS:localhost',
+    '',
+  ].join('\n'));
+  run(['x509', '-req', '-in', 'server.csr', '-CA', 'test-ca.pem', '-CAkey', 'test-ca.key',
+    '-CAcreateserial', '-out', 'server.pem', '-days', '2', '-sha256', '-extfile', 'server.ext']);
+  return {
+    directory,
+    caPem,
+    wrongCaPem,
+    serverPem: fs.readFileSync(path.join(directory, 'server.pem')),
+    serverKey: fs.readFileSync(path.join(directory, 'server.key')),
+  };
+}
+
+function fingerprint256(pem) {
+  return new crypto.X509Certificate(pem).fingerprint256.replace(/:/g, '').toUpperCase();
+}
+
+function verifyCertificateChain(openssl, directory, caFile) {
+  return spawnSync(openssl, ['verify', '-purpose', 'sslserver', '-CAfile', caFile, 'server.pem'], {
+    cwd: directory,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+}
+
+test('release TLS options pin a synthetic CA and enforce localhost identity offline', (t) => {
+  const fixtures = makeTlsFixtures(t);
+  const expected = fingerprint256(fixtures.caPem);
+  const trustedOptions = createVerifiedPgTlsOptions(fixtures.caPem, { expectedFingerprint: expected });
+
+  assert.equal(trustedOptions.rejectUnauthorized, true);
+  assert.equal(trustedOptions.servername, 'localhost');
+  assert.equal(trustedOptions.ca.includes('BEGIN CERTIFICATE'), true);
+  const serverCertificate = new crypto.X509Certificate(fixtures.serverPem);
+  assert.equal(serverCertificate.checkHost('localhost'), 'localhost');
+  assert.equal(serverCertificate.checkHost('wrong.example'), undefined);
+  const validChain = verifyCertificateChain(findOpenSsl(), fixtures.directory, 'test-ca.pem');
+  assert.equal(validChain.status, 0, validChain.stderr);
+  const wrongOptions = createVerifiedPgTlsOptions(fixtures.wrongCaPem, {
+    expectedFingerprint: fingerprint256(fixtures.wrongCaPem),
+  });
+  assert.equal(wrongOptions.rejectUnauthorized, true);
+  const wrongChain = verifyCertificateChain(findOpenSsl(), fixtures.directory, 'wrong-ca.pem');
+  assert.notEqual(wrongChain.status, 0);
+  assert.throws(() => createVerifiedPgTlsOptions('not a certificate', { expectedFingerprint: expected }));
+  assert.throws(() => createVerifiedPgTlsOptions(`${fixtures.caPem.toString()}${fixtures.caPem.toString()}`, {
+    expectedFingerprint: expected,
+  }), /exactly one/i);
+  assert.throws(() => createVerifiedPgTlsOptions(`${fixtures.caPem.toString()}unexpected`, {
+    expectedFingerprint: expected,
+  }), /exactly one/i);
+  const originalNow = Date.now;
+  try {
+    Date.now = () => Date.parse(new crypto.X509Certificate(fixtures.caPem).validTo) + 1000;
+    assert.throws(() => createVerifiedPgTlsOptions(fixtures.caPem, { expectedFingerprint: expected }), /currently valid/i);
+  } finally {
+    Date.now = originalNow;
+  }
+  assert.throws(() => createVerifiedPgTlsOptions(fixtures.caPem, {
+    expectedFingerprint: '00'.repeat(32),
+  }), /fingerprint/i);
+  assert.throws(() => createVerifiedPgTlsOptions(fixtures.caPem, {
+    expectedFingerprint: expected,
+    servername: '127.0.0.1',
+  }), /localhost/i);
+});
+
+test('controlled release config rejects connection-string overrides and requires explicit verified tunnel TLS', () => {
+  const secret = 'synthetic-password-do-not-log';
+  assert.throws(() => buildReleaseDatabaseConfig({
+    DATABASE_URL: 'postgres://synthetic.invalid/db?sslmode=disable',
+    PGPASSWORD: secret,
+  }), (error) => !error.message.includes(secret) && /DATABASE_URL/i.test(error.message));
+  assert.throws(() => buildReleaseDatabaseConfig({
+    PGHOST: '127.0.0.1', PGPORT: '55432', PGUSER: 'release_test', PGDATABASE: 'test',
+    PGPASSWORD: secret, RELEASE_DB_TLS_SERVER_NAME: 'localhost',
+  }), (error) => !error.message.includes(secret) && /trust file/i.test(error.message));
+  assert.throws(() => buildReleaseDatabaseConfig({
+    PGHOST: 'remote.example', PGPORT: '55432', PGUSER: 'release_test', PGDATABASE: 'test',
+    PGPASSWORD: secret, RELEASE_DB_CA_FILE: 'C:\\synthetic\\root.crt',
+    RELEASE_DB_TLS_SERVER_NAME: 'localhost',
+  }), (error) => !error.message.includes(secret) && /loopback/i.test(error.message));
+  assert.throws(() => buildReleaseDatabaseConfig({
+    PGHOST: '127.0.0.1', PGPORT: '55432', PGUSER: 'release_test', PGDATABASE: 'test',
+    PGPASSWORD: secret, RELEASE_DB_CA_FILE: 'C:\\synthetic\\root.crt',
+    RELEASE_DB_TLS_SERVER_NAME: 'localhost', PGSSLMODE: 'disable',
+  }), (error) => !error.message.includes(secret) && /ssl override/i.test(error.message));
+  assert.throws(() => buildReleaseDatabaseConfig({
+    PGHOST: '127.0.0.1', PGPORT: '55432', PGUSER: 'release_test', PGDATABASE: 'test',
+    PGPASSWORD: secret, RELEASE_DB_CA_FILE: 'C:\\synthetic\\root.crt',
+    RELEASE_DB_TLS_SERVER_NAME: 'localhost', PGSSLNEGOTIATION: 'direct',
+  }), (error) => !error.message.includes(secret) && /ssl override/i.test(error.message));
+  assert.throws(() => buildReleaseDatabaseConfig({
+    PGHOST: '127.0.0.1', PGPORT: '55432', PGUSER: 'release_test', PGDATABASE: 'test',
+    PGPASSWORD: secret, RELEASE_DB_CA_FILE: 'C:\\missing\\root.crt',
+    RELEASE_DB_TLS_SERVER_NAME: 'localhost',
+  }), (error) => !error.message.includes(secret) && /unavailable or unsafe/i.test(error.message));
+  assert.throws(() => buildReleaseDatabaseConfig({
+    PGHOST: '127.0.0.1', PGPORT: '55432', PGUSER: 'release_test', PGDATABASE: 'test',
+    PGPASSWORD: secret, RELEASE_DB_CA_FILE: 'C:\\synthetic\\root.crt',
+    RELEASE_DB_TLS_SERVER_NAME: 'localhost', NODE_TLS_REJECT_UNAUTHORIZED: '0',
+  }), (error) => !error.message.includes(secret) && /certificate verification/i.test(error.message));
+});
+
+test('controlled release runner rejects the process-wide TLS verification bypass before connecting', async () => {
+  const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  try {
+    await assert.rejects(runApprovedReleaseMigrations({
+      env: {
+        RELEASE_MIGRATIONS_APPROVED: 'true',
+        RELEASE_APPROVAL_REFERENCE: 'CHG-SYNTHETIC',
+        RELEASE_EXPECTED_DATABASE: 'tq_synthetic_release',
+        RELEASE_EXPECTED_DB_USER: 'tq_release_operator',
+        RELEASE_EXPECTED_SERVER_ADDRESS: '127.0.0.1',
+        RELEASE_EXPECTED_SERVER_PORT: '55432',
+        RELEASE_EXPECTED_PENDING_MIGRATIONS: '18',
+      },
+      databaseConfig: {
+        host: '127.0.0.1', port: 55432, user: 'tq_release_operator',
+        password: 'synthetic-secret', database: 'tq_synthetic_release',
+        ssl: { ca: 'synthetic CA', rejectUnauthorized: true, servername: 'localhost' },
+      },
+      migrations: [{ version: 18, file: '018_synthetic.sql' }],
+    }), /certificate verification/i);
+  } finally {
+    if (previous === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    else process.env.NODE_TLS_REJECT_UNAUTHORIZED = previous;
+  }
+});
+
+test('release configuration refuses an unpinned synthetic CA even with otherwise complete tunnel inputs', (t) => {
+  const fixtures = makeTlsFixtures(t);
+  assert.throws(() => buildReleaseDatabaseConfig({
+    PGHOST: '127.0.0.1', PGPORT: '55432', PGUSER: 'release_test', PGDATABASE: 'test',
+    PGPASSWORD: 'synthetic-password-sentinel',
+    RELEASE_DB_CA_FILE: path.join(fixtures.directory, 'test-ca.pem'),
+    RELEASE_DB_TLS_SERVER_NAME: 'localhost',
+  }), (error) => !error.message.includes('synthetic-password-sentinel') && /fingerprint/i.test(error.message));
+});
+
+test('migration checksums normalize CRLF and lone CR while preserving canonical migration hashes 018-026', () => {
+  const lfSql = 'SELECT 1;\nSELECT 2;\n';
+  assert.equal(migrationChecksum(lfSql.replace(/\n/g, '\r\n')), migrationChecksum(lfSql));
+  assert.equal(migrationChecksum(lfSql.replace(/\n/g, '\r')), migrationChecksum(lfSql));
+
+  const expectedChecksums = new Map([
+    [18, 'f64e6e0de7abdf873fdb1bc93739d2704e4b16ed5bc428c991c7507407ea5668'],
+    [19, 'b76fa5f58daae29dbcf2120b4c9ff533eda3c41dc3f21efdab93b207fb8b2f4f'],
+    [20, '6e2cf94b9a8acdcee728e8a0283a95580fc7e63f6622dcb5890415f4b9e715af'],
+    [21, '3b5ff42ba45a158df434b92b95e935c608fc0a236516d8135d6d0329963beac6'],
+    [22, '5a45ef2133bc0d69fe117f7164eeb9af65eb16bcf6f4a1215804bd14919e3c76'],
+    [23, '2df0959d48efd554a8e7403ebbf331bfdfb6971b2d66e43a6ae267c02642f12d'],
+    [24, '2595a35fe97699376b611f21cc19aa4b7e26d495463fe7585bf7e1c96370e111'],
+    [25, '2a1b904056274c73903cfb713703c6db8e6c2ea37f9c8fd1863f9a3004e42e68'],
+    [26, '334f7b73ddc1c8d6ddcdafd547181f75fbeac85df713d4ba73995fb9c4d23b12'],
+  ]);
+  const migrations = RELEASE_MIGRATIONS.filter(({ version }) => version >= 18 && version <= 26);
+  assert.equal(migrations.length, expectedChecksums.size);
+  for (const migration of migrations) {
+    const sql = fs.readFileSync(path.join(__dirname, 'migrations', migration.file), 'utf8');
+    assert.equal(migrationChecksum(sql), expectedChecksums.get(migration.version),
+      `migration ${migration.version} must retain its canonical LF checksum`);
+  }
+});
 
 test('release manifest includes migration 026 for game progress save commit idempotency', () => {
   assert.deepEqual(RELEASE_MIGRATIONS.at(-1), { version: 26, file: '026_game_progress_save_commit_idempotency.sql' });
