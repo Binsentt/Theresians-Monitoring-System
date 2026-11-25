@@ -170,7 +170,7 @@ test('PowerShell service-file, TLS, environment, and ACL-record validators pass 
   });
   const elapsedMs = Date.now() - startedAt;
   assert.equal(result.status, 0, `${describePowerShellResult(result, elapsedMs)} ${result.stdout || ''} ${result.stderr || ''}`);
-  assert.match(`${result.stdout}\n${result.stderr}`, /PASS: 20 synthetic/);
+  assert.match(`${result.stdout}\n${result.stderr}`, /PASS: 29 synthetic/);
 });
 
 
