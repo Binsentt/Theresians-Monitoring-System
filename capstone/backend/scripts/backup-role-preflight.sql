@@ -324,6 +324,7 @@ SELECT
     ),
     'hex'
   ) AS routine_inventory_sha256
+  FROM routine_inventory
   \gset
   \echo BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=:routine_inventory_sha256
   ROLLBACK;

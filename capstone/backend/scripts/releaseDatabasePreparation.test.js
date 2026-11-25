@@ -659,6 +659,16 @@ test('backup-role routine inventory digest is asserted in disposable PostgreSQL 
 });
 
 
+test('backup-role routine inventory digest aggregates the inventory CTE rows', () => {
+  const sql = read('backup-role-preflight.sql');
+  const start = sql.indexOf('WITH routine_inventory AS (');
+  const end = sql.indexOf('\\gset', start);
+  assert.ok(start >= 0 && end > start, 'routine inventory digest query must be present');
+  const query = sql.slice(start, end);
+  assert.match(query, /\)\s+AS routine_inventory_sha256\s+FROM\s+routine_inventory\b/i,
+    'the inventory digest must aggregate actual routine_inventory rows');
+});
+
 test('restore rejects a mismatched archive digest before invoking pg_restore', () => {
   const script = read('backup-restore-rehearsal.ps1');
   const digestCheck = script.indexOf("$actualDigest -ine $ExpectedArchiveSha256");
