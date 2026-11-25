@@ -397,7 +397,7 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
   assert.match(harness, /unvalidated CHECK constraint/);
   assert.match(harness, /truncated custom-format archive must be rejected/);
   assert.match(harness, /OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:/);
-  assert.match(harness, /passedScenarioCount, 84/);
+  assert.match(harness, /passedScenarioCount, 85/);
   const unexpectedInsertAt = harness.indexOf('const unexpectedMigration = psql(CASES.preMigration026');
   const unexpectedClassifiedAt = harness.indexOf(
     "assert.equal(parseBackupReleaseState(unexpectedBackupStateResult).readiness, 'UNVERIFIED');",
@@ -882,7 +882,7 @@ test('backup harness rejects orphaned migration 026 catalog objects', () => {
   assert.match(harness, /orphaned migration-026 constraint/);
   assert.match(harness, /orphaned migration-026 trigger/);
   assert.match(harness, /orphaned migration-026 type/);
-  assert.match(harness, /passedScenarioCount, 84/);
+  assert.match(harness, /passedScenarioCount, 85/);
 });
 
 
@@ -966,7 +966,7 @@ test('backup role audit rejects executable large-object creators and unsafe call
   assert.match(harness, /direct EXECUTE on server-side large-object file functions is rejected/);
   assert.match(harness, /backup role ownership of a user routine is rejected/);
   assert.match(harness, /CREATE privilege on pg_catalog is rejected by backup-role audit/);
-  assert.match(harness, /passedScenarioCount, 84/);
+  assert.match(harness, /passedScenarioCount, 85/);
 
   const workflow = readIsolatedBackendWorkflow();
   const matrixJobs = /postgres_image:\s*\['postgres:16-bookworm',\s*'postgres:18-bookworm'\]/.test(workflow)
