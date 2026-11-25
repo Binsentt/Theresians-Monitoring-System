@@ -84,7 +84,7 @@ function Get-TqRootCertificateMetadata {
   } catch {
     throw 'STOP: verified PostgreSQL root CA file is missing or is not strict UTF-8 PEM.'
   }
-  if ($text.StartsWith([char]0xFEFF)) { throw 'STOP: verified PostgreSQL root CA must be BOM-free PEM.' }
+  if ($text.StartsWith([string][char]0xFEFF, [System.StringComparison]::Ordinal)) { throw 'STOP: verified PostgreSQL root CA must be BOM-free PEM.' }
   $match = [regex]::Match($text, '\A-----BEGIN CERTIFICATE-----\s*([A-Za-z0-9+/=\r\n]+)-----END CERTIFICATE-----\s*\z')
   if (-not $match.Success) { throw 'STOP: verified PostgreSQL root CA must contain exactly one clean PEM certificate.' }
   $base64 = $match.Groups[1].Value -replace '\s', ''

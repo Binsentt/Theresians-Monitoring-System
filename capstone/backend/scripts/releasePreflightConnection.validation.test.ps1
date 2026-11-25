@@ -99,6 +99,58 @@ Assert-Throws { Assert-TqRestrictedAclRecord -Record $badAcl -CurrentUserSid $us
 $badAcl = [pscustomobject]@{ OwnerSid = 'S-1-5-32-544'; Rules = $validRules }
 Assert-Throws { Assert-TqRestrictedAclRecord -Record $badAcl -CurrentUserSid $userSid -Label 'synthetic file' } 'exact protected' 'unexpected ACL owner'
 
+$syntheticCertDir = Join-Path ([System.IO.Path]::GetTempPath()) ('tq-rootca-validator-' + [guid]::NewGuid().ToString('N'))
+[void][System.IO.Directory]::CreateDirectory($syntheticCertDir)
+$rsa = $null
+$syntheticCert = $null
+try {
+  $rsa = [System.Security.Cryptography.RSA]::Create(2048)
+  $request = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
+    'CN=synthetic-root', $rsa,
+    [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+    [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
+  )
+  $request.CertificateExtensions.Add(
+    [System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension]::new($true, $false, 0, $true)
+  )
+  $request.CertificateExtensions.Add(
+    [System.Security.Cryptography.X509Certificates.X509KeyUsageExtension]::new(
+      [System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::KeyCertSign -bor
+        [System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::CrlSign, $true
+    )
+  )
+  $syntheticCert = $request.CreateSelfSigned([DateTimeOffset]::UtcNow.AddDays(-1), [DateTimeOffset]::UtcNow.AddDays(30))
+  $der = $syntheticCert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
+  $base64 = [Convert]::ToBase64String($der)
+  $wrappedBase64 = [regex]::Replace($base64, '.{1,64}', "`$0`n")
+  $pem = "-----BEGIN CERTIFICATE-----`n$wrappedBase64-----END CERTIFICATE-----`n"
+  $pemPath = Join-Path $syntheticCertDir 'valid.pem'
+  [System.IO.File]::WriteAllText($pemPath, $pem, [System.Text.UTF8Encoding]::new($false))
+
+  $parsedCertificate = Get-TqRootCertificateMetadata -CertificatePath $pemPath
+  Assert-True ($parsedCertificate.IsCa -and $parsedCertificate.IsSelfIssued) 'valid BOM-free synthetic CA PEM is accepted and parsed as a CA'
+  Assert-True ($parsedCertificate.Subject -ceq 'CN=synthetic-root' -and $parsedCertificate.Issuer -ceq 'CN=synthetic-root') 'synthetic certificate subject and issuer are inspected'
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try { $expectedSyntheticFingerprint = ([BitConverter]::ToString($sha.ComputeHash($der))).Replace('-', '') }
+  finally { $sha.Dispose() }
+  Assert-True ($parsedCertificate.Fingerprint -ceq $expectedSyntheticFingerprint) 'certificate metadata uses the DER SHA-256 fingerprint'
+
+  $pemBytes = [System.IO.File]::ReadAllBytes($pemPath)
+  $bomBytes = New-Object byte[] ($pemBytes.Length + 3)
+  $bomBytes[0] = 0xEF; $bomBytes[1] = 0xBB; $bomBytes[2] = 0xBF
+  [System.Array]::Copy($pemBytes, 0, $bomBytes, 3, $pemBytes.Length)
+  $bomPath = Join-Path $syntheticCertDir 'bom.pem'
+  [System.IO.File]::WriteAllBytes($bomPath, $bomBytes)
+  Assert-Throws { Get-TqRootCertificateMetadata -CertificatePath $bomPath } 'BOM-free' 'actual UTF-8 BOM'
+
+  $invalidUtf8Path = Join-Path $syntheticCertDir 'invalid-utf8.pem'
+  [System.IO.File]::WriteAllBytes($invalidUtf8Path, [byte[]](0xC3, 0x28))
+  Assert-Throws { Get-TqRootCertificateMetadata -CertificatePath $invalidUtf8Path } 'strict UTF-8' 'invalid UTF-8'
+} finally {
+  if ($syntheticCert) { $syntheticCert.Dispose() }
+  if ($rsa) { $rsa.Dispose() }
+  if (Test-Path -LiteralPath $syntheticCertDir) { Remove-Item -LiteralPath $syntheticCertDir -Recurse -Force }
+}
 $pinnedMetadata = [pscustomobject]@{
   Fingerprint = '9A84D18ED0BB44450D38DA6F35A3C4E22AD68192A0C91A2C96DD16E5C17C04DF'
   IsCa = $true
@@ -110,5 +162,17 @@ Assert-TqPinnedPostgresRootCertificate -Metadata $pinnedMetadata
 Assert-True $true 'fixed expected CA pin accepts only current CA/self-issued metadata'
 $pinnedMetadata.Fingerprint = '00' * 32
 Assert-Throws { Assert-TqPinnedPostgresRootCertificate -Metadata $pinnedMetadata } 'fingerprint' 'unapproved root fingerprint'
+$pinnedMetadata.Fingerprint = '9A84D18ED0BB44450D38DA6F35A3C4E22AD68192A0C91A2C96DD16E5C17C04DF'
+$pinnedMetadata.IsCa = $false
+Assert-Throws { Assert-TqPinnedPostgresRootCertificate -Metadata $pinnedMetadata } 'CA constraints' 'missing CA basic constraints'
+$pinnedMetadata.IsCa = $true
+$pinnedMetadata.IsSelfIssued = $false
+Assert-Throws { Assert-TqPinnedPostgresRootCertificate -Metadata $pinnedMetadata } 'issuer' 'untrusted issuer identity'
+$pinnedMetadata.IsSelfIssued = $true
+$pinnedMetadata.NotBeforeUtc = [DateTime]::UtcNow.AddMinutes(1)
+Assert-Throws { Assert-TqPinnedPostgresRootCertificate -Metadata $pinnedMetadata } 'validity' 'not-yet-valid certificate'
+$pinnedMetadata.NotBeforeUtc = [DateTime]::UtcNow.AddDays(-1)
+$pinnedMetadata.NotAfterUtc = [DateTime]::UtcNow.AddMinutes(-1)
+Assert-Throws { Assert-TqPinnedPostgresRootCertificate -Metadata $pinnedMetadata } 'validity' 'expired certificate'
 
-Write-Output "PASS: $script:Assertions synthetic service-file, environment, pin, and ACL-record assertions."
+Write-Output "PASS: $script:Assertions synthetic service-file, environment, certificate, pin, and ACL-record assertions."
