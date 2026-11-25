@@ -1193,10 +1193,38 @@ assert.match(backupRoleAudit.stdout, /executable_large_object_creation_function_
 assert.match(backupRoleAudit.stdout, /executable_large_object_server_file_function_count=0/);
 assert.match(backupRoleAudit.stdout, /executable_security_definer_function_count=0/);
 assert.match(backupRoleAudit.stdout, /executable_untrusted_function_count=0/);
+assert.match(backupRoleAudit.stdout, /^BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=[a-f0-9]{64}$/m);
+assert.doesNotMatch(backupRoleAudit.stdout, /pg_get_functiondef|synthetic_backup_review_marker/,
+  'routine source and identities must never be emitted to the audit log');
 assert.match(backupRoleAudit.stdout,
   /OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:/,
   'the catalog audit must preserve its explicit unknown-function-side-effect gate');
+const initialRoutineInventory = backupRoleAudit.stdout.match(/^BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=([a-f0-9]{64})$/m)[1];
+const createRoutine = psql(CASES.valid, 'postgres',
+  'CREATE OR REPLACE FUNCTION public.synthetic_backup_review_marker() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 1 $$;');
+assert.equal(createRoutine.status, 0, createRoutine.stderr);
+const routineCreatedAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(routineCreatedAudit.status, 0, routineCreatedAudit.stderr);
+const createdRoutineInventory = routineCreatedAudit.stdout.match(/^BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=([a-f0-9]{64})$/m)[1];
+assert.notEqual(createdRoutineInventory, initialRoutineInventory,
+  'adding a synthetic routine must invalidate the prior review fingerprint');
+const replaceRoutine = psql(CASES.valid, 'postgres',
+  'CREATE OR REPLACE FUNCTION public.synthetic_backup_review_marker() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 2 $$;');
+assert.equal(replaceRoutine.status, 0, replaceRoutine.stderr);
+const routineReplacedAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(routineReplacedAudit.status, 0, routineReplacedAudit.stderr);
+const replacedRoutineInventory = routineReplacedAudit.stdout.match(/^BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=([a-f0-9]{64})$/m)[1];
+assert.notEqual(replacedRoutineInventory, createdRoutineInventory,
+  'changing a synthetic routine body must invalidate the prior review fingerprint');
+const dropRoutine = psql(CASES.valid, 'postgres', 'DROP FUNCTION public.synthetic_backup_review_marker();');
+assert.equal(dropRoutine.status, 0, dropRoutine.stderr);
+const routineRemovedAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(routineRemovedAudit.status, 0, routineRemovedAudit.stderr);
+assert.equal(routineRemovedAudit.stdout.match(/^BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=([a-f0-9]{64})$/m)[1],
+  initialRoutineInventory,
+  'removing the synthetic routine must restore the original inventory fingerprint');
 recordScenario('synthetic role has clean catalog counts while overall nonwriting status remains unverified');
+recordScenario('backup role routine inventory digest changes with routine definitions and emits no source');
 recordScenario('backup role cannot create large objects after mutator EXECUTE is revoked');
 
 const grantSystemSchemaCreate = psql(CASES.valid, 'postgres',

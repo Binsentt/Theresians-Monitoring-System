@@ -104,6 +104,9 @@ test('Windows preflight utility uses a service alias, rejects inline passwords, 
   assert.match(script, /Assert-TqNoAmbientPgOverrides/);
   assert.match(script, /Assert-TqPreflightConnectionFiles/);
   assert.match(script, /ExpectedTunnelPort/);
+  assert.match(script, /\[Parameter\(Mandatory = \$true\)\]\s*(?:\[ValidateNotNullOrEmpty\(\)\]\s*)?\[string\]\$ExpectedDatabase/);
+  assert.match(script, /\[Parameter\(Mandatory = \$true\)\]\s*(?:\[ValidateNotNullOrEmpty\(\)\]\s*)?\[string\]\$ExpectedServerAddress/);
+  assert.match(script, /\[Parameter\(Mandatory = \$true\)\]\s*\[ValidateRange\(1, 65535\)\]\s*\[int\]\$ExpectedServerPort/);
   assert.match(script, /VerifiedCaPath/);
   assert.match(script, /release-preflight-role-audit\.sql/);
   assert.match(script, /release-migration-026-prerequisite-preflight\.sql/);
@@ -579,7 +582,14 @@ test('backup utility has separate explicit backup and isolated-restore gates', (
     'restore free-space reserve must use uncompressed source database size, not archive size');
   assert.ok(/databaseSizeBytes = \[Math\]::Max\(\$beforeState\.DatabaseSizeBytes, \$afterState\.DatabaseSizeBytes\)/.test(script),
     'backup manifest must retain the larger pre/post source-size estimate for restore planning');
-  assert.match(script, /sslmode=verify-full/);
+  assert.match(script, /ExpectedTunnelPort/);
+  assert.match(script, /\[Parameter\(Mandatory = \$true\)\]\s*(?:\[ValidateNotNullOrEmpty\(\)\]\s*)?\[string\]\$ExpectedDatabase/);
+  assert.match(script, /\[Parameter\(Mandatory = \$true\)\]\s*(?:\[ValidateNotNullOrEmpty\(\)\]\s*)?\[string\]\$ExpectedServerAddress/);
+  assert.match(script, /\[Parameter\(Mandatory = \$true\)\]\s*\[ValidateRange\(1, 65535\)\]\s*\[int\]\$ExpectedServerPort/);
+  assert.match(script, /Assert-TqPgServiceSettings/);
+  assert.match(script, /Assert-TqProtectedLocalFile/);
+  assert.match(script, /Assert-TqPinnedPostgresRootCertificate/);
+  assert.match(script, /ExpectedServerPort,\s*\[Parameter\(Mandatory = \$true\)\]\s*\[ValidateRange\(1, 65535\)\]\s*\[int\]\$ExpectedTunnelPort/);
   assert.match(script, /Read-only source\/restore catalog metadata comparison/);
   assert.match(script, /pg_largeobject_metadata/);
   assert.match(script, /\$fields\.Count -ne 11/);
@@ -612,17 +622,40 @@ test('migration 026 remains additive and runner accepts only the exact approved 
   assert.match(runner, /database migration checksum does not match this source revision/);
   assert.match(runner, /migration 024/i);
 });
-test('backup never starts pg_dump while nonwriting-role audit remains unverified', () => {
+test('backup role audit requires exact catalog and signed routine-review evidence before pg_dump', () => {
   const script = read('backup-restore-rehearsal.ps1');
   const roleSql = read('backup-role-preflight.sql');
+  const roleReview = read('backupRoleReview.validation.psm1');
   const harness = read('run-preflight-postgres-harness.cjs');
   assert.match(roleSql, /OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED/);
+  assert.match(roleSql, /BACKUP_ROLE_ROUTINE_INVENTORY_SHA256/);
+  assert.match(roleSql, /pg_catalog\.sha256/);
+  assert.match(roleSql, /pg_catalog\.pg_get_functiondef/);
   assert.match(harness, /OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED/);
-  const roleGate = script.indexOf("OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:");
+  assert.match(script, /CATALOG_PRIVILEGE_CHECKS=PASS/);
+  assert.match(script, /sideEffectUnknown\.Count -ne 1/);
+  assert.match(script, /inventory\.Count -ne 1/);
+  assert.match(script, /Assert-TqBackupRoleReviewEvidence/);
+  assert.match(script, /ExpectedBackupRoleReviewerKeySha256/);
+  assert.match(script, /routineInventorySha256/);
+  const reviewGate = script.indexOf('Get-VerifiedBackupRoleReview $roleAuditBefore.RoutineInventorySha256');
   const dumpInvocation = script.indexOf('& $PgDumpPath @dumpArguments');
-  assert.ok(roleGate >= 0 && dumpInvocation > roleGate,
-    'the unverified role audit must throw before any logical archive is created');
-  assert.match(script, /STOP: backup role non-writing guarantee is UNVERIFIED/);
+  assert.ok(reviewGate >= 0 && dumpInvocation > reviewGate,
+    'the verified reviewer attestation must be required before any logical archive is created');
+  assert.match(roleReview, /not yet valid, expired, or valid for more than seven days/);
+  assert.match(roleReview, /signature is invalid/);
+  assert.match(roleReview, /reviewer_key_sha256/);
+});
+
+
+test('backup-role routine inventory digest is asserted in disposable PostgreSQL integration', () => {
+  const harness = read('run-preflight-postgres-harness.cjs');
+  const audit = harness.indexOf('const backupRoleAudit = invokeBackupRoleAudit(CASES.valid)');
+  const nextScenario = harness.indexOf("recordScenario('synthetic role has clean catalog counts", audit);
+  assert.ok(audit >= 0 && nextScenario > audit);
+  const assertionBlock = harness.slice(audit, nextScenario);
+  assert.match(assertionBlock, /BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=\[a-f0-9\]\{64\}/);
+  assert.match(assertionBlock, /routine source and identities must never be emitted to the audit log/i);
 });
 
 
@@ -895,8 +928,10 @@ test('backup role audit rejects executable large-object creators and unsafe call
     'the role audit must not claim arbitrary function-body side effects are proven safe');
 
   const backupScript = read('backup-restore-rehearsal.ps1');
-  assert.match(backupScript, /\$text -match '\(\?im\)\^OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:/);
-  assert.match(backupScript, /STOP: backup role non-writing guarantee is UNVERIFIED/);
+  assert.match(backupScript, /\$sideEffectUnknown = \[regex\]::Matches/);
+  assert.match(backupScript, /\$sideEffectUnknown\.Count -ne 1/);
+  assert.match(backupScript, /STOP: backup-role audit output is missing, duplicate, contradictory/);
+  assert.match(backupScript, /signed, unexpired independent backup-role side-effect review evidence/);
 
   const harness = read('run-preflight-postgres-harness.cjs');
   assert.match(harness, /public EXECUTE on large-object creation functions is rejected/);

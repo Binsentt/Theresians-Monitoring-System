@@ -26,6 +26,7 @@
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '10s';
 SET LOCAL lock_timeout = '2s';
+SET LOCAL search_path = pg_catalog;
 
 WITH target_role AS (
   SELECT oid, rolcanlogin, rolinherit, rolsuper, rolcreatedb, rolcreaterole,
@@ -267,7 +268,64 @@ SELECT
 \echo Backup-role catalog counts: role_membership_count=:role_membership_count unreadable_relation_count=:unreadable_relation_count unreadable_sequence_count=:unreadable_sequence_count unreadable_large_object_count=:unreadable_large_object_count relation_write_privilege_count=:relation_write_privilege_count relation_maintenance_privilege_count=:relation_maintenance_privilege_count sequence_write_privilege_count=:sequence_write_privilege_count large_object_write_privilege_count=:large_object_write_privilege_count executable_large_object_creation_function_count=:executable_large_object_creation_function_count executable_large_object_server_file_function_count=:executable_large_object_server_file_function_count owned_user_routine_count=:owned_user_routine_count parameter_set_privilege_count=:parameter_set_privilege_count parameter_alter_system_privilege_count=:parameter_alter_system_privilege_count executable_security_definer_function_count=:executable_security_definer_function_count executable_untrusted_function_count=:executable_untrusted_function_count schema_create_privilege_count=:schema_create_privilege_count unusable_schema_count=:unusable_schema_count row_security_relation_count=:row_security_relation_count foreign_table_count=:foreign_table_count
 \if :backup_role_ok
   \echo 'CATALOG_PRIVILEGE_CHECKS=PASS'
-  \echo 'OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED: arbitrary trusted function bodies and external side effects are not proven harmless; review this limitation before calling the role non-writing.'
+  \echo 'OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED: arbitrary trusted function bodies may have side effects; review the exact routine inventory and provide a signed, current, independently pinned side-effect attestation.'
+  WITH routine_inventory AS (
+    SELECT
+      namespace_record.nspname,
+      function_record.proname,
+      pg_catalog.pg_get_function_identity_arguments(function_record.oid) AS identity_arguments,
+      pg_catalog.pg_get_userbyid(function_record.proowner) AS owner_name,
+      language_record.lanname AS language_name,
+      function_record.prokind,
+      function_record.prosecdef,
+      function_record.provolatile,
+      function_record.proleakproof,
+      function_record.proconfig,
+      function_record.proacl::text AS routine_acl,
+      encode(
+        pg_catalog.sha256(
+          convert_to(
+            CASE
+              WHEN function_record.prokind = 'a'
+                THEN COALESCE(pg_catalog.to_jsonb(aggregate_record)::text, '') || E'\n' || COALESCE(function_record.prosrc, '')
+              ELSE pg_catalog.pg_get_functiondef(function_record.oid)
+            END,
+            'UTF8'
+          )
+        ),
+        'hex'
+      ) AS definition_sha256
+    FROM pg_catalog.pg_proc AS function_record
+    JOIN pg_catalog.pg_namespace AS namespace_record
+      ON namespace_record.oid = function_record.pronamespace
+    JOIN pg_catalog.pg_language AS language_record
+      ON language_record.oid = function_record.prolang
+    LEFT JOIN pg_catalog.pg_aggregate AS aggregate_record
+      ON aggregate_record.aggfnoid = function_record.oid
+    WHERE namespace_record.nspname <> 'information_schema'
+      AND namespace_record.nspname !~ '^pg_'
+  )
+  SELECT encode(
+    pg_catalog.sha256(
+      convert_to(
+        COALESCE(
+          pg_catalog.jsonb_agg(
+            pg_catalog.jsonb_build_array(
+              nspname, proname, identity_arguments, owner_name, language_name,
+              prokind, prosecdef, provolatile, proleakproof, proconfig,
+              routine_acl, definition_sha256
+            )
+            ORDER BY nspname, proname, identity_arguments, prokind
+          )::text,
+          '[]'
+        ),
+        'UTF8'
+      )
+    ),
+    'hex'
+  ) AS routine_inventory_sha256
+  \gset
+  \echo BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=:routine_inventory_sha256
   ROLLBACK;
 \else
   \echo 'STOP: backup role, data-read coverage, target, or dump completeness prerequisites failed.'

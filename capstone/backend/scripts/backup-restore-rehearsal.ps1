@@ -6,15 +6,24 @@ param(
 
   [string]$BackupServiceName = 'tq_prod_backup',
   [string]$RestoreServiceName = 'tq_restore_local',
+  [Parameter(Mandatory = $true)]
   [string]$ExpectedDatabase,
+  [Parameter(Mandatory = $true)]
   [string]$ExpectedServerAddress,
+  [Parameter(Mandatory = $true)]
   [ValidateRange(1, 65535)]
-  [int]$ExpectedServerPort = 5432,
+  [int]$ExpectedServerPort,
+  [Parameter(Mandatory = $true)]
+  [ValidateRange(1, 65535)]
+  [int]$ExpectedTunnelPort,
   [string]$ServiceFilePath,
   [string]$BackupDirectory,
   [string]$ArchivePath,
   [string]$ExpectedArchiveSha256,
   [string]$ApprovalReference,
+  [string]$BackupRoleReviewEvidencePath,
+  [ValidatePattern('^[A-Fa-f0-9]{64}$')]
+  [string]$ExpectedBackupRoleReviewerKeySha256,
   [Parameter(Mandatory = $true)]
   [ValidatePattern('^[a-f0-9]{40}$')]
   [string]$ExpectedToolSourceCommit,
@@ -146,7 +155,7 @@ function Assert-SufficientFreeSpace([string]$PathValue, [long]$DataBytes) {
 function Read-PgServiceSection([string]$Alias, [string]$ResolvedServiceFile) {
   $inside = $false
   $settings = @{}
-  foreach ($line in [System.IO.File]::ReadAllLines($ResolvedServiceFile)) {
+  foreach ($line in [System.IO.File]::ReadAllLines($ResolvedServiceFile, [System.Text.UTF8Encoding]::new($false, $true))) {
     $trimmed = $line.Trim()
     if (-not $trimmed -or $trimmed.StartsWith('#') -or $trimmed.StartsWith(';')) { continue }
     if ($trimmed -match '^\[([^\]]+)\]$') {
@@ -177,34 +186,25 @@ function Assert-PgServiceConfiguration([string]$Alias, [string]$ExpectedRole, [b
     throw 'STOP: selected PGSERVICEFILE alias does not match the approved database/role inputs.'
   }
   if ($IsProduction) {
-    if ($settings.sslmode -cne 'verify-full' -or -not $settings.sslrootcert -or
-        -not [System.IO.Path]::IsPathRooted($settings.sslrootcert)) {
-      throw 'STOP: production TCP-proxy use requires sslmode=verify-full and an explicit trusted root certificate.'
+    if (-not $ExpectedTunnelPort -or $ExpectedTunnelPort -lt 1 -or $ExpectedTunnelPort -gt 65535) {
+      throw 'STOP: the verified local SSH tunnel port must be supplied explicitly.'
     }
+    $service = [pscustomobject]@{ ServiceName = $Alias; Settings = $settings }
+    Assert-TqPgServiceSettings -Service $service -ExpectedServiceName $BackupServiceName -ExpectedDatabase $ExpectedDatabase -ExpectedRole $backupRole -ExpectedTunnelPort $ExpectedTunnelPort -ExpectedCaPath $settings.sslrootcert
+    $currentUserSid = (Get-ApprovedStorageSids).Current
+    [void](Assert-TqProtectedLocalFile -PathValue $resolvedFile -Label 'PGSERVICEFILE' -RepositoryRoot $repositoryRoot -CurrentUserSid $currentUserSid)
     $rootCertificate = Resolve-PathOutsideRepository $settings.sslrootcert 'PostgreSQL TLS root certificate'
     [void](Assert-StoragePath $rootCertificate)
-    if (-not (Test-Path -LiteralPath $rootCertificate -PathType Leaf)) { throw 'STOP: configured TLS root certificate is unavailable.' }
+    [void](Assert-TqProtectedLocalFile -PathValue $rootCertificate -Label 'PostgreSQL TLS root certificate' -RepositoryRoot $repositoryRoot -CurrentUserSid $currentUserSid)
+    $certificateMetadata = Get-TqRootCertificateMetadata -CertificatePath $rootCertificate
+    Assert-TqPinnedPostgresRootCertificate -Metadata $certificateMetadata
   } else {
-    $addresses = @($settings.host)
-    if ($settings.hostaddr) { $addresses += $settings.hostaddr }
-    foreach ($address in $addresses) {
-      $isLoopback = $false
-      if ($address -in @('localhost', 'localhost.')) { $isLoopback = $true }
-      else {
-        $parsedAddress = $null
-        if ([System.Net.IPAddress]::TryParse($address, [ref]$parsedAddress)) {
-          $isLoopback = [System.Net.IPAddress]::IsLoopback($parsedAddress)
-        }
-      }
-      if (-not $isLoopback) { throw 'STOP: isolated restore service must resolve only to loopback.' }
-    }
-    if ($settings.port -and [int]$settings.port -ne $ExpectedServerPort) {
-      throw 'STOP: isolated restore service port does not match the approved target.'
+    if ($settings.host -cne 'localhost' -or $settings.hostaddr -cne '127.0.0.1' -or $settings.port -cne [string]$ExpectedTunnelPort) {
+      throw 'STOP: isolated restore service must bind to localhost/127.0.0.1 and the exact approved restore port.'
     }
   }
   return $settings
 }
-
 function Assert-OperatorConnectionFiles {
   if ((Test-Path Env:PGPASSWORD) -or (Test-Path Env:PGPASSFILE)) {
     throw 'STOP: clear PGPASSWORD and PGPASSFILE environment overrides; the PostgreSQL clients must request the password interactively.'
@@ -283,17 +283,55 @@ function Invoke-PsqlAudit([string]$Service, [string]$Role, [string]$SqlFile) {
     '-v', "expected_server_port=$ExpectedServerPort",
     '-f', (Join-Path $PSScriptRoot $SqlFile)
   )
-  $output = & $PsqlPath @arguments 2>&1
+  $output = @(& $PsqlPath @arguments 2>&1)
   $exitCode = $LASTEXITCODE
   Assert-InteractivePassfileAbsent
-  $text = $output -join "`n"
-  foreach ($line in $output) { Write-Output $line }
+  $text = $output -join [Environment]::NewLine
+  foreach ($line in $output) {
+    if ([string]$line -notmatch '(?m)^BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=') { Write-Host ([string]$line) }
+  }
   if ($exitCode -ne 0) { throw "STOP: $SqlFile failed with psql exit code $exitCode." }
-  if ($text -match '(?im)^OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:') {
-    throw 'STOP: backup role non-writing guarantee is UNVERIFIED; review callable routine side effects before any archive is created.'
+
+  $catalogPass = [regex]::Matches($text, '(?m)^CATALOG_PRIVILEGE_CHECKS=PASS\s*$')
+  $sideEffectUnknown = [regex]::Matches($text, '(?m)^OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:[^\r\n]+$')
+  $sideEffectPass = [regex]::Matches($text, '(?m)^OVERALL_BACKUP_ROLE_NONWRITING=PASS\s*$')
+  $inventory = [regex]::Matches($text, '(?m)^BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=([a-f0-9]{64})\s*$')
+  if ($catalogPass.Count -ne 1 -or $sideEffectUnknown.Count -ne 1 -or $sideEffectPass.Count -ne 0 -or $inventory.Count -ne 1) {
+    throw 'STOP: backup-role audit output is missing, duplicate, contradictory, or does not bind an external routine-side-effect review.'
+  }
+  return [pscustomobject]@{
+    CatalogStatus = 'PASS'
+    SideEffectStatus = 'UNVERIFIED'
+    RoutineInventorySha256 = $inventory[0].Groups[1].Value
   }
 }
 
+function Get-VerifiedBackupRoleReview([string]$RoutineInventorySha256) {
+  if (-not $BackupRoleReviewEvidencePath -or $ExpectedBackupRoleReviewerKeySha256 -notmatch '^[A-Fa-f0-9]{64}$') {
+    throw 'STOP: signed, unexpired independent backup-role side-effect review evidence and its separately approved key fingerprint are required.'
+  }
+  $evidencePath = Resolve-PathOutsideRepository $BackupRoleReviewEvidencePath 'backup-role review evidence'
+  [void](Assert-StoragePath $evidencePath)
+  Assert-RestrictedStorageAcl $evidencePath 'ReadOnly' $true
+  $evidenceItem = Get-Item -LiteralPath $evidencePath -Force -ErrorAction Stop
+  if ($evidenceItem.Length -le 0 -or $evidenceItem.Length -gt 16384) {
+    throw 'STOP: backup-role review evidence must be a non-empty file no larger than 16 KiB.'
+  }
+  try {
+    $encoding = [System.Text.UTF8Encoding]::new($false, $true)
+    $evidenceText = [System.IO.File]::ReadAllText($evidencePath, $encoding)
+  } catch {
+    throw 'STOP: backup-role review evidence is not strict UTF-8.'
+  }
+  $review = Assert-TqBackupRoleReviewEvidence -EvidenceText $evidenceText -ExpectedDatabase $ExpectedDatabase -ExpectedServerAddress $ExpectedServerAddress -ExpectedServerPort $ExpectedServerPort -ExpectedToolSourceSha $ExpectedToolSourceCommit -ExpectedApplicationSourceSha $ExpectedProductionApplicationCommit -ExpectedRoutineInventorySha256 $RoutineInventorySha256 -ExpectedReviewerKeySha256 $ExpectedBackupRoleReviewerKeySha256
+  return [pscustomobject]@{
+    Status = $review.Status
+    ExpiresUtc = $review.ExpiresUtc
+    RoutineInventorySha256 = $review.RoutineInventorySha256
+    ReviewerKeySha256 = $review.ReviewerKeySha256.ToUpperInvariant()
+    EvidenceSha256 = (Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
+  }
+}
 function Invoke-ReleaseStateAudit([string]$Service, [string]$Role) {
   $arguments = @(
     '--dbname', "service=$Service", '-X', '-q', '-A', '-t', '-F', '|', '-P', 'pager=off',
@@ -359,6 +397,8 @@ foreach ($commit in @($ExpectedToolSourceCommit, $ExpectedProductionApplicationC
 $reviewedInputs = @(
   'capstone/backend/scripts/backup-restore-rehearsal.ps1',
   'capstone/backend/scripts/backup-role-preflight.sql',
+  'capstone/backend/scripts/backupRoleReview.validation.psm1',
+  'capstone/backend/scripts/releasePreflightConnection.validation.psm1',
   'capstone/backend/scripts/backup-release-state-preflight.sql',
   'capstone/backend/scripts/release-migration-preflight.sql',
   'capstone/backend/scripts/release-migration-026-prerequisite-preflight.sql',
@@ -367,6 +407,12 @@ $reviewedInputs = @(
 $sourceStatus = @(& git -C $repositoryRoot status --porcelain --untracked-files=all -- $reviewedInputs 2>$null)
 if ($LASTEXITCODE -ne 0 -or $sourceStatus.Count -gt 0) {
   throw 'STOP: backup/preflight files or migrations are modified/untracked; use a clean reviewed release commit.'
+}
+$connectionValidationModule = Join-Path $PSScriptRoot 'releasePreflightConnection.validation.psm1'
+$backupRoleReviewModule = Join-Path $PSScriptRoot 'backupRoleReview.validation.psm1'
+foreach ($modulePath in @($connectionValidationModule, $backupRoleReviewModule)) {
+  if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) { throw 'STOP: required reviewed validation module is missing.' }
+  Import-Module -Name $modulePath -Force -ErrorAction Stop
 }
 if ($BackupServiceName -ne 'tq_prod_backup') { throw 'STOP: production backups must use the dedicated tq_prod_backup service alias.' }
 if ($RestoreServiceName -ne 'tq_restore_local') { throw 'STOP: restore must use the isolated tq_restore_local service alias.' }
@@ -408,7 +454,8 @@ try {
     $env:PGOPTIONS = '-c default_transaction_read_only=on -c statement_timeout=10000 -c lock_timeout=2000'
     Write-Output "Approval reference: $ApprovalReference"
     Write-Output 'Running the fixed catalog-only backup role audit.'
-    Invoke-PsqlAudit $BackupServiceName $backupRole 'backup-role-preflight.sql'
+    $roleAuditBefore = Invoke-PsqlAudit $BackupServiceName $backupRole 'backup-role-preflight.sql'
+    $roleReviewBefore = Get-VerifiedBackupRoleReview $roleAuditBefore.RoutineInventorySha256
     $beforeState = Invoke-ReleaseStateAudit $BackupServiceName $backupRole
     Assert-SufficientFreeSpace $destination $beforeState.DatabaseSizeBytes
 
@@ -422,6 +469,14 @@ try {
     if ($dumpExit -ne 0) { throw "STOP: pg_dump failed (exit $dumpExit); partial archive and protected log were retained." }
     Move-Item -LiteralPath $partial -Destination $archive
 
+    $roleAuditAfter = Invoke-PsqlAudit $BackupServiceName $backupRole 'backup-role-preflight.sql'
+    if ($roleAuditAfter.RoutineInventorySha256 -cne $roleAuditBefore.RoutineInventorySha256) {
+      throw 'STOP: backup-role routine inventory changed during the archive operation; do not treat the archive as verified.'
+    }
+    $roleReviewAfter = Get-VerifiedBackupRoleReview $roleAuditAfter.RoutineInventorySha256
+    if ($roleReviewAfter.EvidenceSha256 -cne $roleReviewBefore.EvidenceSha256) {
+      throw 'STOP: backup-role review evidence changed during the archive operation.'
+    }
     $afterState = Invoke-ReleaseStateAudit $BackupServiceName $backupRole
     & $PgRestorePath '--list' $archive 1> $tocPath 2> $listLog
     $listExit = $LASTEXITCODE
@@ -438,6 +493,13 @@ try {
       archiveSha256 = $digest
       createdAtUtc = [DateTime]::UtcNow.ToString('o')
       approvalReference = $ApprovalReference
+      backupRoleReview = [ordered]@{
+        status = $roleReviewBefore.Status
+        reviewerKeySha256 = $roleReviewBefore.ReviewerKeySha256
+        routineInventorySha256 = $roleReviewBefore.RoutineInventorySha256
+        evidenceSha256 = $roleReviewBefore.EvidenceSha256
+        expiresAtUtc = $roleReviewBefore.ExpiresUtc.ToString('o')
+      }
       toolSourceCommit = $ExpectedToolSourceCommit
       productionApplicationCommit = $ExpectedProductionApplicationCommit
       toolVersions = $toolVersions
