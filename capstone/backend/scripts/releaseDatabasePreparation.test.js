@@ -721,6 +721,15 @@ test('synthetic restore schema diagnostics expose only aggregate entity-kind evi
   assert.doesNotMatch(harness, /classifyPsqlFailure\(String\(/);
   assert.match(harness, /schemaEntityKindLine.*\[a-z-\].*\[a-f0-9\]\{64\}/);
 });
+test('synthetic restore trigger diagnostics separate internal and user-trigger aggregates', () => {
+  const harness = read('run-preflight-postgres-harness.cjs');
+  assert.match(harness, /function getBackupTriggerAggregateDiagnostic/);
+  assert.match(harness, /item->>'internal'/);
+  assert.match(harness, /item->>'definition'/);
+  assert.match(harness, /SYNTHETIC_TRIGGER_ENTITY_DIFF=/);
+  assert.match(harness, /return `internal=.*;user=/);
+  assert.doesNotMatch(harness, /console\.error\(`SYNTHETIC_TRIGGER_ENTITY_DIFF=[^`]*(?:schema|relation|name|definition)=/);
+});
 test('backup content integrity uses read-only aggregate manifests and compares restored state fail-closed', () => {
   const sql = read('backup-restore-integrity-preflight.sql');
   const script = read('backup-restore-rehearsal.ps1');

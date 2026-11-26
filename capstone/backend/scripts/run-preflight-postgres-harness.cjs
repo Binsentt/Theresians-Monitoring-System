@@ -176,6 +176,71 @@ function summarizeBackupSchemaEntityKindDifference(source, restored) {
   });
   return differences.join(',') || 'none';
 }
+
+function getBackupTriggerAggregateDiagnostic(database, role) {
+  const schemaEntityCte = BACKUP_INTEGRITY_SQL.match(
+    /WITH RECURSIVE schema_entities AS \(([\s\S]*?)\r?\n\), schema_manifest AS \(/,
+  );
+  assert.ok(schemaEntityCte, 'synthetic trigger diagnostics must reuse the reviewed integrity CTE');
+  const result = psql(database, role, `
+    BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+    SET LOCAL statement_timeout = '30s';
+    SET LOCAL lock_timeout = '2s';
+    SET LOCAL search_path = pg_catalog;
+    WITH RECURSIVE schema_entities AS (${schemaEntityCte[1]})
+    SELECT item->>'internal' || '|' || COUNT(*)::text || '|' ||
+           encode(pg_catalog.sha256(convert_to(
+             COALESCE(jsonb_agg(item->>'name' ORDER BY item->>'name' COLLATE "C")::text, '[]'), 'UTF8'
+           )), 'hex') || '|' ||
+           encode(pg_catalog.sha256(convert_to(
+             COALESCE(jsonb_agg(item->>'definition' ORDER BY item->>'definition' COLLATE "C")::text, '[]'), 'UTF8'
+           )), 'hex') || '|' ||
+           encode(pg_catalog.sha256(convert_to(
+             COALESCE(jsonb_agg(item->>'enabled' ORDER BY item->>'enabled' COLLATE "C")::text, '[]'), 'UTF8'
+           )), 'hex') || '|' ||
+           encode(pg_catalog.sha256(convert_to(
+             COALESCE(jsonb_agg((item->>'schema') || '.' || (item->>'relation') ORDER BY
+               (item->>'schema') || '.' || (item->>'relation') COLLATE "C")::text, '[]'), 'UTF8'
+           )), 'hex')
+    FROM schema_entities
+    WHERE item->>'kind' = 'trigger'
+    GROUP BY item->>'internal'
+    ORDER BY item->>'internal';
+    ROLLBACK;
+  `);
+  const failureCategory = classifyPsqlFailure(result);
+  if (result.status !== 0) {
+    const diagnosticFailure = new Error(
+      `synthetic trigger diagnostic query failed; status=${result.status ?? 'null'} signal=${result.signal ?? 'none'} category=${failureCategory}`,
+    );
+    diagnosticFailure.safeCategory = failureCategory;
+    throw diagnosticFailure;
+  }
+  const rows = String(result.stdout || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const aggregates = new Map();
+  for (let index = 0; index < rows.length; index += 1) {
+    const fields = rows[index].split('|');
+    assert.equal(fields.length, 6, `synthetic trigger diagnostic row ${index + 1} has an unexpected shape`);
+    assert.match(fields[0], /^(?:true|false)$/, `synthetic trigger diagnostic row ${index + 1} has an invalid category`);
+    assert.match(fields[1], /^\d+$/, `synthetic trigger diagnostic row ${index + 1} has an invalid count`);
+    for (const digest of fields.slice(2)) assert.match(digest, /^[a-f0-9]{64}$/, 'synthetic trigger diagnostic digest is malformed');
+    assert.equal(aggregates.has(fields[0]), false, 'synthetic trigger diagnostic repeated a category');
+    aggregates.set(fields[0], { count: Number(fields[1]), name: fields[2], definition: fields[3], enabled: fields[4], location: fields[5] });
+  }
+  assert.ok(aggregates.size > 0, 'synthetic trigger diagnostic returned no aggregate rows');
+  return aggregates;
+}
+
+function summarizeBackupTriggerAggregateDifference(source, restored) {
+  const summarizeCategory = (category) => {
+    const before = source.get(category);
+    const after = restored.get(category);
+    const compare = (field) => before && after && before[field] === after[field] ? 'same' : 'different';
+    return `${before?.count ?? 0}/${after?.count ?? 0}:n=${compare('name')},d=${compare('definition')},e=${compare('enabled')},l=${compare('location')}`;
+  };
+  return `internal=${summarizeCategory('true')};user=${summarizeCategory('false')}`;
+}
+
 function parseBackupContentIntegrity(result, label) {
   const output = `${result.stdout || ''}\n${result.stderr || ''}`;
   assert.equal(result.status, 0,
@@ -2034,6 +2099,11 @@ if (process.env.TQ_EXPECTED_POSTGRES_MAJOR === '18') {
       const sourceSchemaKinds = getBackupSchemaEntityKindManifest(CASES.valid, 'tq_prod_backup_reader');
       const restoredSchemaKinds = getBackupSchemaEntityKindManifest(restoreDatabase, 'tq_restore_operator');
       entityKindDifference = summarizeBackupSchemaEntityKindDifference(sourceSchemaKinds, restoredSchemaKinds);
+      if ([...sourceSchemaKinds.keys(), ...restoredSchemaKinds.keys()].includes('trigger')) {
+        const sourceTriggers = getBackupTriggerAggregateDiagnostic(CASES.valid, 'tq_prod_backup_reader');
+        const restoredTriggers = getBackupTriggerAggregateDiagnostic(restoreDatabase, 'tq_restore_operator');
+        console.error(`SYNTHETIC_TRIGGER_ENTITY_DIFF=${summarizeBackupTriggerAggregateDifference(sourceTriggers, restoredTriggers)}`);
+      }
     } catch (diagnosticError) {
       const safeCategory = diagnosticError?.safeCategory || classifyPsqlFailure({
         status: null,
