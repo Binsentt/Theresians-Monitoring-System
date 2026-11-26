@@ -1016,6 +1016,9 @@ test('disposable PostgreSQL harness tests stdin-driven password synchronization 
 test('synthetic SCRAM passfile check waits for active HBA reload and retains recovery copy on cleanup failure', () => {
   const harness = read('run-preflight-postgres-harness.cjs');
   assert.match(harness, /pg_conf_load_time\(\)/);
+  assert.match(harness, /SELECT current_setting\('hba_file'\)/);
+  assert.match(harness, /syntheticPasswordHba must resolve to the active PostgreSQL configuration path/);
+  assert.doesNotMatch(harness, /const syntheticPasswordHba = '\/var\/lib\/postgresql\/data\/pg_hba\.conf'/);
   assert.match(harness, /function waitForSyntheticHbaReload/);
   assert.match(harness, /database = ARRAY\['all'\]::text\[\]/);
   assert.match(harness, /address = '127\.0\.0\.1'::inet/);

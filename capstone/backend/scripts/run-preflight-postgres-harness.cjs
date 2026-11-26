@@ -65,6 +65,22 @@ function dockerBinary(args, input = undefined) {
   return result;
 }
 
+function resolveSyntheticHbaPath() {
+  const result = psql('postgres', 'postgres', `
+    SELECT current_setting('hba_file');
+  `);
+  assert.equal(result.status, 0,
+    `synthetic PostgreSQL HBA configuration path query must succeed; status=${result.status}, signal=${result.signal ?? 'none'}`);
+  const hbaPath = String(result.stdout || '').trim();
+  assert.match(hbaPath,
+    /^\/var\/lib\/postgresql\/(?:data|[0-9]+\/docker)\/pg_hba\.conf$/,
+    'syntheticPasswordHba must resolve to the active PostgreSQL configuration path');
+  const fileCheck = docker(['exec', CONTAINER, 'test', '-f', hbaPath]);
+  assert.equal(fileCheck.status, 0,
+    'the active PostgreSQL HBA configuration path must exist in the disposable container');
+  return hbaPath;
+}
+
 function psql(database, role, sql, variables = {}) {
   const args = ['exec'];
   if (sql !== undefined) args.push('-i');
@@ -1756,7 +1772,7 @@ recordScenario('restored archive matches source release readiness and catalog me
 
 const syntheticPasswordRole = 'tq_synthetic_password_sync';
 const syntheticPasswordPassfile = '/tmp/tq-synthetic-password-sync.pgpass';
-const syntheticPasswordHba = '/var/lib/postgresql/data/pg_hba.conf';
+const syntheticPasswordHba = resolveSyntheticHbaPath();
 const syntheticPasswordHbaBackup = '/tmp/tq-synthetic-password-sync.pg_hba.original';
 const syntheticPasswordHbaCandidate = '/tmp/tq-synthetic-password-sync.pg_hba.candidate';
 const syntheticPasswordHbaRule = `host all ${syntheticPasswordRole} 127.0.0.1/32 scram-sha-256`;
