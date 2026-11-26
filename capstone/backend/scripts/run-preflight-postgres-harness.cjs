@@ -1783,6 +1783,12 @@ assert.equal(createSyntheticPasswordRole.status, 0,
   'disposable password synchronization role must be created in the synthetic PostgreSQL cluster');
 let syntheticHbaBackupReady = false;
 let restoreSyntheticHbaVerified = false;
+let restoreSyntheticHbaStage = 'not-started';
+let restoreSyntheticHbaReloadObserved = false;
+let restoreSyntheticHbaRuleAbsent = false;
+let restoreSyntheticHbaRulesParse = false;
+let restoreSyntheticHbaReadbackStatus = 'not-run';
+let restoreSyntheticHbaReadback = 'unavailable';
 
 function syntheticConfigLoadTime() {
   const result = psql('postgres', 'postgres', `
@@ -1921,15 +1927,24 @@ try {
   let verifyRestoredHba = { status: 0, stdout: 't' };
   if (syntheticHbaBackupReady) {
     let beforeRestoreReload = null;
-    try { beforeRestoreReload = syntheticConfigLoadTime(); } catch {}
+    try {
+      restoreSyntheticHbaStage = 'read-pre-restore-config-time';
+      beforeRestoreReload = syntheticConfigLoadTime();
+    } catch {
+      restoreSyntheticHbaStage = 'pre-restore-config-time-failed';
+    }
     restoreSyntheticHba = docker([
       'exec', CONTAINER, 'cp', '-p', syntheticPasswordHbaBackup, syntheticPasswordHba,
     ]);
     if (restoreSyntheticHba.status === 0 && beforeRestoreReload !== null) {
+      restoreSyntheticHbaStage = 'reload-original-hba';
       reloadRestoredHba = psql('postgres', 'postgres', 'SELECT pg_reload_conf();');
       if (reloadRestoredHba.status === 0 && reloadRestoredHba.stdout.trim() === 't') {
         try {
+          restoreSyntheticHbaStage = 'observe-original-hba-reload';
           waitForSyntheticHbaReload(beforeRestoreReload, 'original');
+          restoreSyntheticHbaReloadObserved = true;
+          restoreSyntheticHbaStage = 'read-original-hba-rules';
           verifyRestoredHba = psql('postgres', 'postgres', `
             SELECT
               NOT EXISTS (
@@ -1941,15 +1956,40 @@ try {
                   AND address = '127.0.0.1'::inet
                   AND netmask = '255.255.255.255'::inet
                   AND auth_method = 'scram-sha-256'
-              )
-              AND NOT EXISTS (
+              ),
+              NOT EXISTS (
                 SELECT 1 FROM pg_catalog.pg_hba_file_rules WHERE error IS NOT NULL
               );
           `);
+          restoreSyntheticHbaReadbackStatus = verifyRestoredHba.status;
+          const readback = String(verifyRestoredHba.stdout || '').trim();
+          if (/^[tf]\|[tf]$/.test(readback)) {
+            [restoreSyntheticHbaRuleAbsent, restoreSyntheticHbaRulesParse] = readback.split('|').map((value) => value === 't');
+            restoreSyntheticHbaReadback = readback;
+          } else {
+            restoreSyntheticHbaStage = 'original-hba-readback-output-invalid';
+            restoreSyntheticHbaReadback = 'unrecognized';
+          }
           restoreSyntheticHbaVerified = verifyRestoredHba.status === 0
-            && verifyRestoredHba.stdout.trim() === 't';
-        } catch { restoreSyntheticHbaVerified = false; }
+            && restoreSyntheticHbaRuleAbsent
+            && restoreSyntheticHbaRulesParse;
+          if (restoreSyntheticHbaVerified) restoreSyntheticHbaStage = 'verified';
+          else if (verifyRestoredHba.status !== 0) restoreSyntheticHbaStage = 'original-hba-readback-query-failed';
+          else if (restoreSyntheticHbaStage !== 'original-hba-readback-output-invalid') restoreSyntheticHbaStage = 'original-hba-readback-mismatch';
+        } catch {
+          restoreSyntheticHbaStage = 'original-hba-reload-or-readback-failed';
+          restoreSyntheticHbaVerified = false;
+        }
+      } else {
+        restoreSyntheticHbaStage = 'original-hba-reload-command-failed';
       }
+    } else if (restoreSyntheticHba.status !== 0) {
+      restoreSyntheticHbaStage = 'restore-original-hba-file-failed';
+    } else {
+      restoreSyntheticHbaStage = 'pre-restore-config-time-unavailable';
+    }
+    if (!restoreSyntheticHbaVerified) {
+      restoreSyntheticHbaReadbackStatus = verifyRestoredHba.status;
     }
   }
   const removeSyntheticPassfiles = docker([
@@ -1972,7 +2012,7 @@ try {
     assert.equal(reloadRestoredHba.stdout.trim(), 't',
       'PostgreSQL must confirm the original disposable pg_hba.conf reload');
     assert.equal(restoreSyntheticHbaVerified, true,
-      'the original HBA must be loaded and independently verified before removing its recovery copy');
+      `the original HBA must be loaded and independently verified before removing its recovery copy; stage=${restoreSyntheticHbaStage}, reloadObserved=${restoreSyntheticHbaReloadObserved}, syntheticRuleAbsent=${restoreSyntheticHbaRuleAbsent}, allRulesParse=${restoreSyntheticHbaRulesParse}, readbackStatus=${restoreSyntheticHbaReadbackStatus}, readback=${restoreSyntheticHbaReadback}`);
   }
   assert.equal(removeSyntheticPassfiles.status, 0,
     'synthetic passfiles must be removed from the disposable container');

@@ -1027,3 +1027,13 @@ test('synthetic SCRAM passfile check waits for active HBA reload and retains rec
   assert.match(harness, /'env', '-u', 'PGPASSWORD', 'psql'/);
   assert.match(harness, /if \(restoreSyntheticHbaVerified\)[\s\S]*?removeSyntheticHbaRecoveryFiles/);
 });
+
+test('synthetic HBA restoration failure reports only bounded sanitized stage evidence', () => {
+  const harness = read('run-preflight-postgres-harness.cjs');
+  assert.match(harness, /restoreSyntheticHbaStage/);
+  assert.match(harness, /restoreSyntheticHbaReloadObserved/);
+  assert.match(harness, /restoreSyntheticHbaRuleAbsent/);
+  assert.match(harness, /restoreSyntheticHbaRulesParse/);
+  assert.match(harness, /readbackStatus=\$\{restoreSyntheticHbaReadbackStatus\}/);
+  assert.doesNotMatch(harness, /readbackStderr=\$\{verifyRestoredHba\.stderr/);
+});
