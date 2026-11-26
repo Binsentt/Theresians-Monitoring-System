@@ -125,6 +125,57 @@ function invokeBackupContentIntegrity(database, role) {
   });
 }
 
+function getBackupSchemaEntityKindManifest(database, role) {
+  const schemaEntityCte = BACKUP_INTEGRITY_SQL.match(
+    /WITH RECURSIVE schema_entities AS \(([\s\S]*?)\r?\n\), schema_manifest AS \(/,
+  );
+  assert.ok(schemaEntityCte, 'synthetic schema-kind diagnostics must reuse the reviewed integrity CTE');
+  const result = psql(database, role, `
+    BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+    SET LOCAL statement_timeout = '30s';
+    SET LOCAL lock_timeout = '2s';
+    SET LOCAL search_path = pg_catalog;
+    WITH RECURSIVE schema_entities AS (${schemaEntityCte[1]})
+    SELECT item->>'kind' || '|' || COUNT(*)::text || '|' ||
+           encode(pg_catalog.sha256(convert_to(
+             COALESCE(jsonb_agg(item ORDER BY item::text COLLATE "C")::text, '[]'), 'UTF8'
+           )), 'hex')
+    FROM schema_entities
+    GROUP BY item->>'kind'
+    ORDER BY item->>'kind';
+    ROLLBACK;
+  `);
+  const failureCategory = classifyPsqlFailure(result);
+  if (result.status !== 0) {
+    const diagnosticFailure = new Error(
+      `synthetic schema-kind diagnostic query failed; status=${result.status ?? 'null'} signal=${result.signal ?? 'none'} category=${failureCategory}`,
+    );
+    diagnosticFailure.safeCategory = failureCategory;
+    throw diagnosticFailure;
+  }
+  const rows = String(result.stdout || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const manifest = new Map();
+  for (let index = 0; index < rows.length; index += 1) {
+    const schemaEntityKindLine = rows[index].match(/^([a-z][a-z-]*)\|(\d+)\|([a-f0-9]{64})$/);
+    assert.ok(schemaEntityKindLine, `synthetic schema-kind diagnostic row ${index + 1} is malformed`);
+    assert.equal(manifest.has(schemaEntityKindLine[1]), false,
+      `synthetic schema-kind diagnostic repeated entity kind ${schemaEntityKindLine[1]}`);
+    manifest.set(schemaEntityKindLine[1], { count: Number(schemaEntityKindLine[2]), digest: schemaEntityKindLine[3] });
+  }
+  assert.ok(manifest.size > 0, 'synthetic schema-kind diagnostic returned no aggregate rows');
+  return manifest;
+}
+
+function summarizeBackupSchemaEntityKindDifference(source, restored) {
+  const kinds = new Set([...source.keys(), ...restored.keys()]);
+  const differences = [...kinds].sort().flatMap((kind) => {
+    const sourceEntity = source.get(kind);
+    const restoredEntity = restored.get(kind);
+    if (sourceEntity && restoredEntity && sourceEntity.count === restoredEntity.count && sourceEntity.digest === restoredEntity.digest) return [];
+    return [`${kind}:${sourceEntity?.count ?? 0}/${restoredEntity?.count ?? 0}:${sourceEntity?.digest === restoredEntity?.digest ? 'same' : 'different'}`];
+  });
+  return differences.join(',') || 'none';
+}
 function parseBackupContentIntegrity(result, label) {
   const output = `${result.stdout || ''}\n${result.stderr || ''}`;
   assert.equal(result.status, 0,
@@ -1977,8 +2028,24 @@ if (process.env.TQ_EXPECTED_POSTGRES_MAJOR === '18') {
   const restoredIntegrity = parseBackupContentIntegrity(
     invokeBackupContentIntegrity(restoreDatabase, 'tq_restore_operator'), 'restored manifest',
   );
+  if (sourceIntegrity.row !== restoredIntegrity.row) {
+    let entityKindDifference = 'unavailable';
+    try {
+      const sourceSchemaKinds = getBackupSchemaEntityKindManifest(CASES.valid, 'tq_prod_backup_reader');
+      const restoredSchemaKinds = getBackupSchemaEntityKindManifest(restoreDatabase, 'tq_restore_operator');
+      entityKindDifference = summarizeBackupSchemaEntityKindDifference(sourceSchemaKinds, restoredSchemaKinds);
+    } catch (diagnosticError) {
+      const safeCategory = diagnosticError?.safeCategory || classifyPsqlFailure({
+        status: null,
+        error: diagnosticError,
+        stderr: '',
+      });
+      entityKindDifference = `unavailable:${safeCategory}`;
+    }
+    console.error(`SYNTHETIC_SCHEMA_ENTITY_KIND_DIFF=${entityKindDifference}`);
+  }
   assert.equal(sourceIntegrity.row, restoredIntegrity.row,
-    'backup content manifest matches the restored synthetic database');
+    `backup content manifest matches the restored synthetic database; schemaEntityKindDiff=${sourceIntegrity.row === restoredIntegrity.row ? 'not-needed' : 'captured'}`);
   assert.ok(Number(sourceIntegrity.fields[5]) > 0, 'synthetic table rows must be included in the manifest');
   assert.ok(Number(sourceIntegrity.fields[7]) > 0, 'synthetic sequence state must be included in the manifest');
   assert.equal(Number(sourceIntegrity.fields[8]), 1, 'the synthetic large object must be included in the manifest');

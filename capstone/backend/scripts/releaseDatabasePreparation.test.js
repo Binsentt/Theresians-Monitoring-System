@@ -710,6 +710,17 @@ test('backup restore readiness is separate from archive integrity and source ide
   assert.doesNotMatch(script, /release_ledger_row_count/);
 });
 
+test('synthetic restore schema diagnostics expose only aggregate entity-kind evidence', () => {
+  const harness = read('run-preflight-postgres-harness.cjs');
+  assert.match(harness, /function getBackupSchemaEntityKindManifest/);
+  assert.match(harness, /schemaEntityCte\[1\]/);
+  assert.match(harness, /SYNTHETIC_SCHEMA_ENTITY_KIND_DIFF=/);
+  assert.match(harness, /const failureCategory = classifyPsqlFailure\(result\);/);
+  assert.match(harness, /classifyPsqlFailure\(\{\s*status: null,/);
+  assert.match(harness, /safeCategory/);
+  assert.doesNotMatch(harness, /classifyPsqlFailure\(String\(/);
+  assert.match(harness, /schemaEntityKindLine.*\[a-z-\].*\[a-f0-9\]\{64\}/);
+});
 test('backup content integrity uses read-only aggregate manifests and compares restored state fail-closed', () => {
   const sql = read('backup-restore-integrity-preflight.sql');
   const script = read('backup-restore-rehearsal.ps1');
