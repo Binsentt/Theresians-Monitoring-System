@@ -2228,6 +2228,7 @@ recordScenario(`shared exported snapshot and non-MVCC sequence distinction verif
 
 const syntheticPasswordRole = 'tq_synthetic_password_sync';
 const syntheticPasswordPassfile = '/tmp/tq-synthetic-password-sync.pgpass';
+const syntheticHostaddrPassfile = '/tmp/tq-synthetic-password-sync.hostaddr-only.pgpass';
 const syntheticPasswordHba = resolveSyntheticHbaPath();
 const syntheticPasswordHbaBackup = '/tmp/tq-synthetic-password-sync.pg_hba.original';
 const syntheticPasswordHbaCandidate = '/tmp/tq-synthetic-password-sync.pg_hba.candidate';
@@ -2351,8 +2352,9 @@ try {
   assert.equal(createMissingCredentialPassfile.status, 0,
     'empty passfile negative control must be created only inside the disposable cluster');
   const missingCredentialAuthentication = docker([
-    'exec', '--env', `PGPASSFILE=${missingCredentialPassfile}`, CONTAINER, 'env', '-u', 'PGPASSWORD', 'psql',
-    '--host=127.0.0.1', '--port=5432', `--username=${syntheticPasswordRole}`, '--dbname=postgres',
+    'exec', '--env', `PGPASSFILE=${missingCredentialPassfile}`, '--env', 'PGHOSTADDR=127.0.0.1', CONTAINER,
+    'env', '-u', 'PGPASSWORD', 'psql', '--host=localhost', '--port=5432',
+    `--username=${syntheticPasswordRole}`, '--dbname=postgres',
     '--no-psqlrc', '--no-password', '--quiet', '--tuples-only', '--no-align',
     '--command', `SELECT current_user = '${syntheticPasswordRole}';`,
   ]);
@@ -2360,7 +2362,25 @@ try {
     && missingCredentialAuthentication.status !== 0,
   'missing synthetic passfile must not authenticate under the active SCRAM-only HBA rule');
 
-  const passfileEntry = `127.0.0.1:5432:postgres:${syntheticPasswordRole}:${syntheticPassword}\n`;
+  const hostaddrOnlyPassfileEntry = `127.0.0.1:5432:postgres:${syntheticPasswordRole}:${syntheticPassword}\n`;
+  const writeHostaddrOnlyPassfile = docker([
+    'exec', '-i', CONTAINER, 'sh', '-c',
+    `umask 077 && cat > ${syntheticHostaddrPassfile} && chmod 600 ${syntheticHostaddrPassfile}`,
+  ], hostaddrOnlyPassfileEntry);
+  assert.equal(writeHostaddrOnlyPassfile.status, 0,
+    'hostaddr-only synthetic passfile control must be written only inside the disposable cluster');
+  const hostaddrOnlyAuthentication = docker([
+    'exec', '--env', `PGPASSFILE=${syntheticHostaddrPassfile}`, '--env', 'PGHOSTADDR=127.0.0.1', CONTAINER,
+    'env', '-u', 'PGPASSWORD', 'psql', '--host=localhost', '--port=5432',
+    `--username=${syntheticPasswordRole}`, '--dbname=postgres',
+    '--no-psqlrc', '--no-password', '--quiet', '--tuples-only', '--no-align',
+    '--command', `SELECT current_user = '${syntheticPasswordRole}';`,
+  ]);
+  assert.ok(Number.isInteger(hostaddrOnlyAuthentication.status)
+    && hostaddrOnlyAuthentication.status !== 0,
+  'libpq must not select a password-file row keyed only by hostaddr when host=localhost');
+
+  const passfileEntry = `localhost:5432:postgres:${syntheticPasswordRole}:${syntheticPassword}\n`;
   const writeSyntheticPassfile = docker([
     'exec', '-i', CONTAINER, 'sh', '-c',
     `umask 077 && cat > ${syntheticPasswordPassfile} && chmod 600 ${syntheticPasswordPassfile}`,
@@ -2369,8 +2389,9 @@ try {
     'synthetic passfile must be written only inside the disposable PostgreSQL container');
 
   const verifySyntheticPassword = docker([
-    'exec', '--env', `PGPASSFILE=${syntheticPasswordPassfile}`, CONTAINER, 'env', '-u', 'PGPASSWORD', 'psql',
-    '--host=127.0.0.1', '--port=5432', `--username=${syntheticPasswordRole}`, '--dbname=postgres',
+    'exec', '--env', `PGPASSFILE=${syntheticPasswordPassfile}`, '--env', 'PGHOSTADDR=127.0.0.1', CONTAINER,
+    'env', '-u', 'PGPASSWORD', 'psql', '--host=localhost', '--port=5432',
+    `--username=${syntheticPasswordRole}`, '--dbname=postgres',
     '--no-psqlrc', '--no-password', '--quiet', '--tuples-only', '--no-align',
     '--command', `SELECT current_user = '${syntheticPasswordRole}';`,
   ]);
@@ -2452,6 +2473,7 @@ try {
   }
   const removeSyntheticPassfiles = docker([
     'exec', CONTAINER, 'rm', '-f', syntheticPasswordPassfile,
+    syntheticHostaddrPassfile,
     '/tmp/tq-synthetic-password-sync.no-credential.pgpass',
   ]);
   let removeSyntheticHbaRecoveryFiles = { status: 0 };

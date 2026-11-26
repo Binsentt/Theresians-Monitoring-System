@@ -115,20 +115,30 @@ Create the client files outside the repository, for example under
 
 ```ini
 [tq_release_preflight]
-host=127.0.0.1
+host=localhost
+hostaddr=127.0.0.1
 port=55432
 dbname=APPROVED_DATABASE_NAME
 user=tq_release_preflight_reader
-connect_timeout=5
-application_name=tq-release-preflight
+sslmode=verify-full
+sslrootcert=ABSOLUTE_PATH_TO_VERIFIED_PRODUCTION_ROOT_CA
 ```
 
 `pgpass.conf` (one protected local line; enter the password only in a trusted
 local password manager/editor, never in CMD or PowerShell history):
 
 ```text
-127.0.0.1:55432:APPROVED_DATABASE_NAME:tq_release_preflight_reader:ESCAPED_PASSWORD
+localhost:55432:APPROVED_DATABASE_NAME:tq_release_preflight_reader:ESCAPED_PASSWORD
 ```
+
+When both `host` and `hostaddr` are set, libpq uses `host` for password-file
+matching and hostname verification; `hostaddr` controls only the network route.
+Use the `localhost` host field shown above in the matching `pgpass.conf` entry.
+The profile contains exactly the seven approved settings required by the
+connection validator; do not add a password, `connect_timeout`, or
+`application_name` setting.
+Replace the CA path example with the exact absolute path independently verified
+on the operator's machine before running the validator.
 
 In the pgpass line, escape a literal colon as `\:` and a literal backslash as
 `\\`. Restrict the file ACL to the owner and SYSTEM, with inheritance disabled;

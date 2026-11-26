@@ -170,7 +170,7 @@ test('PowerShell service-file, TLS, environment, and ACL-record validators pass 
   });
   const elapsedMs = Date.now() - startedAt;
   assert.equal(result.status, 0, `${describePowerShellResult(result, elapsedMs)} ${result.stdout || ''} ${result.stderr || ''}`);
-  assert.match(`${result.stdout}\n${result.stderr}`, /PASS: 36 synthetic/);
+  assert.match(`${result.stdout}\n${result.stderr}`, /PASS: 39 synthetic/);
 });
 
 
@@ -1113,7 +1113,12 @@ test('disposable PostgreSQL harness tests stdin-driven password synchronization 
   assert.match(harness, /`\\\\password \$\{syntheticPasswordRole\}`/);
   assert.match(harness, /synchronizationOutput\.includes\(syntheticPassword\)/);
   assert.match(harness, /PGPASSFILE=\$\{syntheticPasswordPassfile\}/);
+  assert.match(harness, /'env', '-u', 'PGPASSWORD', 'psql', '--host=localhost'/);
+  assert.match(harness, /'--env', 'PGHOSTADDR=127\.0\.0\.1'/);
+  assert.match(harness, /`localhost:5432:postgres:\$\{syntheticPasswordRole\}:\$\{syntheticPassword\}\\n`/);
+  assert.match(harness, /libpq must not select a password-file row keyed only by hostaddr when host=localhost/);
   assert.match(harness, /exact synthetic passfile credential must authenticate/);
+  assert.match(harness, /syntheticHostaddrPassfile/);
   assert.match(harness, /synthetic passfiles must be removed/);
   assert.match(harness, /temporary pg_hba\.conf recovery copies must be removed only after successful restoration/);
   assert.match(harness, /passedScenarioCount, 101/);

@@ -35,6 +35,18 @@ Assert-TqPgServiceSettings -Service $service -ExpectedServiceName 'tq_release_pr
   -ExpectedTunnelPort 55432 -ExpectedCaPath $caPath
 Assert-True ($service.Settings['host'] -ceq 'localhost') 'host identity must remain localhost for verify-full SAN matching'
 Assert-True ($service.Settings['hostaddr'] -ceq '127.0.0.1') 'network route must remain loopback IPv4'
+$runbookPath = Join-Path $PSScriptRoot '..\docs\database-release-preparation-operator-runbook.md'
+$runbookText = [System.IO.File]::ReadAllText([System.IO.Path]::GetFullPath($runbookPath))
+$serviceExampleMatch = [regex]::Match($runbookText, '(?s)`pg_service\.conf`.*?```ini\r?\n(?<settings>.*?)\r?\n```')
+Assert-True $serviceExampleMatch.Success 'the operator runbook must contain a service-file example'
+$serviceExample = ConvertFrom-TqPgServiceFileText -Text $serviceExampleMatch.Groups['settings'].Value
+Assert-TqPgServiceSettings -Service $serviceExample -ExpectedServiceName 'tq_release_preflight' `
+  -ExpectedDatabase 'APPROVED_DATABASE_NAME' -ExpectedRole 'tq_release_preflight_reader' `
+  -ExpectedTunnelPort 55432 -ExpectedCaPath 'ABSOLUTE_PATH_TO_VERIFIED_PRODUCTION_ROOT_CA'
+Assert-True ($runbookText.Contains('localhost:55432:APPROVED_DATABASE_NAME:tq_release_preflight_reader:ESCAPED_PASSWORD')) `
+  'the operator runbook passfile example must match libpq host-based lookup when service hostaddr is set'
+Assert-True (-not $runbookText.Contains('127.0.0.1:55432:APPROVED_DATABASE_NAME:tq_release_preflight_reader:ESCAPED_PASSWORD')) `
+  'the operator runbook must not teach passfile matching by hostaddr'
 
 Assert-Throws {
   $extraSetting = ConvertFrom-TqPgServiceFileText ($baseText + "`npassword=synthetic-secret-value")
