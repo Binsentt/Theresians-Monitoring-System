@@ -458,8 +458,10 @@ test('disposable PostgreSQL harness scenario counters match the executed scenari
   assert.ok(dynamicModeScenario, 'the missing-table and missing-column scenarios must remain enumerated');
   const additionalDynamicRuns = (dynamicModeScenario[1].match(/^\s*\['[^']+'\s*,/gm) || []).length - 1;
   const receiptConstraintScenarioRuns = (preflightSection.match(/\nassertReceiptConstraintMismatch\(\{/g) || []).length;
+  // Two label-only helper bodies occur before this boundary; one is used by
+  // receiptConstraintScenarioRuns and the grant-option helper runs afterward.
   const preflightScenarioCount = (preflightSection.match(/^\s*recordScenario\(/gm) || []).length
-    + additionalDynamicRuns + receiptConstraintScenarioRuns - 1;
+    + additionalDynamicRuns + receiptConstraintScenarioRuns - 2;
   assert.match(harness, new RegExp('assert\\.equal\\(passedScenarioCount, ' + preflightScenarioCount + ','));
 
   const maintainBranchStart = harness.indexOf('if (serverVersionNumber >= 170000)');
@@ -468,8 +470,12 @@ test('disposable PostgreSQL harness scenario counters match the executed scenari
   assert.match(maintainBranch,
     /if \(serverVersionNumber >= 170000\)[\s\S]*recordScenario\('MAINTAIN privilege is rejected on supported PostgreSQL versions'\);[\s\S]*\} else \{[\s\S]*recordScenario\('MAINTAIN privilege check is version-safe on PostgreSQL 16'\);/,
     'exactly one PostgreSQL-version-specific MAINTAIN scenario runs per server');
+  const backupGrantOptionScenarioRuns = (harness.match(/^\s*assertBackupRoleGrantOptionRejected\(\{/gm) || []).length;
+  const maintainScenarioAlternatives = (maintainBranch.match(/^\s*recordScenario\(/gm) || []).length;
+  assert.equal(maintainScenarioAlternatives, 2, 'one PostgreSQL-version-specific MAINTAIN scenario must execute');
   const totalScenarioCount = (harness.match(/^\s*recordScenario\(/gm) || []).length
-    + additionalDynamicRuns + receiptConstraintScenarioRuns - 2;
+    + additionalDynamicRuns + receiptConstraintScenarioRuns + backupGrantOptionScenarioRuns
+    - 2 - (maintainScenarioAlternatives - 1);
   assert.match(harness, new RegExp('assert\\.equal\\(passedScenarioCount, ' + totalScenarioCount + ','));
 });
 

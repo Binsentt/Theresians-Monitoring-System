@@ -173,7 +173,7 @@ WITH RECURSIVE schema_entities AS (
 
   UNION ALL
   SELECT jsonb_build_object(
-    'kind', 'database', 'name', database_record.datname,
+    'kind', 'database',
     'encoding', pg_catalog.pg_encoding_to_char(database_record.encoding),
     'collation', database_record.datcollate, 'characterType', database_record.datctype,
     'localeProvider', database_record.datlocprovider::text,

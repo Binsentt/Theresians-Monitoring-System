@@ -737,6 +737,8 @@ test('backup content integrity uses read-only aggregate manifests and compares r
   assert.match(sql, /sequence-ownership/);
   assert.match(sql, /pg_catalog\.pg_aggregate/);
   assert.match(sql, /pg_catalog\.pg_range/);
+  assert.doesNotMatch(sql, /'kind', 'database',\s*'name', database_record\.datname/,
+    'the portable schema manifest must not vary with the source versus isolated-restore database name');
   assert.match(sql, /database_record\.datcollversion/);
   assert.match(sql, /BACKUP_CONTENT_INTEGRITY=PASS\|/);
   assert.doesNotMatch(sql, /^\s*(?:INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|CALL)\b/im);
