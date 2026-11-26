@@ -715,6 +715,11 @@ test('backup content integrity uses read-only aggregate manifests and compares r
   const script = read('backup-restore-rehearsal.ps1');
   const harness = read('run-preflight-postgres-harness.cjs');
   assert.match(sql, /BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;/);
+  assert.match(sql, /SET LOCAL statement_timeout = '30min';/i);
+  assert.match(sql, /SET LOCAL lock_timeout = '2s';/i);
+  assert.match(sql, /SET LOCAL work_mem = '64MB';/i);
+  assert.doesNotMatch(sql, /SET LOCAL temp_file_limit\s*=/i,
+    'the restricted non-superuser backup role cannot set the superuser-only temp_file_limit parameter');
   assert.match(sql, /BACKUP_TARGET_IDENTITY=PASS/);
   assert.match(sql, /pg_catalog\.sha256\(convert_to\(to_jsonb\(row_data\)::text, 'UTF8'\)\)/);
   assert.match(sql, /pg_catalog\.lo_get\(/);

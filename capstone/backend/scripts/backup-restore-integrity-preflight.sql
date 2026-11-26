@@ -11,7 +11,7 @@ SET LOCAL TimeZone = 'UTC';
 SET LOCAL IntervalStyle = 'postgres_verbose';
 SET LOCAL bytea_output = 'hex';
 SET LOCAL work_mem = '64MB';
-SET LOCAL temp_file_limit = '10GB';
+-- temp_file_limit is superuser-only; this restricted reader uses the transaction timeout and work_mem controls above.
 
 SELECT current_database() = :'expected_database'
    AND current_user = :'expected_role'
