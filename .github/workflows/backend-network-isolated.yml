@@ -1256,6 +1256,8 @@ jobs:
             'capstone/backend/scripts/releasePreflightConnection.validation.test.ps1',
             'capstone/backend/scripts/backupRoleReview.validation.psm1',
             'capstone/backend/scripts/backupRoleReview.validation.test.ps1',
+            'capstone/backend/scripts/backupStorageSafety.validation.psm1',
+            'capstone/backend/scripts/backupStorageSafety.validation.test.ps1',
             'capstone/backend/scripts/backup-restore-rehearsal.ps1'
           )) {
             $tokens = $null
@@ -1292,6 +1294,22 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & pwsh -NoLogo -NoProfile -NonInteractive -File 'capstone/backend/scripts/backupRoleReview.validation.test.ps1'
           if ($LASTEXITCODE -ne 0) { throw "PowerShell 7 backup-role review tests failed with exit code $LASTEXITCODE." }
+
+      - name: Run storage safety tests under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:TQ_REQUIRE_REPARSE_FIXTURE = '1'
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -File 'capstone/backend/scripts/backupStorageSafety.validation.test.ps1'
+          if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell 5.1 storage-safety tests failed with exit code $LASTEXITCODE." }
+
+      - name: Run storage safety tests under PowerShell 7
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:TQ_REQUIRE_REPARSE_FIXTURE = '1'
+          & pwsh -NoLogo -NoProfile -NonInteractive -File 'capstone/backend/scripts/backupStorageSafety.validation.test.ps1'
+          if ($LASTEXITCODE -ne 0) { throw "PowerShell 7 storage-safety tests failed with exit code $LASTEXITCODE." }
 
       - name: Run focused Node 20 preflight and checksum regression tests
         shell: powershell

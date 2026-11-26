@@ -39,6 +39,12 @@ WITH target_role AS (
       WHERE NOT has_table_privilege(current_user, relation.oid, 'SELECT')
     )::integer AS unreadable_relation_count,
     COUNT(*) FILTER (
+      WHERE has_table_privilege(current_user, relation.oid, 'SELECT WITH GRANT OPTION')
+    )::integer AS relation_select_grant_option_count,
+    COUNT(*) FILTER (
+      WHERE has_any_column_privilege(current_user, relation.oid, 'SELECT WITH GRANT OPTION')
+    )::integer AS column_select_grant_option_count,
+    COUNT(*) FILTER (
       WHERE has_table_privilege(current_user, relation.oid, 'INSERT')
          OR has_table_privilege(current_user, relation.oid, 'UPDATE')
          OR has_table_privilege(current_user, relation.oid, 'DELETE')
@@ -63,6 +69,7 @@ WITH target_role AS (
   FROM pg_catalog.pg_class AS relation
   JOIN pg_catalog.pg_namespace AS relation_namespace
     ON relation_namespace.oid = relation.relnamespace
+  CROSS JOIN target_role
   WHERE relation.relkind IN ('r', 'p', 'v', 'm', 'f')
     AND relation_namespace.nspname <> 'information_schema'
     AND relation_namespace.nspname !~ '^pg_'
@@ -71,6 +78,9 @@ WITH target_role AS (
     COUNT(*) FILTER (
       WHERE NOT has_sequence_privilege(current_user, sequence_relation.oid, 'SELECT')
     )::integer AS unreadable_sequence_count,
+    COUNT(*) FILTER (
+      WHERE has_sequence_privilege(current_user, sequence_relation.oid, 'SELECT WITH GRANT OPTION')
+    )::integer AS sequence_select_grant_option_count,
     COUNT(*) FILTER (
       WHERE has_sequence_privilege(current_user, sequence_relation.oid, 'USAGE')
          OR has_sequence_privilege(current_user, sequence_relation.oid, 'UPDATE')
@@ -104,7 +114,35 @@ WITH target_role AS (
           WHERE (large_object_privilege.grantee = target_role.oid OR large_object_privilege.grantee = 0::oid)
             AND large_object_privilege.privilege_type = 'UPDATE'
         )
-    )::integer AS large_object_write_privilege_count
+    )::integer AS large_object_write_privilege_count,
+    COUNT(*) FILTER (
+      WHERE EXISTS (
+        SELECT 1 FROM pg_catalog.aclexplode(
+          COALESCE(large_object.lomacl, pg_catalog.acldefault('L', large_object.lomowner))
+        ) AS large_object_privilege
+        WHERE (large_object_privilege.grantee = target_role.oid OR large_object_privilege.grantee = 0::oid)
+          AND large_object_privilege.privilege_type = 'SELECT'
+          AND large_object_privilege.is_grantable
+      )
+    )::integer AS large_object_select_grant_option_count,
+    COUNT(*) FILTER (
+      WHERE EXISTS (
+        SELECT 1 FROM pg_catalog.aclexplode(
+          COALESCE(large_object.lomacl, pg_catalog.acldefault('L', large_object.lomowner))
+        ) AS large_object_privilege
+        WHERE large_object_privilege.grantee = 0::oid
+          AND large_object_privilege.privilege_type = 'SELECT'
+      )
+    )::integer AS public_large_object_read_privilege_count,
+    COUNT(*) FILTER (
+      WHERE EXISTS (
+        SELECT 1 FROM pg_catalog.aclexplode(
+          COALESCE(large_object.lomacl, pg_catalog.acldefault('L', large_object.lomowner))
+        ) AS large_object_privilege
+        WHERE large_object_privilege.grantee = 0::oid
+          AND large_object_privilege.privilege_type = 'UPDATE'
+      )
+    )::integer AS public_large_object_write_privilege_count
   FROM pg_catalog.pg_largeobject_metadata AS large_object
   CROSS JOIN target_role
 ), large_object_creation_function_audit AS (
@@ -155,6 +193,13 @@ WITH target_role AS (
       WHERE has_parameter_privilege(current_user, parameter_record.parname, 'ALTER SYSTEM')
     )::integer AS parameter_alter_system_privilege_count
   FROM pg_catalog.pg_parameter_acl AS parameter_record
+), database_grant_option_audit AS (
+  SELECT CASE WHEN has_database_privilege(current_user, current_database(), 'CONNECT WITH GRANT OPTION')
+              THEN 1 ELSE 0 END::integer AS database_connect_grant_option_count
+), routine_grant_option_audit AS (
+  SELECT COUNT(*)::integer AS routine_execute_grant_option_count
+  FROM pg_catalog.pg_proc AS function_record
+  WHERE has_function_privilege(current_user, function_record.oid, 'EXECUTE WITH GRANT OPTION')
 ), security_definer_function_audit AS (
   SELECT COUNT(*)::integer AS executable_security_definer_function_count
   FROM pg_catalog.pg_proc AS function_record
@@ -185,12 +230,30 @@ WITH target_role AS (
   )::integer AS unusable_schema_count,
   COUNT(*) FILTER (
     WHERE has_schema_privilege(current_user, namespace_record.oid, 'CREATE')
-  )::integer AS schema_create_privilege_count
+  )::integer AS schema_create_privilege_count,
+  COUNT(*) FILTER (
+    WHERE has_schema_privilege(current_user, namespace_record.oid, 'USAGE WITH GRANT OPTION')
+  )::integer AS schema_usage_grant_option_count
   FROM pg_catalog.pg_namespace AS namespace_record
 ), role_membership_audit AS (
-  SELECT COUNT(*)::integer AS role_membership_count
-  FROM pg_catalog.pg_auth_members AS membership
-  JOIN target_role ON target_role.oid = membership.member
+  WITH RECURSIVE role_set_members(role_oid) AS (
+    SELECT membership.member
+    FROM pg_catalog.pg_auth_members AS membership
+    CROSS JOIN target_role
+    WHERE membership.roleid = target_role.oid
+    UNION
+    SELECT membership.member
+    FROM pg_catalog.pg_auth_members AS membership
+    JOIN role_set_members AS reachable ON membership.roleid = reachable.role_oid
+  )
+  SELECT target_role.oid AS target_role_oid,
+         (SELECT COUNT(*)::integer FROM pg_catalog.pg_auth_members AS membership
+          WHERE membership.member = target_role.oid) AS role_membership_count,
+         (SELECT COUNT(*)::integer FROM pg_catalog.pg_auth_members AS membership
+          WHERE membership.roleid = target_role.oid) AS role_member_count,
+         (SELECT COUNT(*)::integer FROM role_set_members
+          WHERE role_oid <> target_role.oid) AS role_set_member_count
+  FROM target_role
 )
 SELECT
   current_database() = :'expected_database'
@@ -203,13 +266,24 @@ SELECT
   COALESCE((SELECT rolcanlogin AND NOT rolinherit AND NOT rolsuper AND NOT rolcreatedb
                    AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls
             FROM target_role), false)
-    AND (SELECT role_membership_count = 0 FROM role_membership_audit)
+    AND (SELECT role_membership_count = 0 AND role_member_count = 0 AND role_set_member_count = 0 FROM role_membership_audit)
     AS dedicated_non_admin_role_ok,
   COALESCE(has_database_privilege(current_user, current_database(), 'CONNECT'), false)
     AND NOT COALESCE(has_database_privilege(current_user, current_database(), 'CREATE'), true)
     AND NOT COALESCE(has_database_privilege(current_user, current_database(), 'TEMP'), true)
     AS database_privileges_ok,
   (SELECT role_membership_count FROM role_membership_audit) AS role_membership_count,
+  (SELECT role_member_count FROM role_membership_audit) AS role_member_count,
+  (SELECT role_set_member_count FROM role_membership_audit) AS role_set_member_count,
+  (SELECT database_connect_grant_option_count FROM database_grant_option_audit) AS database_connect_grant_option_count,
+  (SELECT schema_usage_grant_option_count FROM schema_audit) AS schema_usage_grant_option_count,
+  (SELECT routine_execute_grant_option_count FROM routine_grant_option_audit) AS routine_execute_grant_option_count,
+  (SELECT relation_select_grant_option_count FROM relation_audit) AS relation_select_grant_option_count,
+  (SELECT column_select_grant_option_count FROM relation_audit) AS column_select_grant_option_count,
+  (SELECT sequence_select_grant_option_count FROM sequence_audit) AS sequence_select_grant_option_count,
+  (SELECT large_object_select_grant_option_count FROM large_object_audit) AS large_object_select_grant_option_count,
+  (SELECT public_large_object_read_privilege_count FROM large_object_audit) AS public_large_object_read_privilege_count,
+  (SELECT public_large_object_write_privilege_count FROM large_object_audit) AS public_large_object_write_privilege_count,
   (SELECT unreadable_relation_count FROM relation_audit) AS unreadable_relation_count,
   (SELECT unreadable_sequence_count FROM sequence_audit) AS unreadable_sequence_count,
   (SELECT unreadable_large_object_count FROM large_object_audit) AS unreadable_large_object_count,
@@ -247,10 +321,19 @@ SELECT
     AND COALESCE((SELECT rolcanlogin AND NOT rolinherit AND NOT rolsuper AND NOT rolcreatedb
                          AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls
                   FROM target_role), false)
-    AND (SELECT role_membership_count = 0 FROM role_membership_audit)
+     AND (SELECT role_membership_count = 0 AND role_member_count = 0 AND role_set_member_count = 0 FROM role_membership_audit)
     AND COALESCE(has_database_privilege(current_user, current_database(), 'CONNECT'), false)
     AND NOT COALESCE(has_database_privilege(current_user, current_database(), 'CREATE'), true)
     AND NOT COALESCE(has_database_privilege(current_user, current_database(), 'TEMP'), true)
+     AND (SELECT database_connect_grant_option_count = 0 FROM database_grant_option_audit)
+     AND (SELECT schema_usage_grant_option_count = 0 FROM schema_audit)
+     AND (SELECT routine_execute_grant_option_count = 0 FROM routine_grant_option_audit)
+     AND (SELECT relation_select_grant_option_count = 0 FROM relation_audit)
+     AND (SELECT column_select_grant_option_count = 0 FROM relation_audit)
+     AND (SELECT sequence_select_grant_option_count = 0 FROM sequence_audit)
+     AND (SELECT large_object_select_grant_option_count = 0 FROM large_object_audit)
+     AND (SELECT public_large_object_read_privilege_count = 0 FROM large_object_audit)
+     AND (SELECT public_large_object_write_privilege_count = 0 FROM large_object_audit)
     AND (SELECT unreadable_relation_count = 0 FROM relation_audit)
     AND (SELECT unreadable_sequence_count = 0 FROM sequence_audit)
     AND (SELECT unreadable_large_object_count = 0 FROM large_object_audit)
@@ -273,8 +356,7 @@ SELECT
     AND (SELECT foreign_table_count = 0 FROM relation_audit)
   ) AS backup_role_ok
 \gset
-
-\echo Backup-role catalog counts: role_membership_count=:role_membership_count unreadable_relation_count=:unreadable_relation_count unreadable_sequence_count=:unreadable_sequence_count unreadable_large_object_count=:unreadable_large_object_count relation_write_privilege_count=:relation_write_privilege_count relation_column_write_privilege_count=:relation_column_write_privilege_count relation_maintenance_privilege_count=:relation_maintenance_privilege_count sequence_write_privilege_count=:sequence_write_privilege_count large_object_write_privilege_count=:large_object_write_privilege_count executable_large_object_creation_function_count=:executable_large_object_creation_function_count executable_large_object_server_file_function_count=:executable_large_object_server_file_function_count owned_user_routine_count=:owned_user_routine_count parameter_set_privilege_count=:parameter_set_privilege_count parameter_alter_system_privilege_count=:parameter_alter_system_privilege_count lo_compat_privileges_enabled=:lo_compat_privileges_enabled executable_security_definer_function_count=:executable_security_definer_function_count executable_untrusted_function_count=:executable_untrusted_function_count schema_create_privilege_count=:schema_create_privilege_count unusable_schema_count=:unusable_schema_count row_security_relation_count=:row_security_relation_count foreign_table_count=:foreign_table_count
+\echo Backup-role catalog counts: role_membership_count=:role_membership_count role_member_count=:role_member_count role_set_member_count=:role_set_member_count database_connect_grant_option_count=:database_connect_grant_option_count schema_usage_grant_option_count=:schema_usage_grant_option_count routine_execute_grant_option_count=:routine_execute_grant_option_count relation_select_grant_option_count=:relation_select_grant_option_count column_select_grant_option_count=:column_select_grant_option_count sequence_select_grant_option_count=:sequence_select_grant_option_count large_object_select_grant_option_count=:large_object_select_grant_option_count public_large_object_read_privilege_count=:public_large_object_read_privilege_count public_large_object_write_privilege_count=:public_large_object_write_privilege_count unreadable_relation_count=:unreadable_relation_count unreadable_sequence_count=:unreadable_sequence_count unreadable_large_object_count=:unreadable_large_object_count relation_write_privilege_count=:relation_write_privilege_count relation_column_write_privilege_count=:relation_column_write_privilege_count relation_maintenance_privilege_count=:relation_maintenance_privilege_count sequence_write_privilege_count=:sequence_write_privilege_count large_object_write_privilege_count=:large_object_write_privilege_count executable_large_object_creation_function_count=:executable_large_object_creation_function_count executable_large_object_server_file_function_count=:executable_large_object_server_file_function_count owned_user_routine_count=:owned_user_routine_count parameter_set_privilege_count=:parameter_set_privilege_count parameter_alter_system_privilege_count=:parameter_alter_system_privilege_count lo_compat_privileges_enabled=:lo_compat_privileges_enabled executable_security_definer_function_count=:executable_security_definer_function_count executable_untrusted_function_count=:executable_untrusted_function_count schema_create_privilege_count=:schema_create_privilege_count unusable_schema_count=:unusable_schema_count row_security_relation_count=:row_security_relation_count foreign_table_count=:foreign_table_count
 \if :backup_role_ok
   \echo 'CATALOG_PRIVILEGE_CHECKS=PASS'
   \echo 'OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED: arbitrary trusted function bodies may have side effects; review the exact routine inventory and provide a signed, current, independently pinned side-effect attestation.'

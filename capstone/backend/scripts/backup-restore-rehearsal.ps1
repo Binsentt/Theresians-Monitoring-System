@@ -43,33 +43,26 @@ $ErrorActionPreference = 'Stop'
 $backupRole = 'tq_prod_backup_reader'
 $restoreRole = 'tq_restore_operator'
 $script:InteractivePassfilePath = $null
+$script:ExportedBackupSnapshot = $null
+$storageSafetyModule = Join-Path $PSScriptRoot 'backupStorageSafety.validation.psm1'
+if (-not (Test-Path -LiteralPath $storageSafetyModule -PathType Leaf)) { throw 'STOP: reviewed storage-safety validator is missing.' }
 $backendRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $repositoryRoot = (& git -C $backendRoot rev-parse --show-toplevel 2>$null).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $repositoryRoot) { throw 'STOP: utility must run from the reviewed Git worktree.' }
-$repositoryRoot = [System.IO.Path]::GetFullPath($repositoryRoot).TrimEnd('\')
+$repositoryRoot = [System.IO.Path]::GetFullPath($repositoryRoot)
 
 function Resolve-PathOutsideRepository([string]$PathValue, [string]$Label) {
+  if ($PathValue -match '^[A-Za-z]:(?![\\/])') { throw 'STOP: drive-relative storage paths are forbidden.' }
   $resolved = (Resolve-Path -LiteralPath $PathValue).Path
-  $full = [System.IO.Path]::GetFullPath($resolved).TrimEnd('\')
-  if ($full.Equals($repositoryRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
-      $full.StartsWith($repositoryRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+  $full = ConvertTo-TqCanonicalStoragePath $resolved
+  if (Test-TqPathWithinRoot -Path $full -Root $repositoryRoot) {
     throw "STOP: $Label must remain outside the repository."
   }
   return $full
 }
 
 function Assert-NoReparsePath([string]$PathValue) {
-  $full = [System.IO.Path]::GetFullPath($PathValue)
-  $cursor = $full
-  while ($cursor) {
-    $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
-    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-      throw 'STOP: backup inputs and destinations cannot traverse a reparse point.'
-    }
-    $parent = Split-Path -LiteralPath $cursor -Parent
-    if (-not $parent -or $parent -eq $cursor) { break }
-    $cursor = $parent
-  }
+  Assert-TqNoReparsePath -Path $PathValue
 }
 
 function Get-ApprovedStorageSids {
@@ -85,58 +78,28 @@ function Assert-RestrictedStorageAcl([string]$PathValue, [ValidateSet('ReadOnly'
   Assert-NoReparsePath $PathValue
   try { $acl = Get-Acl -LiteralPath $PathValue -ErrorAction Stop }
   catch { throw 'STOP: restricted storage ACL could not be read.' }
-  if ($RequireProtectedDacl -and -not $acl.AreAccessRulesProtected) {
-    throw 'STOP: sensitive input or backup directory must have a protected DACL.'
-  }
-
   $approved = Get-ApprovedStorageSids
-  $approvedValues = @($approved.Current, $approved.System, $approved.Administrators)
   try { $ownerSid = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value }
   catch { throw 'STOP: storage owner could not be verified.' }
-  if ($ownerSid -notin $approvedValues) { throw 'STOP: storage owner is not an approved local identity.' }
-
-  $allowRules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) |
-    Where-Object { $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow })
-  foreach ($rule in $allowRules) {
-    if ($rule.IdentityReference.Value -notin $approvedValues) {
-      throw 'STOP: storage ACL grants access to an unapproved identity.'
-    }
-  }
-
-  $rightsBySid = @{}
-  foreach ($rule in $allowRules) {
-    $sid = $rule.IdentityReference.Value
-    if (-not $rightsBySid.ContainsKey($sid)) { $rightsBySid[$sid] = 0 }
-    $rightsBySid[$sid] = $rightsBySid[$sid] -bor [int]$rule.FileSystemRights
-  }
-  $fullControl = [int][System.Security.AccessControl.FileSystemRights]::FullControl
-  foreach ($sid in @($approved.System, $approved.Administrators)) {
-    if (-not $rightsBySid.ContainsKey($sid) -or (($rightsBySid[$sid] -band $fullControl) -ne $fullControl)) {
-      throw 'STOP: SYSTEM and Administrators must retain FullControl on protected backup storage.'
-    }
-  }
-  if (-not $rightsBySid.ContainsKey($approved.Current)) { throw 'STOP: the current operator has no direct approved storage grant.' }
-  $operatorRights = $rightsBySid[$approved.Current]
-  $requiredMask = switch ($RequiredAccess) {
-    'ReadOnly' { [int][System.Security.AccessControl.FileSystemRights]::Read }
-    'ReadWrite' { [int][System.Security.AccessControl.FileSystemRights]::Read -bor [int][System.Security.AccessControl.FileSystemRights]::Write }
-    'Modify' { [int][System.Security.AccessControl.FileSystemRights]::Modify }
-  }
-  if (($operatorRights -band $requiredMask) -ne $requiredMask) {
-    throw 'STOP: the current operator lacks the minimum direct access required for this path.'
-  }
+  $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+  Assert-TqRestrictedAclRules -Rules $rules -ApprovedSids $approved -OwnerSid $ownerSid -RequiredAccess $RequiredAccess -RequireProtectedDacl $RequireProtectedDacl -AreAccessRulesProtected $acl.AreAccessRulesProtected
 }
 
 function Assert-EncryptedLocalVolume([string]$PathValue) {
   $full = [System.IO.Path]::GetFullPath($PathValue)
   $root = [System.IO.Path]::GetPathRoot($full)
   if ($root -notmatch '^[A-Za-z]:\\$') { throw 'STOP: encrypted storage must be a verified local Windows volume.' }
+  try { $drive = [System.IO.DriveInfo]::new($root) }
+  catch { throw 'STOP: local storage volume type and filesystem could not be verified.' }
+  if ($drive.DriveType -ne [System.IO.DriveType]::Fixed -or $drive.DriveFormat -cne 'NTFS') {
+    throw 'STOP: backup and restore storage must be on a fixed NTFS volume.'
+  }
   if (-not (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue)) {
     throw 'STOP: BitLocker status cannot be verified on this system.'
   }
   try { $volume = Get-BitLockerVolume -MountPoint $root -ErrorAction Stop }
   catch { throw 'STOP: BitLocker encryption/protection status could not be verified.' }
-  if ($volume.VolumeStatus -ne 'FullyEncrypted' -or $volume.ProtectionStatus -ne 'On') {
+  if ($volume.VolumeStatus -ne 'FullyEncrypted' -or $volume.ProtectionStatus -ne 'On' -or [int]$volume.EncryptionPercentage -ne 100) {
     throw 'STOP: backup or restored Student data must be on a fully encrypted, BitLocker-protected volume.'
   }
 }
@@ -231,6 +194,110 @@ function Assert-InteractivePassfileAbsent {
   if ($script:InteractivePassfilePath -and (Test-Path -LiteralPath $script:InteractivePassfilePath)) {
     throw 'STOP: the protected prompt-only passfile path was unexpectedly created; do not continue or inspect it in logs.'
   }
+}
+
+function Read-BoundedSnapshotOutputLine([System.IO.StreamReader]$Reader, [datetime]$DeadlineUtc, [System.Diagnostics.Process]$Process) {
+  if ($Process.HasExited) { throw 'STOP: exported snapshot psql process exited before publishing its readiness record.' }
+  $remaining = [int][Math]::Max(1, [Math]::Ceiling(($DeadlineUtc - [DateTime]::UtcNow).TotalMilliseconds))
+  $lineTask = $Reader.ReadLineAsync()
+  try {
+    if (-not $lineTask.Wait($remaining)) { throw 'STOP: exported snapshot readiness output timed out.' }
+    return $lineTask.GetAwaiter().GetResult()
+  } catch {
+    if ($_.Exception.Message -like 'STOP:*') { throw }
+    throw 'STOP: exported snapshot readiness output could not be read.'
+  }
+}
+
+function Start-ExportedBackupSnapshot([string]$Service) {
+  if ($Service -notmatch '^[A-Za-z0-9_.-]{1,63}$') { throw 'STOP: exported snapshot service alias is invalid.' }
+  $serviceFile = Resolve-PathOutsideRepository $ServiceFilePath 'PGSERVICEFILE'
+  $serviceDirectory = Split-Path -LiteralPath $serviceFile -Parent
+  Assert-RestrictedStorageAcl $serviceDirectory 'Modify' $true
+  $snapshotSqlPath = Join-Path $serviceDirectory ('.tq-exported-snapshot-' + [guid]::NewGuid().ToString('N') + '.sql')
+  if (Test-Path -LiteralPath $snapshotSqlPath) { throw 'STOP: exported snapshot SQL path unexpectedly exists.' }
+  $snapshotSql = @'
+\set ON_ERROR_STOP on
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SELECT pg_catalog.pg_export_snapshot();
+\echo TQ_BACKUP_SNAPSHOT_READY
+SELECT pg_catalog.pg_sleep(900);
+ROLLBACK;
+'@
+  Write-NewProtectedTextFile $snapshotSqlPath $snapshotSql
+  $process = $null
+  try {
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $PsqlPath
+    $startInfo.Arguments = "--dbname=service=$Service -X -q -A -t --set=ON_ERROR_STOP=1 --file=`"$snapshotSqlPath`""
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $false
+    $startInfo.RedirectStandardInput = $false
+    $startInfo.CreateNoWindow = $false
+    $startInfo.EnvironmentVariables['PGOPTIONS'] = '-c default_transaction_read_only=on -c statement_timeout=0 -c lock_timeout=2000'
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    if (-not $process.Start()) { throw 'STOP: exported snapshot psql process did not start.' }
+    $deadlineUtc = [DateTime]::UtcNow.AddSeconds(30)
+    $snapshotId = $null
+    $ready = $false
+    while (-not $ready) {
+      $line = Read-BoundedSnapshotOutputLine -Reader $process.StandardOutput -DeadlineUtc $deadlineUtc -Process $process
+      if ($null -eq $line) { throw 'STOP: exported snapshot psql process closed output before readiness.' }
+      if (-not $snapshotId -and $line -match '^[0-9A-Fa-f]+-[0-9A-Fa-f]+-[0-9A-Fa-f]+$') {
+        $snapshotId = $line
+        continue
+      }
+      if ($line -ceq 'TQ_BACKUP_SNAPSHOT_READY' -and $snapshotId) { $ready = $true; continue }
+      throw 'STOP: exported snapshot psql process returned an unexpected readiness record.'
+    }
+    $snapshot = [pscustomobject]@{ Process = $process; SnapshotId = $snapshotId; ScriptPath = $snapshotSqlPath }
+    Assert-ExportedBackupSnapshotAlive $snapshot
+    return $snapshot
+  } catch {
+    if ($process) {
+      try {
+        if (-not $process.HasExited) { $process.Kill(); [void]$process.WaitForExit(10000) }
+      } catch { }
+      try { $process.Dispose() } catch { }
+    }
+    if (Test-Path -LiteralPath $snapshotSqlPath) {
+      try { Remove-Item -LiteralPath $snapshotSqlPath -Force -ErrorAction Stop } catch { throw 'STOP: snapshot setup failed and its protected temporary SQL file could not be removed.' }
+    }
+    if ($_.Exception.Message -like 'STOP:*') { throw }
+    throw 'STOP: exported PostgreSQL snapshot could not be established.'
+  }
+}
+
+function Assert-ExportedBackupSnapshotAlive([object]$Snapshot) {
+  if (-not $Snapshot -or -not $Snapshot.Process -or $Snapshot.Process.HasExited -or
+      [string]$Snapshot.SnapshotId -notmatch '^[0-9A-Fa-f]+-[0-9A-Fa-f]+-[0-9A-Fa-f]+$') {
+    throw 'STOP: exported snapshot transaction ended or its identifier is invalid.'
+  }
+}
+
+function Stop-ExportedBackupSnapshot([object]$Snapshot) {
+  if (-not $Snapshot) { return }
+  $cleanupFailed = $false
+  try {
+    if ($Snapshot.Process -and -not $Snapshot.Process.HasExited) {
+      try {
+        $Snapshot.Process.Kill()
+        if (-not $Snapshot.Process.WaitForExit(10000)) { $cleanupFailed = $true }
+      } catch { $cleanupFailed = $true }
+    }
+    if ($Snapshot.Process -and -not $Snapshot.Process.HasExited) { $cleanupFailed = $true }
+    if ($Snapshot.ScriptPath -and (Test-Path -LiteralPath $Snapshot.ScriptPath)) {
+      try { Remove-Item -LiteralPath $Snapshot.ScriptPath -Force -ErrorAction Stop }
+      catch { $cleanupFailed = $true }
+    }
+    if ($Snapshot.ScriptPath -and (Test-Path -LiteralPath $Snapshot.ScriptPath)) { $cleanupFailed = $true }
+  } finally {
+    if ($Snapshot.Process) { $Snapshot.Process.Dispose() }
+  }
+  $script:ExportedBackupSnapshot = $null
+  if ($cleanupFailed) { throw 'STOP: exported snapshot cleanup could not be independently verified.' }
 }
 
 function Get-VerifiedToolVersions {
@@ -362,13 +429,83 @@ function Invoke-ReleaseStateAudit([string]$Service, [string]$Role) {
   }
 }
 
+function Invoke-ContentIntegrityAudit([string]$Service, [string]$Role, [string]$SnapshotId = '') {
+  if ($SnapshotId -and $SnapshotId -notmatch '^[0-9A-Fa-f]+-[0-9A-Fa-f]+-[0-9A-Fa-f]+$') {
+    throw 'STOP: exported snapshot identifier is malformed.'
+  }
+  $arguments = @(
+    '--dbname', "service=$Service", '-X', '-q', '-A', '-t', '-P', 'pager=off',
+    '-v', 'ON_ERROR_STOP=1',
+    '-v', "expected_database=$ExpectedDatabase",
+    '-v', "expected_role=$Role",
+    '-v', "expected_server_address=$ExpectedServerAddress",
+    '-v', "expected_server_port=$ExpectedServerPort",
+    '-f', (Join-Path $PSScriptRoot 'backup-restore-integrity-preflight.sql')
+  )
+  if ($SnapshotId) { $arguments += @('-v', "snapshot_id=$SnapshotId") }
+  $output = @(& $PsqlPath @arguments 2>$null)
+  $exitCode = $LASTEXITCODE
+  Assert-InteractivePassfileAbsent
+  if ($exitCode -ne 0) { throw 'STOP: aggregate backup/restore integrity audit failed.' }
+  $lines = @($output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+  if (@($lines | Where-Object { $_ -ceq 'BACKUP_TARGET_IDENTITY=PASS' }).Count -ne 1 -or
+      @($lines | Where-Object { $_ -match '^BACKUP_TARGET_IDENTITY=' -and $_ -cne 'BACKUP_TARGET_IDENTITY=PASS' }).Count -gt 0) {
+    throw 'STOP: aggregate integrity target identity output was missing or invalid.'
+  }
+  $resultRows = @($lines | Where-Object { $_ -match '^BACKUP_CONTENT_INTEGRITY=' })
+  if ($resultRows.Count -ne 1) {
+    throw 'STOP: aggregate integrity evidence was missing, ambiguous, oversized, or malformed.'
+  }
+  $matchResult = [regex]::Match($resultRows[0], '^BACKUP_CONTENT_INTEGRITY=PASS\|([a-f0-9]{64})\|([a-f0-9]{64})\|([a-f0-9]{64})\|([a-f0-9]{64})\|([0-9]+)\|([0-9]+)\|([0-9]+)\|([0-9]+)\|([0-9]+)$')
+  if (-not $matchResult.Success) { throw 'STOP: aggregate integrity evidence was unverified, oversized, or malformed.' }
+  $values = @(
+    $matchResult.Groups[1].Value, $matchResult.Groups[2].Value,
+    $matchResult.Groups[3].Value, $matchResult.Groups[4].Value,
+    $matchResult.Groups[5].Value, $matchResult.Groups[6].Value,
+    $matchResult.Groups[7].Value, $matchResult.Groups[8].Value,
+    $matchResult.Groups[9].Value
+  )
+  return [pscustomobject]@{
+    ManifestSha256 = (Get-TqSha256Text ($values -join '|'))
+    SchemaSha256 = $values[0]
+    TableSha256 = $values[1]
+    SequenceSha256 = $values[2]
+    LargeObjectSha256 = $values[3]
+    TableCount = [long]$values[4]
+    RowCount = [long]$values[5]
+    SequenceCount = [long]$values[6]
+    LargeObjectCount = [long]$values[7]
+    LargeObjectBytes = [long]$values[8]
+  }
+}
+
+function Get-TqSha256Text([string]$Value) {
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+    return ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+  } finally { $sha.Dispose() }
+}
+
+function Test-ContentIntegrityEqual([object]$Left, [object]$Right) {
+  return $Left.ManifestSha256 -ceq $Right.ManifestSha256 -and
+    $Left.SchemaSha256 -ceq $Right.SchemaSha256 -and
+    $Left.TableSha256 -ceq $Right.TableSha256 -and
+    $Left.SequenceSha256 -ceq $Right.SequenceSha256 -and
+    $Left.LargeObjectSha256 -ceq $Right.LargeObjectSha256 -and
+    $Left.TableCount -eq $Right.TableCount -and $Left.RowCount -eq $Right.RowCount -and
+    $Left.SequenceCount -eq $Right.SequenceCount -and
+    $Left.LargeObjectCount -eq $Right.LargeObjectCount -and $Left.LargeObjectBytes -eq $Right.LargeObjectBytes
+}
+
 function Assert-StoragePath([string]$PathValue) {
   $full = Resolve-PathOutsideRepository $PathValue 'backup or restore artifact'
+  Assert-TqNoReparsePath -Path $full
+  $full = Assert-TqArtifactPathNotVolumeRoot $full
   $temporaryRoots = @($env:TEMP, $env:TMP, $env:RUNNER_TEMP) | Where-Object { $_ }
   foreach ($tempRoot in $temporaryRoots) {
-    $tempFull = [System.IO.Path]::GetFullPath($tempRoot).TrimEnd('\')
-    if ($full.Equals($tempFull, [System.StringComparison]::OrdinalIgnoreCase) -or
-        $full.StartsWith($tempFull + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+    $tempFull = ConvertTo-TqCanonicalStoragePath $tempRoot
+    if (Test-TqPathWithinRoot -Path $full -Root $tempFull) {
       throw 'STOP: backup artifacts cannot be stored in a temporary or CI directory.'
     }
   }
@@ -396,6 +533,9 @@ foreach ($commit in @($ExpectedToolSourceCommit, $ExpectedProductionApplicationC
 }
 $reviewedInputs = @(
   'capstone/backend/scripts/backup-restore-rehearsal.ps1',
+  'capstone/backend/scripts/backupStorageSafety.validation.psm1',
+  'capstone/backend/scripts/backup-restore-integrity-preflight.sql',
+  'capstone/backend/scripts/postgres-exported-snapshot.integration.cjs',
   'capstone/backend/scripts/backup-role-preflight.sql',
   'capstone/backend/scripts/backupRoleReview.validation.psm1',
   'capstone/backend/scripts/releasePreflightConnection.validation.psm1',
@@ -408,6 +548,10 @@ $sourceStatus = @(& git -C $repositoryRoot status --porcelain --untracked-files=
 if ($LASTEXITCODE -ne 0 -or $sourceStatus.Count -gt 0) {
   throw 'STOP: backup/preflight files or migrations are modified/untracked; use a clean reviewed release commit.'
 }
+if ($Action -eq 'CreateProductionBackup') {
+  throw 'STOP: production backup remains disabled. MVCC data can share an exported snapshot, but sequence state is non-MVCC and requires a separately reviewed, externally enforced write-quiescence procedure that this build does not implement.'
+}
+Import-Module -Name $storageSafetyModule -Force -ErrorAction Stop
 $connectionValidationModule = Join-Path $PSScriptRoot 'releasePreflightConnection.validation.psm1'
 $backupRoleReviewModule = Join-Path $PSScriptRoot 'backupRoleReview.validation.psm1'
 foreach ($modulePath in @($connectionValidationModule, $backupRoleReviewModule)) {
@@ -451,23 +595,28 @@ try {
       throw 'STOP: refusing to overwrite an existing archive or sidecar.'
     }
 
-    $env:PGOPTIONS = '-c default_transaction_read_only=on -c statement_timeout=10000 -c lock_timeout=2000'
+    $env:PGOPTIONS = '-c default_transaction_read_only=on -c statement_timeout=30min -c lock_timeout=2000'
     Write-Output "Approval reference: $ApprovalReference"
     Write-Output 'Running the fixed catalog-only backup role audit.'
     $roleAuditBefore = Invoke-PsqlAudit $BackupServiceName $backupRole 'backup-role-preflight.sql'
     $roleReviewBefore = Get-VerifiedBackupRoleReview $roleAuditBefore.RoutineInventorySha256
     $beforeState = Invoke-ReleaseStateAudit $BackupServiceName $backupRole
+    $script:ExportedBackupSnapshot = Start-ExportedBackupSnapshot $BackupServiceName
+    Assert-ExportedBackupSnapshotAlive $script:ExportedBackupSnapshot
+    $beforeIntegrity = Invoke-ContentIntegrityAudit $BackupServiceName $backupRole $script:ExportedBackupSnapshot.SnapshotId
     Assert-SufficientFreeSpace $destination $beforeState.DatabaseSizeBytes
 
     $dumpArguments = @(
-      '--format=custom', '--compress=6', '--lock-wait-timeout=5s', '--no-tablespaces',
+      '--format=custom', '--compress=6', '--lock-wait-timeout=5s', "--snapshot=$($script:ExportedBackupSnapshot.SnapshotId)", '--no-tablespaces',
       "--file=$partial", "--dbname=service=$BackupServiceName"
     )
     & $PgDumpPath @dumpArguments 2> $dumpLog
     $dumpExit = $LASTEXITCODE
+    Assert-ExportedBackupSnapshotAlive $script:ExportedBackupSnapshot
     Assert-InteractivePassfileAbsent
     if ($dumpExit -ne 0) { throw "STOP: pg_dump failed (exit $dumpExit); partial archive and protected log were retained." }
-    Move-Item -LiteralPath $partial -Destination $archive
+    try { [System.IO.File]::Move($partial, $archive) }
+    catch { throw 'STOP: archive finalization failed; no existing destination was overwritten and the partial archive was retained.' }
 
     $roleAuditAfter = Invoke-PsqlAudit $BackupServiceName $backupRole 'backup-role-preflight.sql'
     if ($roleAuditAfter.RoutineInventorySha256 -cne $roleAuditBefore.RoutineInventorySha256) {
@@ -478,6 +627,12 @@ try {
       throw 'STOP: backup-role review evidence changed during the archive operation.'
     }
     $afterState = Invoke-ReleaseStateAudit $BackupServiceName $backupRole
+    Assert-ExportedBackupSnapshotAlive $script:ExportedBackupSnapshot
+    $afterIntegrity = Invoke-ContentIntegrityAudit $BackupServiceName $backupRole $script:ExportedBackupSnapshot.SnapshotId
+    Assert-ExportedBackupSnapshotAlive $script:ExportedBackupSnapshot
+    if (-not (Test-ContentIntegrityEqual $beforeIntegrity $afterIntegrity)) {
+      throw 'STOP: source aggregate integrity changed across the archive window; retain the archive as unverified and investigate concurrent changes.'
+    }
     & $PgRestorePath '--list' $archive 1> $tocPath 2> $listLog
     $listExit = $LASTEXITCODE
     if ($listExit -ne 0) { throw "STOP: pg_restore could not list the archive (exit $listExit); archive and logs were retained." }
@@ -488,7 +643,7 @@ try {
     } else { 'UNAVAILABLE' }
     Write-NewProtectedTextFile $hashPath "$digest  $([System.IO.Path]::GetFileName($archive))`r`n"
     $metadata = [ordered]@{
-      format = 'theresians-logical-backup-manifest-v1'
+      format = 'theresians-logical-backup-manifest-v3'
       archiveFileName = [System.IO.Path]::GetFileName($archive)
       archiveSha256 = $digest
       createdAtUtc = [DateTime]::UtcNow.ToString('o')
@@ -508,6 +663,11 @@ try {
       sourceStateAfterDump = $afterState.Readiness
       sourceMetadataFingerprintBeforeDump = $beforeState.Fingerprint
       sourceMetadataFingerprintAfterDump = $afterState.Fingerprint
+      sourceContentIntegrityBeforeDump = $beforeIntegrity
+      sourceContentIntegrityAfterDump = $afterIntegrity
+      sourceContentSnapshotPolicy = 'SHARED_EXPORTED_REPEATABLE_READ_SNAPSHOT_FOR_MVCC_DATA'
+      sourceSequenceStatePolicy = 'NON_MVCC_REQUIRES_EXTERNAL_WRITE_QUIESCENCE'
+      sourceContentSnapshotWarning = 'The aggregate manifests and pg_dump import one exported repeatable-read snapshot for MVCC data. PostgreSQL sequence state is non-MVCC and must remain quiescent under a separately reviewed, externally enforced procedure.'
       restoreReleaseReadiness = $releaseReadiness
       restoreMetadataFingerprint = $metadataFingerprint
       databaseSizeBytes = [Math]::Max($beforeState.DatabaseSizeBytes, $afterState.DatabaseSizeBytes)
@@ -518,12 +678,13 @@ try {
       serverConfigurationIncluded = $false
       railwayConfigurationIncluded = $false
       extensionBinariesIncluded = $false
-      operatorNote = 'Not complete disaster-recovery coverage. Separately reviewed role/extension/configuration recreation and recovery steps remain required.'
+      operatorNote = 'Not complete disaster-recovery coverage. MVCC data shares an exported snapshot; production backup acceptance remains blocked until non-MVCC sequence state is protected by a separately reviewed, externally enforced write-quiescence procedure. Separately reviewed role/extension/configuration recreation and recovery steps remain required.'
     }
     Write-NewProtectedTextFile $metadataPath (($metadata | ConvertTo-Json -Depth 6) + "`r`n")
     foreach ($artifact in @($archive, $dumpLog, $tocPath, $listLog, $hashPath, $metadataPath)) { Assert-ArtifactAcl $artifact 'ReadWrite' }
     Write-Output "PASS: custom archive created and TOC validated. SHA256=$digest"
-    Write-Output "Restore-integrity metadata comparison status: $(if ($metadataFingerprint -match '^[a-f0-9]{32}$') { 'AVAILABLE' } else { 'UNVERIFIED' })."
+    Write-Output "Restore-integrity metadata comparison status: $(if ($metadataFingerprint -match '^[a-f0-9]{32}$' -and $beforeIntegrity.ManifestSha256 -ceq $afterIntegrity.ManifestSha256) { 'AVAILABLE' } else { 'UNVERIFIED' })."
+    Write-Output 'MVCC source snapshot consistency: PASS. Sequence state remains subject to external write-quiescence and is not covered by the MVCC snapshot.'
     Write-Output "Release readiness: $releaseReadiness. No schema repair or migration was run."
     Write-Output 'Archive scope excludes database-global roles, memberships, tablespaces, server/Railway configuration, and extension binaries; do not describe it as complete disaster recovery.'
     Write-Output 'Keep the archive, manifest, digest, and logs only in the verified encrypted restricted destination; apply a separately approved retention and secure-disposal policy.'
@@ -549,10 +710,15 @@ try {
     Assert-ArtifactAcl $metadataPath 'ReadOnly'
     try { $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json -ErrorAction Stop }
     catch { throw 'STOP: backup metadata sidecar is invalid.' }
-    if ($metadata.format -cne 'theresians-logical-backup-manifest-v1' -or
+    if ($metadata.format -cne 'theresians-logical-backup-manifest-v3' -or
         $metadata.archiveSha256 -ine $actualDigest -or
         $metadata.productionApplicationCommit -cne $ExpectedProductionApplicationCommit -or
         $metadata.toolSourceCommit -cne $ExpectedToolSourceCommit -or
+        $metadata.sourceContentSnapshotPolicy -cne 'SHARED_EXPORTED_REPEATABLE_READ_SNAPSHOT_FOR_MVCC_DATA' -or
+        $metadata.sourceSequenceStatePolicy -cne 'NON_MVCC_REQUIRES_EXTERNAL_WRITE_QUIESCENCE' -or
+        $metadata.sourceContentSnapshotWarning -notmatch 'sequence state is non-MVCC' -or
+        $metadata.sourceContentIntegrityBeforeDump.ManifestSha256 -notmatch '^[a-f0-9]{64}$' -or
+        $metadata.sourceContentIntegrityBeforeDump.ManifestSha256 -cne $metadata.sourceContentIntegrityAfterDump.ManifestSha256 -or
         $metadata.restoreReleaseReadiness -notin @('PRE_MIGRATION_026', 'POST_MIGRATION_026', 'UNVERIFIED')) {
       throw 'STOP: backup metadata does not match the verified archive and pinned tool/application source commits.'
     }
@@ -618,13 +784,19 @@ ROLLBACK;
     Assert-ArtifactAcl $restoreLog 'ReadWrite'
     Assert-ArtifactAcl $restoreErrorLog 'ReadWrite'
     $restoredState = Invoke-ReleaseStateAudit $RestoreServiceName $restoreRole
+    $restoredIntegrity = Invoke-ContentIntegrityAudit $RestoreServiceName $restoreRole
+    $sourceIntegrity = [pscustomobject]$metadata.sourceContentIntegrityBeforeDump
+    if (-not (Test-ContentIntegrityEqual $sourceIntegrity $restoredIntegrity)) {
+      throw 'STOP: isolated restore aggregate integrity does not match the source manifest; do not accept this restore rehearsal.'
+    }
     $expectedFingerprint = [string]$metadata.restoreMetadataFingerprint
     $metadataMatches = $expectedFingerprint -match '^[a-f0-9]{32}$' -and
       $restoredState.Fingerprint -ceq $expectedFingerprint -and
       $restoredState.Readiness -ceq [string]$metadata.restoreReleaseReadiness
     $metadataStatus = if ($metadataMatches) { 'PASS' } else { 'UNVERIFIED' }
     $readinessStatus = if ($metadataMatches) { $restoredState.Readiness } else { 'UNVERIFIED' }
-    Write-Output 'PASS: archive restore integrity checks (SHA-256, custom TOC, empty loopback target, transactional pg_restore) completed.'
+    Write-Output 'PASS: archive digest/TOC checks and transactional isolated restore completed; restored aggregate manifests matched the stored pre-dump reference.'
+    Write-Output 'The stored source manifest and pg_dump shared one exported repeatable-read snapshot for MVCC data; sequence state remains separately gated by write-quiescence.'
     Write-Output 'Restore integrity and release-schema readiness remain separate results.'
     Write-Output "Read-only source/restore catalog metadata comparison: $metadataStatus."
     Write-Output "Migration release readiness: $readinessStatus. Archive integrity and migration readiness are separate results."
@@ -633,8 +805,12 @@ ROLLBACK;
   }
 }
 finally {
-  foreach ($variable in @(Get-ChildItem Env:PG* -ErrorAction SilentlyContinue)) {
-    Remove-Item -LiteralPath "Env:$($variable.Name)" -ErrorAction SilentlyContinue
+  try {
+    if ($script:ExportedBackupSnapshot) { Stop-ExportedBackupSnapshot $script:ExportedBackupSnapshot }
+  } finally {
+    foreach ($variable in @(Get-ChildItem Env:PG* -ErrorAction SilentlyContinue)) {
+      Remove-Item -LiteralPath "Env:$($variable.Name)" -ErrorAction SilentlyContinue
+    }
+    foreach ($name in $previousPgEnvironment.Keys) { Set-Item -Path "Env:$name" -Value $previousPgEnvironment[$name] }
   }
-  foreach ($name in $previousPgEnvironment.Keys) { Set-Item -Path "Env:$name" -Value $previousPgEnvironment[$name] }
 }
