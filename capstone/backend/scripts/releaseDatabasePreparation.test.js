@@ -1216,9 +1216,9 @@ test('backup source audits and pg_dump share one exported snapshot while sequenc
     'synthetic identity failures must expose SQLSTATE to the bounded sanitizer without printing raw stderr');
   assert.match(snapshotIntegration, /container\.HostConfig\.NetworkMode, 'none'/);
   assert.match(snapshotIntegration, /container\.Config\.Image, `postgres:\$\{EXPECTED_MAJOR\}-bookworm`/);
-  assert.match(snapshotIntegration, /const identity = psql\([\s\S]*?,\s*'tq_backend_test_ci'\s*\)/,
-    'the identity probe must connect to the disposable database that receives the CI sentinel');
-  assert.match(snapshotIntegration, /`tq_backend_test_ci\|postgres\|127\.0\.0\.1\|5432\|\$\{EXPECTED_MAJOR\}\|tq-disposable-ci:\$\{SENTINEL\}`/);
+  assert.match(snapshotIntegration, /const identity = psql\([\s\S]*?,\s*'tq_preflight_valid_test_ci'\s*\)/,
+    'the identity probe must connect to a database actually provisioned and sentinel-marked by both matrix jobs');
+  assert.match(snapshotIntegration, /`tq_preflight_valid_test_ci\|postgres\|127\.0\.0\.1\|5432\|\$\{EXPECTED_MAJOR\}\|tq-disposable-ci:\$\{SENTINEL\}`/);
   assert.match(snapshotIntegration, /pg_export_snapshot\(\)/);
   assert.match(snapshotIntegration, /SET TRANSACTION SNAPSHOT '\$\{snapshotId\}'/);
   assert.match(snapshotIntegration, /`--snapshot=\$\{snapshotId\}`/);
