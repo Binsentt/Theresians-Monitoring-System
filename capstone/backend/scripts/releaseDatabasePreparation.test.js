@@ -727,6 +727,11 @@ test('backup content integrity uses read-only aggregate manifests and compares r
   assert.match(sql, /schema_manifest/);
   assert.match(sql, /pg_get_partkeydef/);
   assert.match(sql, /pg_get_expr\(relation\.relpartbound/);
+  assert.match(sql, /'collation', collation_entry\.collname/,
+    'the aggregate manifest must not use COLLATION, a PostgreSQL keyword, as a relation alias');
+  assert.match(sql, /pg_catalog\.pg_collation AS collation_entry ON collation_entry\.oid = attribute\.attcollation/);
+  assert.match(sql, /collation_namespace\.oid = collation_entry\.collnamespace/);
+  assert.doesNotMatch(sql, /pg_catalog\.pg_collation AS collation\b/);
   assert.match(sql, /row-security-policy/);
   assert.match(sql, /pg_get_ruledef/);
   assert.match(sql, /sequence-ownership/);
@@ -1148,6 +1153,9 @@ test('backup source audits and pg_dump share one exported snapshot while sequenc
   assert.match(snapshotIntegration, /const CONTAINER = 'tq-backend-test-postgres'/);
   assert.match(snapshotIntegration, /container\.HostConfig\.NetworkMode, 'none'/);
   assert.match(snapshotIntegration, /container\.Config\.Image, `postgres:\$\{EXPECTED_MAJOR\}-bookworm`/);
+  assert.match(snapshotIntegration, /const identity = psql\([\s\S]*?,\s*'tq_backend_test_ci'\s*\)/,
+    'the identity probe must connect to the disposable database that receives the CI sentinel');
+  assert.match(snapshotIntegration, /`tq_backend_test_ci\|postgres\|127\.0\.0\.1\|5432\|\$\{EXPECTED_MAJOR\}\|tq-disposable-ci:\$\{SENTINEL\}`/);
   assert.match(snapshotIntegration, /pg_export_snapshot\(\)/);
   assert.match(snapshotIntegration, /SET TRANSACTION SNAPSHOT '\$\{snapshotId\}'/);
   assert.match(snapshotIntegration, /`--snapshot=\$\{snapshotId\}`/);

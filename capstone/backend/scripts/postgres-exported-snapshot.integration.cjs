@@ -73,10 +73,10 @@ function verifyCiTarget() {
       (SELECT pg_catalog.shobj_description(database_record.oid, 'pg_database')
        FROM pg_catalog.pg_database AS database_record
        WHERE database_record.datname = current_database());
-  `);
+  `, 'tq_backend_test_ci');
   assertCommand(identity, 'verify exact disposable PostgreSQL identity');
   assert.equal(String(identity.stdout || '').trim(),
-    `postgres|postgres|127.0.0.1|5432|${EXPECTED_MAJOR}|tq-disposable-ci:${SENTINEL}`);
+    `tq_backend_test_ci|postgres|127.0.0.1|5432|${EXPECTED_MAJOR}|tq-disposable-ci:${SENTINEL}`);
   record('exact PostgreSQL major, loopback target, no-published-port container, and sentinel identity');
 }
 

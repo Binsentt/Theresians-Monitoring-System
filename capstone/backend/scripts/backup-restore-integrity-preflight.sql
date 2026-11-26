@@ -62,15 +62,15 @@ WITH RECURSIVE schema_entities AS (
     'notNull', attribute.attnotnull, 'identity', attribute.attidentity::text,
     'generated', attribute.attgenerated::text,
     'default', pg_catalog.pg_get_expr(default_record.adbin, default_record.adrelid),
-    'collationSchema', collation_namespace.nspname, 'collation', collation.collname
+    'collationSchema', collation_namespace.nspname, 'collation', collation_entry.collname
   )
   FROM pg_catalog.pg_attribute AS attribute
   JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid
   JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
   LEFT JOIN pg_catalog.pg_attrdef AS default_record
     ON default_record.adrelid = attribute.attrelid AND default_record.adnum = attribute.attnum
-  LEFT JOIN pg_catalog.pg_collation AS collation ON collation.oid = attribute.attcollation
-  LEFT JOIN pg_catalog.pg_namespace AS collation_namespace ON collation_namespace.oid = collation.collnamespace
+  LEFT JOIN pg_catalog.pg_collation AS collation_entry ON collation_entry.oid = attribute.attcollation
+  LEFT JOIN pg_catalog.pg_namespace AS collation_namespace ON collation_namespace.oid = collation_entry.collnamespace
   WHERE attribute.attnum > 0 AND NOT attribute.attisdropped
     AND namespace.nspname <> 'information_schema' AND namespace.nspname !~ '^pg_'
 
