@@ -1186,6 +1186,7 @@ assert.match(backupRoleAudit.stdout, /unreadable_relation_count=0/);
 assert.match(backupRoleAudit.stdout, /unreadable_sequence_count=0/);
 assert.match(backupRoleAudit.stdout, /unreadable_large_object_count=0/);
 assert.match(backupRoleAudit.stdout, /relation_write_privilege_count=0/);
+assert.match(backupRoleAudit.stdout, /relation_column_write_privilege_count=0/);
 assert.match(backupRoleAudit.stdout, /relation_maintenance_privilege_count=0/);
 assert.match(backupRoleAudit.stdout, /parameter_set_privilege_count=0/);
 assert.match(backupRoleAudit.stdout, /parameter_alter_system_privilege_count=0/);
@@ -1199,7 +1200,54 @@ assert.doesNotMatch(backupRoleAudit.stdout, /pg_get_functiondef|synthetic_backup
 assert.match(backupRoleAudit.stdout,
   /OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:/,
   'the catalog audit must preserve its explicit unknown-function-side-effect gate');
+assert.match(backupRoleAudit.stdout, /lo_compat_privileges_enabled=f/);
 const initialRoutineInventory = backupRoleAudit.stdout.match(/^BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=([a-f0-9]{64})$/m)[1];
+
+const grantColumnUpdate = psql(CASES.valid, 'postgres',
+  'GRANT UPDATE (name) ON TABLE public.accounts TO tq_prod_backup_reader;');
+assert.equal(grantColumnUpdate.status, 0, grantColumnUpdate.stderr);
+const directColumnWriteAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(directColumnWriteAudit.status, 3,
+  `a direct column-level UPDATE grant must fail closed: ${directColumnWriteAudit.stderr}\n${directColumnWriteAudit.stdout}`);
+assert.match(directColumnWriteAudit.stdout, /relation_column_write_privilege_count=1/);
+const revokeColumnUpdate = psql(CASES.valid, 'postgres',
+  'REVOKE UPDATE (name) ON TABLE public.accounts FROM tq_prod_backup_reader;');
+assert.equal(revokeColumnUpdate.status, 0, revokeColumnUpdate.stderr);
+const postDirectColumnWriteAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(postDirectColumnWriteAudit.status, 0,
+  `revoking column-level UPDATE must restore audit readiness: ${postDirectColumnWriteAudit.stderr}\n${postDirectColumnWriteAudit.stdout}`);
+recordScenario('backup role column-level UPDATE grant is rejected');
+
+const grantPublicColumnUpdate = psql(CASES.valid, 'postgres',
+  'GRANT UPDATE (name) ON TABLE public.accounts TO PUBLIC;');
+assert.equal(grantPublicColumnUpdate.status, 0, grantPublicColumnUpdate.stderr);
+const publicColumnWriteAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(publicColumnWriteAudit.status, 3,
+  `an effective PUBLIC column-level UPDATE grant must fail closed: ${publicColumnWriteAudit.stderr}\n${publicColumnWriteAudit.stdout}`);
+assert.match(publicColumnWriteAudit.stdout, /relation_column_write_privilege_count=1/);
+const revokePublicColumnUpdate = psql(CASES.valid, 'postgres',
+  'REVOKE UPDATE (name) ON TABLE public.accounts FROM PUBLIC;');
+assert.equal(revokePublicColumnUpdate.status, 0, revokePublicColumnUpdate.stderr);
+const postPublicColumnWriteAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(postPublicColumnWriteAudit.status, 0,
+  `revoking PUBLIC column-level UPDATE must restore audit readiness: ${postPublicColumnWriteAudit.stderr}\n${postPublicColumnWriteAudit.stdout}`);
+recordScenario('PUBLIC column-level UPDATE grant is rejected');
+
+const enableDatabaseLoCompatibility = psql('postgres', 'postgres',
+  `ALTER DATABASE ${CASES.valid} SET lo_compat_privileges = on;`);
+assert.equal(enableDatabaseLoCompatibility.status, 0, enableDatabaseLoCompatibility.stderr);
+const databaseLoCompatibilityAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(databaseLoCompatibilityAudit.status, 3,
+  `a database-default lo_compat_privileges bypass must fail closed: ${databaseLoCompatibilityAudit.stderr}\n${databaseLoCompatibilityAudit.stdout}`);
+assert.match(databaseLoCompatibilityAudit.stdout, /lo_compat_privileges_enabled=t/);
+const resetDatabaseLoCompatibility = psql('postgres', 'postgres',
+  `ALTER DATABASE ${CASES.valid} RESET lo_compat_privileges;`);
+assert.equal(resetDatabaseLoCompatibility.status, 0, resetDatabaseLoCompatibility.stderr);
+const postDatabaseLoCompatibilityAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(postDatabaseLoCompatibilityAudit.status, 0,
+  `resetting the disposable database default must restore audit readiness: ${postDatabaseLoCompatibilityAudit.stderr}\n${postDatabaseLoCompatibilityAudit.stdout}`);
+recordScenario('database-level lo_compat_privileges default is rejected');
+
 const createRoutine = psql(CASES.valid, 'postgres',
   'CREATE OR REPLACE FUNCTION public.synthetic_backup_review_marker() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 1 $$;');
 assert.equal(createRoutine.status, 0, createRoutine.stderr);
@@ -1706,5 +1754,5 @@ assert.equal(postRestoredState.fingerprint, postSourceState.fingerprint,
   'post-026 source and restored database catalog fingerprints must match without comparing application rows');
 recordScenario('restored archive matches source release readiness and catalog metadata fingerprint without comparing application rows');
 
-assert.equal(passedScenarioCount, 85, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
+assert.equal(passedScenarioCount, 88, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
 console.log(`Preflight integration result: ${passedScenarioCount}/${passedScenarioCount} disposable PostgreSQL scenarios passed.`);

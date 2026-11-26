@@ -47,6 +47,11 @@ WITH target_role AS (
          OR has_table_privilege(current_user, relation.oid, 'TRIGGER')
     )::integer AS relation_write_privilege_count,
     COUNT(*) FILTER (
+      WHERE has_any_column_privilege(current_user, relation.oid, 'INSERT')
+         OR has_any_column_privilege(current_user, relation.oid, 'UPDATE')
+         OR has_any_column_privilege(current_user, relation.oid, 'REFERENCES')
+    )::integer AS relation_column_write_privilege_count,
+    COUNT(*) FILTER (
       WHERE CASE
         WHEN current_setting('server_version_num')::integer >= 170000
           THEN has_table_privilege(current_user, relation.oid, 'MAINTAIN')
@@ -209,6 +214,7 @@ SELECT
   (SELECT unreadable_sequence_count FROM sequence_audit) AS unreadable_sequence_count,
   (SELECT unreadable_large_object_count FROM large_object_audit) AS unreadable_large_object_count,
   (SELECT relation_write_privilege_count FROM relation_audit) AS relation_write_privilege_count,
+  (SELECT relation_column_write_privilege_count FROM relation_audit) AS relation_column_write_privilege_count,
   (SELECT relation_maintenance_privilege_count FROM relation_audit) AS relation_maintenance_privilege_count,
   (SELECT sequence_write_privilege_count FROM sequence_audit) AS sequence_write_privilege_count,
   (SELECT large_object_write_privilege_count FROM large_object_audit) AS large_object_write_privilege_count,
@@ -222,6 +228,7 @@ SELECT
     AS parameter_set_privilege_count,
   (SELECT parameter_alter_system_privilege_count FROM parameter_privilege_audit)
     AS parameter_alter_system_privilege_count,
+  current_setting('lo_compat_privileges')::boolean AS lo_compat_privileges_enabled,
   (SELECT executable_security_definer_function_count FROM security_definer_function_audit)
     AS executable_security_definer_function_count,
   (SELECT executable_untrusted_function_count FROM untrusted_function_audit)
@@ -248,6 +255,7 @@ SELECT
     AND (SELECT unreadable_sequence_count = 0 FROM sequence_audit)
     AND (SELECT unreadable_large_object_count = 0 FROM large_object_audit)
     AND (SELECT relation_write_privilege_count = 0 FROM relation_audit)
+    AND (SELECT relation_column_write_privilege_count = 0 FROM relation_audit)
     AND (SELECT relation_maintenance_privilege_count = 0 FROM relation_audit)
     AND (SELECT sequence_write_privilege_count = 0 FROM sequence_audit)
     AND (SELECT large_object_write_privilege_count = 0 FROM large_object_audit)
@@ -256,6 +264,7 @@ SELECT
     AND (SELECT owned_user_routine_count = 0 FROM owned_user_routine_audit)
     AND (SELECT parameter_set_privilege_count = 0 FROM parameter_privilege_audit)
     AND (SELECT parameter_alter_system_privilege_count = 0 FROM parameter_privilege_audit)
+    AND NOT current_setting('lo_compat_privileges')::boolean
     AND (SELECT executable_security_definer_function_count = 0 FROM security_definer_function_audit)
     AND (SELECT executable_untrusted_function_count = 0 FROM untrusted_function_audit)
     AND (SELECT schema_create_privilege_count = 0 FROM schema_audit)
@@ -265,7 +274,7 @@ SELECT
   ) AS backup_role_ok
 \gset
 
-\echo Backup-role catalog counts: role_membership_count=:role_membership_count unreadable_relation_count=:unreadable_relation_count unreadable_sequence_count=:unreadable_sequence_count unreadable_large_object_count=:unreadable_large_object_count relation_write_privilege_count=:relation_write_privilege_count relation_maintenance_privilege_count=:relation_maintenance_privilege_count sequence_write_privilege_count=:sequence_write_privilege_count large_object_write_privilege_count=:large_object_write_privilege_count executable_large_object_creation_function_count=:executable_large_object_creation_function_count executable_large_object_server_file_function_count=:executable_large_object_server_file_function_count owned_user_routine_count=:owned_user_routine_count parameter_set_privilege_count=:parameter_set_privilege_count parameter_alter_system_privilege_count=:parameter_alter_system_privilege_count executable_security_definer_function_count=:executable_security_definer_function_count executable_untrusted_function_count=:executable_untrusted_function_count schema_create_privilege_count=:schema_create_privilege_count unusable_schema_count=:unusable_schema_count row_security_relation_count=:row_security_relation_count foreign_table_count=:foreign_table_count
+\echo Backup-role catalog counts: role_membership_count=:role_membership_count unreadable_relation_count=:unreadable_relation_count unreadable_sequence_count=:unreadable_sequence_count unreadable_large_object_count=:unreadable_large_object_count relation_write_privilege_count=:relation_write_privilege_count relation_column_write_privilege_count=:relation_column_write_privilege_count relation_maintenance_privilege_count=:relation_maintenance_privilege_count sequence_write_privilege_count=:sequence_write_privilege_count large_object_write_privilege_count=:large_object_write_privilege_count executable_large_object_creation_function_count=:executable_large_object_creation_function_count executable_large_object_server_file_function_count=:executable_large_object_server_file_function_count owned_user_routine_count=:owned_user_routine_count parameter_set_privilege_count=:parameter_set_privilege_count parameter_alter_system_privilege_count=:parameter_alter_system_privilege_count lo_compat_privileges_enabled=:lo_compat_privileges_enabled executable_security_definer_function_count=:executable_security_definer_function_count executable_untrusted_function_count=:executable_untrusted_function_count schema_create_privilege_count=:schema_create_privilege_count unusable_schema_count=:unusable_schema_count row_security_relation_count=:row_security_relation_count foreign_table_count=:foreign_table_count
 \if :backup_role_ok
   \echo 'CATALOG_PRIVILEGE_CHECKS=PASS'
   \echo 'OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED: arbitrary trusted function bodies may have side effects; review the exact routine inventory and provide a signed, current, independently pinned side-effect attestation.'
