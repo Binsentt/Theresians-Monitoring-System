@@ -1157,8 +1157,36 @@ test('synthetic HBA SQL errors expose only a bounded SQLSTATE diagnostic categor
     'sqlstate=42P01',
   );
   assert.equal(
+    diagnostics.classifyPsqlFailure({
+      status: 2,
+      stderr: 'psql: error: connection to server at "192.0.2.15", port 5432 failed: Connection refused',
+    }),
+    'connection-refused',
+  );
+  assert.equal(
+    diagnostics.classifyPsqlFailure({
+      status: 2,
+      stderr: 'psql: error: connection to server at "db.internal", port 5432 failed: FATAL:  28P01: password authentication failed for user "private_reader"',
+    }),
+    'sqlstate=28P01',
+  );
+  assert.equal(
+    diagnostics.classifyPsqlFailure({
+      status: 2,
+      stderr: 'psql: error: connection to server at "db.internal", port 5432 failed: FATAL:  3D000: database "private_db" does not exist',
+    }),
+    'sqlstate=3D000',
+  );
+  assert.equal(
     diagnostics.classifyPsqlFailure({ status: 2, stderr: 'connection detail must not be copied' }),
     'connection-failure',
+  );
+  assert.doesNotMatch(
+    diagnostics.classifyPsqlFailure({
+      status: 2,
+      stderr: 'psql: error: connection to server at "192.0.2.15", port 5432 failed: Connection refused',
+    }),
+    /192\.0\.2\.15|5432|db\.internal|private_reader|private_db/,
   );
   assert.equal(
     diagnostics.classifyPsqlFailure({ status: 3, stderr: 'unrecognized process output' }),
@@ -1184,6 +1212,8 @@ test('backup source audits and pg_dump share one exported snapshot while sequenc
   assert.match(harness, /spawnSync\(process\.execPath, \[exportedSnapshotHelper\]/);
   assert.match(harness, /passedScenarioCount, 101/);
   assert.match(snapshotIntegration, /const CONTAINER = 'tq-backend-test-postgres'/);
+  assert.match(snapshotIntegration, /'--set=VERBOSITY=verbose'/,
+    'synthetic identity failures must expose SQLSTATE to the bounded sanitizer without printing raw stderr');
   assert.match(snapshotIntegration, /container\.HostConfig\.NetworkMode, 'none'/);
   assert.match(snapshotIntegration, /container\.Config\.Image, `postgres:\$\{EXPECTED_MAJOR\}-bookworm`/);
   assert.match(snapshotIntegration, /const identity = psql\([\s\S]*?,\s*'tq_backend_test_ci'\s*\)/,

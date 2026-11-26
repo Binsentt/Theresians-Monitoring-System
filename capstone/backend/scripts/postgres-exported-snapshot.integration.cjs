@@ -40,7 +40,7 @@ function psql(sql, database = 'postgres') {
   return docker([
     'exec', '-i', CONTAINER, 'psql',
     '--host=127.0.0.1', '--port=5432', '--username=postgres', `--dbname=${database}`,
-    '--no-psqlrc', '--no-password', '--set=ON_ERROR_STOP=1', '--quiet',
+    '--no-psqlrc', '--no-password', '--set=ON_ERROR_STOP=1', '--set=VERBOSITY=verbose', '--quiet',
     '--tuples-only', '--no-align', '--field-separator=|', '--file=-',
   ], sql);
 }
