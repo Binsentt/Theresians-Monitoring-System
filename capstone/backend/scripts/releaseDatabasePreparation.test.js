@@ -170,7 +170,7 @@ test('PowerShell service-file, TLS, environment, and ACL-record validators pass 
   });
   const elapsedMs = Date.now() - startedAt;
   assert.equal(result.status, 0, `${describePowerShellResult(result, elapsedMs)} ${result.stdout || ''} ${result.stderr || ''}`);
-  assert.match(`${result.stdout}\n${result.stderr}`, /PASS: 29 synthetic/);
+  assert.match(`${result.stdout}\n${result.stderr}`, /PASS: 36 synthetic/);
 });
 
 
@@ -191,7 +191,9 @@ test('PowerShell preflight accepts only an explicit matching source SHA before t
   const caFile = path.join(tempDirectory, 'root.crt');
   const callMarker = path.join(tempDirectory, 'psql-stub-calls.txt');
   const psqlStub = path.join(tempDirectory, 'psql-stub.cmd');
-  fs.writeFileSync(passfile, 'synthetic-only-not-a-production-credential\n', 'utf8');
+  fs.writeFileSync(passfile,
+    'localhost:55432:tq_synthetic_metadata:tq_release_preflight_reader:synthetic-only-not-a-production-credential\n',
+    'utf8');
   fs.writeFileSync(caFile, 'synthetic certificate fixture; no real key or credential\n', 'utf8');
   fs.writeFileSync(serviceFile, `[tq_release_preflight]\nhost=localhost\nhostaddr=127.0.0.1\nport=55432\ndbname=fixture\nuser=tq_release_preflight_reader\nsslmode=verify-full\nsslrootcert=${caFile}\n`, 'utf8');
   fs.writeFileSync(psqlStub, `@echo invoked>>"${callMarker}"\r\n@exit /b 0\r\n`, 'utf8');
@@ -397,7 +399,7 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
   assert.match(harness, /unvalidated CHECK constraint/);
   assert.match(harness, /truncated custom-format archive must be rejected/);
   assert.match(harness, /OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:/);
-  assert.match(harness, /passedScenarioCount, 88/);
+  assert.match(harness, /passedScenarioCount, 89/);
   const unexpectedInsertAt = harness.indexOf('const unexpectedMigration = psql(CASES.preMigration026');
   const unexpectedClassifiedAt = harness.indexOf(
     "assert.equal(parseBackupReleaseState(unexpectedBackupStateResult).readiness, 'UNVERIFIED');",
@@ -882,7 +884,7 @@ test('backup harness rejects orphaned migration 026 catalog objects', () => {
   assert.match(harness, /orphaned migration-026 constraint/);
   assert.match(harness, /orphaned migration-026 trigger/);
   assert.match(harness, /orphaned migration-026 type/);
-  assert.match(harness, /passedScenarioCount, 88/);
+  assert.match(harness, /passedScenarioCount, 89/);
 });
 
 
@@ -966,7 +968,7 @@ test('backup role audit rejects executable large-object creators and unsafe call
   assert.match(harness, /direct EXECUTE on server-side large-object file functions is rejected/);
   assert.match(harness, /backup role ownership of a user routine is rejected/);
   assert.match(harness, /CREATE privilege on pg_catalog is rejected by backup-role audit/);
-  assert.match(harness, /passedScenarioCount, 88/);
+  assert.match(harness, /passedScenarioCount, 89/);
 
   const workflow = readIsolatedBackendWorkflow();
   const matrixJobs = /postgres_image:\s*\['postgres:16-bookworm',\s*'postgres:18-bookworm'\]/.test(workflow)
@@ -995,5 +997,30 @@ test('backup role audit rejects column-level writes and inherited large-object c
   assert.match(harness, /backup role column-level UPDATE grant is rejected/);
   assert.match(harness, /PUBLIC column-level UPDATE grant is rejected/);
   assert.match(harness, /database-level lo_compat_privileges default is rejected/);
-  assert.match(harness, /passedScenarioCount, 88/);
+  assert.match(harness, /passedScenarioCount, 89/);
+});
+
+
+test('disposable PostgreSQL harness tests stdin-driven password synchronization without exposing the secret', () => {
+  const harness = read('run-preflight-postgres-harness.cjs');
+  assert.match(harness, /`\\\\password \$\{syntheticPasswordRole\}`/);
+  assert.match(harness, /synchronizationOutput\.includes\(syntheticPassword\)/);
+  assert.match(harness, /PGPASSFILE=\$\{syntheticPasswordPassfile\}/);
+  assert.match(harness, /exact synthetic passfile credential must authenticate/);
+  assert.match(harness, /synthetic passfiles must be removed/);
+  assert.match(harness, /temporary pg_hba\.conf recovery copies must be removed only after successful restoration/);
+  assert.match(harness, /passedScenarioCount, 89/);
+});
+
+
+test('synthetic SCRAM passfile check waits for active HBA reload and retains recovery copy on cleanup failure', () => {
+  const harness = read('run-preflight-postgres-harness.cjs');
+  assert.match(harness, /pg_conf_load_time\(\)/);
+  assert.match(harness, /function waitForSyntheticHbaReload/);
+  assert.match(harness, /database = ARRAY\['all'\]::text\[\]/);
+  assert.match(harness, /address = '127\.0\.0\.1'::inet/);
+  assert.match(harness, /netmask = '255\.255\.255\.255'::inet/);
+  assert.match(harness, /missing synthetic passfile must not authenticate/);
+  assert.match(harness, /'env', '-u', 'PGPASSWORD', 'psql'/);
+  assert.match(harness, /if \(restoreSyntheticHbaVerified\)[\s\S]*?removeSyntheticHbaRecoveryFiles/);
 });

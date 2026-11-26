@@ -1754,5 +1754,218 @@ assert.equal(postRestoredState.fingerprint, postSourceState.fingerprint,
   'post-026 source and restored database catalog fingerprints must match without comparing application rows');
 recordScenario('restored archive matches source release readiness and catalog metadata fingerprint without comparing application rows');
 
-assert.equal(passedScenarioCount, 88, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
+const syntheticPasswordRole = 'tq_synthetic_password_sync';
+const syntheticPasswordPassfile = '/tmp/tq-synthetic-password-sync.pgpass';
+const syntheticPasswordHba = '/var/lib/postgresql/data/pg_hba.conf';
+const syntheticPasswordHbaBackup = '/tmp/tq-synthetic-password-sync.pg_hba.original';
+const syntheticPasswordHbaCandidate = '/tmp/tq-synthetic-password-sync.pg_hba.candidate';
+const syntheticPasswordHbaRule = `host all ${syntheticPasswordRole} 127.0.0.1/32 scram-sha-256`;
+const syntheticPassword = `tq-test-${crypto.randomBytes(24).toString('hex')}`;
+const createSyntheticPasswordRole = psql('postgres', 'postgres',
+  `CREATE ROLE ${syntheticPasswordRole} LOGIN;`);
+assert.equal(createSyntheticPasswordRole.status, 0,
+  'disposable password synchronization role must be created in the synthetic PostgreSQL cluster');
+let syntheticHbaBackupReady = false;
+let restoreSyntheticHbaVerified = false;
+
+function syntheticConfigLoadTime() {
+  const result = psql('postgres', 'postgres', `
+    SELECT EXTRACT(EPOCH FROM pg_catalog.pg_conf_load_time())::text;
+  `);
+  assert.equal(result.status, 0,
+    `disposable PostgreSQL configuration-load timestamp must be readable; status=${result.status}, signal=${result.signal ?? 'none'}`);
+  const seconds = Number(String(result.stdout || '').trim());
+  assert.ok(Number.isFinite(seconds) && seconds > 0,
+    'disposable PostgreSQL configuration-load timestamp must be finite and positive');
+  return seconds;
+}
+
+function waitForSyntheticHbaReload(previousLoadTime, stage) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const result = psql('postgres', 'postgres', `
+      SELECT pg_catalog.pg_sleep(0.1);
+      SELECT EXTRACT(EPOCH FROM pg_catalog.pg_conf_load_time())::text;
+    `);
+    assert.equal(result.status, 0,
+      `disposable PostgreSQL HBA ${stage} reload polling failed; status=${result.status}, signal=${result.signal ?? 'none'}`);
+    const rows = String(result.stdout || '').trim().split(/\r?\n/).filter(Boolean);
+    const observedLoadTime = Number(rows.at(-1));
+    assert.ok(Number.isFinite(observedLoadTime),
+      `disposable PostgreSQL HBA ${stage} reload timestamp is invalid`);
+    if (observedLoadTime > previousLoadTime) return observedLoadTime;
+  }
+  throw new Error(`disposable PostgreSQL HBA ${stage} reload was not observed within the bounded 10-second wait`);
+}
+try {
+  const synchronizationInput = [
+    `\\password ${syntheticPasswordRole}`,
+    syntheticPassword,
+    syntheticPassword,
+  ].join('\n') + '\n';
+  const synchronization = docker([
+    'exec', '-i', CONTAINER, 'psql',
+    '--host=127.0.0.1', '--port=5432', '--username=postgres', '--dbname=postgres',
+    '--no-psqlrc', '--no-password', '--set=ON_ERROR_STOP=1', '--quiet',
+  ], synchronizationInput);
+  const synchronizationOutput = `${synchronization.stdout ?? ''}${synchronization.stderr ?? ''}`;
+  assert.equal(synchronization.status, 0,
+    `stdin-driven psql \\password synchronization must succeed without clipboard input; status=${synchronization.status}, signal=${synchronization.signal ?? 'none'}, secretEchoed=${synchronizationOutput.includes(syntheticPassword)}`);
+  assert.equal(synchronizationOutput.includes(syntheticPassword), false,
+    'synthetic password must not appear in psql stdout or stderr');
+
+  const syntheticScramStored = psql('postgres', 'postgres', `
+    SELECT rolpassword LIKE 'SCRAM-SHA-256$%'
+    FROM pg_catalog.pg_authid
+    WHERE rolname = '${syntheticPasswordRole}';
+  `);
+  assert.equal(syntheticScramStored.status, 0,
+    'disposable role must be checked without returning its password verifier');
+  assert.equal(syntheticScramStored.stdout.trim(), 't',
+    'the disposable server must store the synchronized password as a SCRAM verifier');
+
+  const saveSyntheticHba = docker([
+    'exec', CONTAINER, 'cp', '-p', syntheticPasswordHba, syntheticPasswordHbaBackup,
+  ]);
+  assert.equal(saveSyntheticHba.status, 0,
+    'original pg_hba.conf must be preserved inside the disposable container before the SCRAM-only probe');
+  syntheticHbaBackupReady = true;
+  const beforeSyntheticHbaReload = syntheticConfigLoadTime();
+  const installSyntheticScramRule = docker([
+    'exec', CONTAINER, 'sh', '-c',
+    `printf '%s\\n' '${syntheticPasswordHbaRule}' > ${syntheticPasswordHbaCandidate} && cat ${syntheticPasswordHbaBackup} >> ${syntheticPasswordHbaCandidate} && cat ${syntheticPasswordHbaCandidate} > ${syntheticPasswordHba}`,
+  ]);
+  assert.equal(installSyntheticScramRule.status, 0,
+    'SCRAM-only pg_hba rule must be added only to the disposable PostgreSQL cluster');
+  const reloadSyntheticHba = psql('postgres', 'postgres', 'SELECT pg_reload_conf();');
+  assert.equal(reloadSyntheticHba.status, 0,
+    'disposable PostgreSQL must reload the synthetic SCRAM-only authentication rule');
+  assert.equal(reloadSyntheticHba.stdout.trim(), 't',
+    'PostgreSQL must confirm the disposable pg_hba.conf reload');
+  waitForSyntheticHbaReload(beforeSyntheticHbaReload, 'SCRAM-only');
+  const verifySyntheticHbaRule = psql('postgres', 'postgres', `
+    SELECT
+      (SELECT COUNT(*) = 1
+       FROM pg_catalog.pg_hba_file_rules
+       WHERE line_number = 1
+         AND type = 'host'
+         AND database = ARRAY['all']::text[]
+         AND user_name = ARRAY['${syntheticPasswordRole}']::text[]
+         AND address = '127.0.0.1'::inet
+         AND netmask = '255.255.255.255'::inet
+         AND auth_method = 'scram-sha-256'
+         AND error IS NULL)
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_hba_file_rules WHERE error IS NOT NULL
+      );
+  `);
+  assert.equal(verifySyntheticHbaRule.status, 0,
+    'synthetic SCRAM-only host rule must be present and parse without exposing its contents');
+  assert.equal(verifySyntheticHbaRule.stdout.trim(), 't',
+    'the reloaded disposable PostgreSQL must parse the exact database, role, loopback address, and SCRAM-only rule');
+
+  const missingCredentialPassfile = '/tmp/tq-synthetic-password-sync.no-credential.pgpass';
+  const createMissingCredentialPassfile = docker([
+    'exec', CONTAINER, 'sh', '-c',
+    `umask 077 && : > ${missingCredentialPassfile} && chmod 600 ${missingCredentialPassfile}`,
+  ]);
+  assert.equal(createMissingCredentialPassfile.status, 0,
+    'empty passfile negative control must be created only inside the disposable cluster');
+  const missingCredentialAuthentication = docker([
+    'exec', '--env', `PGPASSFILE=${missingCredentialPassfile}`, CONTAINER, 'env', '-u', 'PGPASSWORD', 'psql',
+    '--host=127.0.0.1', '--port=5432', `--username=${syntheticPasswordRole}`, '--dbname=postgres',
+    '--no-psqlrc', '--no-password', '--quiet', '--tuples-only', '--no-align',
+    '--command', `SELECT current_user = '${syntheticPasswordRole}';`,
+  ]);
+  assert.ok(Number.isInteger(missingCredentialAuthentication.status)
+    && missingCredentialAuthentication.status !== 0,
+  'missing synthetic passfile must not authenticate under the active SCRAM-only HBA rule');
+
+  const passfileEntry = `127.0.0.1:5432:postgres:${syntheticPasswordRole}:${syntheticPassword}\n`;
+  const writeSyntheticPassfile = docker([
+    'exec', '-i', CONTAINER, 'sh', '-c',
+    `umask 077 && cat > ${syntheticPasswordPassfile} && chmod 600 ${syntheticPasswordPassfile}`,
+  ], passfileEntry);
+  assert.equal(writeSyntheticPassfile.status, 0,
+    'synthetic passfile must be written only inside the disposable PostgreSQL container');
+
+  const verifySyntheticPassword = docker([
+    'exec', '--env', `PGPASSFILE=${syntheticPasswordPassfile}`, CONTAINER, 'env', '-u', 'PGPASSWORD', 'psql',
+    '--host=127.0.0.1', '--port=5432', `--username=${syntheticPasswordRole}`, '--dbname=postgres',
+    '--no-psqlrc', '--no-password', '--quiet', '--tuples-only', '--no-align',
+    '--command', `SELECT current_user = '${syntheticPasswordRole}';`,
+  ]);
+  assert.equal(verifySyntheticPassword.status, 0,
+    `exact synthetic passfile credential must authenticate without PGPASSWORD or a prompt; status=${verifySyntheticPassword.status}, signal=${verifySyntheticPassword.signal ?? 'none'}`);
+  assert.equal(verifySyntheticPassword.stdout.trim(), 't',
+    'the new synthetic password must authenticate as the intended disposable role');
+} finally {
+  let restoreSyntheticHba = { status: syntheticHbaBackupReady ? 1 : 0 };
+  let reloadRestoredHba = { status: syntheticHbaBackupReady ? 1 : 0, stdout: '' };
+  let verifyRestoredHba = { status: 0, stdout: 't' };
+  if (syntheticHbaBackupReady) {
+    let beforeRestoreReload = null;
+    try { beforeRestoreReload = syntheticConfigLoadTime(); } catch {}
+    restoreSyntheticHba = docker([
+      'exec', CONTAINER, 'cp', '-p', syntheticPasswordHbaBackup, syntheticPasswordHba,
+    ]);
+    if (restoreSyntheticHba.status === 0 && beforeRestoreReload !== null) {
+      reloadRestoredHba = psql('postgres', 'postgres', 'SELECT pg_reload_conf();');
+      if (reloadRestoredHba.status === 0 && reloadRestoredHba.stdout.trim() === 't') {
+        try {
+          waitForSyntheticHbaReload(beforeRestoreReload, 'original');
+          verifyRestoredHba = psql('postgres', 'postgres', `
+            SELECT
+              NOT EXISTS (
+                SELECT 1 FROM pg_catalog.pg_hba_file_rules
+                WHERE line_number = 1
+                  AND type = 'host'
+                  AND database = ARRAY['all']::text[]
+                  AND user_name = ARRAY['${syntheticPasswordRole}']::text[]
+                  AND address = '127.0.0.1'::inet
+                  AND netmask = '255.255.255.255'::inet
+                  AND auth_method = 'scram-sha-256'
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM pg_catalog.pg_hba_file_rules WHERE error IS NOT NULL
+              );
+          `);
+          restoreSyntheticHbaVerified = verifyRestoredHba.status === 0
+            && verifyRestoredHba.stdout.trim() === 't';
+        } catch { restoreSyntheticHbaVerified = false; }
+      }
+    }
+  }
+  const removeSyntheticPassfiles = docker([
+    'exec', CONTAINER, 'rm', '-f', syntheticPasswordPassfile,
+    '/tmp/tq-synthetic-password-sync.no-credential.pgpass',
+  ]);
+  let removeSyntheticHbaRecoveryFiles = { status: 0 };
+  if (restoreSyntheticHbaVerified) {
+    removeSyntheticHbaRecoveryFiles = docker([
+      'exec', CONTAINER, 'rm', '-f', syntheticPasswordHbaBackup, syntheticPasswordHbaCandidate,
+    ]);
+  }
+  const dropSyntheticPasswordRole = psql('postgres', 'postgres',
+    `DROP ROLE IF EXISTS ${syntheticPasswordRole};`);
+  assert.equal(restoreSyntheticHba.status, 0,
+    'original pg_hba.conf must be restored in the disposable cluster');
+  assert.equal(reloadRestoredHba.status, 0,
+    'PostgreSQL must reload its original disposable authentication configuration');
+  if (syntheticHbaBackupReady) {
+    assert.equal(reloadRestoredHba.stdout.trim(), 't',
+      'PostgreSQL must confirm the original disposable pg_hba.conf reload');
+    assert.equal(restoreSyntheticHbaVerified, true,
+      'the original HBA must be loaded and independently verified before removing its recovery copy');
+  }
+  assert.equal(removeSyntheticPassfiles.status, 0,
+    'synthetic passfiles must be removed from the disposable container');
+  assert.equal(removeSyntheticHbaRecoveryFiles.status, 0,
+    'temporary pg_hba.conf recovery copies must be removed only after successful restoration');
+  assert.equal(dropSyntheticPasswordRole.status, 0,
+    'synthetic password role must be removed from the disposable cluster');
+}
+recordScenario('stdin-only psql password synchronization authenticates via a temporary disposable passfile without echoing the secret');
+
+assert.equal(passedScenarioCount, 89, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
 console.log(`Preflight integration result: ${passedScenarioCount}/${passedScenarioCount} disposable PostgreSQL scenarios passed.`);

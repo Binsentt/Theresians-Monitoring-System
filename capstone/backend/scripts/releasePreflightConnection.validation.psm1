@@ -75,6 +75,83 @@ function Assert-TqPgServiceSettings {
   }
 }
 
+function ConvertFrom-TqPgPassfileRecord {
+  param([Parameter(Mandatory = $true)][string]$Line)
+
+  $fields = New-Object 'System.Collections.Generic.List[string]'
+  $field = New-Object System.Text.StringBuilder
+  $escaped = $false
+  foreach ($character in $Line.ToCharArray()) {
+    if ($escaped) {
+      if ($character -ne [char]58 -and $character -ne [char]92) {
+        throw 'STOP: PGPASSFILE contains a malformed or unsupported record.'
+      }
+      [void]$field.Append($character)
+      $escaped = $false
+      continue
+    }
+    if ($character -eq [char]92) {
+      $escaped = $true
+      continue
+    }
+    if ($character -eq [char]58) {
+      $fields.Add($field.ToString())
+      [void]$field.Clear()
+      continue
+    }
+    [void]$field.Append($character)
+  }
+  if ($escaped) { throw 'STOP: PGPASSFILE contains a malformed or unsupported record.' }
+  $fields.Add($field.ToString())
+  if ($fields.Count -ne 5) { throw 'STOP: PGPASSFILE contains a malformed or unsupported record.' }
+  return ,($fields.ToArray())
+}
+
+function Assert-TqPgPassfileContentMatchesService {
+  param(
+    [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+    [Parameter(Mandatory = $true)][object]$Service
+  )
+
+  $settings = $Service.Settings
+  $expected = @([string]$settings['host'], [string]$settings['port'],
+    [string]$settings['dbname'], [string]$settings['user'])
+  $matches = New-Object 'System.Collections.Generic.List[object]'
+  foreach ($line in [regex]::Split($Text, "`r`n|`n|`r")) {
+    if ($line.Length -eq 0 -or $line.StartsWith('#', [System.StringComparison]::Ordinal)) { continue }
+    $fields = ConvertFrom-TqPgPassfileRecord -Line $line
+    $matchesService = $true
+    for ($index = 0; $index -lt 4; $index++) {
+      if ($fields[$index] -cne '*' -and $fields[$index] -cne $expected[$index]) {
+        $matchesService = $false
+        break
+      }
+    }
+    if ($matchesService) { $matches.Add($fields) }
+  }
+
+  if ($matches.Count -ne 1) {
+    throw 'STOP: PGPASSFILE must contain exactly one exact tuple for the validated PostgreSQL service.'
+  }
+  $selected = $matches[0]
+  for ($index = 0; $index -lt 4; $index++) {
+    if ($selected[$index] -cne $expected[$index]) {
+      throw 'STOP: PGPASSFILE must contain exactly one exact tuple for the validated PostgreSQL service.'
+    }
+  }
+  if ($selected[4].Length -eq 0) {
+    throw 'STOP: PGPASSFILE must contain exactly one exact tuple for the validated PostgreSQL service.'
+  }
+
+  # With both host and hostaddr configured, libpq uses host for passfile
+  # matching and hostaddr only for routing. Never return the password field.
+  return [pscustomobject]@{
+    MatchCount = 1
+    LookupHost = [string]$settings['host']
+    CredentialPresent = $true
+  }
+}
+
 function Get-TqRootCertificateMetadata {
   param([Parameter(Mandatory = $true)][string]$CertificatePath)
 
@@ -244,12 +321,17 @@ function Assert-TqPreflightConnectionFiles {
   $service = ConvertFrom-TqPgServiceFileText -Text $serviceText
   Assert-TqPgServiceSettings -Service $service -ExpectedServiceName $ExpectedServiceName `
     -ExpectedDatabase $ExpectedDatabase -ExpectedRole $ExpectedRole -ExpectedTunnelPort $ExpectedTunnelPort -ExpectedCaPath $caPath
+  try { $passText = [System.IO.File]::ReadAllText($passPath, [System.Text.UTF8Encoding]::new($false, $true)) }
+  catch { throw 'STOP: PostgreSQL passfile is missing or is not strict UTF-8 text.' }
+  [void](Assert-TqPgPassfileContentMatchesService -Text $passText -Service $service)
+  $passText = $null
+  $serviceText = $null
   $certificate = Get-TqRootCertificateMetadata -CertificatePath $caPath
   Assert-TqPinnedPostgresRootCertificate -Metadata $certificate
   return [pscustomobject]@{ ServiceFilePath = $servicePath; PassfilePath = $passPath; VerifiedCaPath = $caPath }
 }
 
 Export-ModuleMember -Function Get-TqAmbientPgOverrideNames, Assert-TqNoAmbientPgOverrides, `
-  ConvertFrom-TqPgServiceFileText, Assert-TqPgServiceSettings, Get-TqRootCertificateMetadata, `
+  ConvertFrom-TqPgServiceFileText, Assert-TqPgServiceSettings, Assert-TqPgPassfileContentMatchesService, Get-TqRootCertificateMetadata, `
   Assert-TqPinnedPostgresRootCertificate, Assert-TqRestrictedAclRecord, Assert-TqProtectedLocalFile, `
   Assert-TqPreflightConnectionFiles

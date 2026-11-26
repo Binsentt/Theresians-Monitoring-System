@@ -73,6 +73,29 @@ $environmentError = $null
 try { Assert-TqNoAmbientPgOverrides -VariableNames @('PGPASSWORD') } catch { $environmentError = $_.Exception.Message }
 Assert-True ($environmentError -notmatch 'synthetic-secret-value') 'environment error must never expose values'
 
+$syntheticPgpass = 'localhost:55432:tq_synthetic_metadata:tq_release_preflight_reader:synthetic\:colon\\slash'
+$pgpassMatch = Assert-TqPgPassfileContentMatchesService -Text $syntheticPgpass -Service $service
+Assert-True ($pgpassMatch.MatchCount -eq 1 -and $pgpassMatch.LookupHost -ceq 'localhost' -and $pgpassMatch.CredentialPresent) `
+  'the exact service tuple must resolve one non-empty passfile credential using host rather than hostaddr'
+Assert-True (($pgpassMatch | ConvertTo-Json -Compress) -notmatch 'synthetic|colon|slash') `
+  'passfile validation results must never return credential contents'
+Assert-Throws {
+  Assert-TqPgPassfileContentMatchesService -Text '127.0.0.1:55432:tq_synthetic_metadata:tq_release_preflight_reader:synthetic-only' `
+    -Service $service
+} 'exactly one exact tuple' 'passfile keyed only by hostaddr instead of service host'
+Assert-Throws {
+  Assert-TqPgPassfileContentMatchesService -Text "*:*:*:*:synthetic-wildcard`n$syntheticPgpass" -Service $service
+} 'exactly one exact tuple' 'wildcard entry shadows or ambiguates exact credentials'
+Assert-Throws {
+  Assert-TqPgPassfileContentMatchesService -Text 'localhost:55432:tq_synthetic_metadata:tq_release_preflight_reader:' -Service $service
+} 'exactly one exact tuple' 'empty matching password'
+Assert-Throws {
+  Assert-TqPgPassfileContentMatchesService -Text 'localhost:55432:tq_synthetic_metadata:tq_release_preflight_reader:synthetic:extra' -Service $service
+} 'malformed' 'unescaped colon in passfile record'
+Assert-Throws {
+  Assert-TqPgPassfileContentMatchesService -Text 'localhost:55432:tq_synthetic_metadata:other_reader:synthetic-only' -Service $service
+} 'exactly one exact tuple' 'wrong passfile role'
+
 $userSid = 'S-1-5-21-111111111-222222222-333333333-1001'
 $full = [int][System.Security.AccessControl.FileSystemRights]::FullControl
 $validRules = @(
