@@ -105,9 +105,28 @@ WITH RECURSIVE schema_entities AS (
   WHERE namespace.nspname <> 'information_schema' AND namespace.nspname !~ '^pg_'
 
   UNION ALL
+  -- PostgreSQL assigns OID-derived names to internal triggers during restore.
+  -- Normalize only that generated identifier; keep the definition body, state,
+  -- relation, and user-trigger definitions exact. Constraint entities above
+  -- independently preserve the contract behind internal constraint triggers.
   SELECT jsonb_build_object(
     'kind', 'trigger', 'schema', namespace.nspname, 'relation', relation.relname,
-    'name', trigger_record.tgname, 'definition', pg_catalog.pg_get_triggerdef(trigger_record.oid, true),
+    'name', CASE WHEN trigger_record.tgisinternal THEN '<internal-trigger>' ELSE trigger_record.tgname END,
+    'definition', CASE
+      WHEN trigger_record.tgisinternal AND trigger_record.tgconstraint <> 0 THEN
+        pg_catalog.regexp_replace(
+          pg_catalog.pg_get_triggerdef(trigger_record.oid, true),
+          '^CREATE[[:space:]]+CONSTRAINT[[:space:]]+TRIGGER[[:space:]]+[^[:space:]]+',
+          'CREATE CONSTRAINT TRIGGER <internal-trigger>'
+        )
+      WHEN trigger_record.tgisinternal THEN
+        pg_catalog.regexp_replace(
+          pg_catalog.pg_get_triggerdef(trigger_record.oid, true),
+          '^CREATE[[:space:]]+TRIGGER[[:space:]]+[^[:space:]]+',
+          'CREATE TRIGGER <internal-trigger>'
+        )
+      ELSE pg_catalog.pg_get_triggerdef(trigger_record.oid, true)
+    END,
     'enabled', trigger_record.tgenabled::text, 'internal', trigger_record.tgisinternal
   )
   FROM pg_catalog.pg_trigger AS trigger_record

@@ -734,6 +734,10 @@ test('backup content integrity uses read-only aggregate manifests and compares r
   const sql = read('backup-restore-integrity-preflight.sql');
   const script = read('backup-restore-rehearsal.ps1');
   const harness = read('run-preflight-postgres-harness.cjs');
+  const triggerStart = sql.indexOf("'kind', 'trigger'");
+  const triggerEnd = sql.indexOf('FROM pg_catalog.pg_trigger', triggerStart);
+  assert.ok(triggerStart >= 0 && triggerEnd > triggerStart, 'portable schema manifest must define its trigger entity');
+  const triggerEntity = sql.slice(triggerStart, triggerEnd);
   assert.match(sql, /BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;/);
   assert.match(sql, /SET LOCAL statement_timeout = '30min';/i);
   assert.match(sql, /SET LOCAL lock_timeout = '2s';/i);
@@ -757,6 +761,13 @@ test('backup content integrity uses read-only aggregate manifests and compares r
   assert.match(sql, /sequence-ownership/);
   assert.match(sql, /pg_catalog\.pg_aggregate/);
   assert.match(sql, /pg_catalog\.pg_range/);
+  assert.match(triggerEntity, /'name', CASE WHEN trigger_record\.tgisinternal THEN '<internal-trigger>' ELSE trigger_record\.tgname END/,
+    'generated internal trigger names must not make a logically identical restore manifest differ');
+  assert.match(triggerEntity, /'definition', CASE[\s\S]*WHEN trigger_record\.tgisinternal AND trigger_record\.tgconstraint <> 0 THEN/);
+  assert.match(triggerEntity, /ELSE pg_catalog\.pg_get_triggerdef\(trigger_record\.oid, true\)\s+END/,
+    'user-defined trigger names and definitions must remain exact in the manifest');
+  assert.match(triggerEntity, /CREATE CONSTRAINT TRIGGER <internal-trigger>/);
+  assert.match(triggerEntity, /CREATE TRIGGER <internal-trigger>/);
   assert.doesNotMatch(sql, /'kind', 'database',\s*'name', database_record\.datname/,
     'the portable schema manifest must not vary with the source versus isolated-restore database name');
   assert.match(sql, /database_record\.datcollversion/);
