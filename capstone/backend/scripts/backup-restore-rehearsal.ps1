@@ -537,6 +537,7 @@ $reviewedInputs = @(
   'capstone/backend/scripts/backup-restore-integrity-preflight.sql',
   'capstone/backend/scripts/postgres-exported-snapshot.integration.cjs',
   'capstone/backend/scripts/backup-role-preflight.sql',
+  'capstone/backend/scripts/backup-role-routine-review-export.sql',
   'capstone/backend/scripts/backupRoleReview.validation.psm1',
   'capstone/backend/scripts/releasePreflightConnection.validation.psm1',
   'capstone/backend/scripts/backup-release-state-preflight.sql',

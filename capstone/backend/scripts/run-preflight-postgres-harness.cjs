@@ -644,6 +644,17 @@ function invokeBackupRoleAudit(database) {
   });
 }
 
+function invokeBackupRoleRoutineReviewExport(database) {
+  return psql(database, 'tq_prod_backup_reader', fs.readFileSync(
+    require('node:path').join(__dirname, 'backup-role-routine-review-export.sql'),
+    'utf8',
+  ), {
+    expected_database: database,
+    expected_server_address: '127.0.0.1',
+    expected_server_port: '5432',
+  });
+}
+
 function assertBackupRoleGrantOptionRejected({ grantSql, revokeSql, counter, label }) {
   const grant = psql(CASES.valid, 'postgres', grantSql);
   assert.equal(grant.status, 0, `${label}: synthetic grant failed: ${grant.stderr}`);
@@ -1442,6 +1453,21 @@ assert.equal(routineCreatedAudit.status, 0, routineCreatedAudit.stderr);
 const createdRoutineInventory = routineCreatedAudit.stdout.match(/^BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=([a-f0-9]{64})$/m)[1];
 assert.notEqual(createdRoutineInventory, initialRoutineInventory,
   'adding a synthetic routine must invalidate the prior review fingerprint');
+const routineReviewExportResult = invokeBackupRoleRoutineReviewExport(CASES.valid);
+assert.equal(routineReviewExportResult.status, 0,
+  `read-only routine review export must pass the restricted target identity gate: ${routineReviewExportResult.stderr}`);
+assert.equal(routineReviewExportResult.stdout.trim().split(/\r?\n/).length, 1,
+  'review export must be a single machine-readable record suitable for protected file redirection');
+const routineReviewExport = JSON.parse(routineReviewExportResult.stdout.trim());
+assert.equal(routineReviewExport.routine_inventory_sha256, createdRoutineInventory,
+  'exported routine definitions and metadata must hash to the exact audited inventory fingerprint');
+const exportedMarker = routineReviewExport.routines.find((routine) =>
+  routine.schema === 'public' && routine.name === 'synthetic_backup_review_marker');
+assert.ok(exportedMarker, 'review export must include the synthetic user routine');
+assert.equal(exportedMarker.executable_by_backup_role, true,
+  'export must identify effective EXECUTE access for the backup role');
+assert.match(exportedMarker.definition, /SELECT 1/,
+  'reviewer must receive the actual synthetic routine definition');
 const replaceRoutine = psql(CASES.valid, 'postgres',
   'CREATE OR REPLACE FUNCTION public.synthetic_backup_review_marker() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 2 $$;');
 assert.equal(replaceRoutine.status, 0, replaceRoutine.stderr);
@@ -1459,6 +1485,7 @@ assert.equal(routineRemovedAudit.stdout.match(/^BACKUP_ROLE_ROUTINE_INVENTORY_SH
   'removing the synthetic routine must restore the original inventory fingerprint');
 recordScenario('synthetic role has clean catalog counts while overall nonwriting status remains unverified');
 recordScenario('backup role routine inventory digest changes with routine definitions and emits no source');
+recordScenario('routine review export matches the audited inventory fingerprint and includes executable routine definitions');
 recordScenario('backup role cannot create large objects after mutator EXECUTE is revoked');
 
 const grantSystemSchemaCreate = psql(CASES.valid, 'postgres',
@@ -2503,7 +2530,7 @@ try {
 }
 recordScenario('stdin-only psql password synchronization authenticates via a temporary disposable passfile without echoing the secret');
 
-assert.equal(passedScenarioCount, 101, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
+assert.equal(passedScenarioCount, 102, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
 console.log(`Preflight integration result: ${passedScenarioCount}/${passedScenarioCount} disposable PostgreSQL scenarios passed.`);
 const expectedBackupIntegrityScenarioCount = process.env.TQ_EXPECTED_POSTGRES_MAJOR === '18' ? 6 : 0;
 assert.equal(passedBackupIntegrityScenarioCount, expectedBackupIntegrityScenarioCount,

@@ -399,7 +399,7 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
   assert.match(harness, /unvalidated CHECK constraint/);
   assert.match(harness, /truncated custom-format archive must be rejected/);
   assert.match(harness, /OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:/);
-  assert.match(harness, /passedScenarioCount, 101/);
+  assert.match(harness, /passedScenarioCount, 102/);
   const unexpectedInsertAt = harness.indexOf('const unexpectedMigration = psql(CASES.preMigration026');
   const unexpectedClassifiedAt = harness.indexOf(
     "assert.equal(parseBackupReleaseState(unexpectedBackupStateResult).readiness, 'UNVERIFIED');",
@@ -669,6 +669,48 @@ test('backup-role routine inventory digest aggregates the inventory CTE rows', (
   const query = sql.slice(start, end);
   assert.match(query, /\)\s+AS routine_inventory_sha256\s+FROM\s+routine_inventory\b/i,
     'the inventory digest must aggregate actual routine_inventory rows');
+});
+
+test('backup-role independent review export is read-only, target-bound, and fingerprint-compatible', () => {
+  const sql = read('backup-role-routine-review-export.sql');
+  const script = read('backup-restore-rehearsal.ps1');
+  const harness = read('run-preflight-postgres-harness.cjs');
+  const runbook = fs.readFileSync(path.join(scripts, '../docs/database-release-preparation-operator-runbook.md'), 'utf8');
+  assert.match(sql, /^\\set ON_ERROR_STOP on/m);
+  assert.match(sql, /BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;/i);
+  assert.match(sql, /SET LOCAL statement_timeout = '30s';/i);
+  assert.match(sql, /SET LOCAL lock_timeout = '2s';/i);
+  assert.match(sql, /transaction_read_only/);
+  assert.match(sql, /current_user\s*=\s*'tq_prod_backup_reader'/);
+  assert.match(sql, /session_user\s*=\s*current_user/);
+  assert.match(sql, /host\(inet_server_addr\(\)\)\s*=\s*:'expected_server_address'/);
+  assert.match(sql, /inet_server_port\(\)\s*=\s*:'expected_server_port'::integer/);
+  assert.match(sql, /pg_catalog\.pg_get_functiondef/);
+  assert.match(sql, /routine_inventory_sha256/);
+  assert.match(sql, /executable_by_backup_role/);
+  assert.match(sql, /definition_sha256/);
+  assert.doesNotMatch(sql, /^\s*(?:INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|CALL|DO)\b/im);
+  assert.doesNotMatch(sql, /SELECT\s+.+\s+FROM\s+public\.(?:accounts|game_results|playtime_sessions)\b/is);
+  assert.match(script, /'capstone\/backend\/scripts\/backup-role-routine-review-export\.sql'/,
+    'the review export must be pinned by the backup tool exact-source guard');
+  assert.match(harness, /invokeBackupRoleRoutineReviewExport/);
+  assert.match(harness, /routine review export matches the audited inventory fingerprint/);
+  assert.match(runbook, /backup-role-routine-review-export\.sql/);
+  assert.match(runbook, /protected.*routine.*definition.*export/i);
+});
+
+test('backup runbook keeps production dump hard-stopped until sequence writers are externally quiesced', () => {
+  const script = read('backup-restore-rehearsal.ps1');
+  const runbook = fs.readFileSync(path.join(scripts, '../docs/database-release-preparation-operator-runbook.md'), 'utf8');
+  assert.match(script, /production backup remains disabled[\s\S]*sequence state is non-MVCC/i);
+  assert.match(runbook, /Website API replicas/i);
+  assert.match(runbook, /in-process question-generation/i);
+  assert.match(runbook, /administrative sessions/i);
+  assert.match(runbook, /external.*(?:clients|writers)/i);
+  assert.match(runbook, /GET.*(?:student-progress|generation-status)/i);
+  assert.match(runbook, /sequence.*before.*after/i);
+  assert.match(runbook, /production.*CRASHED/i);
+  assert.match(runbook, /12783185b083ed1b370143d912ddcb70d53e6839/);
 });
 
 test('restore rejects a mismatched archive digest before invoking pg_restore', () => {
@@ -983,7 +1025,7 @@ test('backup harness rejects orphaned migration 026 catalog objects', () => {
   assert.match(harness, /orphaned migration-026 constraint/);
   assert.match(harness, /orphaned migration-026 trigger/);
   assert.match(harness, /orphaned migration-026 type/);
-  assert.match(harness, /passedScenarioCount, 101/);
+  assert.match(harness, /passedScenarioCount, 102/);
 });
 
 
@@ -1075,7 +1117,7 @@ test('backup role audit rejects executable large-object creators and unsafe call
   assert.match(harness, /schema USAGE WITH GRANT OPTION is rejected/);
   assert.match(harness, /routine EXECUTE WITH GRANT OPTION is rejected/);
   assert.match(harness, /CREATE privilege on pg_catalog is rejected by backup-role audit/);
-  assert.match(harness, /passedScenarioCount, 101/);
+  assert.match(harness, /passedScenarioCount, 102/);
 
   const workflow = readIsolatedBackendWorkflow();
   const matrixJobs = /postgres_image:\s*\['postgres:16-bookworm',\s*'postgres:18-bookworm'\]/.test(workflow)
@@ -1104,7 +1146,7 @@ test('backup role audit rejects column-level writes and inherited large-object c
   assert.match(harness, /backup role column-level UPDATE grant is rejected/);
   assert.match(harness, /PUBLIC column-level UPDATE grant is rejected/);
   assert.match(harness, /database-level lo_compat_privileges default is rejected/);
-  assert.match(harness, /passedScenarioCount, 101/);
+  assert.match(harness, /passedScenarioCount, 102/);
 });
 
 
@@ -1121,7 +1163,7 @@ test('disposable PostgreSQL harness tests stdin-driven password synchronization 
   assert.match(harness, /syntheticHostaddrPassfile/);
   assert.match(harness, /synthetic passfiles must be removed/);
   assert.match(harness, /temporary pg_hba\.conf recovery copies must be removed only after successful restoration/);
-  assert.match(harness, /passedScenarioCount, 101/);
+  assert.match(harness, /passedScenarioCount, 102/);
 });
 
 
@@ -1215,7 +1257,7 @@ test('backup source audits and pg_dump share one exported snapshot while sequenc
   assert.match(harness, /postgres-exported-snapshot\.integration\.cjs/);
   assert.match(harness, /exported-snapshot integration must pass for PostgreSQL 16 and 18/);
   assert.match(harness, /spawnSync\(process\.execPath, \[exportedSnapshotHelper\]/);
-  assert.match(harness, /passedScenarioCount, 101/);
+  assert.match(harness, /passedScenarioCount, 102/);
   assert.match(snapshotIntegration, /const CONTAINER = 'tq-backend-test-postgres'/);
   assert.match(snapshotIntegration, /'--set=VERBOSITY=verbose'/,
     'synthetic identity failures must expose SQLSTATE to the bounded sanitizer without printing raw stderr');
@@ -1258,7 +1300,7 @@ test('backup role audit rejects incoming memberships and grant-option delegation
   assert.match(harness, /schema USAGE WITH GRANT OPTION is rejected/);
   assert.match(harness, /database CONNECT WITH GRANT OPTION is rejected/);
   assert.match(harness, /routine EXECUTE WITH GRANT OPTION is rejected/);
-  assert.match(harness, /passedScenarioCount, 101/);
+  assert.match(harness, /passedScenarioCount, 102/);
   assert.match(sql, /role_set_member_count/);
   assert.match(harness, /transitive backup role membership that permits SET ROLE is rejected/);
   assert.match(sql, /SELECT target_role\.oid AS target_role_oid,[\s\S]*?FROM target_role\s*\)\s*SELECT/,
