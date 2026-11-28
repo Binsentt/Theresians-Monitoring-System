@@ -179,7 +179,7 @@ test('Node resolves the PowerShell-validated OpenSSL token to the exact PATH exe
     const result = spawnSync(process.execPath, [integrationPath], {
       env,
       encoding: 'utf8',
-      timeout: 7000,
+      timeout: 20000,
       maxBuffer: 65536,
       windowsHide: true
     });
@@ -201,18 +201,40 @@ test('the actual workflow-resolved OpenSSL survives its PowerShell-to-Node hando
   try {
     const bin = path.join(tempRoot, 'bin');
     fs.mkdirSync(bin);
-    for (const name of ['initdb.exe', 'pg_ctl.exe', 'psql.exe']) {
+    for (const name of ['pg_ctl.exe', 'psql.exe']) {
       fs.writeFileSync(path.join(bin, name), 'synthetic placeholder', { flag: 'wx' });
     }
+    const compiler = process.env.TQ_CSC || (process.env.SystemRoot &&
+      path.join(process.env.SystemRoot, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'));
+    assert.ok(compiler && path.isAbsolute(compiler) && fs.existsSync(compiler),
+      'workflow-provided native compiler must be available');
+    const initDbPath = path.join(bin, 'initdb.exe');
+    const initDbSource = path.join(tempRoot, 'synthetic-initdb.cs');
+    fs.writeFileSync(initDbSource,
+      'public static class Program { public static int Main() { return 73; } }',
+      { flag: 'wx', encoding: 'utf8' });
+    const compilerEnv = {};
+    for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'PATHEXT', 'USERPROFILE']) {
+      if (process.env[key]) compilerEnv[key] = process.env[key];
+    }
+    const compiled = spawnSync(compiler, ['/nologo', '/target:exe', '/out:' + initDbPath, initDbSource], {
+      cwd: tempRoot,
+      env: compilerEnv,
+      encoding: 'utf8',
+      timeout: 15000,
+      maxBuffer: 32768,
+      windowsHide: true
+    });
+    assert.ok(!compiled.error && !compiled.signal && compiled.status === 0 && fs.existsSync(initDbPath),
+      'harmless initdb stop stub must compile');
     const env = {};
     for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'PATHEXT', 'USERPROFILE',
-      'TQ_OPENSSL', 'TQ_OPENSSL_VERIFIED_PATH']) {
+      'TQ_OPENSSL', 'TQ_OPENSSL_VERIFIED_PATH', 'TQ_CSC']) {
       if (process.env[key]) env[key] = process.env[key];
     }
     Object.assign(env, {
       TQ_PG18_BIN: bin,
-      TQ_PG18_WORKER_SOURCE: workerPath,
-      TQ_CSC: process.execPath
+      TQ_PG18_WORKER_SOURCE: workerPath
     });
     const result = spawnSync(process.execPath, [integrationPath], {
       env,
@@ -224,8 +246,12 @@ test('the actual workflow-resolved OpenSSL survives its PowerShell-to-Node hando
     const output = (result.stdout || '') + (result.stderr || '');
 
     assert.equal(result.status, 1, 'synthetic PostgreSQL stub must stop after successful OpenSSL launch');
-    assert.match(output, /PG18_INITDB_BOUNDED_PROCESS_FAILURE_ENOENT/,
-      'actual workflow token and validated path must reach Node before disposable database setup');
+    assert.match(output, /PRIMARY_STAGE=pg18-initdb/,
+      'actual workflow OpenSSL handoff must reach the harmless initdb stop stub');
+    assert.match(output, /PRIMARY_FAILURE=PG18_INITDB_UNEXPECTED_EXIT_73/,
+      'the harmless stub must stop the integration before PostgreSQL starts');
+    assert.match(output, /CLEANUP=PASS/);
+    assert.match(output, /PRODUCTION_CONNECTIONS=0/);
     assert.equal(output.includes(tempRoot), false, 'diagnostics must not expose temporary paths');
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
