@@ -111,6 +111,12 @@ function inventoryDigest(rows) {
   return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
+const LOCK_TABLE_SUPPORTED_RELKINDS = new Set(['r', 'p', 'v']);
+
+function selectLockableRelations(rows) {
+  return rows.filter((row) => LOCK_TABLE_SUPPORTED_RELKINDS.has(row.kind));
+}
+
 async function getRelationInventory(client) {
   const result = await client.query(`
     SELECT c.oid::text AS oid, n.nspname AS schema_name, c.relname AS relation_name,
@@ -136,16 +142,12 @@ async function acquireCandidateBarrier(client, lockTimeout = '5s', onInventoryCa
     'candidate refuses foreign tables because their remote data writers are outside this database lock domain');
   if (onInventoryCaptured) await onInventoryCaptured();
 
-  // This is deliberately only a table/catalog barrier. Sequence objects stay
-  // in the inventory digest but cannot be LOCK TABLE targets; PostgreSQL
-  // rejects them with 42809. The test proves sequence mutations remain an
-  // uncovered production backup blocker.
-  const dataRelations = before.filter((row) =>
-    !['pg_catalog', 'information_schema'].includes(row.schema_name) &&
-    !row.schema_name.startsWith('pg_toast') && row.kind !== 'S');
-  const systemRelations = before.filter((row) =>
-    (row.schema_name === 'pg_catalog' || row.schema_name.startsWith('pg_toast')) && ['r', 't'].includes(row.kind));
-  const targets = [...dataRelations, ...systemRelations];
+  // PostgreSQL LOCK TABLE supports ordinary tables, partitioned tables,
+  // and views. Keep every relation in the inventory digest, but submit only
+  // those supported kinds as lock targets; sequences, materialized views,
+  // and TOAST relations are not valid LOCK TABLE targets. Sequence state
+  // remains an explicit production backup blocker.
+  const targets = selectLockableRelations(before);
 
   for (let offset = 0; offset < targets.length; offset += 40) {
     const names = targets.slice(offset, offset + 40)
@@ -285,6 +287,11 @@ async function main() {
     console.log('PASS: LOCK TABLE on sequence is unsupported (SQLSTATE 42809)');
 
     markStage('relation-inventory-drift');
+    const lockKindFixture = ['r', 'p', 'v', 'S', 'm', 'f', 't'].map((kind, index) => ({
+      oid: String(index), schema_name: 'synthetic', relation_name: 'rel_' + index, kind, persistence: 'p',
+    }));
+    assert.deepEqual(selectLockableRelations(lockKindFixture).map((row) => row.kind), ['r', 'p', 'v'],
+      "only PostgreSQL LOCK TABLE-supported relation kinds may be submitted as lock targets");
     const driftBarrierClient = newClient(DATABASE);
     await connect(driftBarrierClient);
     await assert.rejects(
