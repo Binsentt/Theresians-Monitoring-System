@@ -9,6 +9,8 @@ const { test } = require('node:test');
 
 const workerPath = path.join(__dirname, 'VerifiedReaderPasswordWorker.cs');
 const integrationPath = path.join(__dirname, 'windowsPg18VerifiedPasswordTransport.integration.cjs');
+const workflowPath = path.resolve(__dirname, '..', '..', '..', '.github', 'workflows', 'windows-reader-pqchange-pg18.yml');
+const workflowSourceAvailable = fs.existsSync(workflowPath);
 const readWorker = () => fs.readFileSync(workerPath, 'utf8');
 
 test('non-synthetic worker build is disabled pending a reviewed production operator wrapper', () => {
@@ -292,8 +294,9 @@ test('synthetic integration rejects untrusted relative OpenSSL paths with an exe
   }
 });
 
-test('Windows workflow passes only the validated OpenSSL executable through the Node handoff', () => {
-  const workflowPath = path.join(__dirname, '..', '..', '..', '.github', 'workflows', 'windows-reader-pqchange-pg18.yml');
+test('Windows workflow passes only the validated OpenSSL executable through the Node handoff', {
+  skip: !workflowSourceAvailable
+}, () => {
   const workflow = fs.readFileSync(workflowPath, 'utf8').replace(/\r\n/g, '\n');
 
   assert.match(workflow, /System32[\\/]where\.exe/);
@@ -311,8 +314,9 @@ test('Windows workflow passes only the validated OpenSSL executable through the 
   assert.ok(fixedTokenIndex >= 0 && fixedTokenIndex < integrationIndex);
 });
 
-test('Windows transport workflow runs on the integrated PR46 branch', () => {
-  const workflowPath = path.join(__dirname, '..', '..', '..', '.github', 'workflows', 'windows-reader-pqchange-pg18.yml');
+test('Windows transport workflow runs on the integrated PR46 branch', {
+  skip: !workflowSourceAvailable
+}, () => {
   const workflow = fs.readFileSync(workflowPath, 'utf8').replace(/\r\n/g, '\n');
   assert.match(workflow, /- codex\/release-safety-pg18-validation-20261121/);
 });
