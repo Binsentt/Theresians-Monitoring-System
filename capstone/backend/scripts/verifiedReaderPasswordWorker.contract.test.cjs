@@ -102,22 +102,23 @@ test('synthetic integration reports a fixed missing-tool code without echoing pa
   assert.equal(output.includes(sentinel), false, 'diagnostic must not expose filesystem paths');
 });
 
-test('synthetic integration bounds OpenSSL startup and reports only a fixed failure code', { skip: process.platform !== 'win32' }, () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-openssl-probe-test-'));
+test('synthetic integration rejects a missing verified OpenSSL executable path', { skip: process.platform !== 'win32' }, () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-openssl-missing-path-test-'));
   try {
     const bin = path.join(tempRoot, 'bin');
     fs.mkdirSync(bin);
     for (const name of ['initdb.exe', 'pg_ctl.exe', 'psql.exe']) {
       fs.writeFileSync(path.join(bin, name), 'synthetic placeholder', { flag: 'wx' });
     }
-    const missingOpenSsl = path.join(tempRoot, 'private missing openssl.exe');
+    const missingOpenSsl = path.join(tempRoot, 'missing', 'openssl.exe');
     const env = {};
     for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'PATHEXT', 'USERPROFILE']) {
       if (process.env[key]) env[key] = process.env[key];
     }
     Object.assign(env, {
       TQ_PG18_BIN: bin,
-      TQ_OPENSSL: missingOpenSsl,
+      TQ_OPENSSL: 'openssl.exe',
+      TQ_OPENSSL_VERIFIED_PATH: missingOpenSsl,
       TQ_PG18_WORKER_SOURCE: workerPath,
       TQ_CSC: process.execPath
     });
@@ -130,16 +131,73 @@ test('synthetic integration bounds OpenSSL startup and reports only a fixed fail
     });
     const output = (result.stdout || '') + (result.stderr || '');
 
-    assert.equal(result.status, 1, 'unlaunchable OpenSSL must stop before database setup');
-    assert.match(output, /VERIFIED_OPENSSL_START_FAILED_ENOENT/);
+    assert.equal(result.status, 1, 'missing verified executable must stop before setup');
+    assert.match(output, /VERIFIED_OPENSSL_PATH_INVALID/);
     assert.equal(output.includes(tempRoot), false, 'diagnostic must not expose temporary paths');
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
 
-test('synthetic integration resolves the fixed OpenSSL command through PATH without exposing paths', { skip: process.platform !== 'win32' }, () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-openssl-path-test-'));
+test('Node resolves the PowerShell-validated OpenSSL token to the exact PATH executable', { skip: process.platform !== 'win32' }, () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-openssl-resolution-test-'));
+  try {
+    const bin = path.join(tempRoot, 'bin');
+    fs.mkdirSync(bin);
+    for (const name of ['initdb.exe', 'pg_ctl.exe', 'psql.exe']) {
+      fs.writeFileSync(path.join(bin, name), 'synthetic placeholder', { flag: 'wx' });
+    }
+    const opensslPath = path.join(bin, 'openssl.exe');
+    const sourcePath = path.join(tempRoot, 'not-openssl.cs');
+    const source = 'using System; public static class Program { public static void Main() { Console.WriteLine("SYNTHETIC_NOT_OPENSSL"); } }';
+    fs.writeFileSync(sourcePath, source, { flag: 'wx', encoding: 'utf8' });
+    const compiler = process.env.TQ_CSC || (process.env.SystemRoot &&
+      path.join(process.env.SystemRoot, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'));
+    assert.ok(compiler && path.isAbsolute(compiler) && fs.existsSync(compiler), 'Windows C# compiler must be available');
+    const compiled = spawnSync(compiler, ['/nologo', '/target:exe', '/out:' + opensslPath, sourcePath], {
+      cwd: tempRoot,
+      encoding: 'utf8',
+      timeout: 15000,
+      maxBuffer: 32768,
+      windowsHide: true
+    });
+    assert.equal(compiled.error, undefined, 'synthetic native executable compilation must complete');
+    assert.equal(compiled.status, 0, 'synthetic native executable compilation must succeed');
+    assert.ok(fs.existsSync(opensslPath), 'synthetic executable must exist at the pinned path');
+    const env = {};
+    for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'PATHEXT', 'USERPROFILE']) {
+      if (process.env[key]) env[key] = process.env[key];
+    }
+    Object.assign(env, {
+      PATH: bin + path.delimiter + (process.env.PATH || ''),
+      TQ_PG18_BIN: bin,
+      TQ_OPENSSL: 'OpenSSL.EXE',
+      TQ_OPENSSL_VERIFIED_PATH: opensslPath,
+      TQ_PG18_WORKER_SOURCE: workerPath,
+      TQ_CSC: compiler
+    });
+    const result = spawnSync(process.execPath, [integrationPath], {
+      env,
+      encoding: 'utf8',
+      timeout: 7000,
+      maxBuffer: 65536,
+      windowsHide: true
+    });
+    const output = (result.stdout || '') + (result.stderr || '');
+
+    assert.equal(result.status, 1, 'non-OpenSSL executable must stop before database setup');
+    assert.match(output, /VERIFIED_OPENSSL_VERSION_CHECK_FAILED/,
+      'the child process must reach the exact validated executable and reject its output');
+    assert.equal(output.includes(tempRoot), false, 'diagnostic must not expose temporary paths');
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('the actual workflow-resolved OpenSSL survives its PowerShell-to-Node handoff', {
+  skip: process.platform !== 'win32' || !process.env.TQ_OPENSSL_VERIFIED_PATH || !process.env.TQ_OPENSSL
+}, () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-openssl-handoff-test-'));
   try {
     const bin = path.join(tempRoot, 'bin');
     fs.mkdirSync(bin);
@@ -147,13 +205,49 @@ test('synthetic integration resolves the fixed OpenSSL command through PATH with
       fs.writeFileSync(path.join(bin, name), 'synthetic placeholder', { flag: 'wx' });
     }
     const env = {};
-    for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATHEXT', 'USERPROFILE']) {
+    for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'PATHEXT', 'USERPROFILE',
+      'TQ_OPENSSL', 'TQ_OPENSSL_VERIFIED_PATH']) {
       if (process.env[key]) env[key] = process.env[key];
     }
     Object.assign(env, {
-      PATH: bin,
       TQ_PG18_BIN: bin,
-      TQ_OPENSSL: 'OpenSSL.EXE',
+      TQ_PG18_WORKER_SOURCE: workerPath,
+      TQ_CSC: process.execPath
+    });
+    const result = spawnSync(process.execPath, [integrationPath], {
+      env,
+      encoding: 'utf8',
+      timeout: 7000,
+      maxBuffer: 65536,
+      windowsHide: true
+    });
+    const output = (result.stdout || '') + (result.stderr || '');
+
+    assert.equal(result.status, 1, 'synthetic PostgreSQL stub must stop after successful OpenSSL launch');
+    assert.match(output, /PG18_INITDB_BOUNDED_PROCESS_FAILURE_ENOENT/,
+      'actual workflow token and validated path must reach Node before disposable database setup');
+    assert.equal(output.includes(tempRoot), false, 'diagnostics must not expose temporary paths');
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('synthetic integration rejects untrusted relative OpenSSL paths with an executable basename', { skip: process.platform !== 'win32' }, () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-openssl-relative-path-test-'));
+  try {
+    const bin = path.join(tempRoot, 'bin');
+    fs.mkdirSync(bin);
+    for (const name of ['initdb.exe', 'pg_ctl.exe', 'psql.exe']) {
+      fs.writeFileSync(path.join(bin, name), 'synthetic placeholder', { flag: 'wx' });
+    }
+    const env = {};
+    for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'PATHEXT', 'USERPROFILE']) {
+      if (process.env[key]) env[key] = process.env[key];
+    }
+    Object.assign(env, {
+      TQ_PG18_BIN: bin,
+      TQ_OPENSSL: path.win32.join('untrusted', 'openssl.exe'),
+      TQ_OPENSSL_VERIFIED_PATH: path.join(bin, 'openssl.exe'),
       TQ_PG18_WORKER_SOURCE: workerPath,
       TQ_CSC: process.execPath
     });
@@ -166,10 +260,26 @@ test('synthetic integration resolves the fixed OpenSSL command through PATH with
     });
     const output = (result.stdout || '') + (result.stderr || '');
 
-    assert.equal(result.status, 1, 'unavailable PATH command must stop before database setup');
-    assert.match(output, /VERIFIED_OPENSSL_START_FAILED_ENOENT/);
+    assert.equal(result.status, 1, 'relative executable path must stop before setup');
+    assert.match(output, /VERIFIED_TEST_TOOL_NOT_ALLOWED_OPENSSL_COMMAND/);
     assert.equal(output.includes(tempRoot), false, 'diagnostic must not expose temporary paths');
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test('Windows workflow passes only the validated OpenSSL executable through the Node handoff', () => {
+  const workflowPath = path.join(__dirname, '..', '..', '..', '.github', 'workflows', 'windows-reader-pqchange-pg18.yml');
+  const workflow = fs.readFileSync(workflowPath, 'utf8').replace(/\r\n/g, '\n');
+
+  assert.match(workflow, /Get-Command openssl\.exe -CommandType Application/);
+  assert.match(workflow, /\$env:TQ_OPENSSL\s*=\s*'openssl\.exe'/);
+  assert.match(workflow, /\$env:TQ_OPENSSL_VERIFIED_PATH\s*=\s*\$opensslPath/);
+  assert.doesNotMatch(workflow, /\$env:TQ_OPENSSL\s*=\s*\$opensslCommand\.Name/);
+  assert.ok(workflow.includes('$opensslPath = [IO.Path]::GetFullPath($opensslCommand.Source)'));
+  const resolvedPathIndex = workflow.indexOf('$env:TQ_OPENSSL_VERIFIED_PATH = $opensslPath');
+  const fixedTokenIndex = workflow.indexOf("$env:TQ_OPENSSL = 'openssl.exe'");
+  const integrationIndex = workflow.indexOf('node capstone/backend/scripts/windowsPg18VerifiedPasswordTransport.integration.cjs');
+  assert.ok(resolvedPathIndex >= 0 && resolvedPathIndex < integrationIndex);
+  assert.ok(fixedTokenIndex >= 0 && fixedTokenIndex < integrationIndex);
 });

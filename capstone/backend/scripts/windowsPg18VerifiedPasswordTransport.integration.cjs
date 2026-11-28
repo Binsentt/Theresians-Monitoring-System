@@ -29,17 +29,57 @@ for (const [label, file] of requiredTestTools) {
   if (!path.isAbsolute(file)) throw new Error('VERIFIED_TEST_TOOL_NOT_ABSOLUTE_' + label);
   if (!fs.existsSync(file)) throw new Error('VERIFIED_TEST_TOOL_FILE_MISSING_' + label);
 }
-if (!openssl) throw new Error('VERIFIED_TEST_TOOL_UNSET_OPENSSL');
-const opensslByPath = path.isAbsolute(openssl);
-if (!opensslByPath && path.win32.basename(openssl).toLowerCase() !== 'openssl.exe') {
+if (!openssl || openssl.toLowerCase() !== 'openssl.exe') {
   throw new Error('VERIFIED_TEST_TOOL_NOT_ALLOWED_OPENSSL_COMMAND');
+}
+const verifiedOpenSslPath = process.env.TQ_OPENSSL_VERIFIED_PATH;
+if (!verifiedOpenSslPath || !path.win32.isAbsolute(verifiedOpenSslPath) ||
+    path.win32.basename(verifiedOpenSslPath).toLowerCase() !== 'openssl.exe' ||
+    !fs.existsSync(verifiedOpenSslPath)) {
+  throw new Error('VERIFIED_OPENSSL_PATH_INVALID');
 }
 
 const baseEnv = {};
 for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'PATHEXT', 'USERPROFILE']) {
   if (process.env[key]) baseEnv[key] = process.env[key];
 }
-const opensslProbe = spawnSync(openssl, ['version'], {
+const windowsRoot = baseEnv.SystemRoot || baseEnv.WINDIR;
+if (!windowsRoot) throw new Error('VERIFIED_OPENSSL_RESOLVER_UNAVAILABLE');
+const whereExe = path.join(windowsRoot, 'System32', 'where.exe');
+if (!fs.existsSync(whereExe)) throw new Error('VERIFIED_OPENSSL_RESOLVER_UNAVAILABLE');
+let verifiedOpenSslRealPath;
+try {
+  verifiedOpenSslRealPath = fs.realpathSync.native(verifiedOpenSslPath);
+} catch {
+  throw new Error('VERIFIED_OPENSSL_PATH_INVALID');
+}
+baseEnv.PATH = path.dirname(verifiedOpenSslRealPath) + path.delimiter + (baseEnv.PATH || '');
+const whereProbe = spawnSync(whereExe, ['openssl.exe'], {
+  cwd: process.cwd(),
+  env: baseEnv,
+  encoding: 'utf8',
+  timeout: 5000,
+  maxBuffer: 8192,
+  windowsHide: true
+});
+if (whereProbe.error || whereProbe.signal || whereProbe.status === null) {
+  const code = whereProbe.error && whereProbe.error.code && /^[A-Za-z0-9_]+$/.test(whereProbe.error.code)
+    ? whereProbe.error.code.toUpperCase() : (whereProbe.status === null ? 'TIMEOUT' : 'OTHER');
+  throw new Error('VERIFIED_OPENSSL_RESOLUTION_FAILED_' + code);
+}
+const firstResolvedOpenSsl = (whereProbe.stdout || '').split(/\r?\n/).map(value => value.trim()).find(Boolean);
+let resolvedOpenSslRealPath = null;
+try {
+  if (whereProbe.status === 0 && firstResolvedOpenSsl) {
+    resolvedOpenSslRealPath = fs.realpathSync.native(firstResolvedOpenSsl);
+  }
+} catch {}
+if (!resolvedOpenSslRealPath ||
+    path.win32.normalize(resolvedOpenSslRealPath).toLowerCase() !==
+      path.win32.normalize(verifiedOpenSslRealPath).toLowerCase()) {
+  throw new Error('VERIFIED_OPENSSL_PATH_MISMATCH');
+}
+const opensslProbe = spawnSync('openssl.exe', ['version'], {
   cwd: process.cwd(),
   env: baseEnv,
   encoding: 'utf8',
@@ -59,7 +99,7 @@ if (opensslProbe.status !== 0 || !/^OpenSSL\s/i.test(opensslProbe.stdout || ''))
   throw new Error('VERIFIED_OPENSSL_VERSION_CHECK_FAILED');
 }
 
-baseEnv.PATH = bin + path.delimiter + (opensslByPath ? path.dirname(openssl) + path.delimiter : '') + (baseEnv.PATH || '');
+baseEnv.PATH = bin + path.delimiter + (baseEnv.PATH || '');
 
 const parent = fs.realpathSync.native(os.tmpdir());
 const root = fs.mkdtempSync(path.join(parent, 'tq-pg18-verified-sync-'));
