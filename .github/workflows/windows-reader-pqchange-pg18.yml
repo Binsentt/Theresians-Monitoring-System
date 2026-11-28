@@ -95,5 +95,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL 18 integration test syntax check failed.' }
           node --test capstone/backend/scripts/verifiedReaderPasswordWorker.contract.test.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Worker source contract tests failed.' }
+          node --test capstone/backend/scripts/productionReaderPasswordSupervisor.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Bounded operator supervisor tests failed.' }
+          $env:TQ_OPERATOR_GATE_TESTS_REQUIRED = '1'
+          node capstone/backend/scripts/productionReaderPasswordOperator.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Actual protected operator gate regressions failed.' }
           node capstone/backend/scripts/windowsPg18VerifiedPasswordTransport.integration.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Synthetic PostgreSQL 18 TLS/password synchronization integration failed.' }

@@ -120,7 +120,9 @@ internal static class VerifiedReaderPasswordWorker
         {
             if (result == IntPtr.Zero || PQresultStatus(result) != PgResultTuplesOk ||
                 PQntuples(result) != 1 || PQnfields(result) != 1) return null;
-            return PtrString(PQgetvalue(result, 0, 0));
+            string attributes = PtrString(PQgetvalue(result, 0, 0));
+            string privileges = PrivilegeSnapshot(conn);
+            return privileges == null ? null : attributes + "|" + privileges;
         }
         finally { if (result != IntPtr.Zero) PQclear(result); }
     }
@@ -128,8 +130,41 @@ internal static class VerifiedReaderPasswordWorker
     private static bool RequiredRoleSnapshot(string value)
     {
         return value != null && value.StartsWith("true|", StringComparison.Ordinal) &&
-            value.Length == 37 &&
-            value.Substring(5).Length == 32;
+            value.Length == 70 && value[37] == '|' &&
+            System.Text.RegularExpressions.Regex.IsMatch(value.Substring(5), "\\A[0-9a-f]{32}\\|[0-9a-f]{32}\\z");
+    }
+
+    // Catalog-only digest: ownership, object/column/default grants and shared
+    // role dependencies. Do not expose catalog rows or credential verifiers.
+    // Unrelated concurrent privilege/catalog changes also fail closed.
+    private static string PrivilegeSnapshot(IntPtr conn)
+    {
+        const string sql = "SELECT pg_catalog.md5(COALESCE(string_agg(v,E'\\n' ORDER BY v),'')) FROM (" +
+            "SELECT ROW('database',oid,datdba,datacl)::text v FROM pg_catalog.pg_database UNION ALL " +
+            "SELECT ROW('namespace',oid,nspowner,nspacl)::text FROM pg_catalog.pg_namespace UNION ALL " +
+            "SELECT ROW('relation',oid,relowner,relacl)::text FROM pg_catalog.pg_class UNION ALL " +
+            "SELECT ROW('column',attrelid,attnum,attacl)::text FROM pg_catalog.pg_attribute WHERE attacl IS NOT NULL UNION ALL " +
+            "SELECT ROW('routine',oid,proowner,proacl)::text FROM pg_catalog.pg_proc UNION ALL " +
+            "SELECT ROW('type',oid,typowner,typacl)::text FROM pg_catalog.pg_type UNION ALL " +
+            "SELECT ROW('language',oid,lanowner,lanacl)::text FROM pg_catalog.pg_language UNION ALL " +
+            "SELECT ROW('fdw',oid,fdwowner,fdwacl)::text FROM pg_catalog.pg_foreign_data_wrapper UNION ALL " +
+            "SELECT ROW('server',oid,srvowner,srvacl)::text FROM pg_catalog.pg_foreign_server UNION ALL " +
+            "SELECT ROW('default',oid,defaclrole,defaclnamespace,defaclobjtype,defaclacl)::text FROM pg_catalog.pg_default_acl UNION ALL " +
+            "SELECT ROW('largeobject',oid,lomowner,lomacl)::text FROM pg_catalog.pg_largeobject_metadata UNION ALL " +
+            "SELECT ROW('tablespace',oid,spcowner,spcacl)::text FROM pg_catalog.pg_tablespace UNION ALL " +
+            "SELECT ROW('parameter',oid,parname,paracl)::text FROM pg_catalog.pg_parameter_acl UNION ALL " +
+            "SELECT ROW('dependency',dbid,classid,objid,objsubid,refclassid,refobjid,deptype)::text FROM pg_catalog.pg_shdepend " +
+            "WHERE refobjid=(SELECT oid FROM pg_catalog.pg_roles WHERE rolname='tq_release_preflight_reader')" +
+            ") catalog_privileges;";
+        IntPtr result = PQexec(conn, sql);
+        try
+        {
+            if (result == IntPtr.Zero || PQresultStatus(result) != PgResultTuplesOk ||
+                PQntuples(result) != 1 || PQnfields(result) != 1) return null;
+            string value = PtrString(PQgetvalue(result, 0, 0));
+            return value != null && System.Text.RegularExpressions.Regex.IsMatch(value, "\\A[0-9a-f]{32}\\z") ? value : null;
+        }
+        finally { if (result != IntPtr.Zero) PQclear(result); }
     }
 
     private static bool ValidateConnectionIdentity(IntPtr conn, int localPort, int serverPort,
@@ -256,6 +291,9 @@ internal static class VerifiedReaderPasswordWorker
 
     public static int Main(string[] args)
     {
+#if TQ_OPERATOR
+        return VerifiedReaderPasswordOperator.Run(args, RunOperator);
+#else
 #if !TQ_SYNTHETIC
         Console.WriteLine("PRODUCTION_OPERATION_DISABLED=TRUE");
         return 30;
@@ -287,6 +325,21 @@ internal static class VerifiedReaderPasswordWorker
             return 12;
         }
 #endif
+        return RunVerified(localPort, serverPort, mode, expectedAddress);
+#endif
+#endif
+    }
+
+#if TQ_OPERATOR
+    private static int RunOperator(int localPort, int serverPort, string expectedAddress)
+    {
+        return RunVerified(localPort, serverPort, "sync", expectedAddress);
+    }
+#endif
+
+#if TQ_SYNTHETIC || TQ_OPERATOR
+    private static int RunVerified(int localPort, int serverPort, string mode, string expectedAddress)
+    {
         if (PQlibVersion() / 10000 != 18) return 11;
         if (!ValidateConnectionEnvironment())
         {
@@ -301,7 +354,7 @@ internal static class VerifiedReaderPasswordWorker
         try
         {
             conn = PQconnectdb("service=" + ServiceAlias +
-                " sslmode=verify-full connect_timeout=10 options='-c default_transaction_read_only=on -c statement_timeout=8000 -c lock_timeout=2000'");
+                " sslmode=verify-full connect_timeout=10 options='-c search_path=pg_catalog -c default_transaction_read_only=on -c statement_timeout=8000 -c lock_timeout=2000'");
             if (conn == IntPtr.Zero || PQstatus(conn) != ConnectionOk)
             {
                 Console.WriteLine("AUTH_OR_TLS=FAIL");
@@ -335,7 +388,8 @@ internal static class VerifiedReaderPasswordWorker
             }
 #endif
 
-            if (!ScalarIs(conn, "SHOW default_transaction_read_only;", "on") ||
+            if (!ScalarIs(conn, "SHOW search_path;", "pg_catalog") ||
+                !ScalarIs(conn, "SHOW default_transaction_read_only;", "on") ||
                 !ScalarIs(conn, "SHOW statement_timeout;", "8s") ||
                 !ScalarIs(conn, "SHOW lock_timeout;", "2s"))
             {
@@ -430,6 +484,6 @@ internal static class VerifiedReaderPasswordWorker
             ZeroAndFree(secretPointer, secretLength);
             if (conn != IntPtr.Zero) PQfinish(conn);
         }
-#endif
     }
+#endif
 }

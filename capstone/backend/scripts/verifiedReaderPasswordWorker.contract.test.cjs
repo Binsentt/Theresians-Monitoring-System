@@ -13,6 +13,13 @@ const workflowPath = path.resolve(__dirname, '..', '..', '..', '.github', 'workf
 const workflowSourceAvailable = fs.existsSync(workflowPath);
 const readWorker = () => fs.readFileSync(workerPath, 'utf8');
 
+test('explicit operator build routes through protected one-use gates and reuses the verified core', () => {
+  const source = readWorker();
+  assert.match(source, /#if TQ_OPERATOR[\s\S]*?VerifiedReaderPasswordOperator\.Run\(args, RunOperator\)/);
+  assert.match(source, /RunVerified\(localPort, serverPort, "sync", expectedAddress\)/);
+  assert.equal((source.match(/PQchangePassword\(conn, roleToChange/g) || []).length, 1);
+});
+
 test('non-synthetic worker build is disabled pending a reviewed production operator wrapper', () => {
   const source = readWorker();
   assert.match(source, /#if !TQ_SYNTHETIC[\s\S]*?PRODUCTION_OPERATION_DISABLED=TRUE[\s\S]*?return 30;[\s\S]*?#else/);

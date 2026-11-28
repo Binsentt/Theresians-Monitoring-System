@@ -391,6 +391,37 @@ async function main() {
     psql('SELECT current_user=\'tq_release_preflight_reader\';', 'old-reader-reject',
       'tq_synthetic_reader', oldReaderPass, 2);
     mark('OLD_READER_PASSWORD_REJECTED');
+
+    // Exercise the SAME production authorization/ACL/native/journal gate and
+    // password callback using compile-time synthetic identities only.
+    const { createOperatorFixture } = require('./productionReaderPasswordOperator.test.cjs');
+    const operatorSecret = crypto.randomBytes(32).toString('hex') + ':Operator\\Synthetic';
+    secrets.push(operatorSecret);
+    const operatorPass = passfile('reader-operator.pgpass', 'localhost', 'postgres', reader, operatorSecret);
+    psql(`CREATE TABLE public.tq_operator_grant_probe(id integer); GRANT SELECT ON public.tq_operator_grant_probe TO ${reader};`, 'operator-grant-fixture');
+    const grantBefore = psql("SELECT md5(ROW(relowner,relacl)::text) FROM pg_catalog.pg_class WHERE oid='public.tq_operator_grant_probe'::regclass;", 'operator-grant-before').stdout.trim();
+    stage = 'real-protected-operator-fixture';
+    const operator = createOperatorFixture({ bin, root, port, adminPass: path.join(root, 'admin.pgpass'),
+      readerPass: operatorPass, ca: path.join(root, 'root.crt'), workerSource, csc });
+    stage = 'real-protected-operator';
+    const { runBounded, assertExecutableReady } = require('./productionReaderPasswordOperator.cjs');
+    assertExecutableReady(operator.exe);
+    const operatorResult = await runBounded(operator.exe, [operator.authorization, operator.write(),
+      operator.repo, operator.fields.sourceCommit]);
+    assert.equal(operatorResult.completed, true, 'PROTECTED_OPERATOR_DID_NOT_COMPLETE');
+    assert.equal(operatorResult.identityVerified, true, 'PROTECTED_OPERATOR_IDENTITY_NOT_VERIFIED');
+    assert.equal(operatorResult.passwordSynchronized, true, 'PROTECTED_OPERATOR_SYNC_NOT_CONFIRMED');
+    assert.equal(operatorResult.rolePropertiesPreserved, true, 'PROTECTED_OPERATOR_ROLE_CHANGED');
+    assert.equal(psql("SELECT md5(ROW(relowner,relacl)::text) FROM pg_catalog.pg_class WHERE oid='public.tq_operator_grant_probe'::regclass;", 'operator-grant-after').stdout.trim(), grantBefore, 'PROTECTED_OPERATOR_GRANTS_CHANGED');
+    const receipt = fs.readFileSync(path.join(operator.journal, 'operation.consumed'), 'utf8');
+    assert.ok(receipt.includes('STATE=OUTCOME_UNKNOWN') && receipt.includes('COMPLETED=0'), 'OPERATOR_DURABLE_RECEIPT_MISSING');
+    assert.equal(psql('SELECT current_user=\'tq_release_preflight_reader\';', 'operator-reader-auth',
+      'tq_synthetic_reader', operatorPass).stdout.trim(), 't', 'OPERATOR_NEW_READER_AUTH_FAILED');
+    psql('SELECT 1;', 'operator-previous-reader-reject', 'tq_synthetic_reader', newReaderPass, 2);
+    const replay = operator.invoke({ operationId: crypto.randomUUID() });
+    assert.equal(replay.status, 31, 'OPERATOR_REPLAY_ACCEPTED');
+    assert.ok(!replay.stdout.includes('PASSWORD_CHANGE_ATTEMPTED=TRUE'), 'OPERATOR_REPLAY_MUTATED');
+    mark('PROTECTED_OPERATOR_REAL_PG18_SYNC_AUTH_AND_REPLAY');
     success = true;
   } catch (error) {
     primaryStage = stage || 'UNKNOWN';
