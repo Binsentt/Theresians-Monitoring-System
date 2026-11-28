@@ -17,15 +17,26 @@ let worker = null;
 const workerSource = process.env.TQ_PG18_WORKER_SOURCE;
 const csc = process.env.TQ_CSC || (process.env.SystemRoot &&
   path.join(process.env.SystemRoot, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'));
-for (const file of [bin && path.join(bin, 'initdb.exe'), bin && path.join(bin, 'pg_ctl.exe'),
-  bin && path.join(bin, 'psql.exe'), openssl, workerSource, csc]) {
-  if (!file || !path.isAbsolute(file) || !fs.existsSync(file)) throw new Error('VERIFIED_TEST_TOOL_MISSING');
+const requiredTestTools = [
+  ['PG18_INITDB', bin && path.join(bin, 'initdb.exe')],
+  ['PG18_PG_CTL', bin && path.join(bin, 'pg_ctl.exe')],
+  ['PG18_PSQL', bin && path.join(bin, 'psql.exe')],
+  ['OPENSSL', openssl],
+  ['WORKER_SOURCE', workerSource],
+  ['C_COMPILER', csc]
+];
+for (const [label, file] of requiredTestTools) {
+  if (!file) throw new Error('VERIFIED_TEST_TOOL_UNSET_' + label);
+  if (!path.isAbsolute(file)) throw new Error('VERIFIED_TEST_TOOL_NOT_ABSOLUTE_' + label);
+  if (!fs.existsSync(file)) throw new Error('VERIFIED_TEST_TOOL_FILE_MISSING_' + label);
 }
+
 const baseEnv = {};
 for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'PATHEXT', 'USERPROFILE']) {
   if (process.env[key]) baseEnv[key] = process.env[key];
 }
 baseEnv.PATH = bin + path.delimiter + path.dirname(openssl) + path.delimiter + (baseEnv.PATH || '');
+
 const parent = fs.realpathSync.native(os.tmpdir());
 const root = fs.mkdtempSync(path.join(parent, 'tq-pg18-verified-sync-'));
 const data = path.join(root, 'cluster');

@@ -1,11 +1,14 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { test } = require('node:test');
 
 const workerPath = path.join(__dirname, 'VerifiedReaderPasswordWorker.cs');
+const integrationPath = path.join(__dirname, 'windowsPg18VerifiedPasswordTransport.integration.cjs');
 const readWorker = () => fs.readFileSync(workerPath, 'utf8');
 
 test('production worker pins the admin service and fixed reader target', () => {
@@ -71,4 +74,30 @@ test('passfile parser zeroes each temporary field buffer before clearing and reu
   const source = readWorker();
   assert.match(source, /AddPassfileFieldAndClear\(fields, field\)/);
   assert.match(source, /for \(int index = 0; index < field\.Count; index\+\+\)\s*field\[index\] = 0;\s*field\.Clear\(\);/);
+});
+
+test('synthetic integration reports a fixed missing-tool code without echoing paths', { skip: process.platform !== 'win32' }, () => {
+  const sentinel = path.join(os.tmpdir(), 'tq-test-tool-path-must-not-be-logged');
+  const env = {};
+  for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'PATHEXT', 'USERPROFILE']) {
+    if (process.env[key]) env[key] = process.env[key];
+  }
+  Object.assign(env, {
+    TQ_PG18_BIN: sentinel,
+    TQ_OPENSSL: sentinel,
+    TQ_PG18_WORKER_SOURCE: sentinel,
+    TQ_CSC: sentinel
+  });
+  const result = spawnSync(process.execPath, [integrationPath], {
+    env,
+    encoding: 'utf8',
+    timeout: 5000,
+    maxBuffer: 65536,
+    windowsHide: true
+  });
+  const output = (result.stdout || '') + (result.stderr || '');
+
+  assert.equal(result.status, 1, 'missing synthetic tool must stop before setup');
+  assert.match(output, /VERIFIED_TEST_TOOL_FILE_MISSING_PG18_INITDB/);
+  assert.equal(output.includes(sentinel), false, 'diagnostic must not expose filesystem paths');
 });
