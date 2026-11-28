@@ -166,17 +166,27 @@ authorize its own key. The review module requires a current signature and the
 separately pinned fingerprint. No review signature or reviewer approval
 currently exists; do not fabricate one or use the export as a substitute.
 
-For production backup, each evidence SHA-256 may be claimed once. Immediately
-before backup work, the tool atomically creates a `CreateNew` use receipt in the same
-protected directory as the signed evidence and verifies the receipt ACL. A
-pre-existing receipt rejects replay. The receipt is durable and intentionally
-not removed after a later backup failure; obtain a fresh independent review
-and attestation for another attempt. Keep the evidence directory stable and
-protected, on the verified encrypted local volume, and retain its receipts.
-The use receipt prevents accidental reuse within that directory; it is local
-operator evidence, not a defense against an administrator who can replace or
-relocate the entire evidence directory. Receipt creation or verification
-failure stops before the backup snapshot/archive operation.
+For production backup, each canonical signed-payload SHA-256 may be claimed
+once. The validator reconstructs the exact UTF-8/LF payload that was signed;
+accepted CRLF and optional final-newline representations therefore share one
+claim identity. The raw evidence-file SHA-256 remains separately recorded for
+artifact provenance. Immediately before backup work, the tool atomically
+creates a `CreateNew` use receipt keyed by the canonical payload digest in the
+same protected directory as the signed evidence and verifies the receipt ACL.
+A pre-existing receipt rejects replay. The receipt is durable and
+intentionally not removed after a later backup failure; obtain a fresh
+independent review and attestation for another attempt. Keep the evidence
+directory stable and protected, on the verified encrypted local volume, and
+retain its receipts. The use receipt prevents accidental reuse within that
+directory; it is local operator evidence, not a defense against an
+administrator who can replace or relocate the entire evidence directory.
+Receipt creation or verification failure stops before the backup
+snapshot/archive operation.
+Before using the canonical-payload receipt scheme, inspect any legacy
+`.tq-backup-role-review-<evidence-sha256>.used` receipts in the evidence
+directory and reconcile their prior claims. The validator refuses to create a
+canonical claim while any legacy-format receipt remains; do not delete a
+receipt to bypass that stop.
 
 ### Independent reviewer handoff checklist
 

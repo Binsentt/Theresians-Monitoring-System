@@ -396,6 +396,7 @@ function Get-VerifiedBackupRoleReview([string]$RoutineInventorySha256) {
     ExpiresUtc = $review.ExpiresUtc
     RoutineInventorySha256 = $review.RoutineInventorySha256
     ReviewerKeySha256 = $review.ReviewerKeySha256.ToUpperInvariant()
+    SignedPayloadSha256 = $review.SignedPayloadSha256
     EvidenceSha256 = (Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
     EvidenceDirectory = (Split-Path -LiteralPath $evidencePath -Parent)
   }
@@ -605,7 +606,7 @@ try {
     $reviewUseDirectory = Assert-StoragePath $roleReviewBefore.EvidenceDirectory
     Assert-EncryptedLocalVolume $reviewUseDirectory
     Assert-RestrictedStorageAcl $reviewUseDirectory 'Modify' $true
-    $roleReviewUse = Register-TqBackupRoleReviewEvidenceUse -EvidenceSha256 $roleReviewBefore.EvidenceSha256 -RegistryDirectory $reviewUseDirectory
+    $roleReviewUse = Register-TqBackupRoleReviewEvidenceUse -PayloadSha256 $roleReviewBefore.SignedPayloadSha256 -RegistryDirectory $reviewUseDirectory
     Assert-ArtifactAcl $roleReviewUse.MarkerPath 'ReadWrite'
     $beforeState = Invoke-ReleaseStateAudit $BackupServiceName $backupRole
     $script:ExportedBackupSnapshot = Start-ExportedBackupSnapshot $BackupServiceName
@@ -632,6 +633,9 @@ try {
     $roleReviewAfter = Get-VerifiedBackupRoleReview $roleAuditAfter.RoutineInventorySha256
     if ($roleReviewAfter.EvidenceSha256 -cne $roleReviewBefore.EvidenceSha256) {
       throw 'STOP: backup-role review evidence changed during the archive operation.'
+    }
+    if ($roleReviewAfter.SignedPayloadSha256 -cne $roleReviewBefore.SignedPayloadSha256) {
+      throw 'STOP: canonical backup-role review payload changed during the archive operation.'
     }
     $afterState = Invoke-ReleaseStateAudit $BackupServiceName $backupRole
     Assert-ExportedBackupSnapshotAlive $script:ExportedBackupSnapshot
@@ -660,6 +664,7 @@ try {
         reviewerKeySha256 = $roleReviewBefore.ReviewerKeySha256
         routineInventorySha256 = $roleReviewBefore.RoutineInventorySha256
         evidenceSha256 = $roleReviewBefore.EvidenceSha256
+        signedPayloadSha256 = $roleReviewBefore.SignedPayloadSha256
         expiresAtUtc = $roleReviewBefore.ExpiresUtc.ToString('o')
         useReceiptFileName = [System.IO.Path]::GetFileName($roleReviewUse.MarkerPath)
         useReceiptSha256 = (Get-FileHash -LiteralPath $roleReviewUse.MarkerPath -Algorithm SHA256).Hash.ToLowerInvariant()

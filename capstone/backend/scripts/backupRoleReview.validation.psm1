@@ -192,12 +192,12 @@ function Assert-TqBackupRoleReviewEvidence {
     throw 'STOP: backup-role review public key structure is invalid.'
   }
   $rsa = [System.Security.Cryptography.RSACryptoServiceProvider]::new()
+  $payloadBytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
   try {
     $parameters = [System.Security.Cryptography.RSAParameters]::new()
     $parameters.Modulus = [Convert]::FromBase64String($Matches[1])
     $parameters.Exponent = [Convert]::FromBase64String($Matches[2])
     $rsa.ImportParameters($parameters)
-    $payloadBytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
     $signatureValid = $rsa.VerifyData($payloadBytes, [System.Security.Cryptography.CryptoConfig]::MapNameToOID('SHA256'), $signatureBytes)
   } catch {
     throw 'STOP: backup-role review signature could not be verified.'
@@ -205,6 +205,12 @@ function Assert-TqBackupRoleReviewEvidence {
     $rsa.Dispose()
   }
   if (-not $signatureValid) { throw 'STOP: backup-role review signature is invalid.' }
+  $payloadHasher = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $payloadSha256 = ([BitConverter]::ToString($payloadHasher.ComputeHash($payloadBytes))).Replace('-', '').ToLowerInvariant()
+  } finally {
+    $payloadHasher.Dispose()
+  }
 
   return [pscustomobject]@{
     Status = 'PASS'
@@ -212,6 +218,7 @@ function Assert-TqBackupRoleReviewEvidence {
     ExpiresUtc = $expires
     RoutineInventorySha256 = $fields.routine_inventory_sha256
     ReviewerKeySha256 = $fields.reviewer_key_sha256
+    SignedPayloadSha256 = $payloadSha256
   }
 }
 
@@ -220,7 +227,7 @@ function Register-TqBackupRoleReviewEvidenceUse {
   param(
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[a-f0-9]{64}$')]
-    [string]$EvidenceSha256,
+    [string]$PayloadSha256,
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
     [string]$RegistryDirectory
@@ -254,9 +261,20 @@ function Register-TqBackupRoleReviewEvidenceUse {
     $cursor = $parent.FullName
   }
 
-  $markerPath = Join-Path $directory ('.tq-backup-role-review-' + $EvidenceSha256 + '.used')
+  try {
+    $legacyReceipt = Get-ChildItem -LiteralPath $directory -Force -File -ErrorAction Stop |
+      Where-Object { $_.Name -match '\A\.tq-backup-role-review-[a-f0-9]{64}\.used\z' } |
+      Select-Object -First 1
+  } catch {
+    throw 'STOP: legacy backup-role review receipts could not be inventoried safely.'
+  }
+  if ($null -ne $legacyReceipt) {
+    throw 'STOP: legacy raw-evidence use receipt requires reconciliation before canonical claims.'
+  }
+
+  $markerPath = Join-Path $directory ('.tq-backup-role-review-payload-' + $PayloadSha256 + '.used')
   $usedAtUtc = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture)
-  $record = "TQ_BACKUP_ROLE_REVIEW_USE_V1`nEvidenceSha256=$EvidenceSha256`nUsedAtUtc=$usedAtUtc`n"
+  $record = "TQ_BACKUP_ROLE_REVIEW_PAYLOAD_USE_V1`nPayloadSha256=$PayloadSha256`nUsedAtUtc=$usedAtUtc`n"
   $bytes = [System.Text.UTF8Encoding]::new($false, $true).GetBytes($record)
   try {
     $stream = [System.IO.FileStream]::new(
@@ -273,7 +291,7 @@ function Register-TqBackupRoleReviewEvidenceUse {
     }
   } catch {
     if ([System.IO.File]::Exists($markerPath)) {
-      throw 'STOP: backup-role review evidence already has a use receipt or interrupted claim; obtain a new independent review.'
+      throw 'STOP: backup-role review signed payload already has a use receipt or interrupted claim; obtain a new independent review.'
     }
     throw 'STOP: backup-role review evidence use could not be durably recorded.'
   }
@@ -281,7 +299,7 @@ function Register-TqBackupRoleReviewEvidenceUse {
   return [pscustomobject]@{
     Status = 'PASS'
     MarkerPath = $markerPath
-    EvidenceSha256 = $EvidenceSha256
+    PayloadSha256 = $PayloadSha256
     UsedAtUtc = [DateTime]::ParseExact($usedAtUtc, "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
       [Globalization.CultureInfo]::InvariantCulture,
       [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal)

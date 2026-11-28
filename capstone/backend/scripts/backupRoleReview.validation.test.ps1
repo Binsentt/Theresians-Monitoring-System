@@ -121,6 +121,18 @@ $valid = New-SyntheticEvidence
 Invoke-ExpectPass 'valid independently pinned synthetic signature' $valid
 $crlf = $valid.Replace([string][char]10, [string]([char]13) + [char]10)
 Invoke-ExpectPass 'CRLF evidence normalization' $crlf
+$finalNewline = $valid + [char]10
+Invoke-ExpectPass 'final-newline evidence normalization' $finalNewline
+$validReview = Assert-TqBackupRoleReviewEvidence -EvidenceText $valid @expected
+$crlfReview = Assert-TqBackupRoleReviewEvidence -EvidenceText $crlf @expected
+$finalNewlineReview = Assert-TqBackupRoleReviewEvidence -EvidenceText $finalNewline @expected
+if ($valid -ceq $crlf -or $valid -ceq $finalNewline -or
+    $validReview.SignedPayloadSha256 -notmatch '^[a-f0-9]{64}$' -or
+    $crlfReview.SignedPayloadSha256 -cne $validReview.SignedPayloadSha256 -or
+    $finalNewlineReview.SignedPayloadSha256 -cne $validReview.SignedPayloadSha256) {
+  throw 'Equivalent allowed evidence encodings must resolve to one canonical signed-payload digest.'
+}
+Write-Output 'PASS: allowed line-ending and final-newline variants share one signed-payload digest'
 
 Invoke-ExpectReject 'wrong database' $valid @{ ExpectedDatabase = 'other_database' }
 Invoke-ExpectReject 'wrong server address' $valid @{ ExpectedServerAddress = '127.0.0.2' }
@@ -157,29 +169,52 @@ if (-not (Get-Command Register-TqBackupRoleReviewEvidenceUse -ErrorAction Silent
   $useDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('tq-review-use-' + [guid]::NewGuid().ToString('N'))
   [void][System.IO.Directory]::CreateDirectory($useDirectory)
   try {
-    $evidenceSha = '1' * 64
-    $firstUse = Register-TqBackupRoleReviewEvidenceUse -EvidenceSha256 $evidenceSha -RegistryDirectory $useDirectory
-    if ($firstUse.Status -cne 'PASS' -or -not (Test-Path -LiteralPath $firstUse.MarkerPath -PathType Leaf)) {
+    $payloadSha = $validReview.SignedPayloadSha256
+    $firstUse = Register-TqBackupRoleReviewEvidenceUse -PayloadSha256 $payloadSha -RegistryDirectory $useDirectory
+    if ($firstUse.Status -cne 'PASS' -or $firstUse.PayloadSha256 -cne $payloadSha -or
+        -not (Test-Path -LiteralPath $firstUse.MarkerPath -PathType Leaf)) {
       throw 'First evidence use was not durably recorded.'
     }
     $passed++
     Write-Output 'PASS: first signed-review evidence use is durably recorded'
+    foreach ($variant in @(
+      @{ Name = 'CRLF'; PayloadSha256 = $crlfReview.SignedPayloadSha256 },
+      @{ Name = 'optional final newline'; PayloadSha256 = $finalNewlineReview.SignedPayloadSha256 }
+    )) {
+      try {
+        [void](Register-TqBackupRoleReviewEvidenceUse -PayloadSha256 $variant.PayloadSha256 -RegistryDirectory $useDirectory)
+        $failed++
+        Write-Output "FAIL: replay via $($variant.Name) encoding was accepted"
+      } catch {
+        if ($_.Exception.Message -match 'already has a use receipt or interrupted claim') {
+          $passed++
+          Write-Output "PASS: replay via $($variant.Name) encoding is rejected"
+        } else {
+          $failed++
+          Write-Output "FAIL: replay via $($variant.Name) was rejected for an unexpected reason"
+        }
+      }
+    }
+    $legacyUseDirectory = Join-Path $useDirectory 'legacy-receipt-fixture'
+    [void][System.IO.Directory]::CreateDirectory($legacyUseDirectory)
+    $legacyReceipt = Join-Path $legacyUseDirectory ('.tq-backup-role-review-' + ('3' * 64) + '.used')
+    [System.IO.File]::WriteAllText($legacyReceipt, 'synthetic legacy raw-evidence use receipt', [System.Text.UTF8Encoding]::new($false))
     try {
-      [void](Register-TqBackupRoleReviewEvidenceUse -EvidenceSha256 $evidenceSha -RegistryDirectory $useDirectory)
+      [void](Register-TqBackupRoleReviewEvidenceUse -PayloadSha256 ('4' * 64) -RegistryDirectory $legacyUseDirectory)
       $failed++
-      Write-Output 'FAIL: replayed signed-review evidence was accepted'
+      Write-Output 'FAIL: legacy raw-evidence receipt did not block canonical claims pending reconciliation'
     } catch {
-      if ($_.Exception.Message -match 'already has a use receipt or interrupted claim') {
+      if ($_.Exception.Message -match 'legacy raw-evidence use receipt.*reconciliation') {
         $passed++
-        Write-Output 'PASS: consumed signed-review evidence replay is rejected'
+        Write-Output 'PASS: legacy raw-evidence receipt blocks canonical claim pending reconciliation'
       } else {
         $failed++
-        Write-Output 'FAIL: replay was rejected for an unexpected reason'
+        Write-Output 'FAIL: legacy receipt was rejected for an unexpected reason'
       }
     }
     [System.IO.File]::WriteAllText($firstUse.MarkerPath, 'synthetic tampered receipt', [System.Text.UTF8Encoding]::new($false))
     try {
-      [void](Register-TqBackupRoleReviewEvidenceUse -EvidenceSha256 $evidenceSha -RegistryDirectory $useDirectory)
+      [void](Register-TqBackupRoleReviewEvidenceUse -PayloadSha256 $payloadSha -RegistryDirectory $useDirectory)
       $failed++
       Write-Output 'FAIL: altered existing use receipt was accepted'
     } catch {
@@ -192,7 +227,7 @@ if (-not (Get-Command Register-TqBackupRoleReviewEvidenceUse -ErrorAction Silent
       }
     }
     try {
-      [void](Register-TqBackupRoleReviewEvidenceUse -EvidenceSha256 'not-a-sha' -RegistryDirectory $useDirectory)
+      [void](Register-TqBackupRoleReviewEvidenceUse -PayloadSha256 'not-a-sha' -RegistryDirectory $useDirectory)
       $failed++
       Write-Output 'FAIL: malformed evidence-use digest was accepted'
     } catch {
@@ -200,7 +235,7 @@ if (-not (Get-Command Register-TqBackupRoleReviewEvidenceUse -ErrorAction Silent
       Write-Output 'PASS: malformed evidence-use digest is rejected'
     }
     try {
-      [void](Register-TqBackupRoleReviewEvidenceUse -EvidenceSha256 ('2' * 64) -RegistryDirectory '.')
+      [void](Register-TqBackupRoleReviewEvidenceUse -PayloadSha256 ('2' * 64) -RegistryDirectory '.')
       $failed++
       Write-Output 'FAIL: relative review-use registry directory was accepted'
     } catch {

@@ -738,9 +738,23 @@ test('backup reviewer use registry rejects replay and is atomically create-new',
   const module = read('backupRoleReview.validation.psm1');
   const script = read('backup-restore-rehearsal.ps1');
   assert.match(module, /function Register-TqBackupRoleReviewEvidenceUse/);
+  assert.match(module, /SignedPayloadSha256\s*=\s*\$payloadSha256/,
+    'validated review evidence must expose the canonical signed-payload digest');
+  assert.match(module, /\$PayloadSha256/,
+    'the use registry must claim the signed payload, not the raw evidence file bytes');
   assert.match(module, /FileMode\]::CreateNew/);
-  assert.match(module, /review evidence already has a use receipt or interrupted claim/);
+  assert.match(module, /review signed payload already has a use receipt or interrupted claim/);
+  assert.match(module, /legacy raw-evidence use receipt requires reconciliation/,
+    'legacy one-use claims must block canonical replay claims until reconciled');
+  assert.match(module, /\.tq-backup-role-review-\[a-f0-9\]\{64\}\\\.used/,
+    'the validator must detect old raw-evidence receipt filenames');
   assert.match(script, /Register-TqBackupRoleReviewEvidenceUse/);
+  assert.match(script, /Register-TqBackupRoleReviewEvidenceUse\s+-PayloadSha256\s+\$roleReviewBefore\.SignedPayloadSha256/,
+    'the backup flow must key replay prevention by the canonical validated payload');
+  assert.match(script, /evidenceSha256\s*=\s*\$roleReviewBefore\.EvidenceSha256/,
+    'the raw evidence file hash remains available for artifact provenance');
+  assert.match(script, /signedPayloadSha256\s*=\s*\$roleReviewBefore\.SignedPayloadSha256/,
+    'the manifest records the canonical one-use claim identity');
   const firstReview = script.indexOf('$roleReviewBefore = Get-VerifiedBackupRoleReview $roleAuditBefore.RoutineInventorySha256');
   const useClaim = script.indexOf('Register-TqBackupRoleReviewEvidenceUse', firstReview);
   const snapshotStart = script.indexOf('Start-ExportedBackupSnapshot $BackupServiceName', firstReview);
