@@ -430,7 +430,8 @@ jobs:
             tq_preflight_partial_receipt_026_test_ci \
             tq_preflight_026_applied_test_ci \
             tq_preflight_pre_024_test_ci \
-            tq_preflight_wrong_filename_ledger_test_ci; do
+            tq_preflight_wrong_filename_ledger_test_ci \
+            tq_writer_quiescence_test_ci; do
             docker exec tq-backend-test-postgres createdb --host=127.0.0.1 --username=postgres "$database"
           done
           disposable_sentinel="$(openssl rand -hex 24)"
@@ -463,7 +464,8 @@ jobs:
             tq_preflight_partial_receipt_026_test_ci \
             tq_preflight_026_applied_test_ci \
             tq_preflight_pre_024_test_ci \
-            tq_preflight_wrong_filename_ledger_test_ci; do
+            tq_preflight_wrong_filename_ledger_test_ci \
+            tq_writer_quiescence_test_ci; do
             if [[ ! "$database" =~ ^tq_[a-z0-9_]+_test_ci$ ]]; then
               echo "Refusing to mark an unrecognized PostgreSQL test database: $database" >&2
               exit 1
@@ -485,6 +487,35 @@ jobs:
           TQ_EXPECTED_POSTGRES_MAJOR: '16'
           TQ_DISPOSABLE_DB_SENTINEL: ${{ steps.start-postgres.outputs.sentinel }}
         run: node capstone/backend/scripts/run-preflight-postgres-harness.cjs
+
+      - name: Test synthetic PostgreSQL 16 writer-barrier feasibility
+        shell: bash
+        env:
+          TQ_DISPOSABLE_DB_SENTINEL: ${{ steps.start-postgres.outputs.sentinel }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          docker run --rm \
+            --network container:tq-backend-test-postgres \
+            --read-only \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --pids-limit=128 \
+            --memory=1g \
+            --cpus=2 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777 \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$RUNNER_TEMP/tq-backend-dependencies/node_modules:/backend-deps/node_modules:ro" \
+            --workdir /workspace/capstone/backend \
+            --user "$(id -u):$(id -g)" \
+            --env NODE_PATH=/backend-deps/node_modules \
+            --env CI=true \
+            --env GITHUB_ACTIONS=true \
+            --env GITHUB_SHA="$GITHUB_SHA" \
+            --env TQ_EXPECTED_POSTGRES_MAJOR=16 \
+            --env TQ_DISPOSABLE_DB_SENTINEL="$TQ_DISPOSABLE_DB_SENTINEL" \
+            node:20-bookworm node scripts/backupWriterQuiescence.integration.cjs
 
       - name: Run recovery migration 026 against disposable PostgreSQL 16
         shell: bash
@@ -1128,9 +1159,10 @@ jobs:
             tq_preflight_026_applied_test_ci
             tq_preflight_pre_024_test_ci
             tq_preflight_wrong_filename_ledger_test_ci
+            tq_writer_quiescence_test_ci
           )
           for database in "${databases[@]}"; do
-            if [[ ! "$database" =~ ^tq_preflight_[a-z0-9_]+_test_ci$ ]]; then
+            if [[ ! "$database" =~ ^tq_(preflight_[a-z0-9_]+|writer_quiescence)_test_ci$ ]]; then
               echo "Refusing to create an unrecognized PostgreSQL test database: $database" >&2
               exit 1
             fi
@@ -1174,6 +1206,35 @@ jobs:
           cp capstone/backend/package.json capstone/backend/package-lock.json "$recovery_deps/"
           npm ci --prefix "$recovery_deps" --ignore-scripts --no-audit --no-fund
           test -f "$recovery_deps/node_modules/pg/package.json"
+
+      - name: Test synthetic PostgreSQL 18 writer-barrier feasibility
+        shell: bash
+        env:
+          TQ_DISPOSABLE_DB_SENTINEL: ${{ steps.start-postgres18.outputs.sentinel }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          docker run --rm \
+            --network container:tq-backend-test-postgres \
+            --read-only \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --pids-limit=128 \
+            --memory=1g \
+            --cpus=2 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777 \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$RUNNER_TEMP/tq-recovery-integration-dependencies/node_modules:/backend-deps/node_modules:ro" \
+            --workdir /workspace/capstone/backend \
+            --user "$(id -u):$(id -g)" \
+            --env NODE_PATH=/backend-deps/node_modules \
+            --env CI=true \
+            --env GITHUB_ACTIONS=true \
+            --env GITHUB_SHA="$GITHUB_SHA" \
+            --env TQ_EXPECTED_POSTGRES_MAJOR=18 \
+            --env TQ_DISPOSABLE_DB_SENTINEL="$TQ_DISPOSABLE_DB_SENTINEL" \
+            node:20-bookworm node scripts/backupWriterQuiescence.integration.cjs
 
       - name: Run recovery migration 026 against disposable PostgreSQL 18
         shell: bash
