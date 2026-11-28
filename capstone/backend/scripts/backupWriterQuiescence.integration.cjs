@@ -20,9 +20,11 @@ const FIXED = Object.freeze({
 const liveClients = new Set();
 let diagnosticStage = 'ci-target-validation';
 let diagnosticDetail = 'none';
+let cleanupStage = 'none';
 
 function markStage(stage) {
   diagnosticStage = stage;
+  diagnosticDetail = 'none';
 }
 
 function classifyServerAddress(address) {
@@ -272,7 +274,13 @@ async function main() {
     await assert.rejects(
       acquireCandidateBarrier(driftBarrierClient, '3s', () =>
         admin.query(`CREATE TABLE ${quoteIdent(SCHEMA)}."inventory_race" (id integer)`)),
-      /relation catalog changed while locks were being acquired/,
+      (error) => {
+        const code = typeof error?.code === 'string' && /^[A-Z0-9]+$/.test(error.code)
+          ? error.code.toLowerCase() : 'none';
+        diagnosticDetail = `inventory-drift-error-${code}`;
+        return typeof error?.message === 'string' &&
+          error.message.includes('relation catalog changed while locks were being acquired');
+      },
       'a relation created after inventory capture must invalidate and abort the barrier',
     );
     await driftBarrierClient.query('ROLLBACK');
@@ -445,7 +453,7 @@ async function main() {
       liveClients.delete(client);
     }
     if (!fixtureCleaned) {
-      markStage('fallback-fixture-cleanup');
+      cleanupStage = 'fallback-fixture-cleanup';
       try {
         await cleanupSyntheticFixture(admin);
         console.log('CLEANUP=PASS');
@@ -464,7 +472,8 @@ async function main() {
 main().catch((error) => {
   const safeStage = /^[a-z0-9-]+$/.test(diagnosticStage) ? diagnosticStage : 'unknown';
   const safeDetail = /^[a-z0-9-]+$/.test(diagnosticDetail) ? diagnosticDetail : 'unknown';
+  const safeCleanup = /^[a-z0-9-]+$/.test(cleanupStage) ? cleanupStage : 'unknown';
   const safeCode = typeof error?.code === 'string' && /^[A-Z0-9]+$/.test(error.code) ? error.code : 'NONE';
-  console.error(`FAIL: synthetic writer-quiescence integration failed (stage=${safeStage}, detail=${safeDetail}, name=${error?.name || 'Error'}, sqlstate=${safeCode}).`);
+  console.error(`FAIL: synthetic writer-quiescence integration failed (stage=${safeStage}, detail=${safeDetail}, cleanup=${safeCleanup}, name=${error?.name || 'Error'}, sqlstate=${safeCode}).`);
   process.exitCode = 1;
 });
