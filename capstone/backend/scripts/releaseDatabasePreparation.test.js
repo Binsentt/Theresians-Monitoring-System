@@ -399,7 +399,7 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
   assert.match(harness, /unvalidated CHECK constraint/);
   assert.match(harness, /truncated custom-format archive must be rejected/);
   assert.match(harness, /OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:/);
-  assert.match(harness, /passedScenarioCount, 102/);
+  assert.match(harness, /passedScenarioCount, 103/);
   const unexpectedInsertAt = harness.indexOf('const unexpectedMigration = psql(CASES.preMigration026');
   const unexpectedClassifiedAt = harness.indexOf(
     "assert.equal(parseBackupReleaseState(unexpectedBackupStateResult).readiness, 'UNVERIFIED');",
@@ -1025,7 +1025,7 @@ test('backup harness rejects orphaned migration 026 catalog objects', () => {
   assert.match(harness, /orphaned migration-026 constraint/);
   assert.match(harness, /orphaned migration-026 trigger/);
   assert.match(harness, /orphaned migration-026 type/);
-  assert.match(harness, /passedScenarioCount, 102/);
+  assert.match(harness, /passedScenarioCount, 103/);
 });
 
 
@@ -1117,7 +1117,7 @@ test('backup role audit rejects executable large-object creators and unsafe call
   assert.match(harness, /schema USAGE WITH GRANT OPTION is rejected/);
   assert.match(harness, /routine EXECUTE WITH GRANT OPTION is rejected/);
   assert.match(harness, /CREATE privilege on pg_catalog is rejected by backup-role audit/);
-  assert.match(harness, /passedScenarioCount, 102/);
+  assert.match(harness, /passedScenarioCount, 103/);
 
   const workflow = readIsolatedBackendWorkflow();
   const matrixJobs = /postgres_image:\s*\['postgres:16-bookworm',\s*'postgres:18-bookworm'\]/.test(workflow)
@@ -1146,7 +1146,7 @@ test('backup role audit rejects column-level writes and inherited large-object c
   assert.match(harness, /backup role column-level UPDATE grant is rejected/);
   assert.match(harness, /PUBLIC column-level UPDATE grant is rejected/);
   assert.match(harness, /database-level lo_compat_privileges default is rejected/);
-  assert.match(harness, /passedScenarioCount, 102/);
+  assert.match(harness, /passedScenarioCount, 103/);
 });
 
 
@@ -1163,7 +1163,7 @@ test('disposable PostgreSQL harness tests stdin-driven password synchronization 
   assert.match(harness, /syntheticHostaddrPassfile/);
   assert.match(harness, /synthetic passfiles must be removed/);
   assert.match(harness, /temporary pg_hba\.conf recovery copies must be removed only after successful restoration/);
-  assert.match(harness, /passedScenarioCount, 102/);
+  assert.match(harness, /passedScenarioCount, 103/);
 });
 
 
@@ -1257,7 +1257,8 @@ test('backup source audits and pg_dump share one exported snapshot while sequenc
   assert.match(harness, /postgres-exported-snapshot\.integration\.cjs/);
   assert.match(harness, /exported-snapshot integration must pass for PostgreSQL 16 and 18/);
   assert.match(harness, /spawnSync\(process\.execPath, \[exportedSnapshotHelper\]/);
-  assert.match(harness, /passedScenarioCount, 102/);
+  assert.match(harness, /backup role sequence USAGE is rejected after synthetic nextval proves the write/);
+  assert.match(harness, /passedScenarioCount, 103/);
   assert.match(snapshotIntegration, /const CONTAINER = 'tq-backend-test-postgres'/);
   assert.match(snapshotIntegration, /'--set=VERBOSITY=verbose'/,
     'synthetic identity failures must expose SQLSTATE to the bounded sanitizer without printing raw stderr');
@@ -1300,7 +1301,7 @@ test('backup role audit rejects incoming memberships and grant-option delegation
   assert.match(harness, /schema USAGE WITH GRANT OPTION is rejected/);
   assert.match(harness, /database CONNECT WITH GRANT OPTION is rejected/);
   assert.match(harness, /routine EXECUTE WITH GRANT OPTION is rejected/);
-  assert.match(harness, /passedScenarioCount, 102/);
+  assert.match(harness, /passedScenarioCount, 103/);
   assert.match(sql, /role_set_member_count/);
   assert.match(harness, /transitive backup role membership that permits SET ROLE is rejected/);
   assert.match(sql, /SELECT target_role\.oid AS target_role_oid,[\s\S]*?FROM target_role\s*\)\s*SELECT/,

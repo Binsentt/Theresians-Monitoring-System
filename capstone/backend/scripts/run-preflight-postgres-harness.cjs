@@ -2025,6 +2025,27 @@ const createBackupIntegritySequence = psql(CASES.valid, 'postgres', `
 assert.equal(createBackupIntegritySequence.status, 0, createBackupIntegritySequence.stderr);
 assert.ok(createBackupIntegritySequence.stdout.includes('42'),
   'the aggregate-integrity fixture must start from a known synthetic sequence state');
+const grantBackupSequenceUsage = psql(CASES.valid, 'postgres',
+  'GRANT USAGE ON SEQUENCE public.tq_backup_integrity_sequence TO tq_prod_backup_reader;');
+assert.equal(grantBackupSequenceUsage.status, 0, grantBackupSequenceUsage.stderr);
+const advanceBackupSequence = psql(CASES.valid, 'tq_prod_backup_reader',
+  "SELECT nextval('public.tq_backup_integrity_sequence');");
+assert.equal(advanceBackupSequence.status, 0,
+  `synthetic USAGE must permit nextval before the audit rejects it: ${advanceBackupSequence.stderr}`);
+assert.equal(advanceBackupSequence.stdout.trim(), '43',
+  'synthetic nextval must prove that the USAGE grant can mutate sequence state');
+const writableBackupSequenceAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(writableBackupSequenceAudit.status, 3,
+  `sequence USAGE that permits nextval must fail the backup-role audit: ${writableBackupSequenceAudit.stderr}\n${writableBackupSequenceAudit.stdout}`);
+assert.match(writableBackupSequenceAudit.stdout, /sequence_write_privilege_count=1/);
+const revokeBackupSequenceUsage = psql(CASES.valid, 'postgres',
+  'REVOKE USAGE ON SEQUENCE public.tq_backup_integrity_sequence FROM tq_prod_backup_reader;');
+assert.equal(revokeBackupSequenceUsage.status, 0, revokeBackupSequenceUsage.stderr);
+const readOnlyBackupSequenceAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(readOnlyBackupSequenceAudit.status, 0,
+  `revoking sequence USAGE must restore the read-only backup-role audit: ${readOnlyBackupSequenceAudit.stderr}\n${readOnlyBackupSequenceAudit.stdout}`);
+assert.match(readOnlyBackupSequenceAudit.stdout, /sequence_write_privilege_count=0/);
+recordScenario('backup role sequence USAGE is rejected after synthetic nextval proves the write');
 
 const dump = dockerBinary([
   'exec', CONTAINER, 'pg_dump', '--host=127.0.0.1', '--port=5432',
@@ -2530,7 +2551,7 @@ try {
 }
 recordScenario('stdin-only psql password synchronization authenticates via a temporary disposable passfile without echoing the secret');
 
-assert.equal(passedScenarioCount, 102, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
+assert.equal(passedScenarioCount, 103, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
 console.log(`Preflight integration result: ${passedScenarioCount}/${passedScenarioCount} disposable PostgreSQL scenarios passed.`);
 const expectedBackupIntegrityScenarioCount = process.env.TQ_EXPECTED_POSTGRES_MAJOR === '18' ? 6 : 0;
 assert.equal(passedBackupIntegrityScenarioCount, expectedBackupIntegrityScenarioCount,
