@@ -24,35 +24,35 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Download and verify disposable PostgreSQL 18.7 binaries
+      - name: Download and verify previously proven PostgreSQL 18.6 binaries
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $testRoot = Join-Path $env:RUNNER_TEMP ('tq-pg18-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $testRoot) { throw 'Synthetic PostgreSQL test directory already exists.' }
           New-Item -ItemType Directory -Path $testRoot | Out-Null
-          $archive = Join-Path $testRoot 'postgresql-18.7-2-windows-x64-binaries.zip'
-          $url = 'https://get.enterprisedb.com/postgresql/postgresql-18.7-2-windows-x64-binaries.zip'
+          $archive = Join-Path $testRoot 'postgresql-18.6-5-windows-x64-binaries.zip'
+          $url = 'https://get.enterprisedb.com/postgresql/postgresql-18.6-5-windows-x64-binaries.zip'
           Invoke-WebRequest -Uri $url -OutFile $archive
           $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          $expected = '74f3740a2e7844118857f297c2067d226f8f2b0652de96022ce54bb27cd60a79'
+          $expected = 'e2246ba91d22345bc3d017586c09ede52d9df180b1eeb480f050445f1cad84e2'
           if ($actual -ne $expected) { throw 'PostgreSQL binary archive SHA-256 mismatch.' }
-          $destination = Join-Path $testRoot 'postgresql-18.7'
+          $destination = Join-Path $testRoot 'postgresql-18.6'
           Expand-Archive -LiteralPath $archive -DestinationPath $destination
           $bin = Join-Path $destination 'pgsql\bin'
           foreach ($tool in @('initdb.exe', 'pg_ctl.exe', 'psql.exe', 'libpq.dll')) {
             if (-not (Test-Path -LiteralPath (Join-Path $bin $tool) -PathType Leaf)) { throw 'Verified PostgreSQL binary archive is incomplete.' }
           }
           $version = (& (Join-Path $bin 'psql.exe') --version).Trim()
-          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^psql \(PostgreSQL\) 18\.7$') { throw 'PostgreSQL 18.7 binary check failed.' }
-          Write-Output 'PASS: official PostgreSQL 18.7 binary archive hash and utility versions verified.'
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^psql \(PostgreSQL\) 18\.6$') { throw 'PostgreSQL 18.6 binary check failed.' }
+          Write-Output 'PASS: verified PostgreSQL 18.6 binary archive hash and utility versions.'
 
       - name: Run source contract tests and real PostgreSQL 18 TLS/password synchronization integration
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $testRoot = Join-Path $env:RUNNER_TEMP ('tq-pg18-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
-          $bin = Join-Path $testRoot 'postgresql-18.7\pgsql\bin'
+          $bin = Join-Path $testRoot 'postgresql-18.6\pgsql\bin'
           $env:TQ_PG18_BIN = $bin
           $env:TQ_OPENSSL = (Get-Command openssl.exe -CommandType Application -ErrorAction Stop).Source
           $env:TQ_PG18_WORKER_SOURCE = (Resolve-Path 'capstone/backend/scripts/VerifiedReaderPasswordWorker.cs').Path
