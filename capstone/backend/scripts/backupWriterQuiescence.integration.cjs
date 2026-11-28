@@ -18,6 +18,11 @@ const FIXED = Object.freeze({
   keepAlive: true,
 });
 const liveClients = new Set();
+let diagnosticStage = 'ci-target-validation';
+
+function markStage(stage) {
+  diagnosticStage = stage;
+}
 
 function assertCiTarget() {
   assert.equal(process.env.CI, 'true', 'writer barrier test is restricted to CI');
@@ -45,8 +50,10 @@ async function connect(client) {
 
 async function inspectTarget() {
   const control = newClient('postgres');
+  markStage('disposable-identity-connect');
   await connect(control);
   try {
+    markStage('disposable-identity-query');
     const identity = await control.query(`
       SELECT current_database() AS control_database,
              current_user AS role,
@@ -57,14 +64,22 @@ async function inspectTarget() {
              (SELECT shobj_description(oid, 'pg_database')
                 FROM pg_catalog.pg_database WHERE datname = $1) AS database_comment
         `, [DATABASE]);
+    markStage('identity-row-count');
     assert.equal(identity.rowCount, 1);
     const row = identity.rows[0];
+    markStage('identity-control-database');
     assert.equal(row.control_database, 'postgres');
+    markStage('identity-role');
     assert.equal(row.role, 'postgres');
+    markStage('identity-postgres-major');
     assert.equal(Number(row.major), Number(process.env.TQ_EXPECTED_POSTGRES_MAJOR));
+    markStage('identity-loopback-address');
     assert.equal(row.address, '127.0.0.1');
+    markStage('identity-server-port');
     assert.equal(Number(row.port), 5432);
+    markStage('identity-data-directory');
     assert.match(row.data_directory, /^\/var\/lib\/postgresql\/(?:data|18\/docker)\/?$/);
+    markStage('identity-database-sentinel');
     assert.equal(row.database_comment, `tq-disposable-ci:${process.env.TQ_DISPOSABLE_DB_SENTINEL}`);
   } finally {
     await control.end();
@@ -214,25 +229,31 @@ async function waitForBackendExit(admin, pid) {
 }
 
 async function main() {
+  markStage('ci-target-validation');
   assertCiTarget();
   const originalSentinel = process.env.TQ_DISPOSABLE_DB_SENTINEL;
   process.env.TQ_DISPOSABLE_DB_SENTINEL = 'not-a-run-sentinel';
+  markStage('ci-rejects-wrong-sentinel');
   assert.throws(assertCiTarget, 'wrong CI sentinel must be rejected before opening a database connection');
   process.env.TQ_DISPOSABLE_DB_SENTINEL = originalSentinel;
   const originalPgHost = process.env.PGHOST;
   process.env.PGHOST = 'untrusted.invalid';
+  markStage('ci-rejects-ambient-target');
   assert.throws(assertCiTarget, 'ambient PostgreSQL target override must be rejected before connecting');
   if (originalPgHost === undefined) delete process.env.PGHOST;
   else process.env.PGHOST = originalPgHost;
+  markStage('disposable-target-identity');
   await inspectTarget();
   console.log('PASS: wrong sentinel and ambient target are rejected; fixed loopback, CI run, and PostgreSQL identity verified');
 
+  markStage('synthetic-fixture-creation');
   const admin = await createFixture();
   let barrierClient = null;
   let blocker = null;
   let sequenceWriter = null;
   let fixtureCleaned = false;
   try {
+    markStage('relation-inventory-drift');
     const driftBarrierClient = newClient(DATABASE);
     await connect(driftBarrierClient);
     await assert.rejects(
@@ -249,6 +270,7 @@ async function main() {
 
     // A pre-existing transaction holds a writer lock. Barrier acquisition
     // must wait for it to commit before reporting ready.
+    markStage('drain-preexisting-writer');
     blocker = newClient(DATABASE, WRITER_A);
     await connect(blocker);
     await blocker.query('BEGIN');
@@ -276,6 +298,7 @@ async function main() {
     assert.match(barrier.inventorySha256, /^[a-f0-9]{64}$/);
     console.log(`PASS: existing writer drained before barrier-ready; locked-relations=${barrier.relationCount}`);
 
+    markStage('allow-readonly-access');
     const readResult = await admin.query(`SELECT value FROM ${quoteIdent(SCHEMA)}."progress" WHERE id = 1`);
     assert.equal(Number(readResult.rows[0].value), 1, 'read-only access must remain possible under SHARE locks');
     const dumpReader = newClient(DATABASE, WRITER_A);
@@ -289,6 +312,7 @@ async function main() {
     liveClients.delete(dumpReader);
     console.log('PASS: read-only SELECT and pg_dump-compatible ACCESS SHARE locks remain available');
 
+    markStage('block-row-and-sequence-writes');
     await assertRoleWriteBlocked(WRITER_A,
       `UPDATE ${quoteIdent(SCHEMA)}."progress" SET value = value + 1 WHERE id = 1`, 'writer A update');
     await assertRoleWriteBlocked(WRITER_B,
@@ -311,6 +335,7 @@ async function main() {
     assert.equal(Number(tableStateWhileLocked.rows[0].min_value), 1);
     console.log('PASS: distinct writer identities, row writes, nextval, and setval are blocked');
 
+    markStage('block-ddl-and-truncate');
     await assertLockTimeoutInTransaction(
       admin,
       `CREATE TABLE ${quoteIdent(SCHEMA)}."late_relation" (id integer)`,
@@ -325,6 +350,7 @@ async function main() {
     assert.equal(lateRelation.rows[0].absent, true, 'blocked DDL must not leave a relation behind');
     console.log('PASS: catalog locks prevent new table DDL and inventory drift');
 
+    markStage('release-barrier-locks');
     await barrierClient.query('ROLLBACK');
     await barrierClient.end();
     liveClients.delete(barrierClient);
@@ -339,6 +365,7 @@ async function main() {
 
     // A pre-existing writer makes barrier acquisition time out. The failed
     // acquisition must roll back every partially acquired relation lock.
+    markStage('lock-timeout-cleanup');
     blocker = newClient(DATABASE, WRITER_B);
     await connect(blocker);
     await blocker.query('BEGIN');
@@ -358,6 +385,7 @@ async function main() {
 
     // Simulate a barrier operator/process disappearing while holding the
     // transaction. The server must release locks when that connection closes.
+    markStage('interrupted-session-cleanup');
     const interrupted = newClient(DATABASE);
     await connect(interrupted);
     const interruptedBarrier = await acquireCandidateBarrier(interrupted);
@@ -372,6 +400,7 @@ async function main() {
     await admin.query(`UPDATE ${quoteIdent(SCHEMA)}."progress" SET value = value + 1 WHERE id = 1`);
     console.log('PASS: interrupted lock-session disconnect releases all relation locks');
 
+    markStage('verify-and-cleanup-fixture');
     await sequenceWriter.end();
     liveClients.delete(sequenceWriter);
     sequenceWriter = null;
@@ -403,6 +432,7 @@ async function main() {
       liveClients.delete(client);
     }
     if (!fixtureCleaned) {
+      markStage('fallback-fixture-cleanup');
       try {
         await cleanupSyntheticFixture(admin);
         console.log('CLEANUP=PASS');
@@ -419,7 +449,8 @@ async function main() {
 }
 
 main().catch((error) => {
+  const safeStage = /^[a-z0-9-]+$/.test(diagnosticStage) ? diagnosticStage : 'unknown';
   const safeCode = typeof error?.code === 'string' && /^[A-Z0-9]+$/.test(error.code) ? error.code : 'NONE';
-  console.error(`FAIL: synthetic writer-quiescence integration failed (name=${error?.name || 'Error'}, sqlstate=${safeCode}).`);
+  console.error(`FAIL: synthetic writer-quiescence integration failed (stage=${safeStage}, name=${error?.name || 'Error'}, sqlstate=${safeCode}).`);
   process.exitCode = 1;
 });
