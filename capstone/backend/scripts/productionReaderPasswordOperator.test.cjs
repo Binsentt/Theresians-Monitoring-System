@@ -20,11 +20,46 @@ function run(file, args, options = {}) {
 }
 
 function protect(files) {
-  const input = Buffer.from(JSON.stringify(files), 'utf8').toString('base64');
-  const script = `$ErrorActionPreference='Stop'; $files=ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${input}'))); $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; foreach($p in $files) { $directory=[IO.Directory]::Exists($p); if($directory) {$acl=New-Object Security.AccessControl.DirectorySecurity} else {$acl=New-Object Security.AccessControl.FileSecurity}; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); foreach($s in @($sid.Value,'S-1-5-18','S-1-5-32-544')) { $id=New-Object Security.Principal.SecurityIdentifier($s); $rule=New-Object Security.AccessControl.FileSystemAccessRule($id,'FullControl','Allow'); $acl.AddAccessRule($rule) }; if($directory) {[IO.Directory]::SetAccessControl($p,$acl); $read=[IO.Directory]::GetAccessControl($p)} else {[IO.File]::SetAccessControl($p,$acl); $read=[IO.File]::GetAccessControl($p)}; if(-not $read.AreAccessRulesProtected) {throw 'FIXTURE_PROTECTED_DACL_UNAVAILABLE'} }`;
+  // Each child's explicit DACL must be installed before its parent's
+  // non-inheritable DACL removes the child's original inherited permissions.
+  const ordered = [...new Set(files)].sort((a, b) => b.split(/[\\/]/).length - a.split(/[\\/]/).length);
+  const input = Buffer.from(JSON.stringify(ordered), 'utf8').toString('base64');
+  const script = `
+$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'
+$index=-1; $kind='UNSET'; $stage='DECODE'
+try {
+  $files=ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${input}')))
+  $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
+  foreach($p in $files) {
+    $index++; $stage='TYPE'
+    $directory=[IO.Directory]::Exists($p)
+    if($directory) {$kind='DIRECTORY'; $acl=New-Object Security.AccessControl.DirectorySecurity}
+    else {$kind='FILE'; $acl=New-Object Security.AccessControl.FileSecurity}
+    $stage='BUILD'
+    $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false)
+    foreach($s in @($sid.Value,'S-1-5-18','S-1-5-32-544')) {
+      $id=New-Object Security.Principal.SecurityIdentifier($s)
+      $rule=New-Object Security.AccessControl.FileSystemAccessRule($id,'FullControl','Allow')
+      $acl.AddAccessRule($rule)
+    }
+    $stage='APPLY'
+    if($directory) {[IO.Directory]::SetAccessControl($p,$acl)} else {[IO.File]::SetAccessControl($p,$acl)}
+    $stage='READBACK'
+    if($directory) {$read=[IO.Directory]::GetAccessControl($p)} else {$read=[IO.File]::GetAccessControl($p)}
+    if(-not $read.AreAccessRulesProtected -or $read.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $sid.Value) {
+      throw 'FIXTURE_DACL_READBACK'
+    }
+  }
+  [Console]::WriteLine('FIXTURE_ACL=PASS:COUNT='+$files.Count)
+} catch {
+  [Console]::WriteLine('FIXTURE_ACL=FAIL:INDEX='+$index+':TYPE='+$kind+':STAGE='+$stage)
+  exit 1
+}`;
   const result = run(path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]);
-  assert.equal(result.status, 0, 'fixture protection failed: ' + result.stdout + result.stderr);
+  const failure = (result.stdout || '').split(/\r?\n/).find(line =>
+    /^FIXTURE_ACL=FAIL:INDEX=-?\d+:TYPE=(?:UNSET|DIRECTORY|FILE):STAGE=(?:DECODE|TYPE|BUILD|APPLY|READBACK)$/.test(line));
+  assert.equal(result.status, 0, failure || 'FIXTURE_ACL=FAIL:PROCESS');
 }
 
 function aclSnapshot(files) {

@@ -6,7 +6,7 @@ migration, restart, deployment, or merge. Never place credentials, application
 rows, backup bytes, or routine definitions in GitHub, CI artifacts, chat, or
 ordinary logs.
 
-## Verified status as of 2026-11-26
+## Recovery status and source boundaries — 2026-11-28
 
 - Production Website service `efe9f84c-7d05-4698-be00-452c22b47ec7` in
   `overflowing-insight/production` is **CRASHED** at deployment
@@ -21,21 +21,24 @@ ordinary logs.
   is startup-log evidence, not a current production catalog query. The live
   migration ledger, checksums, partial-object state, and exact pending list
   remain **unverified**.
-- PR #46 is open, Draft, and unmerged. Its verified HEAD is
-  `7c7e8f5b3934c54a8527d15d1b47558c23bdb3e9`; backend and frontend workflows
-  passed at that HEAD. That validation does not establish production
-  authentication or schema state.
+- PR #46 is open, Draft, and unmerged. The prior fully validated baseline is
+  `9c5ce4e4f1f9c3252d28ae29e77a874493eec971`. Later operator/admission
+  candidates require their own exact-commit CI and independent review. Use the
+  immutable source approved in the protected operation record, never a branch
+  default or this document's historical baseline as implicit approval.
 - The owner verified the local CA, protected connection files, and exactly one
   reader passfile tuple. A production connection using
   `tq_release_preflight_reader` previously reached PostgreSQL and failed SCRAM
   password authentication. No successful reader authentication or metadata
   preflight has occurred. The password mismatch remains unresolved.
-- The owner independently confirmed the C: volume is NTFS, fully encrypted,
-  BitLocker protection is On, and encryption is 100%. Current free space could
-  not be read in the managed shell. The earlier free-space estimate is stale.
+- The protected administrator profile, TLS authentication and independently
+  anchored database identity succeeded. Database size and backup capacity were
+  recorded in protected evidence. Do not repeat administrator credential setup
+  or size queries without a concrete reason. Recheck current encrypted-volume
+  state, ACLs and free space immediately before a separately approved backup.
 - A prior Railway Backups screenshot showed “No Backups”; it is not a current
-  backup inventory. Railway MCP does not expose backup/PITR status. A read-only
-  CLI PITR-status query was attempted but blocked by DNS/network failure.
+  backup inventory. Railway MCP's supported backup-list endpoint currently
+  reports that database tools are not enabled for this account.
   Therefore managed backup and PITR availability are **unknown**. Do not enable
   PITR or change Railway settings under this runbook.
 
@@ -48,36 +51,36 @@ equality.
 
 ## 1. Authentication and metadata-preflight gate
 
-The supported tested synchronization mechanism is `psql`'s `\\password` fed
-through standard input, rather than browser-console clipboard paste. The
-disposable PostgreSQL 18 CI scenario verifies that this sets a SCRAM verifier,
-does not echo the synthetic password, and that the exact synthetic passfile
-entry authenticates. This proves the client mechanism in a disposable
-environment only; it does not prove a production administrative path or
-credential match.
+The Windows reader-recovery candidate uses libpq 18 `PQchangePassword` through
+the [protected operator](reader-password-operator-review.md). Do not reuse the
+historical `psql \\password` stdin wrapper: its Windows console path timed out
+and its production outcome was uncertain. The Linux disposable stdin test is
+not Windows production transport evidence. Review the new operator's actual
+protected-profile PostgreSQL 18 integration and final source/artifact pins.
 
 No production password reset or authentication retry is authorized by this
-runbook. Before considering one, the owner must separately approve both the
-exact password-only operation and the single subsequent reader authentication
-and metadata-preflight attempt. The password source must be the already
+runbook. The previously granted conditional one-use synchronization and two
+sequential preflight sessions remain subject to operator review, confirmed
+unused authorization and every applicable gate. Do not request duplicate
+approval of the same scope or silently activate an unreviewed operator.
+The password source must be the already
 protected reader passfile; do not generate or display another secret. A secure
 administrative connection must first be established independently with
 `sslmode=verify-full`, the pinned CA, the intended hostname, and independently
 verified production identity. An administrator login is not the reader and
 must never be used as fallback for the preflight.
 
-The available `\\password` stdin method can avoid the previous browser-paste
-ambiguity only if that authenticated, certificate-verified administrative
-session is available and its credential is already protected. No such complete
-admin TCP profile/passfile and independently trusted host path has been
-verified. The previously validated TCP proxy mapping, loopback relay, pinned
-CA, and `localhost` certificate identity are a candidate TCP route and do not
-depend on SSH host-key trust. However, no protected administrator TCP
-service/passfile has been verified. SSH is a separate fallback and remains
-blocked by host-key trust. Do not substitute an unverified SSH connection or
-weaken TLS. If the protected administrator TCP credential is unavailable,
-stop and obtain a separately reviewed secure administrator route; do not
-retry production authentication.
+The protected administrator TCP profile, pinned CA, `localhost` TLS identity
+and independently anchored proxy route have already been verified. Preserve
+those inputs; no fresh password entry or reset is needed for preparation.
+SSH is not required by the reviewed TCP route. Any target/profile drift or
+authentication/TLS failure stops execution without a fallback or retry.
+
+The two-session metadata preflight retains its separate approved exact source
+`57908cba66e39a187caa290b2bd1eb0a776f7d26`. Preserve its clean checkout and
+dependencies; never substitute the latest PR head. The first reviewed role
+audit establishes reader authentication. The second migration prerequisite
+session runs only after the first passes. No extra reader probe is permitted.
 
 After a separately authorized attempt, the exact reviewed source at the
 approved SHA must run the seven-setting service profile validator and then the
