@@ -2053,7 +2053,7 @@ assert.equal(restoreBackupSequenceState.stdout.trim(), '42',
 const restoredBackupSequenceState = psql(CASES.valid, 'postgres',
   "SELECT last_value::text || '|' || is_called::text FROM public.tq_backup_integrity_sequence;");
 assert.equal(restoredBackupSequenceState.status, 0, restoredBackupSequenceState.stderr);
-assert.equal(restoredBackupSequenceState.stdout.trim(), '42|t',
+assert.equal(restoredBackupSequenceState.stdout.trim(), '42|true',
   'the sequence aggregate-integrity baseline must be restored before the backup/restore rehearsal');
 recordScenario('backup role sequence USAGE is rejected after synthetic nextval proves the write and state is restored');
 
