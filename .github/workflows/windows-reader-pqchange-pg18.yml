@@ -54,12 +54,29 @@ jobs:
           $testRoot = Join-Path $env:RUNNER_TEMP ('tq-pg18-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
           $bin = Join-Path $testRoot 'postgresql-18.6\pgsql\bin'
           $env:TQ_PG18_BIN = $bin
-          $opensslCommand = Get-Command openssl.exe -CommandType Application -ErrorAction Stop
-          $opensslPath = [IO.Path]::GetFullPath($opensslCommand.Source)
-          if (-not [IO.Path]::IsPathRooted($opensslPath) -or
-              [IO.Path]::GetFileName($opensslPath) -ine 'openssl.exe' -or
-              -not (Test-Path -LiteralPath $opensslPath -PathType Leaf)) {
-            throw 'VERIFIED_OPENSSL_PATH_INVALID'
+          $whereExe = Join-Path $env:SystemRoot 'System32\where.exe'
+          if (-not (Test-Path -LiteralPath $whereExe -PathType Leaf)) {
+            throw 'VERIFIED_OPENSSL_RESOLVER_UNAVAILABLE'
+          }
+          try {
+            $whereOutput = @(& $whereExe openssl.exe 2>$null)
+            $whereStatus = $LASTEXITCODE
+          } catch {
+            throw 'VERIFIED_OPENSSL_RESOLUTION_FAILED'
+          }
+          $opensslPath = $whereOutput | Where-Object { $_ -is [string] -and -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+          if ($whereStatus -ne 0 -or -not $opensslPath) {
+            throw 'VERIFIED_OPENSSL_RESOLUTION_FAILED'
+          }
+          $opensslPath = [string]$opensslPath
+          if (-not [IO.Path]::IsPathRooted($opensslPath)) {
+            throw 'VERIFIED_OPENSSL_PATH_NOT_ABSOLUTE'
+          }
+          if ([IO.Path]::GetFileName($opensslPath) -ine 'openssl.exe') {
+            throw 'VERIFIED_OPENSSL_BASENAME_INVALID'
+          }
+          if (-not (Test-Path -LiteralPath $opensslPath -PathType Leaf)) {
+            throw 'VERIFIED_OPENSSL_FILE_MISSING'
           }
           $env:TQ_OPENSSL = 'openssl.exe'
           $env:TQ_OPENSSL_VERIFIED_PATH = $opensslPath

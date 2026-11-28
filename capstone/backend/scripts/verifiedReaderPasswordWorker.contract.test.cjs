@@ -272,11 +272,14 @@ test('Windows workflow passes only the validated OpenSSL executable through the 
   const workflowPath = path.join(__dirname, '..', '..', '..', '.github', 'workflows', 'windows-reader-pqchange-pg18.yml');
   const workflow = fs.readFileSync(workflowPath, 'utf8').replace(/\r\n/g, '\n');
 
-  assert.match(workflow, /Get-Command openssl\.exe -CommandType Application/);
+  assert.match(workflow, /System32[\\/]where\.exe/);
+  assert.match(workflow, /whereOutput = @\(& \$whereExe openssl\.exe/);
+  assert.match(workflow, /VERIFIED_OPENSSL_RESOLUTION_FAILED/);
   assert.match(workflow, /\$env:TQ_OPENSSL\s*=\s*'openssl\.exe'/);
   assert.match(workflow, /\$env:TQ_OPENSSL_VERIFIED_PATH\s*=\s*\$opensslPath/);
-  assert.doesNotMatch(workflow, /\$env:TQ_OPENSSL\s*=\s*\$opensslCommand\.Name/);
-  assert.ok(workflow.includes('$opensslPath = [IO.Path]::GetFullPath($opensslCommand.Source)'));
+  assert.doesNotMatch(workflow, /\$opensslCommand\.(?:Name|Source)/);
+  assert.match(workflow, /\[IO\.Path\]::IsPathRooted\(\$opensslPath\)/);
+  assert.match(workflow, /\[IO\.Path\]::GetFileName\(\$opensslPath\) -ine 'openssl\.exe'/);
   const resolvedPathIndex = workflow.indexOf('$env:TQ_OPENSSL_VERIFIED_PATH = $opensslPath');
   const fixedTokenIndex = workflow.indexOf("$env:TQ_OPENSSL = 'openssl.exe'");
   const integrationIndex = workflow.indexOf('node capstone/backend/scripts/windowsPg18VerifiedPasswordTransport.integration.cjs');
