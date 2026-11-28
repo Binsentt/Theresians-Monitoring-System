@@ -674,11 +674,14 @@ test('backup-role routine inventory digest aggregates the inventory CTE rows', (
 test('disposable PostgreSQL exercises extension-owned routine provenance in the signed-review fingerprint', () => {
   const harness = read('run-preflight-postgres-harness.cjs');
   assert.match(harness, /CREATE EXTENSION pgcrypto WITH SCHEMA public/i);
+  assert.match(harness, /extension_dependency\.deptype = 'e'/);
   assert.match(harness, /extension_name\s*===?\s*'pgcrypto'/i);
   assert.match(harness, /probin/);
   assert.match(harness, /extension_version/);
   assert.match(harness, /extension_schema/);
   assert.match(harness, /extension_owner/);
+  assert.doesNotMatch(harness, /REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC/i,
+    'the extension fixture must not alter unrelated synthetic routine ACLs');
   assert.match(harness, /passedScenarioCount, 104/);
 });
 

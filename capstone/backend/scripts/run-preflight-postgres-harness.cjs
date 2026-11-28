@@ -1485,7 +1485,25 @@ assert.equal(routineRemovedAudit.stdout.match(/^BACKUP_ROLE_ROUTINE_INVENTORY_SH
   'removing the synthetic routine must restore the original inventory fingerprint');
 const createReviewExtension = psql(CASES.valid, 'postgres', `
   CREATE EXTENSION pgcrypto WITH SCHEMA public;
-  REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+  DO $tq_review_extension$
+  DECLARE routine_record record;
+  BEGIN
+    FOR routine_record IN
+      SELECT procedure_record.oid::pg_catalog.regprocedure AS routine_identity
+      FROM pg_catalog.pg_depend AS extension_dependency
+      JOIN pg_catalog.pg_extension AS extension_record
+        ON extension_record.oid = extension_dependency.refobjid
+      JOIN pg_catalog.pg_proc AS procedure_record
+        ON procedure_record.oid = extension_dependency.objid
+      WHERE extension_dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+        AND extension_dependency.refclassid = 'pg_catalog.pg_extension'::pg_catalog.regclass
+        AND extension_dependency.deptype = 'e'
+        AND extension_record.extname = 'pgcrypto'
+    LOOP
+      EXECUTE pg_catalog.format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', routine_record.routine_identity);
+    END LOOP;
+  END;
+  $tq_review_extension$;
 `);
 assert.equal(createReviewExtension.status, 0,
   `the disposable image must provide pgcrypto for extension-owned routine review coverage: ${createReviewExtension.stderr}`);
