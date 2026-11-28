@@ -215,8 +215,82 @@ function Assert-TqBackupRoleReviewEvidence {
   }
 }
 
+function Register-TqBackupRoleReviewEvidenceUse {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[a-f0-9]{64}$')]
+    [string]$EvidenceSha256,
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$RegistryDirectory
+  )
+
+  if (-not [System.IO.Path]::IsPathRooted($RegistryDirectory)) {
+    throw 'STOP: backup-role review-use registry directory must be an absolute path.'
+  }
+  try { $directory = [System.IO.Path]::GetFullPath($RegistryDirectory) }
+  catch { throw 'STOP: backup-role review-use registry directory is invalid.' }
+  if (-not [System.IO.Directory]::Exists($directory)) {
+    throw 'STOP: backup-role review-use registry directory must already exist.'
+  }
+  if ($directory.Equals([System.IO.Path]::GetPathRoot($directory), [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'STOP: backup-role review-use registry cannot be a volume root.'
+  }
+
+  $cursor = $directory
+  while ($cursor) {
+    try { $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop }
+    catch { throw 'STOP: backup-role review-use registry path could not be inspected.' }
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+      throw 'STOP: backup-role review-use registry cannot traverse reparse points.'
+    }
+    $root = [System.IO.Path]::GetPathRoot($cursor)
+    if ($cursor.Equals($root, [System.StringComparison]::OrdinalIgnoreCase)) { break }
+    $parent = [System.IO.Directory]::GetParent($cursor)
+    if ($null -eq $parent -or $parent.FullName -ceq $cursor) {
+      throw 'STOP: backup-role review-use registry path has no verifiable root.'
+    }
+    $cursor = $parent.FullName
+  }
+
+  $markerPath = Join-Path $directory ('.tq-backup-role-review-' + $EvidenceSha256 + '.used')
+  $usedAtUtc = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture)
+  $record = "TQ_BACKUP_ROLE_REVIEW_USE_V1`nEvidenceSha256=$EvidenceSha256`nUsedAtUtc=$usedAtUtc`n"
+  $bytes = [System.Text.UTF8Encoding]::new($false, $true).GetBytes($record)
+  try {
+    $stream = [System.IO.FileStream]::new(
+      $markerPath,
+      [System.IO.FileMode]::CreateNew,
+      [System.IO.FileAccess]::Write,
+      [System.IO.FileShare]::None
+    )
+    try {
+      $stream.Write($bytes, 0, $bytes.Length)
+      $stream.Flush($true)
+    } finally {
+      $stream.Dispose()
+    }
+  } catch {
+    if ([System.IO.File]::Exists($markerPath)) {
+      throw 'STOP: backup-role review evidence already has a use receipt or interrupted claim; obtain a new independent review.'
+    }
+    throw 'STOP: backup-role review evidence use could not be durably recorded.'
+  }
+
+  return [pscustomobject]@{
+    Status = 'PASS'
+    MarkerPath = $markerPath
+    EvidenceSha256 = $EvidenceSha256
+    UsedAtUtc = [DateTime]::ParseExact($usedAtUtc, "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+      [Globalization.CultureInfo]::InvariantCulture,
+      [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal)
+  }
+}
+
 Export-ModuleMember -Function @(
   'Get-TqBackupRoleReviewPublicKeyFingerprint',
   'New-TqBackupRoleReviewPayload',
-  'Assert-TqBackupRoleReviewEvidence'
+  'Assert-TqBackupRoleReviewEvidence',
+  'Register-TqBackupRoleReviewEvidenceUse'
 )

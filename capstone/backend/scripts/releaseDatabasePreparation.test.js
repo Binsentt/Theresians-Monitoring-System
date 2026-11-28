@@ -399,7 +399,7 @@ test('disposable PostgreSQL harness exercises read-only backup audit and isolate
   assert.match(harness, /unvalidated CHECK constraint/);
   assert.match(harness, /truncated custom-format archive must be rejected/);
   assert.match(harness, /OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED:/);
-  assert.match(harness, /passedScenarioCount, 103/);
+  assert.match(harness, /passedScenarioCount, 104/);
   const unexpectedInsertAt = harness.indexOf('const unexpectedMigration = psql(CASES.preMigration026');
   const unexpectedClassifiedAt = harness.indexOf(
     "assert.equal(parseBackupReleaseState(unexpectedBackupStateResult).readiness, 'UNVERIFIED');",
@@ -671,6 +671,17 @@ test('backup-role routine inventory digest aggregates the inventory CTE rows', (
     'the inventory digest must aggregate actual routine_inventory rows');
 });
 
+test('disposable PostgreSQL exercises extension-owned routine provenance in the signed-review fingerprint', () => {
+  const harness = read('run-preflight-postgres-harness.cjs');
+  assert.match(harness, /CREATE EXTENSION pgcrypto WITH SCHEMA public/i);
+  assert.match(harness, /extension_name\s*===?\s*'pgcrypto'/i);
+  assert.match(harness, /probin/);
+  assert.match(harness, /extension_version/);
+  assert.match(harness, /extension_schema/);
+  assert.match(harness, /extension_owner/);
+  assert.match(harness, /passedScenarioCount, 104/);
+});
+
 test('backup-role independent review export is read-only, target-bound, and fingerprint-compatible', () => {
   const sql = read('backup-role-routine-review-export.sql');
   const script = read('backup-restore-rehearsal.ps1');
@@ -697,6 +708,46 @@ test('backup-role independent review export is read-only, target-bound, and fing
   assert.match(harness, /routine review export matches the audited inventory fingerprint/);
   assert.match(runbook, /backup-role-routine-review-export\.sql/);
   assert.match(runbook, /protected.*routine.*definition.*export/i);
+});
+
+test('backup-role routine fingerprint binds extension provenance and native implementation metadata', () => {
+  const audit = read('backup-role-preflight.sql');
+  const exportSql = read('backup-role-routine-review-export.sql');
+  for (const [name, sql] of [['audit', audit], ['review export', exportSql]]) {
+    assert.match(sql, /pg_catalog\.pg_depend/i, `${name} must detect extension membership`);
+    assert.match(sql, /pg_catalog\.pg_extension/i, `${name} must identify the owning extension`);
+    assert.match(sql, /probin/);
+    assert.match(sql, /prosrc/);
+    assert.match(sql, /extension_name/);
+    assert.match(sql, /extension_version/);
+    assert.match(sql, /extension_schema/);
+    assert.match(sql, /extension_owner/);
+    assert.match(sql, /routine_inventory_sha256/);
+    assert.match(sql, /routine_acl,\s*probin,\s*prosrc,\s*extension_name,\s*extension_version,\s*extension_schema,\s*extension_owner,\s*definition_sha256/i,
+      `${name} digest must bind native implementation and extension provenance fields in the same order`);
+  }
+  for (const field of ['extension_name', 'extension_version', 'extension_schema', 'extension_owner', 'probin', 'prosrc']) {
+    assert.match(exportSql, new RegExp(`routine_inventory\\.${field}`));
+  }
+});
+
+test('backup reviewer use registry rejects replay and is atomically create-new', () => {
+  const module = read('backupRoleReview.validation.psm1');
+  const script = read('backup-restore-rehearsal.ps1');
+  assert.match(module, /function Register-TqBackupRoleReviewEvidenceUse/);
+  assert.match(module, /FileMode\]::CreateNew/);
+  assert.match(module, /review evidence already has a use receipt or interrupted claim/);
+  assert.match(script, /Register-TqBackupRoleReviewEvidenceUse/);
+  const firstReview = script.indexOf('$roleReviewBefore = Get-VerifiedBackupRoleReview $roleAuditBefore.RoutineInventorySha256');
+  const useClaim = script.indexOf('Register-TqBackupRoleReviewEvidenceUse', firstReview);
+  const snapshotStart = script.indexOf('Start-ExportedBackupSnapshot $BackupServiceName', firstReview);
+  const dumpInvocation = script.indexOf('& $PgDumpPath @dumpArguments', firstReview);
+  assert.ok(firstReview >= 0 && useClaim > firstReview && snapshotStart > useClaim && dumpInvocation > snapshotStart,
+    'the single-use receipt must be durably claimed after validation and before snapshot/archive work');
+  assert.match(script, /Assert-EncryptedLocalVolume \$reviewUseDirectory/);
+  assert.match(script, /Assert-RestrictedStorageAcl \$reviewUseDirectory 'Modify' \$true/);
+  assert.match(script, /Assert-ArtifactAcl \$roleReviewUse\.MarkerPath 'ReadWrite'/);
+  assert.match(script, /useReceiptSha256/);
 });
 
 test('backup runbook keeps production dump hard-stopped until sequence writers are externally quiesced', () => {
@@ -1025,7 +1076,7 @@ test('backup harness rejects orphaned migration 026 catalog objects', () => {
   assert.match(harness, /orphaned migration-026 constraint/);
   assert.match(harness, /orphaned migration-026 trigger/);
   assert.match(harness, /orphaned migration-026 type/);
-  assert.match(harness, /passedScenarioCount, 103/);
+  assert.match(harness, /passedScenarioCount, 104/);
 });
 
 
@@ -1117,7 +1168,7 @@ test('backup role audit rejects executable large-object creators and unsafe call
   assert.match(harness, /schema USAGE WITH GRANT OPTION is rejected/);
   assert.match(harness, /routine EXECUTE WITH GRANT OPTION is rejected/);
   assert.match(harness, /CREATE privilege on pg_catalog is rejected by backup-role audit/);
-  assert.match(harness, /passedScenarioCount, 103/);
+  assert.match(harness, /passedScenarioCount, 104/);
 
   const workflow = readIsolatedBackendWorkflow();
   const matrixJobs = /postgres_image:\s*\['postgres:16-bookworm',\s*'postgres:18-bookworm'\]/.test(workflow)
@@ -1146,7 +1197,7 @@ test('backup role audit rejects column-level writes and inherited large-object c
   assert.match(harness, /backup role column-level UPDATE grant is rejected/);
   assert.match(harness, /PUBLIC column-level UPDATE grant is rejected/);
   assert.match(harness, /database-level lo_compat_privileges default is rejected/);
-  assert.match(harness, /passedScenarioCount, 103/);
+  assert.match(harness, /passedScenarioCount, 104/);
 });
 
 
@@ -1163,7 +1214,7 @@ test('disposable PostgreSQL harness tests stdin-driven password synchronization 
   assert.match(harness, /syntheticHostaddrPassfile/);
   assert.match(harness, /synthetic passfiles must be removed/);
   assert.match(harness, /temporary pg_hba\.conf recovery copies must be removed only after successful restoration/);
-  assert.match(harness, /passedScenarioCount, 103/);
+  assert.match(harness, /passedScenarioCount, 104/);
 });
 
 
@@ -1258,7 +1309,7 @@ test('backup source audits and pg_dump share one exported snapshot while sequenc
   assert.match(harness, /exported-snapshot integration must pass for PostgreSQL 16 and 18/);
   assert.match(harness, /spawnSync\(process\.execPath, \[exportedSnapshotHelper\]/);
   assert.match(harness, /backup role sequence USAGE is rejected after synthetic nextval proves the write and state is restored/);
-  assert.match(harness, /passedScenarioCount, 103/);
+  assert.match(harness, /passedScenarioCount, 104/);
   assert.match(snapshotIntegration, /const CONTAINER = 'tq-backend-test-postgres'/);
   assert.match(snapshotIntegration, /'--set=VERBOSITY=verbose'/,
     'synthetic identity failures must expose SQLSTATE to the bounded sanitizer without printing raw stderr');
@@ -1301,7 +1352,7 @@ test('backup role audit rejects incoming memberships and grant-option delegation
   assert.match(harness, /schema USAGE WITH GRANT OPTION is rejected/);
   assert.match(harness, /database CONNECT WITH GRANT OPTION is rejected/);
   assert.match(harness, /routine EXECUTE WITH GRANT OPTION is rejected/);
-  assert.match(harness, /passedScenarioCount, 103/);
+  assert.match(harness, /passedScenarioCount, 104/);
   assert.match(sql, /role_set_member_count/);
   assert.match(harness, /transitive backup role membership that permits SET ROLE is rejected/);
   assert.match(sql, /SELECT target_role\.oid AS target_role_oid,[\s\S]*?FROM target_role\s*\)\s*SELECT/,

@@ -1483,6 +1483,42 @@ assert.equal(routineRemovedAudit.status, 0, routineRemovedAudit.stderr);
 assert.equal(routineRemovedAudit.stdout.match(/^BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=([a-f0-9]{64})$/m)[1],
   initialRoutineInventory,
   'removing the synthetic routine must restore the original inventory fingerprint');
+const createReviewExtension = psql(CASES.valid, 'postgres', `
+  CREATE EXTENSION pgcrypto WITH SCHEMA public;
+  REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+`);
+assert.equal(createReviewExtension.status, 0,
+  `the disposable image must provide pgcrypto for extension-owned routine review coverage: ${createReviewExtension.stderr}`);
+const extensionRoutineAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(extensionRoutineAudit.status, 0,
+  `synthetic extension-owned C routines must not change the role privilege audit when EXECUTE is revoked: ${extensionRoutineAudit.stderr}\n${extensionRoutineAudit.stdout}`);
+const extensionRoutineInventory = extensionRoutineAudit.stdout.match(/^BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=([a-f0-9]{64})$/m)[1];
+assert.notEqual(extensionRoutineInventory, initialRoutineInventory,
+  'adding extension-owned routines must invalidate the signed-review fingerprint');
+const extensionRoutineExportResult = invokeBackupRoleRoutineReviewExport(CASES.valid);
+assert.equal(extensionRoutineExportResult.status, 0,
+  `extension routine review export must pass the restricted target identity gate: ${extensionRoutineExportResult.stderr}`);
+const extensionRoutineExport = JSON.parse(extensionRoutineExportResult.stdout.trim());
+assert.equal(extensionRoutineExport.routine_inventory_sha256, extensionRoutineInventory,
+  'extension provenance export and backup-role audit must use the same fingerprint');
+const extensionOwnedNativeRoutine = extensionRoutineExport.routines.find((routine) =>
+  routine.extension_name === 'pgcrypto' && routine.language === 'c');
+assert.ok(extensionOwnedNativeRoutine,
+  'routine export must identify at least one extension-owned native implementation');
+assert.equal(extensionOwnedNativeRoutine.extension_schema, 'public');
+assert.match(extensionOwnedNativeRoutine.extension_version, /^\d+(?:\.\d+)+$/);
+assert.ok(extensionOwnedNativeRoutine.extension_owner,
+  'extension owner must be included for independent review');
+assert.ok(extensionOwnedNativeRoutine.probin && extensionOwnedNativeRoutine.prosrc,
+  'native library and entry-point identifiers must be included for independent review');
+const dropReviewExtension = psql(CASES.valid, 'postgres', 'DROP EXTENSION pgcrypto;');
+assert.equal(dropReviewExtension.status, 0, dropReviewExtension.stderr);
+const extensionRemovedAudit = invokeBackupRoleAudit(CASES.valid);
+assert.equal(extensionRemovedAudit.status, 0, extensionRemovedAudit.stderr);
+assert.equal(extensionRemovedAudit.stdout.match(/^BACKUP_ROLE_ROUTINE_INVENTORY_SHA256=([a-f0-9]{64})$/m)[1],
+  initialRoutineInventory,
+  'removing the synthetic extension must restore the exact original routine inventory');
+recordScenario('extension-owned native routine provenance and implementation identifiers are included in the signed-review digest/export');
 recordScenario('synthetic role has clean catalog counts while overall nonwriting status remains unverified');
 recordScenario('backup role routine inventory digest changes with routine definitions and emits no source');
 recordScenario('routine review export matches the audited inventory fingerprint and includes executable routine definitions');
@@ -2561,7 +2597,7 @@ try {
 }
 recordScenario('stdin-only psql password synchronization authenticates via a temporary disposable passfile without echoing the secret');
 
-assert.equal(passedScenarioCount, 103, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
+assert.equal(passedScenarioCount, 104, 'all expected disposable PostgreSQL preflight and backup scenarios must execute');
 console.log(`Preflight integration result: ${passedScenarioCount}/${passedScenarioCount} disposable PostgreSQL scenarios passed.`);
 const expectedBackupIntegrityScenarioCount = process.env.TQ_EXPECTED_POSTGRES_MAJOR === '18' ? 6 : 0;
 assert.equal(passedBackupIntegrityScenarioCount, expectedBackupIntegrityScenarioCount,

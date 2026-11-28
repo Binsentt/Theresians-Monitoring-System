@@ -139,6 +139,19 @@ role audit. The export must match the audit's
 this SQL as a reviewed source input. The SQL does not read application table
 rows or alter the database.
 
+The fingerprint and export also bind each routine's `probin`/`prosrc` values
+and its extension membership, extension version, extension schema, and
+extension owner. Treat an extension-owned routine as requiring review of the
+matching extension source package and deployed shared-library implementation;
+catalog metadata and `pg_get_functiondef()` do not prove what native code
+does. For every routine, follow executable call paths and dependencies,
+including dynamic SQL and nested routines. Inspect `SECURITY DEFINER`
+ownership, `search_path` configuration, effective `EXECUTE` grants, language
+trust, writes to tables/sequences/large objects, role or configuration changes,
+and filesystem, network, process, or global-state effects. Volatility labels
+and a read-only caller transaction are not proof that an arbitrary routine is
+side-effect free.
+
 Routine bodies may contain sensitive literals. Store the protected routine definition export only in a new file in the approved encrypted, restricted evidence directory; never let the JSON package reach console, CI log, or public artifact storage. The export
 is not itself approval. A qualified independent reviewer must compare every
 definition and effective EXECUTE path with the exact application/tool source,
@@ -152,6 +165,51 @@ fingerprint must be approved and pinned separately; the evidence cannot
 authorize its own key. The review module requires a current signature and the
 separately pinned fingerprint. No review signature or reviewer approval
 currently exists; do not fabricate one or use the export as a substitute.
+
+For production backup, each evidence SHA-256 may be claimed once. Immediately
+before backup work, the tool atomically creates a `CreateNew` use receipt in the same
+protected directory as the signed evidence and verifies the receipt ACL. A
+pre-existing receipt rejects replay. The receipt is durable and intentionally
+not removed after a later backup failure; obtain a fresh independent review
+and attestation for another attempt. Keep the evidence directory stable and
+protected, on the verified encrypted local volume, and retain its receipts.
+The use receipt prevents accidental reuse within that directory; it is local
+operator evidence, not a defense against an administrator who can replace or
+relocate the entire evidence directory. Receipt creation or verification
+failure stops before the backup snapshot/archive operation.
+
+### Independent reviewer handoff checklist
+
+The owner/operator prepares the exact reviewed tool and application commit
+SHAs, independently anchored target database/address/port, the catalog audit
+result, and the protected JSON produced by
+`backup-role-routine-review-export.sql`. The qualified independent reviewer
+must then:
+
+1. Confirm the export's `routine_inventory_sha256` equals the read-only audit
+   marker and record the export file SHA-256 without publishing routine
+   definitions.
+2. Review every exported routine and every effective execution path. Inspect
+   the actual source for trusted procedural languages; inspect the deployed
+   package/shared library for `language=c` routines; follow extension name,
+   version, schema, owner, `probin`, and `prosrc`; and trace nested calls,
+   dynamic SQL, security-definer ownership and `search_path`.
+3. Explicitly assess table, sequence, large-object, role, configuration,
+   filesystem, network, process, and other global side effects. Any missing
+   source/binary, unexplained dependency, inventory mismatch, or unknown
+   behavior means **REJECT / UNVERIFIED**, not an inferred pass.
+4. Independently control the signing key. Supply its public-key SHA-256 via an
+   owner/DBA-approved out-of-band channel, then sign the exact bounded-lifetime
+   evidence payload only after a documented approval. The reviewer must not
+   use a key generated or selected by the operator for this attestation.
+5. Return the signed evidence through the protected evidence directory. The
+   operator validates it against the separately approved key fingerprint and
+   exact target/source/inventory pins. This signature does not itself approve
+   the backup, writer freeze, restore, migration, or deployment.
+
+The human reviewer—not the owner or Codex—must attest to routine semantics and
+transitive implementation behavior that catalog metadata cannot establish,
+and must own the private signing key and approval decision.
 
 ## 3. Sequence-state write quiescence
 

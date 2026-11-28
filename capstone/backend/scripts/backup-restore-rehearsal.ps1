@@ -397,6 +397,7 @@ function Get-VerifiedBackupRoleReview([string]$RoutineInventorySha256) {
     RoutineInventorySha256 = $review.RoutineInventorySha256
     ReviewerKeySha256 = $review.ReviewerKeySha256.ToUpperInvariant()
     EvidenceSha256 = (Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    EvidenceDirectory = (Split-Path -LiteralPath $evidencePath -Parent)
   }
 }
 function Invoke-ReleaseStateAudit([string]$Service, [string]$Role) {
@@ -601,6 +602,11 @@ try {
     Write-Output 'Running the fixed catalog-only backup role audit.'
     $roleAuditBefore = Invoke-PsqlAudit $BackupServiceName $backupRole 'backup-role-preflight.sql'
     $roleReviewBefore = Get-VerifiedBackupRoleReview $roleAuditBefore.RoutineInventorySha256
+    $reviewUseDirectory = Assert-StoragePath $roleReviewBefore.EvidenceDirectory
+    Assert-EncryptedLocalVolume $reviewUseDirectory
+    Assert-RestrictedStorageAcl $reviewUseDirectory 'Modify' $true
+    $roleReviewUse = Register-TqBackupRoleReviewEvidenceUse -EvidenceSha256 $roleReviewBefore.EvidenceSha256 -RegistryDirectory $reviewUseDirectory
+    Assert-ArtifactAcl $roleReviewUse.MarkerPath 'ReadWrite'
     $beforeState = Invoke-ReleaseStateAudit $BackupServiceName $backupRole
     $script:ExportedBackupSnapshot = Start-ExportedBackupSnapshot $BackupServiceName
     Assert-ExportedBackupSnapshotAlive $script:ExportedBackupSnapshot
@@ -655,6 +661,9 @@ try {
         routineInventorySha256 = $roleReviewBefore.RoutineInventorySha256
         evidenceSha256 = $roleReviewBefore.EvidenceSha256
         expiresAtUtc = $roleReviewBefore.ExpiresUtc.ToString('o')
+        useReceiptFileName = [System.IO.Path]::GetFileName($roleReviewUse.MarkerPath)
+        useReceiptSha256 = (Get-FileHash -LiteralPath $roleReviewUse.MarkerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        usedAtUtc = $roleReviewUse.UsedAtUtc.ToString('o')
       }
       toolSourceCommit = $ExpectedToolSourceCommit
       productionApplicationCommit = $ExpectedProductionApplicationCommit

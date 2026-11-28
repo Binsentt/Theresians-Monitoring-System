@@ -150,6 +150,68 @@ Invoke-ExpectReject 'malformed timestamp' (New-SyntheticEvidence -IssuedUtc 'not
 $truncated = (($valid.Split([char]10) | Select-Object -First 10) -join [char]10)
 Invoke-ExpectReject 'truncated evidence' $truncated
 
+if (-not (Get-Command Register-TqBackupRoleReviewEvidenceUse -ErrorAction SilentlyContinue)) {
+  $failed++
+  Write-Output 'FAIL: one-time evidence-use registry is unavailable'
+} else {
+  $useDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('tq-review-use-' + [guid]::NewGuid().ToString('N'))
+  [void][System.IO.Directory]::CreateDirectory($useDirectory)
+  try {
+    $evidenceSha = '1' * 64
+    $firstUse = Register-TqBackupRoleReviewEvidenceUse -EvidenceSha256 $evidenceSha -RegistryDirectory $useDirectory
+    if ($firstUse.Status -cne 'PASS' -or -not (Test-Path -LiteralPath $firstUse.MarkerPath -PathType Leaf)) {
+      throw 'First evidence use was not durably recorded.'
+    }
+    $passed++
+    Write-Output 'PASS: first signed-review evidence use is durably recorded'
+    try {
+      [void](Register-TqBackupRoleReviewEvidenceUse -EvidenceSha256 $evidenceSha -RegistryDirectory $useDirectory)
+      $failed++
+      Write-Output 'FAIL: replayed signed-review evidence was accepted'
+    } catch {
+      if ($_.Exception.Message -match 'already has a use receipt or interrupted claim') {
+        $passed++
+        Write-Output 'PASS: consumed signed-review evidence replay is rejected'
+      } else {
+        $failed++
+        Write-Output 'FAIL: replay was rejected for an unexpected reason'
+      }
+    }
+    [System.IO.File]::WriteAllText($firstUse.MarkerPath, 'synthetic tampered receipt', [System.Text.UTF8Encoding]::new($false))
+    try {
+      [void](Register-TqBackupRoleReviewEvidenceUse -EvidenceSha256 $evidenceSha -RegistryDirectory $useDirectory)
+      $failed++
+      Write-Output 'FAIL: altered existing use receipt was accepted'
+    } catch {
+      if ($_.Exception.Message -match 'already has a use receipt or interrupted claim') {
+        $passed++
+        Write-Output 'PASS: altered existing use receipt fails closed'
+      } else {
+        $failed++
+        Write-Output 'FAIL: altered receipt was rejected for an unexpected reason'
+      }
+    }
+    try {
+      [void](Register-TqBackupRoleReviewEvidenceUse -EvidenceSha256 'not-a-sha' -RegistryDirectory $useDirectory)
+      $failed++
+      Write-Output 'FAIL: malformed evidence-use digest was accepted'
+    } catch {
+      $passed++
+      Write-Output 'PASS: malformed evidence-use digest is rejected'
+    }
+    try {
+      [void](Register-TqBackupRoleReviewEvidenceUse -EvidenceSha256 ('2' * 64) -RegistryDirectory '.')
+      $failed++
+      Write-Output 'FAIL: relative review-use registry directory was accepted'
+    } catch {
+      $passed++
+      Write-Output 'PASS: relative review-use registry directory is rejected'
+    }
+  } finally {
+    [System.IO.Directory]::Delete($useDirectory, $true)
+  }
+}
+
 $rsa.Dispose()
 if ($failed -ne 0) { throw "Backup-role review tests failed: $failed failed, $passed passed." }
-Write-Output "Backup-role signed-review tests: $passed passed, 0 failed."
+Write-Output "Backup-role signed-review and replay tests: $passed passed, 0 failed."
