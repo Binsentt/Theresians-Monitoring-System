@@ -59,12 +59,8 @@ jobs:
               -not (Test-Path -LiteralPath $opensslCommand.Source -PathType Leaf)) {
             throw 'VERIFIED_OPENSSL_PATH_INVALID'
           }
-          try {
-            $env:TQ_OPENSSL = (Resolve-Path -LiteralPath $opensslCommand.Source -ErrorAction Stop).ProviderPath
-          } catch {
-            throw 'VERIFIED_OPENSSL_RESOLUTION_FAILED'
-          }
-          Write-Output 'VERIFIED_OPENSSL_FILE=PRESENT'
+          $env:TQ_OPENSSL = $opensslCommand.Name
+          Write-Output 'VERIFIED_OPENSSL_COMMAND=PRESENT'
           $env:TQ_PG18_WORKER_SOURCE = (Resolve-Path 'capstone/backend/scripts/VerifiedReaderPasswordWorker.cs').Path
           $compilerCandidates = @(
             (Join-Path $env:ProgramFiles 'Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\Roslyn\csc.exe'),

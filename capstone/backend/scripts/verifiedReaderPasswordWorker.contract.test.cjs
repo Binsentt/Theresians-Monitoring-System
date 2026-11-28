@@ -137,3 +137,39 @@ test('synthetic integration bounds OpenSSL startup and reports only a fixed fail
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
+
+test('synthetic integration resolves the fixed OpenSSL command through PATH without exposing paths', { skip: process.platform !== 'win32' }, () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-openssl-path-test-'));
+  try {
+    const bin = path.join(tempRoot, 'bin');
+    fs.mkdirSync(bin);
+    for (const name of ['initdb.exe', 'pg_ctl.exe', 'psql.exe']) {
+      fs.writeFileSync(path.join(bin, name), 'synthetic placeholder', { flag: 'wx' });
+    }
+    const env = {};
+    for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATHEXT', 'USERPROFILE']) {
+      if (process.env[key]) env[key] = process.env[key];
+    }
+    Object.assign(env, {
+      PATH: bin,
+      TQ_PG18_BIN: bin,
+      TQ_OPENSSL: 'openssl.exe',
+      TQ_PG18_WORKER_SOURCE: workerPath,
+      TQ_CSC: process.execPath
+    });
+    const result = spawnSync(process.execPath, [integrationPath], {
+      env,
+      encoding: 'utf8',
+      timeout: 5000,
+      maxBuffer: 65536,
+      windowsHide: true
+    });
+    const output = (result.stdout || '') + (result.stderr || '');
+
+    assert.equal(result.status, 1, 'unavailable PATH command must stop before database setup');
+    assert.match(output, /VERIFIED_OPENSSL_START_FAILED_ENOENT/);
+    assert.equal(output.includes(tempRoot), false, 'diagnostic must not expose temporary paths');
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});

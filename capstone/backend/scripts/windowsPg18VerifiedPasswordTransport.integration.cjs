@@ -30,7 +30,10 @@ for (const [label, file] of requiredTestTools) {
   if (!fs.existsSync(file)) throw new Error('VERIFIED_TEST_TOOL_FILE_MISSING_' + label);
 }
 if (!openssl) throw new Error('VERIFIED_TEST_TOOL_UNSET_OPENSSL');
-if (!path.isAbsolute(openssl)) throw new Error('VERIFIED_TEST_TOOL_NOT_ABSOLUTE_OPENSSL');
+const opensslByPath = path.isAbsolute(openssl);
+if (!opensslByPath && openssl !== 'openssl.exe') {
+  throw new Error('VERIFIED_TEST_TOOL_NOT_ALLOWED_OPENSSL_COMMAND');
+}
 
 const baseEnv = {};
 for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'PATHEXT', 'USERPROFILE']) {
@@ -56,7 +59,7 @@ if (opensslProbe.status !== 0 || !/^OpenSSL\s/i.test(opensslProbe.stdout || ''))
   throw new Error('VERIFIED_OPENSSL_VERSION_CHECK_FAILED');
 }
 
-baseEnv.PATH = bin + path.delimiter + path.dirname(openssl) + path.delimiter + (baseEnv.PATH || '');
+baseEnv.PATH = bin + path.delimiter + (opensslByPath ? path.dirname(openssl) + path.delimiter : '') + (baseEnv.PATH || '');
 
 const parent = fs.realpathSync.native(os.tmpdir());
 const root = fs.mkdtempSync(path.join(parent, 'tq-pg18-verified-sync-'));
