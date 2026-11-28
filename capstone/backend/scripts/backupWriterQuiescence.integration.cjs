@@ -136,11 +136,13 @@ async function acquireCandidateBarrier(client, lockTimeout = '5s', onInventoryCa
     'candidate refuses foreign tables because their remote data writers are outside this database lock domain');
   if (onInventoryCaptured) await onInventoryCaptured();
 
-  // Lock application relations first so existing writers drain before the
-  // system catalogs are locked. Then lock catalogs and their TOAST tables so
-  // concurrent CREATE/ALTER/GRANT work cannot add an unprotected relation.
+  // This is deliberately only a table/catalog barrier. Sequence objects stay
+  // in the inventory digest but cannot be LOCK TABLE targets; PostgreSQL
+  // rejects them with 42809. The test proves sequence mutations remain an
+  // uncovered production backup blocker.
   const dataRelations = before.filter((row) =>
-    !['pg_catalog', 'information_schema'].includes(row.schema_name) && !row.schema_name.startsWith('pg_toast'));
+    !['pg_catalog', 'information_schema'].includes(row.schema_name) &&
+    !row.schema_name.startsWith('pg_toast') && row.kind !== 'S');
   const systemRelations = before.filter((row) =>
     (row.schema_name === 'pg_catalog' || row.schema_name.startsWith('pg_toast')) && ['r', 't'].includes(row.kind));
   const targets = [...dataRelations, ...systemRelations];
@@ -191,11 +193,14 @@ async function createFixture() {
 
 async function verifyAndCleanup(admin) {
   const remaining = await admin.query(`
-    SELECT count(*)::integer AS relation_count
+    SELECT c.relname, c.relkind
       FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname = $1
+     ORDER BY c.relname COLLATE "C"
   `, [SCHEMA]);
-  assert.equal(Number(remaining.rows[0].relation_count), 2, 'only the expected synthetic table and sequence remain');
+  assert.deepEqual(remaining.rows.map((row) => [row.relname, row.relkind]), [
+    ['progress', 'r'], ['progress_pkey', 'i'], ['progress_seq', 'S'],
+  ], 'only the exact expected synthetic table, primary-key index, and sequence remain');
   await admin.query(`DROP SCHEMA ${quoteIdent(SCHEMA)} CASCADE`);
   await admin.query(`DROP ROLE ${quoteIdent(WRITER_A)}`);
   await admin.query(`DROP ROLE ${quoteIdent(WRITER_B)}`);
@@ -266,8 +271,19 @@ async function main() {
   let barrierClient = null;
   let blocker = null;
   let sequenceWriter = null;
+  let sequenceMutator = null;
   let fixtureCleaned = false;
   try {
+    markStage('sequence-lock-not-supported');
+    await admin.query('BEGIN');
+    await assert.rejects(
+      admin.query(`LOCK TABLE ${quoteIdent(SCHEMA)}."progress_seq" IN SHARE MODE`),
+      (error) => error.code === '42809',
+      'PostgreSQL must reject LOCK TABLE on a sequence with wrong_object_type',
+    );
+    await admin.query('ROLLBACK');
+    console.log('PASS: LOCK TABLE on sequence is unsupported (SQLSTATE 42809)');
+
     markStage('relation-inventory-drift');
     const driftBarrierClient = newClient(DATABASE);
     await connect(driftBarrierClient);
@@ -315,7 +331,7 @@ async function main() {
     liveClients.delete(blocker);
     blocker = null;
     const barrier = await barrierPromise;
-    assert.ok(barrier.relationCount >= 3, 'barrier must include application relations, sequence, and system catalog locks');
+    assert.ok(barrier.relationCount > 1, 'barrier must include the application table and system catalog relations; sequences are explicitly excluded');
     assert.match(barrier.inventorySha256, /^[a-f0-9]{64}$/);
     console.log(`PASS: existing writer drained before barrier-ready; locked-relations=${barrier.relationCount}`);
 
@@ -333,28 +349,38 @@ async function main() {
     liveClients.delete(dumpReader);
     console.log('PASS: read-only SELECT and pg_dump-compatible ACCESS SHARE locks remain available');
 
-    markStage('block-row-and-sequence-writes');
+    markStage('row-writes-blocked-sequence-state-unfrozen');
     await assertRoleWriteBlocked(WRITER_A,
       `UPDATE ${quoteIdent(SCHEMA)}."progress" SET value = value + 1 WHERE id = 1`, 'writer A update');
     await assertRoleWriteBlocked(WRITER_B,
       `INSERT INTO ${quoteIdent(SCHEMA)}."progress" VALUES (2, 0)`, 'writer B insert');
     await assertRoleWriteBlocked(WRITER_A,
       `DELETE FROM ${quoteIdent(SCHEMA)}."progress" WHERE id = 1`, 'writer A delete');
-    await assertLockTimeoutInTransaction(
-      sequenceWriter,
-      `SELECT nextval('${SCHEMA}.progress_seq')`,
-      'cached writer B nextval',
-    );
-    await assertRoleWriteBlocked(WRITER_B,
-      `SELECT setval('${SCHEMA}.progress_seq', 900, true)`, 'writer B setval');
-    const sequenceStateWhileLocked = await admin.query(`SELECT last_value, is_called FROM ${quoteIdent(SCHEMA)}."progress_seq"`);
-    assert.equal(Number(sequenceStateWhileLocked.rows[0].last_value), 407,
-      'blocked sequence operations must not change the already reserved sequence cache range');
-    assert.equal(sequenceStateWhileLocked.rows[0].is_called, true);
+    const sequenceStateBeforeProbe = await admin.query(`SELECT last_value, is_called FROM ${quoteIdent(SCHEMA)}."progress_seq"`);
+    assert.equal(Number(sequenceStateBeforeProbe.rows[0].last_value), 407);
+    assert.equal(sequenceStateBeforeProbe.rows[0].is_called, true);
+    const cachedNextvalDuringBarrier = await sequenceWriter.query(`SELECT nextval('${SCHEMA}.progress_seq') AS value`);
+    assert.equal(Number(cachedNextvalDuringBarrier.rows[0].value), 401,
+      'a writer must consume a preallocated sequence value while the table/catalog barrier is held');
+    sequenceMutator = newClient(DATABASE, WRITER_A);
+    await connect(sequenceMutator);
+    const uncachedNextvalDuringBarrier = await sequenceMutator.query(`SELECT nextval('${SCHEMA}.progress_seq') AS value`);
+    assert.ok(Number(uncachedNextvalDuringBarrier.rows[0].value) >= 408,
+      'a distinct writer must advance the sequence while the table/catalog barrier is held');
+    const sequenceStateAfterNextval = await admin.query(`SELECT last_value, is_called FROM ${quoteIdent(SCHEMA)}."progress_seq"`);
+    assert.ok(Number(sequenceStateAfterNextval.rows[0].last_value) > Number(sequenceStateBeforeProbe.rows[0].last_value));
+    await sequenceMutator.query(`SELECT setval('${SCHEMA}.progress_seq', 900, true)`);
+    const sequenceStateAfterSetval = await admin.query(`SELECT last_value, is_called FROM ${quoteIdent(SCHEMA)}."progress_seq"`);
+    assert.equal(Number(sequenceStateAfterSetval.rows[0].last_value), 900,
+      'setval must mutate non-MVCC sequence state while the table/catalog barrier is held');
+    assert.equal(sequenceStateAfterSetval.rows[0].is_called, true);
+    await sequenceMutator.end();
+    liveClients.delete(sequenceMutator);
+    sequenceMutator = null;
     const tableStateWhileLocked = await admin.query(`SELECT count(*)::integer AS rows, min(value)::integer AS min_value FROM ${quoteIdent(SCHEMA)}."progress"`);
     assert.equal(Number(tableStateWhileLocked.rows[0].rows), 1);
     assert.equal(Number(tableStateWhileLocked.rows[0].min_value), 1);
-    console.log('PASS: distinct writer identities, row writes, nextval, and setval are blocked');
+    console.log('PASS: row writes stay blocked, but cached nextval, fresh nextval, and setval mutate sequence state under the barrier');
 
     markStage('block-ddl-and-truncate');
     await assertLockTimeoutInTransaction(
@@ -378,8 +404,8 @@ async function main() {
     barrierClient = null;
     await admin.query(`UPDATE ${quoteIdent(SCHEMA)}."progress" SET value = value + 1 WHERE id = 1`);
     const cachedSequenceAfterRelease = await sequenceWriter.query(`SELECT nextval('${SCHEMA}.progress_seq') AS value`);
-    assert.equal(Number(cachedSequenceAfterRelease.rows[0].value), 401,
-      'the cached next value must remain unchanged by blocked calls and become available after release');
+    assert.equal(Number(cachedSequenceAfterRelease.rows[0].value), 402,
+      'the remaining preallocated sequence cache survives barrier release and another session setval');
     const afterRelease = await admin.query(`SELECT value FROM ${quoteIdent(SCHEMA)}."progress" WHERE id = 1`);
     assert.equal(Number(afterRelease.rows[0].value), 2);
     console.log('PASS: explicit barrier rollback releases locks and restores writes');
@@ -428,8 +454,8 @@ async function main() {
     await verifyAndCleanup(admin);
     fixtureCleaned = true;
     console.log('PASS: synthetic schema and roles cleaned up');
-    console.log(`Writer-quiescence lock feasibility: PostgreSQL ${process.env.TQ_EXPECTED_POSTGRES_MAJOR}, 10/10 scenarios passed.`);
-    console.log('LIMITATION: this database-local mechanism does not freeze external services, other databases, foreign data sources, or PostgreSQL superuser activity outside the tested relation lock domain.');
+    console.log(`Writer-barrier feasibility limits: PostgreSQL ${process.env.TQ_EXPECTED_POSTGRES_MAJOR}, 11/11 test cases passed.`);
+    console.log('PRODUCTION_QUIESCENCE=NO_GO: relation locks block table/catalog writes but do not freeze non-MVCC sequence state or cached nextval values. External services, other databases, foreign data sources, and privileged control-plane activity are also outside this synthetic lock domain.');
   } finally {
     if (blocker) {
       try { await blocker.query('ROLLBACK'); } catch {}
@@ -440,6 +466,11 @@ async function main() {
       try { await barrierClient.query('ROLLBACK'); } catch {}
       try { await barrierClient.end(); } catch {}
       liveClients.delete(barrierClient);
+    }
+    if (sequenceMutator) {
+      try { await sequenceMutator.query('ROLLBACK'); } catch {}
+      try { await sequenceMutator.end(); } catch {}
+      liveClients.delete(sequenceMutator);
     }
     if (sequenceWriter) {
       try { await sequenceWriter.query('RESET ROLE'); } catch {}
