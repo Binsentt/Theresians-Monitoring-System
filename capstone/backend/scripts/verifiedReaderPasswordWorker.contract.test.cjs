@@ -101,3 +101,39 @@ test('synthetic integration reports a fixed missing-tool code without echoing pa
   assert.match(output, /VERIFIED_TEST_TOOL_FILE_MISSING_PG18_INITDB/);
   assert.equal(output.includes(sentinel), false, 'diagnostic must not expose filesystem paths');
 });
+
+test('synthetic integration bounds OpenSSL startup and reports only a fixed failure code', { skip: process.platform !== 'win32' }, () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-openssl-probe-test-'));
+  try {
+    const bin = path.join(tempRoot, 'bin');
+    fs.mkdirSync(bin);
+    for (const name of ['initdb.exe', 'pg_ctl.exe', 'psql.exe']) {
+      fs.writeFileSync(path.join(bin, name), 'synthetic placeholder', { flag: 'wx' });
+    }
+    const missingOpenSsl = path.join(tempRoot, 'private missing openssl.exe');
+    const env = {};
+    for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'PATHEXT', 'USERPROFILE']) {
+      if (process.env[key]) env[key] = process.env[key];
+    }
+    Object.assign(env, {
+      TQ_PG18_BIN: bin,
+      TQ_OPENSSL: missingOpenSsl,
+      TQ_PG18_WORKER_SOURCE: workerPath,
+      TQ_CSC: process.execPath
+    });
+    const result = spawnSync(process.execPath, [integrationPath], {
+      env,
+      encoding: 'utf8',
+      timeout: 5000,
+      maxBuffer: 65536,
+      windowsHide: true
+    });
+    const output = (result.stdout || '') + (result.stderr || '');
+
+    assert.equal(result.status, 1, 'unlaunchable OpenSSL must stop before database setup');
+    assert.match(output, /VERIFIED_OPENSSL_START_FAILED_ENOENT/);
+    assert.equal(output.includes(tempRoot), false, 'diagnostic must not expose temporary paths');
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});

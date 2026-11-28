@@ -21,7 +21,6 @@ const requiredTestTools = [
   ['PG18_INITDB', bin && path.join(bin, 'initdb.exe')],
   ['PG18_PG_CTL', bin && path.join(bin, 'pg_ctl.exe')],
   ['PG18_PSQL', bin && path.join(bin, 'psql.exe')],
-  ['OPENSSL', openssl],
   ['WORKER_SOURCE', workerSource],
   ['C_COMPILER', csc]
 ];
@@ -30,11 +29,33 @@ for (const [label, file] of requiredTestTools) {
   if (!path.isAbsolute(file)) throw new Error('VERIFIED_TEST_TOOL_NOT_ABSOLUTE_' + label);
   if (!fs.existsSync(file)) throw new Error('VERIFIED_TEST_TOOL_FILE_MISSING_' + label);
 }
+if (!openssl) throw new Error('VERIFIED_TEST_TOOL_UNSET_OPENSSL');
+if (!path.isAbsolute(openssl)) throw new Error('VERIFIED_TEST_TOOL_NOT_ABSOLUTE_OPENSSL');
 
 const baseEnv = {};
 for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'PATHEXT', 'USERPROFILE']) {
   if (process.env[key]) baseEnv[key] = process.env[key];
 }
+const opensslProbe = spawnSync(openssl, ['version'], {
+  cwd: process.cwd(),
+  env: baseEnv,
+  encoding: 'utf8',
+  timeout: 5000,
+  maxBuffer: 8192,
+  windowsHide: true
+});
+if (opensslProbe.error) {
+  const code = opensslProbe.error.code && /^[A-Za-z0-9_]+$/.test(opensslProbe.error.code)
+    ? opensslProbe.error.code.toUpperCase() : 'OTHER';
+  throw new Error('VERIFIED_OPENSSL_START_FAILED_' + code);
+}
+if (opensslProbe.signal || opensslProbe.status === null) {
+  throw new Error('VERIFIED_OPENSSL_START_FAILED_TIMEOUT');
+}
+if (opensslProbe.status !== 0 || !/^OpenSSL\s/i.test(opensslProbe.stdout || '')) {
+  throw new Error('VERIFIED_OPENSSL_VERSION_CHECK_FAILED');
+}
+
 baseEnv.PATH = bin + path.delimiter + path.dirname(openssl) + path.delimiter + (baseEnv.PATH || '');
 
 const parent = fs.realpathSync.native(os.tmpdir());
