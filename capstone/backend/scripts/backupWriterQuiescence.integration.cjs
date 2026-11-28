@@ -70,7 +70,7 @@ async function inspectTarget() {
       SELECT current_database() AS control_database,
              current_user AS role,
              current_setting('server_version_num')::integer / 10000 AS major,
-             inet_server_addr()::text AS address,
+             host(inet_server_addr()) AS address,
              inet_server_port() AS port,
              current_setting('data_directory') AS data_directory,
              (SELECT shobj_description(oid, 'pg_database')
