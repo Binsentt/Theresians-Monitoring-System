@@ -1257,7 +1257,7 @@ test('backup source audits and pg_dump share one exported snapshot while sequenc
   assert.match(harness, /postgres-exported-snapshot\.integration\.cjs/);
   assert.match(harness, /exported-snapshot integration must pass for PostgreSQL 16 and 18/);
   assert.match(harness, /spawnSync\(process\.execPath, \[exportedSnapshotHelper\]/);
-  assert.match(harness, /backup role sequence USAGE is rejected after synthetic nextval proves the write/);
+  assert.match(harness, /backup role sequence USAGE is rejected after synthetic nextval proves the write and state is restored/);
   assert.match(harness, /passedScenarioCount, 103/);
   assert.match(snapshotIntegration, /const CONTAINER = 'tq-backend-test-postgres'/);
   assert.match(snapshotIntegration, /'--set=VERBOSITY=verbose'/,

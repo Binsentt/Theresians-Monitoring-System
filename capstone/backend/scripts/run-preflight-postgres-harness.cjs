@@ -2045,7 +2045,17 @@ const readOnlyBackupSequenceAudit = invokeBackupRoleAudit(CASES.valid);
 assert.equal(readOnlyBackupSequenceAudit.status, 0,
   `revoking sequence USAGE must restore the read-only backup-role audit: ${readOnlyBackupSequenceAudit.stderr}\n${readOnlyBackupSequenceAudit.stdout}`);
 assert.match(readOnlyBackupSequenceAudit.stdout, /sequence_write_privilege_count=0/);
-recordScenario('backup role sequence USAGE is rejected after synthetic nextval proves the write');
+const restoreBackupSequenceState = psql(CASES.valid, 'postgres',
+  "SELECT setval('public.tq_backup_integrity_sequence', 42, true);");
+assert.equal(restoreBackupSequenceState.status, 0, restoreBackupSequenceState.stderr);
+assert.equal(restoreBackupSequenceState.stdout.trim(), '42',
+  'the sequence privilege regression must restore the known aggregate-integrity fixture state');
+const restoredBackupSequenceState = psql(CASES.valid, 'postgres',
+  "SELECT last_value::text || '|' || is_called::text FROM public.tq_backup_integrity_sequence;");
+assert.equal(restoredBackupSequenceState.status, 0, restoredBackupSequenceState.stderr);
+assert.equal(restoredBackupSequenceState.stdout.trim(), '42|t',
+  'the sequence aggregate-integrity baseline must be restored before the backup/restore rehearsal');
+recordScenario('backup role sequence USAGE is rejected after synthetic nextval proves the write and state is restored');
 
 const dump = dockerBinary([
   'exec', CONTAINER, 'pg_dump', '--host=127.0.0.1', '--port=5432',
