@@ -153,7 +153,7 @@ test('synthetic integration resolves the fixed OpenSSL command through PATH with
     Object.assign(env, {
       PATH: bin,
       TQ_PG18_BIN: bin,
-      TQ_OPENSSL: 'openssl.exe',
+      TQ_OPENSSL: 'OpenSSL.EXE',
       TQ_PG18_WORKER_SOURCE: workerPath,
       TQ_CSC: process.execPath
     });

@@ -31,7 +31,7 @@ for (const [label, file] of requiredTestTools) {
 }
 if (!openssl) throw new Error('VERIFIED_TEST_TOOL_UNSET_OPENSSL');
 const opensslByPath = path.isAbsolute(openssl);
-if (!opensslByPath && openssl !== 'openssl.exe') {
+if (!opensslByPath && path.win32.basename(openssl).toLowerCase() !== 'openssl.exe') {
   throw new Error('VERIFIED_TEST_TOOL_NOT_ALLOWED_OPENSSL_COMMAND');
 }
 
