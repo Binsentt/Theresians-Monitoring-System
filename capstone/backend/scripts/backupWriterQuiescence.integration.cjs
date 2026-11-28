@@ -19,9 +19,21 @@ const FIXED = Object.freeze({
 });
 const liveClients = new Set();
 let diagnosticStage = 'ci-target-validation';
+let diagnosticDetail = 'none';
 
 function markStage(stage) {
   diagnosticStage = stage;
+}
+
+function classifyServerAddress(address) {
+  if (address === null) return 'null';
+  if (address === '127.0.0.1') return 'expected-ipv4-loopback';
+  if (/^127(?:\.\d{1,3}){3}$/.test(address)) return 'other-ipv4-loopback';
+  if (address === '::1' || address === '0:0:0:0:0:0:0:1') return 'ipv6-loopback';
+  if (/^::ffff:127(?:\.\d{1,3}){3}$/i.test(address)) return 'ipv4-mapped-loopback';
+  if (address.includes(':')) return 'other-ipv6';
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(address)) return 'other-ipv4';
+  return 'unrecognized';
 }
 
 function assertCiTarget() {
@@ -74,6 +86,7 @@ async function inspectTarget() {
     markStage('identity-postgres-major');
     assert.equal(Number(row.major), Number(process.env.TQ_EXPECTED_POSTGRES_MAJOR));
     markStage('identity-loopback-address');
+    diagnosticDetail = `server-address-${classifyServerAddress(row.address)}`;
     assert.equal(row.address, '127.0.0.1');
     markStage('identity-server-port');
     assert.equal(Number(row.port), 5432);
@@ -450,7 +463,8 @@ async function main() {
 
 main().catch((error) => {
   const safeStage = /^[a-z0-9-]+$/.test(diagnosticStage) ? diagnosticStage : 'unknown';
+  const safeDetail = /^[a-z0-9-]+$/.test(diagnosticDetail) ? diagnosticDetail : 'unknown';
   const safeCode = typeof error?.code === 'string' && /^[A-Z0-9]+$/.test(error.code) ? error.code : 'NONE';
-  console.error(`FAIL: synthetic writer-quiescence integration failed (stage=${safeStage}, name=${error?.name || 'Error'}, sqlstate=${safeCode}).`);
+  console.error(`FAIL: synthetic writer-quiescence integration failed (stage=${safeStage}, detail=${safeDetail}, name=${error?.name || 'Error'}, sqlstate=${safeCode}).`);
   process.exitCode = 1;
 });
