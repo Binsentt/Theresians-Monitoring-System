@@ -20,6 +20,10 @@ param(
   [int]$ExpectedServerPort,
 
   [Parameter(Mandatory = $true)]
+  [ValidateRange(1, 65535)]
+  [int]$ExpectedTunnelPort,
+
+  [Parameter(Mandatory = $true)]
   [ValidateNotNullOrEmpty()]
   [string]$PassfilePath,
 
@@ -27,12 +31,25 @@ param(
   [ValidateNotNullOrEmpty()]
   [string]$ServiceFilePath,
 
+  [Parameter(Mandatory = $true)]
+  [ValidateNotNullOrEmpty()]
+  [string]$VerifiedCaPath,
+
   [string]$PsqlPath = (Join-Path $env:ProgramFiles 'PostgreSQL\18\bin\psql.exe'),
-  [string]$ExpectedSourceCommit = '8a9ab3b6a3cfa3a6652538c62673c4655b03642d'
+
+  [Parameter(Mandatory = $true)]
+  [ValidatePattern('^[0-9a-fA-F]{40}$')]
+  [string]$ExpectedSourceCommit
 )
 
 $ErrorActionPreference = 'Stop'
 $expectedRole = 'tq_release_preflight_reader'
+$connectionValidationModule = Join-Path $PSScriptRoot 'releasePreflightConnection.validation.psm1'
+if (-not (Test-Path -LiteralPath $connectionValidationModule -PathType Leaf)) {
+  throw 'STOP: reviewed preflight connection validator is missing.'
+}
+Import-Module $connectionValidationModule -Force
+Assert-TqNoAmbientPgOverrides
 $backendRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $repositoryRoot = (& git -C $backendRoot rev-parse --show-toplevel 2>$null).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $repositoryRoot) {
@@ -50,9 +67,6 @@ function Assert-OutsideRepository([string]$PathValue, [string]$Label) {
   return $full
 }
 
-if (Test-Path Env:PGPASSWORD) {
-  throw 'STOP: PGPASSWORD is present in the process environment. Remove it and use the protected PGPASSFILE instead.'
-}
 if (-not (Test-Path -LiteralPath $PsqlPath -PathType Leaf)) { throw 'STOP: PostgreSQL 18 psql.exe was not found.' }
 $passfile = Assert-OutsideRepository $PassfilePath 'PGPASSFILE'
 $serviceFile = Assert-OutsideRepository $ServiceFilePath 'PGSERVICEFILE'
@@ -64,6 +78,7 @@ if ($LASTEXITCODE -ne 0 -or $sourceHead -ne $ExpectedSourceCommit) {
 }
 $reviewedInputs = @(
   'capstone/backend/scripts/run-release-preflight.ps1',
+  'capstone/backend/scripts/releasePreflightConnection.validation.psm1',
   'capstone/backend/scripts/release-preflight-role-audit.sql',
   'capstone/backend/scripts/release-migration-026-prerequisite-preflight.sql',
   'capstone/backend/scripts/release-migration-preflight.sql',
@@ -73,6 +88,12 @@ $sourceStatus = @(& git -C $repositoryRoot status --porcelain --untracked-files=
 if ($LASTEXITCODE -ne 0 -or $sourceStatus.Count -gt 0) {
   throw 'STOP: reviewed preflight files or migrations are modified/untracked; use a clean reviewed release commit.'
 }
+
+$connectionFiles = Assert-TqPreflightConnectionFiles -ServiceFilePath $ServiceFilePath -PassfilePath $PassfilePath `
+  -VerifiedCaPath $VerifiedCaPath -RepositoryRoot $repositoryRoot -ExpectedDatabase $ExpectedDatabase `
+  -ExpectedRole $expectedRole -ExpectedServiceName $ServiceName -ExpectedTunnelPort $ExpectedTunnelPort
+$serviceFile = $connectionFiles.ServiceFilePath
+$passfile = $connectionFiles.PassfilePath
 
 $previousServiceFile = $env:PGSERVICEFILE
 $previousPassfile = $env:PGPASSFILE

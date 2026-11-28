@@ -10,6 +10,7 @@ const {
   buildApprovalPlan,
   parseVersionList,
   runApprovedReleaseMigrations,
+  assertSameTarget,
 } = require('./run-approved-release-migrations');
 
 function tempMigrationDir(t, migrationRows) {
@@ -158,6 +159,71 @@ test('rejects an unexpected database identity before applying SQL', async (t) =>
   );
   assert.equal(calls.some((call) => call.sql.includes('-- fixture migration 18')), false);
   assert.equal(client.ended, true);
+});
+
+test('database identity accepts PostgreSQL host-formatted IPv4 and IPv6 addresses', () => {
+  const plan = {
+    expectedDatabase: 'tq_operator_fixture',
+    expectedUser: 'release_operator',
+    expectedServerAddress: '127.0.0.1',
+    expectedServerPort: 5432,
+  };
+  assert.doesNotThrow(() => assertSameTarget(matchingIdentity(), plan));
+  assert.doesNotThrow(() => assertSameTarget({
+    ...matchingIdentity(),
+    server_address: '2001:db8::1',
+  }, { ...plan, expectedServerAddress: '2001:db8::1' }));
+});
+
+test('database identity rejects address, format, database, role, port, and missing-address mismatches', () => {
+  const plan = {
+    expectedDatabase: 'tq_operator_fixture',
+    expectedUser: 'release_operator',
+    expectedServerAddress: '127.0.0.1',
+    expectedServerPort: 5432,
+  };
+  const mismatches = [
+    ['incorrect IPv4 address', { server_address: '127.0.0.2' }],
+    ['incorrect IPv6 address', { server_address: '2001:db8::2' }],
+    ['CIDR-suffixed address', { server_address: '127.0.0.1/32' }],
+    ['missing address', { server_address: null }],
+    ['incorrect database', { database_name: 'other_database' }],
+    ['incorrect role', { database_user: 'other_role' }],
+    ['incorrect port', { server_port: 5433 }],
+  ];
+
+  for (const [description, overrides] of mismatches) {
+    assert.throws(
+      () => assertSameTarget({ ...matchingIdentity(), ...overrides }, plan),
+      /identity does not match/i,
+      description,
+    );
+  }
+});
+
+test('migration runner obtains a host-formatted address and rejects mismatches before migration SQL', async (t) => {
+  const dir = tempMigrationDir(t, [{ version: 18, file: '018_fixture.sql' }]);
+  const { client, calls } = fakeClient({
+    identity: { ...matchingIdentity(), server_address: '127.0.0.1/32' },
+    ledgerRows: [],
+  });
+
+  await assert.rejects(
+    runApprovedReleaseMigrations({
+      env: approvalEnv('18'),
+      databaseConfig: { host: 'fixture.invalid' },
+      migrationDir: dir,
+      migrations: [{ version: 18, file: '018_fixture.sql' }],
+      clientFactory: async () => client,
+    }),
+    /identity does not match/i,
+  );
+
+  const identityQuery = calls.find((call) => call.sql.includes('current_database()'));
+  assert.ok(identityQuery, 'the runner must query the database identity');
+  assert.match(identityQuery.sql, /host\(inet_server_addr\(\)\)\s+AS server_address/i);
+  assert.doesNotMatch(identityQuery.sql, /inet_server_addr\(\)::text/i);
+  assert.equal(calls.some((call) => call.sql.includes('-- fixture migration 18')), false);
 });
 
 test('stops safely when the migration ledger is missing', async (t) => {
@@ -384,17 +450,33 @@ test('pre-026 constraint and index listings declare their own required-table sco
 
 test('disposable PostgreSQL harness scenario counters match the executed scenario inventory', () => {
   const harness = fs.readFileSync(path.join(__dirname, 'run-preflight-postgres-harness.cjs'), 'utf8');
-  const backupScenarioBoundary = harness.indexOf('const createSyntheticBackupProbe');
-  assert.notEqual(backupScenarioBoundary, -1, 'backup scenarios must follow the preflight scenarios');
+  const preflightScenarioBoundary = harness.indexOf('const missingBackupRoleAudit');
+  assert.notEqual(preflightScenarioBoundary, -1, 'backup-role scenarios must follow the preflight scenarios');
 
-  const preflightSection = harness.slice(0, backupScenarioBoundary);
-  const dynamicModeScenario = preflightSection.match(/for\s*\(const \[mode, phrase\] of \[([\s\S]*?)\]\)\s*\{[\s\S]*?recordScenario\(/);
+  const preflightSection = harness.slice(0, preflightScenarioBoundary);
+  const dynamicModeScenario = preflightSection.match(/for\s*\(const \[mode, phrase\] of \[([\s\S]*?)\]\)\s*\{\s*[\s\S]*?recordScenario\(/);
   assert.ok(dynamicModeScenario, 'the missing-table and missing-column scenarios must remain enumerated');
   const additionalDynamicRuns = (dynamicModeScenario[1].match(/^\s*\['[^']+'\s*,/gm) || []).length - 1;
-  const preflightScenarioCount = (preflightSection.match(/^\s*recordScenario\(/gm) || []).length + additionalDynamicRuns;
-  const totalScenarioCount = (harness.match(/^\s*recordScenario\(/gm) || []).length + additionalDynamicRuns;
-  assert.match(harness, new RegExp(`assert\\.equal\\(passedScenarioCount, ${preflightScenarioCount},`));
-  assert.match(harness, new RegExp(`assert\\.equal\\(passedScenarioCount, ${totalScenarioCount},`));
+  const receiptConstraintScenarioRuns = (preflightSection.match(/\nassertReceiptConstraintMismatch\(\{/g) || []).length;
+  // Two label-only helper bodies occur before this boundary; one is used by
+  // receiptConstraintScenarioRuns and the grant-option helper runs afterward.
+  const preflightScenarioCount = (preflightSection.match(/^\s*recordScenario\(/gm) || []).length
+    + additionalDynamicRuns + receiptConstraintScenarioRuns - 2;
+  assert.match(harness, new RegExp('assert\\.equal\\(passedScenarioCount, ' + preflightScenarioCount + ','));
+
+  const maintainBranchStart = harness.indexOf('if (serverVersionNumber >= 170000)');
+  const maintainBranchEnd = harness.indexOf('const createLoCompatProbe', maintainBranchStart);
+  const maintainBranch = harness.slice(maintainBranchStart, maintainBranchEnd);
+  assert.match(maintainBranch,
+    /if \(serverVersionNumber >= 170000\)[\s\S]*recordScenario\('MAINTAIN privilege is rejected on supported PostgreSQL versions'\);[\s\S]*\} else \{[\s\S]*recordScenario\('MAINTAIN privilege check is version-safe on PostgreSQL 16'\);/,
+    'exactly one PostgreSQL-version-specific MAINTAIN scenario runs per server');
+  const backupGrantOptionScenarioRuns = (harness.match(/^\s*assertBackupRoleGrantOptionRejected\(\{/gm) || []).length;
+  const maintainScenarioAlternatives = (maintainBranch.match(/^\s*recordScenario\(/gm) || []).length;
+  assert.equal(maintainScenarioAlternatives, 2, 'one PostgreSQL-version-specific MAINTAIN scenario must execute');
+  const totalScenarioCount = (harness.match(/^\s*recordScenario\(/gm) || []).length
+    + additionalDynamicRuns + receiptConstraintScenarioRuns + backupGrantOptionScenarioRuns
+    - 2 - (maintainScenarioAlternatives - 1);
+  assert.match(harness, new RegExp('assert\\.equal\\(passedScenarioCount, ' + totalScenarioCount + ','));
 });
 
 test('synthetic backup-role table and sequence grants target the database being audited', () => {

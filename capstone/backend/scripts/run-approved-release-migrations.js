@@ -5,6 +5,7 @@ const {
   RELEASE_MIGRATIONS,
   applyReleaseMigrations,
   buildReleaseDatabaseConfig,
+  assertTlsVerificationEnvironment,
   migrationChecksum,
 } = require('../releaseMigrations');
 
@@ -159,22 +160,29 @@ async function assertMigration024Impact({ client, plan }) {
 
 async function runApprovedReleaseMigrations({
   env = process.env,
-  databaseConfig = buildReleaseDatabaseConfig(env),
+  databaseConfig,
   migrationDir = DEFAULT_MIGRATION_DIR,
   migrations = RELEASE_MIGRATIONS,
   clientFactory,
 } = {}) {
   const plan = buildApprovalPlan(env, migrations);
-  if (!databaseConfig) {
+  let selectedDatabaseConfig;
+  if (clientFactory) {
+    selectedDatabaseConfig = databaseConfig || buildReleaseDatabaseConfig(env);
+  } else {
+    assertTlsVerificationEnvironment(env);
+    selectedDatabaseConfig = buildReleaseDatabaseConfig(env);
+  }
+  if (!selectedDatabaseConfig) {
     throw new Error('DATABASE_URL or PostgreSQL connection settings are required');
   }
 
   let client;
   if (clientFactory) {
-    client = await clientFactory(databaseConfig);
+    client = await clientFactory(selectedDatabaseConfig);
   } else {
     const { Client } = require('pg');
-    client = new Client(databaseConfig);
+    client = new Client(selectedDatabaseConfig);
   }
 
   let connected = false;
@@ -190,7 +198,7 @@ async function runApprovedReleaseMigrations({
     const identitySql = [
       'SELECT current_database() AS database_name,',
       '       current_user AS database_user,',
-      '       inet_server_addr()::text AS server_address,',
+      '       host(inet_server_addr()) AS server_address,',
       '       inet_server_port() AS server_port',
     ].join('\n');
     const identityResult = await client.query(identitySql);

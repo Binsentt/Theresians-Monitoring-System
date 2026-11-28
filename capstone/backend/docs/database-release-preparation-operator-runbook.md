@@ -1,339 +1,467 @@
-# Database release preparation and SWR acceptance
+# Theresians Website production recovery runbook
 
-This runbook is preparation only. It does not authorize a production connection,
-role/grant change, backup, migration, deployment, Student query, or live AI call.
+**Status: NO-GO.** This document coordinates separately approved operations; it
+does not authorize a production connection, credential change, backup, restore,
+migration, restart, deployment, or merge. Never place credentials, application
+rows, backup bytes, or routine definitions in GitHub, CI artifacts, chat, or
+ordinary logs.
 
-## Known boundary and current state
+## Recovery status and source boundaries — 2026-11-28
 
-- Source reviewed for this package: GitHub `main` at
-  `8a9ab3b6a3cfa3a6652538c62673c4655b03642d`.
-- The recovered Railway Website was last confirmed online on application SHA
-  `98f9b221656293219ea8e481647503b3c5e7164d` by read-only Railway metadata.
-- Railway showed no managed database backup; no backup or restore rehearsal is
-  verified.
-- The owner reported migration records through 025 and no visible 026 entry.
-  This is not a verified ledger/checksum result.
-- `release-migration-preflight.sql` is the post-026 preflight (18 tables, 278
-  columns, receipt table required). Run the new
-  `release-migration-026-prerequisite-preflight.sql` before migration 026; run
-  the existing official preflight only after an independently approved 026
-  migration.
-- The new scripts are currently local and uncommitted. Their wrappers refuse
-  modified or untracked release inputs. Do not use them against production until
-  they are reviewed, committed, and run from the exact approved clean commit.
-- No PostgreSQL server/container is available in the Codex execution
-  environment. The existing GitHub Actions backend workflow has an isolated
-  Docker/PostgreSQL harness, now extended locally for pre/post-migration checks
-  and synthetic archive/restore. Those exact-source CI scenarios must execute
-  before this package can claim PostgreSQL runtime verification.
+- Production Website service `efe9f84c-7d05-4698-be00-452c22b47ec7` in
+  `overflowing-insight/production` is **CRASHED** at deployment
+  `ae7e87d7-74ff-48ad-948d-6c6c77b9ae3c`, source
+  `12783185b083ed1b370143d912ddcb70d53e6839`. Railway metadata reported zero
+  running replicas. Its public domain includes `theresiansquest.com`.
+- PostgreSQL service `14626d99-748f-455c-ab2c-e5a66c00329a` is **ONLINE** at
+  deployment `49d9afe7-65a3-4b82-bfa3-2cf36a2fcb6d`, PostgreSQL 18, one replica,
+  with a 5 GB volume. Metadata did not disclose database contents or size.
+- The last known startup failure reports that read-only schema validation
+  cannot find `game_progress_save_commits` and its required constraints. This
+  is startup-log evidence, not a current production catalog query. The live
+  migration ledger, checksums, partial-object state, and exact pending list
+  remain **unverified**.
+- PR #46 is open, Draft, and unmerged. The prior fully validated baseline is
+  `9c5ce4e4f1f9c3252d28ae29e77a874493eec971`. Later operator/admission
+  candidates require their own exact-commit CI and independent review. Use the
+  immutable source approved in the protected operation record, never a branch
+  default or this document's historical baseline as implicit approval.
+- The owner verified the local CA, protected connection files, and exactly one
+  reader passfile tuple. A production connection using
+  `tq_release_preflight_reader` previously reached PostgreSQL and failed SCRAM
+  password authentication. No successful reader authentication or metadata
+  preflight has occurred. The password mismatch remains unresolved.
+- The protected administrator profile, TLS authentication and independently
+  anchored database identity succeeded. Database size and backup capacity were
+  recorded in protected evidence. Do not repeat administrator credential setup
+  or size queries without a concrete reason. Recheck current encrypted-volume
+  state, ACLs and free space immediately before a separately approved backup.
+- A prior Railway Backups screenshot showed “No Backups”; it is not a current
+  backup inventory. Railway MCP's supported backup-list endpoint currently
+  reports that database tools are not enabled for this account.
+  Therefore managed backup and PITR availability are **unknown**. Do not enable
+  PITR or change Railway settings under this runbook.
 
-## 1. Role review and separate provisioning approval
+The failed reader authentication must not be retried automatically. The PR #46
+change after the failure fixed local passfile matching guidance and added
+synthetic tests; it did not change the production password or prove that the
+server secret matches the passfile. Local `CONNECTION_FILES=PASS` and
+`EXACT_MATCHING_TUPLES=1` validate file shape and selection, not credential
+equality.
 
-The preflight identity is `tq_release_preflight_reader`. It must be a dedicated
-login with `NOINHERIT`, no role memberships, and no superuser, database/schema
-creation, role creation, replication, or RLS bypass attributes. Its only
-application relation privilege is column-level `SELECT` on
-`public.schema_migrations(version, filename, checksum)`.
-Catalog visibility comes from PostgreSQL's built-in catalog access. It must
-have database `CONNECT` and `public` schema `USAGE`, but no database `CREATE` or
-`TEMP`, schema `CREATE`, table write/reference/trigger privileges, or sequence
-privileges. It must not read `accounts`, `game_results`, `playtime_sessions`, or
-any other Student/application table. It must not be able to execute
-application-schema `SECURITY DEFINER` functions, which could otherwise expose
-rows despite having no table SELECT grant.
+## 1. Authentication and metadata-preflight gate
 
-First, an authorized DBA may check role metadata using a read-only query that
-does not read password hashes:
+The Windows reader-recovery candidate uses libpq 18 `PQchangePassword` through
+the [protected operator](reader-password-operator-review.md). Do not reuse the
+historical `psql \\password` stdin wrapper: its Windows console path timed out
+and its production outcome was uncertain. The Linux disposable stdin test is
+not Windows production transport evidence. Review the new operator's actual
+protected-profile PostgreSQL 18 integration and final source/artifact pins.
 
-```sql
-BEGIN READ ONLY;
-SELECT rolname, rolcanlogin, rolinherit, rolsuper, rolcreatedb, rolcreaterole,
-       rolreplication, rolbypassrls
-FROM pg_catalog.pg_roles
-WHERE rolname = 'tq_release_preflight_reader';
-SELECT pg_catalog.pg_get_userbyid(member) AS member_role,
-       pg_catalog.pg_get_userbyid(roleid) AS granted_role
-FROM pg_catalog.pg_auth_members
-WHERE member = (SELECT oid FROM pg_catalog.pg_roles
-                WHERE rolname = 'tq_release_preflight_reader');
-ROLLBACK;
-```
+No production password reset or authentication retry is authorized by this
+runbook. The previously granted conditional one-use synchronization and two
+sequential preflight sessions remain subject to operator review, confirmed
+unused authorization and every applicable gate. Do not request duplicate
+approval of the same scope or silently activate an unreviewed operator.
+The password source must be the already
+protected reader passfile; do not generate or display another secret. A secure
+administrative connection must first be established independently with
+`sslmode=verify-full`, the pinned CA, the intended hostname, and independently
+verified production identity. An administrator login is not the reader and
+must never be used as fallback for the preflight.
 
-No row means the role is absent. Do not create or repair it in this procedure.
-If absent or if any privilege check fails, stop and obtain separate written
-owner/DBA approval. The approved provisioning change, if later authorized, is
-limited to this shape; replace the database placeholder with the independently
-confirmed database name in the DBA session:
+The protected administrator TCP profile, pinned CA, `localhost` TLS identity
+and independently anchored proxy route have already been verified. Preserve
+those inputs; no fresh password entry or reset is needed for preparation.
+SSH is not required by the reviewed TCP route. Any target/profile drift or
+authentication/TLS failure stops execution without a fallback or retry.
 
-```sql
-CREATE ROLE tq_release_preflight_reader LOGIN NOSUPERUSER NOCREATEDB
-  NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-GRANT CONNECT ON DATABASE :"target_database" TO tq_release_preflight_reader;
-GRANT USAGE ON SCHEMA public TO tq_release_preflight_reader;
-GRANT SELECT (version, filename, checksum) ON TABLE public.schema_migrations
-  TO tq_release_preflight_reader;
-```
+The two-session metadata preflight retains its separate approved exact source
+`57908cba66e39a187caa290b2bd1eb0a776f7d26`. Preserve its clean checkout and
+dependencies; never substitute the latest PR head. The first reviewed role
+audit establishes reader authentication. The second migration prerequisite
+session runs only after the first passes. No extra reader probe is permitted.
 
-Pass the database identifier through the DBA's approved `psql` session as
-`-v target_database=APPROVED_DATABASE_NAME`; psql's quoted-identifier
-substitution avoids interpolating an untrusted database name as SQL syntax.
-Set its password interactively in `psql` with `\password
-tq_release_preflight_reader`; never put a password in SQL, a command argument,
-GitHub, chat, or a file in the repository. Do not apply broad `REVOKE` commands
-to fix an existing role. If inherited/public grants, membership, or any extra
-effective privilege appears, stop for DBA review. After separately approved
-provisioning, connect as that role and run `release-preflight-role-audit.sql`.
-The audit requires exactly those three ledger columns and rejects table-wide
-ledger SELECT, SELECT on extra ledger columns, application table/column reads,
-or executable application-schema `SECURITY DEFINER` functions. It must pass
-before either schema preflight is run.
+After a separately authorized attempt, the exact reviewed source at the
+approved SHA must run the seven-setting service profile validator and then the
+metadata-only preflight as the restricted reader. The profile contract is
+exactly `host=localhost`, `hostaddr=127.0.0.1`, the approved local tunnel port,
+database, reader role, `sslmode=verify-full`, and the verified CA path. The
+passfile lookup is keyed by `localhost`, not `127.0.0.1`. The checks must bind
+the expected database, server address, server port, TLS identity, current role,
+read-only transaction, source commit, and exact reader privileges. Do not
+print passfile contents or connection URLs.
 
-The separate backup role is `tq_prod_backup_reader`. It has SELECT access to
-every application table and SELECT on every sequence, so it can read Student
-data. Its use and any provisioning require separate explicit approval. It must
-be non-admin, non-inheriting, have no memberships or writes/DDL, and must not be
-subject to row-level security or foreign tables that could make `pg_dump`
-incomplete. `backup-role-preflight.sql` checks effective privileges but does
-not grant them. Never reuse the schema-only preflight role or the application's
-database credential for a backup.
+The accepted restricted-reader service profile is exactly:
 
-## 2. Private tunnel and Windows libpq configuration
-
-The owner previously established the private Railway SSH tunnel at
-`127.0.0.1:55432`; keep that owner-managed tunnel open. No public PostgreSQL TCP
-proxy is needed. Before using it, confirm the Railway project, production
-environment, Postgres service, and tunnel destination in the Railway UI. The
-local forwarded port is 55432; the expected PostgreSQL server port passed to
-the SQL checks is normally 5432. `inet_server_addr()` is the address seen by
-PostgreSQL and can differ from local `127.0.0.1`; obtain and compare it with the
-approved Railway database endpoint. Do not guess this fingerprint.
-
-Create the client files outside the repository, for example under
-`%APPDATA%\postgresql`:
-
-`pg_service.conf` (no password):
+`pg_service.conf`:
 
 ```ini
 [tq_release_preflight]
-host=127.0.0.1
+host=localhost
+hostaddr=127.0.0.1
 port=55432
 dbname=APPROVED_DATABASE_NAME
 user=tq_release_preflight_reader
-connect_timeout=5
-application_name=tq-release-preflight
+sslmode=verify-full
+sslrootcert=ABSOLUTE_PATH_TO_VERIFIED_PRODUCTION_ROOT_CA
 ```
 
-`pgpass.conf` (one protected local line; enter the password only in a trusted
-local password manager/editor, never in CMD or PowerShell history):
+The matching passfile key is
+`localhost:55432:APPROVED_DATABASE_NAME:tq_release_preflight_reader:ESCAPED_PASSWORD`.
+Keep the credential only in the existing protected passfile; do not substitute
+the local route address `127.0.0.1` as the passfile host key.
 
-```text
-127.0.0.1:55432:APPROVED_DATABASE_NAME:tq_release_preflight_reader:ESCAPED_PASSWORD
+Only the approved pre-026 SQL may then inspect database identity, PostgreSQL
+version, migration metadata, catalogs, and receipt prerequisites. It must
+require valid migration history through 025, migration 024 already applied,
+026 the sole pending migration, and no partial migration-026 objects. It reads
+no Student or Parent rows and changes no state. A failure or unexpected result
+stops the sequence; never edit ledger rows or infer the result from startup
+logs.
+
+## 2. Backup-role routine review evidence
+
+The backup role `tq_prod_backup_reader` is broader than the metadata reader: it
+can read application tables, sequences, and Student data. Do not provision or
+use it without separate owner/DBA approval. The existing
+`backup-role-preflight.sql` checks effective read coverage, role membership,
+large-object access, writes, grant options, RLS, foreign tables, and dangerous
+function classes. It intentionally reports
+`OVERALL_BACKUP_ROLE_NONWRITING=UNVERIFIED` until a human has reviewed the
+actual user-routine bodies.
+
+`backup-role-routine-review-export.sql` supplies that missing review material.
+It runs in an explicit repeatable-read, read-only transaction with statement
+and lock timeouts; requires the exact backup role and independently supplied
+database/server identity; and exports routine definitions, owner, language,
+security, volatility, configuration, ACL, and effective EXECUTE status. Its
+inventory fingerprint is computed with the same ordered fields as the backup
+role audit. The export must match the audit's
+`BACKUP_ROLE_ROUTINE_INVENTORY_SHA256` exactly. The PowerShell backup tool pins
+this SQL as a reviewed source input. The SQL does not read application table
+rows or alter the database.
+
+The fingerprint and export also bind each routine's `probin`/`prosrc` values
+and its extension membership, extension version, extension schema, and
+extension owner. Treat an extension-owned routine as requiring review of the
+matching extension source package and deployed shared-library implementation;
+catalog metadata and `pg_get_functiondef()` do not prove what native code
+does. For every routine, follow executable call paths and dependencies,
+including dynamic SQL and nested routines. Inspect `SECURITY DEFINER`
+ownership, `search_path` configuration, effective `EXECUTE` grants, language
+trust, writes to tables/sequences/large objects, role or configuration changes,
+and filesystem, network, process, or global-state effects. Volatility labels
+and a read-only caller transaction are not proof that an arbitrary routine is
+side-effect free.
+
+Routine bodies may contain sensitive literals. Store the protected routine definition export only in a new file in the approved encrypted, restricted evidence directory; never let the JSON package reach console, CI log, or public artifact storage. The export
+is not itself approval. A qualified independent reviewer must compare every
+definition and effective EXECUTE path with the exact application/tool source,
+identify possible writes, dynamic SQL, external calls and extension effects,
+and sign the existing 16-line evidence format. It binds reviewer ID, decision
+`APPROVED`, scope `nonwriting-side-effects-and-source-integrity`, database,
+backup role, server address/port, tool and application source SHAs, routine
+inventory SHA, issue/expiry times (no more than seven days), reviewer public
+key SHA-256, the public key, and the RSA/SHA-256 signature. The public-key
+fingerprint must be approved and pinned separately; the evidence cannot
+authorize its own key. The review module requires a current signature and the
+separately pinned fingerprint. No review signature or reviewer approval
+currently exists; do not fabricate one or use the export as a substitute.
+
+For production backup, each canonical signed-payload SHA-256 may be claimed
+once. The validator reconstructs the exact UTF-8/LF payload that was signed;
+accepted CRLF and optional final-newline representations therefore share one
+claim identity. The raw evidence-file SHA-256 remains separately recorded for
+artifact provenance. Immediately before backup work, the tool atomically
+creates a `CreateNew` use receipt keyed by the canonical payload digest in the
+same protected directory as the signed evidence and verifies the receipt ACL.
+A pre-existing receipt rejects replay. The receipt is durable and
+intentionally not removed after a later backup failure; obtain a fresh
+independent review and attestation for another attempt. Keep the evidence
+directory stable and protected, on the verified encrypted local volume, and
+retain its receipts. The use receipt prevents accidental reuse within that
+directory; it is local operator evidence, not a defense against an
+administrator who can replace or relocate the entire evidence directory.
+Receipt creation or verification failure stops before the backup
+snapshot/archive operation.
+Before using the canonical-payload receipt scheme, inspect any legacy
+`.tq-backup-role-review-<evidence-sha256>.used` receipts in the evidence
+directory and reconcile their prior claims. The validator refuses to create a
+canonical claim while any legacy-format receipt remains; do not delete a
+receipt to bypass that stop.
+
+### Independent reviewer handoff checklist
+
+The owner/operator prepares the exact reviewed tool and application commit
+SHAs, independently anchored target database/address/port, the catalog audit
+result, and the protected JSON produced by
+`backup-role-routine-review-export.sql`. The qualified independent reviewer
+must then:
+
+1. Confirm the export's `routine_inventory_sha256` equals the read-only audit
+   marker and record the export file SHA-256 without publishing routine
+   definitions.
+2. Review every exported routine and every effective execution path. Inspect
+   the actual source for trusted procedural languages; inspect the deployed
+   package/shared library for `language=c` routines; follow extension name,
+   version, schema, owner, `probin`, and `prosrc`; and trace nested calls,
+   dynamic SQL, security-definer ownership and `search_path`.
+3. Explicitly assess table, sequence, large-object, role, configuration,
+   filesystem, network, process, and other global side effects. Any missing
+   source/binary, unexplained dependency, inventory mismatch, or unknown
+   behavior means **REJECT / UNVERIFIED**, not an inferred pass.
+4. Independently control the signing key. Supply its public-key SHA-256 via an
+   owner/DBA-approved out-of-band channel, then sign the exact bounded-lifetime
+   evidence payload only after a documented approval. The reviewer must not
+   use a key generated or selected by the operator for this attestation.
+5. Return the signed evidence through the protected evidence directory. The
+   operator validates it against the separately approved key fingerprint and
+   exact target/source/inventory pins. This signature does not itself approve
+   the backup, writer freeze, restore, migration, or deployment.
+
+The human reviewer—not the owner or Codex—must attest to routine semantics and
+transitive implementation behavior that catalog metadata cannot establish,
+and must own the private signing key and approval decision.
+
+## 3. Sequence-state write quiescence
+
+The production backup script retains an unconditional hard-stop for
+`CreateProductionBackup`. MVCC snapshots do not include sequence state. Do not
+remove this stop until a separate implementation and operational review prove
+an externally enforced writer freeze and before/after sequence evidence.
+
+The Website being crashed does not prove writes have stopped. Known potential
+writers in the checked-in application include:
+
+- Website account/session/OTP, parent-child, teacher assignment, content,
+  question/lesson lifecycle, announcement, activity-log, and Screen Time API
+  paths.
+- Mobile game API requests for `/api/game/progress`, `/api/game/result`,
+  `/api/game/activity`, playtime sessions, and deletion tombstones.
+- A GET to `/api/student-progress/:studentId` can save a regenerated AI
+  insight. Polling `/api/learning-files/:id/generation-status` can restart a
+  queued generation job. In-process question-generation work can update files
+  and insert questions. Those jobs and their pollers must be drained/stopped.
+- Manual deployment/migration/admin tools and direct administrator sessions.
+
+The current Railway metadata snapshot lists only the Website API replicas and
+PostgreSQL services and no scheduled job service. That does not rule out
+external clients and writers, integrations, additional credentials,
+database triggers, extensions, or out-of-band jobs. The full live writer
+inventory is unknown.
+
+Before any future approved production dump, the owner/DBA must document and
+enforce a maintenance window in this order:
+
+The sequence-state fingerprint must match exactly before and after the dump.
+
+1. Stop ingress and all Website API replicas, prevent autoscaling/restart,
+   disable automatic deploy for the window, and drain active requests. Stop
+   mobile traffic by taking the API out of service; do not rely on client
+   inactivity.
+2. Stop and drain in-process lesson/question generation and related status
+   polling. Inventory and pause external scheduled jobs, integrations, direct
+   clients, administrative sessions, and any other writer. Check the actual production
+   catalog for sequence inventory, triggers and non-application writers.
+3. Keep only the separately approved backup reader connection. Block new
+   writer-capable connections, terminate existing writer sessions under DBA
+   authority, and verify no write-capable session or in-flight write
+   transaction remains. Do not use the backup reader to terminate sessions.
+4. Capture sequence state before the shared snapshot as an aggregate-only
+   fingerprint of all sequence names, ownership, and
+   `last_value`/`is_called` values. Maintain the external write barrier
+   while the exported repeatable-read snapshot is opened, the manifest and
+   `pg_dump` consume that same snapshot, and the archive/TOC/digest checks
+   complete. Capture the same sequence fingerprint after the dump and require
+   an exact before/after digest match.
+5. Release the snapshot and remove the write barrier only after the approved
+   operator confirms archive integrity and records the before/after evidence.
+   If the writer inventory is incomplete, sessions cannot be blocked, the
+   digests differ, or the barrier is interrupted, stop and reject the backup.
+
+This is a proposed operational gate, not an implemented or tested production
+freeze mechanism. Sequence quiescence remains unsatisfied, so the existing
+script hard-stop remains necessary.
+
+## 4. Backup storage, size and integrity
+
+The owner has verified C: encryption and the local protected backup parent.
+Current free capacity and destination reparse/ACL state were not independently
+readable in this managed shell. Production database size is unknown because
+the metadata query has not run. The backup script requires available space of
+at least `2 × pg_database_size(current_database()) + 1 GiB` for archive and
+restore-related artifacts. Do not use the old free-space estimate.
+
+After the separately authorized restricted-reader connection and target
+identity gate, the operator may collect only the current database byte size
+and server version in a read-only transaction:
+
+```sql
+BEGIN READ ONLY;
+SET LOCAL statement_timeout = '10s';
+SET LOCAL lock_timeout = '2s';
+WITH measured AS (
+  SELECT pg_catalog.pg_database_size(current_database())::bigint AS bytes
+)
+SELECT current_database() AS database_name,
+       current_setting('server_version_num') AS server_version_num,
+       measured.bytes AS database_bytes,
+       pg_catalog.pg_size_pretty(measured.bytes) AS database_size
+FROM measured;
+ROLLBACK;
 ```
 
-In the pgpass line, escape a literal colon as `\:` and a literal backslash as
-`\\`. Restrict the file ACL to the owner and SYSTEM, with inheritance disabled;
-do not put credentials in the service file. Set `PGSERVICEFILE` and
-`PGPASSFILE` only to these file paths. The wrapper refuses an inherited
-`PGPASSWORD` variable and does not print credential values.
-
-Before the preflight, verify the local forward is open without authenticating:
+`pg_database_size` reports bytes for the database and requires CONNECT on that
+database (or `pg_read_all_stats`); do not grant additional privileges just to
+run it. If it is denied, stop and leave capacity **unknown**. The owner can
+read local free bytes without administrator elevation using:
 
 ```powershell
-Test-NetConnection 127.0.0.1 -Port 55432
-& 'C:\Program Files\PostgreSQL\18\bin\pg_isready.exe' -h 127.0.0.1 -p 55432 -d APPROVED_DATABASE_NAME -U tq_release_preflight_reader
+$volume = Get-Volume -DriveLetter C -ErrorAction Stop
+if ($volume.FileSystem -ne 'NTFS') { throw 'STOP: backup volume is not NTFS.' }
+[pscustomobject]@{
+  FileSystem = $volume.FileSystem
+  AvailableBytes = [int64]$volume.SizeRemaining
+  TotalBytes = [int64]$volume.Size
+}
 ```
 
-Then use the exact clean, reviewed release commit. The working directory is the
-backend folder in that commit. The command below contains placeholders only;
-never paste a connection URL or password into it:
+Compare only those byte counts with the script's threshold. Do not include
+database contents or connection information in the capacity record.
 
-```powershell
-& '.\scripts\run-release-preflight.ps1' `
-  -Stage PreMigration026 `
-  -ServiceName tq_release_preflight `
-  -ExpectedDatabase 'APPROVED_DATABASE_NAME' `
-  -ExpectedServerAddress 'APPROVED_POSTGRES_SERVER_ADDRESS' `
-  -ExpectedServerPort 5432 `
-  -PassfilePath "$env:APPDATA\postgresql\pgpass.conf" `
-  -ServiceFilePath "$env:APPDATA\postgresql\pg_service.conf" `
-  -ExpectedSourceCommit 'APPROVED_CLEAN_SOURCE_SHA'
-```
+After the authorized restricted metadata connection succeeds, collect only
+the current database size and identity metadata needed to calculate capacity;
+do not query application rows. On the owner machine, read current volume
+capacity and validate the exact encrypted destination's NTFS, ACL, reparse
+status, and path outside the repository before any backup authorization. Stop
+if capacity is below the script threshold or any storage check is unavailable.
 
-The source SHA, database name, server address, server port, role, read-only
-state, and timeouts are checked before metadata inspection. The role-audit SQL
-then verifies effective privileges. The pre-026 SQL reads only `pg_catalog`
-and `schema_migrations`, confirms the 17-table/269-column pre-026 contract,
-checks migration filenames/checksums 018–026, requires 024/025 applied and 026
-pending, and stops on partial receipt objects. It does not select application
-rows or apply migrations. Preserve output only in the access-restricted change
-record; do not attach it to public issues or CI.
+The eventual backup requires PostgreSQL 18 client tools, the dedicated
+reviewed backup role, verified service/TLS identity, a separately approved
+recovery point and change, enforced writer quiescence, custom-format
+`pg_dump` using the shared exported snapshot, archive SHA-256 and TOC
+verification, and a protected evidence record. No production backup has been
+created or verified. Do not put the archive, routine export, sidecars, or logs
+in the repository or GitHub.
 
-If 024 or any unexpected version is pending, a checksum/ledger differs, 026 is
-already recorded, receipt objects are partial, or any identity/privilege/schema
-check fails, STOP. Do not repair schema, edit the ledger, or infer the result.
+Restore into a new, isolated PostgreSQL 18 instance bound to loopback with no
+route to production. It must be a separate empty `tq_restore_*` database,
+non-admin local restore role, and distinct connection service. Verify archive
+SHA and TOC before restore; use `pg_restore --single-transaction
+--exit-on-error --no-owner --no-privileges`, never `--clean` or `--create`.
+The rehearsal must validate restored schema/ledger/checksums, aggregate-only
+table consistency, sequence states, large objects, routine/catalog
+fingerprints, and all source-vs-restore checks without emitting row data.
+Keep the target isolated until independently reviewed. Synthetic PostgreSQL
+16/18 CI and PostgreSQL 18 synthetic archive-integrity tests are not a restore
+of production data. No production archive or isolated production restore
+exists yet.
 
-## 3. Backup and isolated restore gate
+## 5. Migration 026 and post-migration verification
 
-No production backup or restore has been verified. Before migration 026, the
-owner must approve the backup operation, recovery point, operator, and encrypted
-storage destination. A volume existing in Railway is not evidence of a usable
-backup. A backup without a successful isolated restore rehearsal is not release
-readiness.
+Migration 026 is the additive receipt-table migration for game-progress save
+idempotency. Do not execute it until all of these are separately authorized and
+verified:
 
-Use only PostgreSQL 18 client tools and the dedicated backup role. The backup
-destination must be a non-temporary, non-CI directory on encrypted storage with
-restricted ACLs. The script refuses overwrite, requires a change reference and
-explicit switches, checks `tq_prod_backup_reader` against all relations and
-sequences, creates a custom-format archive, lists its TOC, and writes a SHA-256
-sidecar. Keep the archive, TOC, digest, and logs out of Git, GitHub artifacts,
-chat, and ordinary project folders. The backup role reads Student records.
+1. Exact clean reviewed source, passing exact-head backend/frontend CI, and
+   secure restricted-reader preflight.
+2. Ledger versions, filenames and canonical checksums through 025 match
+   source; 024 and 025 are applied; 026 is the only pending migration; the
+   receipt table/constraints are wholly absent, not partial.
+3. Approved production backup archive passes SHA/TOC checks and a separate
+   isolated PostgreSQL 18 restore rehearsal passes.
+4. Backup-role routine review is signed and verified against the exact
+   inventory fingerprint. Writer freeze and before/after sequence state pass.
+5. Runtime role privileges for the exact migration and route are reviewed;
+   no production test writes are used.
+6. Owner separately approves migration 026 alone, target identity, exact
+   checksum/source, change reference, monitoring window, operator and
+   rollback owner.
 
-After separate approval, from a clean reviewed commit with the approved
-backup/restore role and external service/pass files configured, the operator
-would use the `CreateProductionBackup` action with
-`-ExecuteApprovedProductionBackup -EncryptedStorageConfirmed`, the approved
-change reference, and the external encrypted directory. No such command is
-authorized by this preparation task.
+Use the reviewed recovery-specific executor
+`capstone/backend/scripts/recoveryMigration026.js`, not a generic runner that
+could apply other pending migrations. It must assert the exact pending list is
+`[26]`, verify prior checksums, take its advisory lock, apply only migration
+026 transactionally, and preserve `OUTCOME UNKNOWN` if a COMMIT response is
+lost. Migration 024 remains prohibited. After a separately authorized run,
+verify the complete receipt-table/constraint/index contract and effective
+runtime permissions read-only before considering a deployment.
 
-Restore only into a separately created, disposable PostgreSQL 18 target reachable
-through `tq_restore_local` at a loopback address. The database must have a
-`tq_restore_*` name, be empty, and use a local non-admin, `NOINHERIT` restore
-role with CREATE on the disposable `public` schema only. Do not configure the
-restore alias to Railway or any production host. The script rechecks the archive
-SHA-256 and TOC before using `pg_restore --single-transaction --exit-on-error
---no-owner --no-privileges`; it refuses `--clean` or `--create`, verifies the
-restored migration ledger/receipt table read-only, and never drops or creates a
-database. A restore failure leaves the disposable target for operator
-inspection; do not repoint it at production. A full post-restore source preflight
-and checksum review is required before treating the rehearsal as complete.
+The reviewed recovery executor's PostgreSQL client configuration requires an
+explicit loopback host, the `localhost` TLS server name, the pinned CA, and
+`rejectUnauthorized: true`. The general controlled release migration config
+also verifies the pinned self-signed CA before enabling TLS verification.
+Never replace these checks with `rejectUnauthorized: false`, or treat
+PostgreSQL `sslmode=verify-full` as equivalent to an unverified Node TLS
+connection.
 
-Docker/Podman and a local PostgreSQL server are unavailable in the Codex
-environment, so the PowerShell dump/restore utility has static/parser tests
-only. The owner must provide an approved disposable PostgreSQL 18 restore host
-with no external route, or install/enable an approved local container runtime
-and use a no-network container. Do not install or download one as part of this
-task.
+## 6. Website and mobile restoration
 
-## 4. Migration 026: separate approval and controlled procedure
+The fastest safe route is still blocked by unresolved reader authentication,
+no verified production backup/restore, no signed backup-role review, and no
+sequence-quiescence implementation. A deployment rollback is not yet a
+verified alternative: a previously removed deployment is not proof that its
+startup schema contract matches the live database, and older code may not
+preserve save-idempotency semantics. Do not redeploy an older image merely to
+see whether it starts.
 
-Migration 026 is additive: it creates `public.game_progress_save_commits` with
-the columns, unique keys, foreign key, and checks used by `/api/game/progress`
-save idempotency. It does not update/delete existing Student, Game result,
-progress, session, or activity rows. Its account foreign key cascades deletion
-of receipt rows if an account is later deleted. Application startup does not
-run this migration or repair schema.
+After migration and post-migration verification, separately approve one exact
+source deployment with Auto Deploy confirmed off and no other deployment
+queued. Check startup logs, configured health endpoint and replica health.
+Never disable startup schema validation. Keep the receipt table on code
+rollback; a database restore is a separate disaster-recovery operation.
 
-Migration 026 is not approved here. It may be considered only after all these
-gates are separately approved and evidenced:
+Using only synthetic/test accounts and mocked AI where applicable, acceptance
+must cover:
 
-1. Exact clean release commit and passing Node 20 backend/frontend CI.
-2. Pre-026 preflight passes from the dedicated metadata-only role; 024 and 025
-   checksums match and 026 is the only expected pending version.
-3. The receipt table and all named receipt objects are absent (not partial).
-4. A production backup archive passes SHA/TOC verification and restores into
-   the isolated PostgreSQL 18 target; schema and ledger/checksums are reviewed.
-5. Runtime role effective privileges can use the receipt table without startup
-   DDL. Confirm required `SELECT`, `INSERT`, `UPDATE` and any conflict handling
-   privileges from the exact route SQL; do not issue production test writes.
-6. Owner approves migration 026 alone, the exact database fingerprint, source
-   checksum, approval reference, maintenance/monitoring window, and rollback
-   owner.
+- Website account creation, login/session/OTP, and role authorization.
+- Mobile authentication and API compatibility for the deployed game client.
+- Save creation with a unique commit ID; exact retry returns the same receipt;
+  altered payload under the same ID is rejected; progress and activity persist
+  exactly once.
+- Game-result, activity, playtime-session and tombstone flows, including
+  persistence across API restart.
+- Admin/Teacher Student Progress authorization, linked Parent read-only access,
+  and denial of unrelated Students.
+- Current-cycle evidence, AI Strengths/Weaknesses/Recommendations grounded in
+  synthetic results, generation availability/cache failure states, and upload
+  processing. No real Student record or live AI call.
 
-After approval only, the controlled `npm run migrate:release` runner must be
-used from the approved source, with transient values read from the secure
-operator store: `RELEASE_MIGRATIONS_APPROVED=true`, approval reference, exact
-database/user/server/port fingerprint, and
-`RELEASE_EXPECTED_PENDING_MIGRATIONS=26`. Do not set migration-024 flags or run
-024. The runner takes its advisory lock, verifies existing migration checksums,
-compares the actual pending list exactly to `[26]`, and applies only that list.
-Do not run it with the production application's DATABASE_URL or administrator
-credentials. On any mismatch, stop and inspect metadata; never edit
-`schema_migrations` manually.
+Record exact deployed SHA, test fixture identifier, sanitized results, and
+redacted evidence in the restricted release record. Production acceptance has
+not occurred.
 
-Immediately afterward, run the role audit and existing post-migration
-`release-migration-preflight.sql` from the same reviewed source. Confirm all
-receipt table columns/constraints and 18 tables/278 columns. This is still not a
-deployment authorization.
+## 7. Railway backup/PITR and next gates
 
-## 5. Deployment and recovery gates
+Read-only service metadata currently confirms PostgreSQL online and Website
+crashed. It does not establish Railway backup/PITR configuration. The
+documented `railway postgres pitr status` command is read-only, but the last
+Codex CLI attempt could not reach Railway because of DNS/network failure. The
+owner may inspect the current Backups/PITR status in Railway dashboard or run
+the documented status command from their authenticated normal shell; do not
+enable PITR or change settings. Preserve sanitized status and timestamps only.
 
-Railway's read-only metadata last showed the recovered Website service online
-on the prior source SHA. Its deployed config is `main`; Auto Deploy was
-owner-reported disabled but is not exposed by the read API. Before any merge or
-manual deployment, the owner must verify the Website and Postgres services'
-source repo/branch, Auto Deploy OFF, no queued/running deployments, and the
-exact current and proposed deployment SHAs in the Railway dashboard. Preserve
-the currently online deployment until migration and the deployment are
-separately approved.
+The next smallest safe actions are:
 
-Before deployment, confirm production runtime permissions against exact current
-route SQL and perform a synthetic save/retry integration in disposable
-PostgreSQL. Deploy only the approved SHA manually after the migration and
-post-migration preflight gates. Check `/api/health` (or the configured Railway
-health path), startup readiness, logs for schema compatibility, and a
-non-production synthetic account path. Do not use a real Student account to
-test saves.
+1. Owner/DBA resolves the secure administrative connection prerequisite and,
+   under fresh explicit authorization, performs at most one password-only
+   synchronization followed by one restricted-reader authentication and
+   metadata-preflight attempt. The tested stdin `\\password` method avoids
+   browser clipboard ambiguity but requires a verified administrative
+   TLS-verified route and its already protected credential. No such route is
+   currently verified; no retry/reset is authorized now.
+2. If preflight passes, produce the exact metadata-only database-size and
+   migration/schema results. Have the owner verify current encrypted disk
+   capacity and the backup destination checks.
+3. Obtain separate DBA approval for backup-role use, perform the routine
+   export only to protected encrypted storage, and obtain the independent
+   signed review. Implement/review/enforce the sequence freeze without
+   removing the backup hard-stop prematurely.
+4. Separately authorize production backup, then isolated restore rehearsal;
+   only after both pass consider separately authorizing migration 026, its
+   post-checks, deployment, and synthetic website/mobile acceptance.
 
-Application rollback does not roll back migration 026 or remove the receipt
-table. Keep it in place. Rolling back to older backend code may stop enforcing
-`save_commit_id`, so coordinate with the Game client version and preserve
-backend idempotency protection. Database restore is a separate disaster
-recovery operation and must never overwrite production without its own explicit
-approval.
-
-## 6. Student Progress and Parent browser acceptance
-
-Only after a separately approved deployment and designated synthetic/test
-Student data are available:
-
-1. Sign in as Admin and Teacher; confirm each sees only authorized Student
-Progress records.
-2. Use a test Student with five or more validated Mathematics attempts on a
-canonical topic and at least 80% accuracy. Confirm the topic strength cites
-only that evidence. Use a separate synthetic Student below the threshold and
-confirm no topic strength is shown.
-3. Submit known incorrect answers with valid canonical question, set, Grade,
-   Difficulty, and Topic metadata. Confirm weaknesses cite the incorrect
-   evidence, and each recommendation addresses a confirmed weakness.
-4. Include results without valid topic metadata; confirm they can contribute
-   only to supported general metrics and display an explicit topic evidence
-   gap, never an inferred topic.
-5. Refresh AI Insight. Confirm current-cycle evidence is reloaded, another
-   Student's insight cannot appear, stale evidence is not presented as current,
-   and AI paused/provider failure is labeled accurately while deterministic
-   grounded evidence remains available.
-6. Confirm Performance by Map, Latest Activity, Score Over Time, and Per-Quest
-   Evidence use accepted saves/current cycle; exploration tasks show completion
-   without invented quiz scores.
-7. Sign in as a Parent linked to the test Student. Confirm only the linked
-   child's progress is visible and every Parent control remains view-only;
-   verify an unrelated child is denied.
-8. Confirm a zero-result Student sees a truthful insufficient-evidence state.
-9. Record the deployed source SHA, test account/data fixture, screenshots with
-   personal identifiers redacted, and results in the restricted release record.
-
-Never create, edit, reset, or backfill real Student records for acceptance.
-This plan has not been run against production or live AI.
-
-## 7. Remaining owner approvals and shortest order
-
-1. Approve review/publication of the local preparation files to a clean release
-   branch/PR so the exact scripts and new CI scenarios are immutable and
-   testable. No commit/push is authorized by this run.
-2. If needed, separately authorize the DBA to provision/repair the
-   metadata-only preflight role. Verify it by connecting as that role; stop on
-   extra privileges.
-3. Separately approve creating the broad read-only backup role, production
-   logical backup, and encrypted destination. Separately approve the isolated
-   restore rehearsal. These actions handle production Student data.
-4. Review the exact-source isolated CI result, including the pre-026 synthetic
-   PostgreSQL cases, then approve only migration 026 if every gate passes.
-5. Run post-migration read-only schema verification.
-6. Separately approve manual Railway deployment of one exact commit with
-   Auto Deploy confirmed off.
-7. Perform Student/Teacher/Parent browser acceptance with designated test
-   accounts and separately approve any live AI-provider call.
-
-Until the production preflight, backup, and restore gates pass, migration and
-deployment are not release-safe. The recovered Website should remain online on
-its existing deployment.
+No production credential reset, authentication retry, SQL, backup, restore,
+migration, role/grant change, restart, deployment, merge, Student-row access,
+or Railway configuration change has been performed by this preparation.
